@@ -61,19 +61,25 @@ def require_internal_token(x_internal_token: str = Header()) -> None:
     "/collector-runs/{run_id}/target",
     dependencies=[Depends(require_internal_token)],
 )
-def run_target(run_id: str, session: Session = Depends(get_session, scope="function")) -> dict:
+def run_target(
+    run_id: str,
+    x_run_claim: str | None = Header(default=None),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
     """Ziel eines zentralen Laufs inkl. Zugangsdaten (nur fuer den zentralen Worker).
 
     Laeufe ueber einen Agenten bekommen ihr Ziel ausschliesslich beim Abholen (next-run).
+    `X-Run-Claim` (0.109.1, Celery-Task des Workers): ein erneut geschickter Lauf wird nur
+    einmal gelesen - ein zweiter Auftrag bekommt `skip` (`runs.claim`).
     """
-    run = session.get(CollectorRun, run_id)
+    run = session.get(CollectorRun, run_id, with_for_update=True)
     if run is None:
         raise HTTPException(status_code=404, detail="run not found")
     if run.execution != "inprocess":
         raise HTTPException(status_code=403, detail="run is executed by an agent")
-    if run.status is RunStatus.QUEUED:  # zentraler Worker beginnt: wie das Abholen beim Agenten
-        run.status = RunStatus.RUNNING
-        run.started_at = datetime.now(UTC)
+    # zentraler Worker beginnt: wie das Abholen beim Agenten
+    if not runs.claim(run, x_run_claim):
+        return {"target": None, "skip": True}
     src = session.get(SourceSystem, run.source_system_id) if run.source_system_id else None
     if src is None:
         return {"target": None}

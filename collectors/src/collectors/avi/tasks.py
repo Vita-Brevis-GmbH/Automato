@@ -110,4 +110,4 @@ def collect_once(
 
 @app.task(name="collectors.avi.collect")
 def collect(run_id: str) -> None:
-    collect_once(run_id, agent_api.run_target(run_id))
+    agent_api.central(run_id, collect_once)

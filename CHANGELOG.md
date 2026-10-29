@@ -7,6 +7,31 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.109.1 – 2026-10-29
+
+Korrekturen (Fehlerliste des Anwenders 2026-10-29) und neue Roadmap nach Versionen. Abnahme bis
+0.109.0.
+
+- **NetBox-Lauf bleibt „wartet“:** Redis hält die Warteschlange zum zentralen Worker ohne
+  Datenträger – nach einem Neustart bzw. Update waren wartende Aufträge weg und der Lauf blieb
+  bis zur Frist (24 h) stehen. Jetzt schickt der Zeitplan zentral gelesene Läufe nach
+  `AUTOMATO_RUN_REDISPATCH_MINUTES` (5) erneut; gelesen wird trotzdem nur einmal (Claim beim
+  Abholen des Ziels, `X-Run-Claim`). Die Liste der Läufe sagt, wer abholen muss (Agent mit
+  letztem Lebenszeichen bzw. zentraler Worker, „erneut geschickt“).
+- **Prüfung „Zentraler Worker“** in System → Verbindungen und `deploy/aufbau.sh pruefen`:
+  antwortet er (Ping), Aufträge in der Warteschlange, wartende Läufe – mit Befehl zum Starten
+  und den Logs.
+- **Oberfläche schneller:** Ansichten werden erst beim Öffnen geladen – das erste Paket
+  1 057 kB → 270 kB (ohne Warnung beim Bauen).
+- **Fenster:** Seitenpanels und Dialoge am Rand ziehbar (Breite gemerkt, Doppelklick = Vorgabe),
+  ⤢ fast volle Breite; Vorgabe nach Bildschirmbreite, lange Namen brechen in Panels um.
+- **Tests:** Testclient mit `httpx2` (keine Warnung mehr); nachts bzw. von Hand alle
+  Orchestrator-Tests auch mit `AUTOMATO_TEST_DOC_SNAPSHOTS=1` (Fingerabdruck der Doku);
+  `test_aus_wie_bisher` schaltet den Stand selbst aus.
+- **Roadmap** nach Versionen: Version 1 bis zur Produktivschaltung (1.0.0), Version 2 neuer Name
+  und Cockpit, Version 3 Automatisierung (`ROADMAP.md`).
+- Tests (orchestrator 664, UI-Tests 151).
+
 ## 0.109.0 – 2026-10-29
 
 Analyse der Wege (Anwender: „weshalb dieser Pfad gewählt wird … dass ich es als Mensch verstehen

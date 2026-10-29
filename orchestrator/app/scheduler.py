@@ -137,6 +137,11 @@ def start(factory: sessionmaker, tz: str, interval: int) -> threading.Event:
                 _last_tick = datetime.now(UTC)
             except Exception:  # Schleife darf nicht sterben (DB kurz weg o. ae.)
                 log.exception("Zeitplan-Durchgang fehlgeschlagen")
+            try:  # wartende zentrale Laeufe erneut schicken (0.109.1, Redis ohne Datentraeger)
+                with factory() as session:
+                    runs.redispatch_waiting(session, celery_app.dispatch_collect)
+            except Exception:
+                log.exception("Wartende Laeufe nicht erneut geschickt")
             try:
                 if (counts := retention.maybe_purge(factory, get_settings())) is not None:
                     log.info("Aufbewahrung: geloescht %s", counts)

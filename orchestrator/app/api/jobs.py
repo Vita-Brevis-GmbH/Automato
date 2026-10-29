@@ -94,7 +94,7 @@ def start_collect_all(
     return CollectAllResponse(queued=sum(1 for i in items if i.run_id), items=items)
 
 
-def _message(run: CollectorRun) -> str | None:
+def _message(run: CollectorRun, session: Session | None = None) -> str | None:
     """Meldung des Laufs; ist sein Ergebnis angekommen, aber noch nicht eingespielt (0.80.1:
     eines nach dem anderen), steht das statt „läuft“ da. Nur Antwort (folgt der Sprache); die
     gespeicherte Meldung `run.message` bleibt deutsch und wird beim Abruf uebersetzt (0.90.0)."""
@@ -107,10 +107,13 @@ def _message(run: CollectorRun) -> str | None:
             f"Ergebnis angekommen – wartet aufs Einspielen ({ahead} davor)",
             f"Result arrived – waiting to be ingested ({ahead} ahead)",
         )
-    return runs.show_message(run.message)
+    shown = runs.show_message(run.message)
+    if shown is None and session is not None:  # 0.109.1: wer einen wartenden Lauf abholen muss
+        shown = runs.waiting_text(session, run)
+    return shown
 
 
-def _run_out(run: CollectorRun) -> CollectorRunOut:
+def _run_out(run: CollectorRun, session: Session | None = None) -> CollectorRunOut:
     return CollectorRunOut(
         id=run.id,
         platform=run.platform,
@@ -118,7 +121,7 @@ def _run_out(run: CollectorRun) -> CollectorRunOut:
         tenant_id=run.tenant_id,
         source_system_id=run.source_system_id,
         rule_count=run.rule_count,
-        message=_message(run),
+        message=_message(run, session),
         execution=run.execution,
         trigger=run.trigger,
         queued_at=run.queued_at,
@@ -173,7 +176,7 @@ def list_runs(
         .offset(offset)
         .limit(limit)
     )
-    return [_run_out(r) for r in session.scalars(query)]
+    return [_run_out(r, session) for r in session.scalars(query)]
 
 
 _STATES = {s.value for s in RunStatus}
@@ -189,7 +192,7 @@ def get_run(
     if run is None:
         raise HTTPException(status_code=404, detail="run not found")
     tenant_scope(principal, run.tenant_id)  # Mandanten-Zugriff pruefen
-    return _run_out(run)
+    return _run_out(run, session)
 
 
 @router.post("/{run_id}/cancel", response_model=CollectorRunOut)
@@ -207,4 +210,4 @@ def cancel_run(
     if run.status not in runs.OPEN:
         raise HTTPException(status_code=409, detail="run already finished")
     runs.cancel(session, run, actor=f"user:{principal.subject}")
-    return _run_out(run)
+    return _run_out(run, session)

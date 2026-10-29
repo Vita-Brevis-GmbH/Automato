@@ -120,9 +120,9 @@ def check_netbox(target: Target | None = None) -> tuple[bool, str]:
 
 @app.task(name="collectors.infoblox.collect")
 def collect_infoblox_task(run_id: str) -> None:
-    collect_infoblox(run_id, agent_api.run_target(run_id))
+    agent_api.central(run_id, collect_infoblox)
 
 
 @app.task(name="collectors.netbox.collect")
 def collect_netbox_task(run_id: str) -> None:
-    collect_netbox(run_id, agent_api.run_target(run_id))
+    agent_api.central(run_id, collect_netbox)

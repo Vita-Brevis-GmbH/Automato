@@ -193,3 +193,30 @@ test("Weg-Suche: Warum dieser Weg?, Erwartet über und Finding von Hand", async 
   expect(posted).toMatchObject({ tenant_id: 1, title: "Route prüfen", src: "10.10.0.5", dst: "10.30.0.10", service: "tcp/443", severity: "warning" });
   await expect(drawer.locator("a[href='#findings?type=manual']")).toBeVisible();
 });
+
+// Fenster ziehbar (0.109.1, Anwender: „Fenster zu klein“): ⤢ fast volle Breite, Rand ziehen setzt
+// eine eigene Breite, die der Browser sich merkt; Doppelklick auf den Rand = Vorgabe
+test("Seitenpanel: breiter mit ⤢, Rand ziehen, Breite gemerkt", async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.goto("/#wege?src=10.10.0.5&dst=10.30.0.10&service=tcp%2F443");
+  await page.locator("#trace-0 button.trace-explain").click();
+  const drawer = page.locator(".drawer");
+  const width = async () => (await drawer.boundingBox())!.width;
+  const normal = await width();
+  await drawer.locator("button.size").click();
+  expect(await width()).toBeGreaterThan(1300); // 96vw
+  await drawer.locator("button.size").click();
+  expect(Math.round(await width())).toBe(Math.round(normal));
+  // Rand nach links ziehen: 200 px breiter
+  const box = (await drawer.locator(".drawer-grip").boundingBox())!;
+  await page.mouse.move(box.x + 3, box.y + 200);
+  await page.mouse.down();
+  await page.mouse.move(box.x - 197, box.y + 200, { steps: 5 });
+  await page.mouse.up();
+  expect(Math.abs((await width()) - (normal + 200))).toBeLessThan(4);
+  await drawer.locator("button.close").click();
+  await page.locator("#trace-0 button.trace-explain").click();
+  expect(Math.abs((await width()) - (normal + 200))).toBeLessThan(4); // gemerkt
+  await drawer.locator(".drawer-grip").dblclick();
+  expect(Math.round(await width())).toBe(Math.round(normal));
+});

@@ -54,17 +54,49 @@ def targets() -> list[Target]:
     return [Target(**t) for t in response.json()]
 
 
-def run_target(run_id: str) -> Target | None:
-    """Ziel eines zentralen Laufs (zentraler Worker, internes Token); Fehler -> None."""
+def _task_id() -> str | None:
+    """Celery-Task, der gerade laeuft (zentraler Worker) - sonst None."""
+    try:
+        from celery import current_task
+    except ImportError:  # Agent ohne Celery
+        return None
+    request = getattr(current_task, "request", None)
+    return getattr(request, "id", None) if current_task else None
+
+
+def claim_target(run_id: str) -> tuple[bool, Target | None]:
+    """Ziel eines zentralen Laufs (zentraler Worker, internes Token) und ob dieser Auftrag ihn
+    liest (0.109.1): ein erneut geschickter Lauf wird nur einmal gelesen. Fehler -> (True,
+    None), dann gilt die lokale Konfiguration."""
     settings = get_settings()
+    headers = {"X-Internal-Token": settings.internal_api_token}
+    if task := _task_id():
+        headers["X-Run-Claim"] = task
     try:
         response = http.get_json(
-            f"{settings.orchestrator_url}/internal/collector-runs/{run_id}/target",
-            None,
-            {"X-Internal-Token": settings.internal_api_token},
+            f"{settings.orchestrator_url}/internal/collector-runs/{run_id}/target", None, headers
         )
     except Exception as exc:  # noqa: BLE001 - dann gilt die lokale Konfiguration
         log.warning("Ziel fuer Lauf %s nicht abrufbar: %s", run_id, exc)
+        return True, None
+    body = response.json()
+    if body.get("skip"):
+        return False, None
+    data = body.get("target")
+    return True, (Target(**data) if data else None)
+
+
+def run_target(run_id: str) -> Target | None:
+    """Ziel eines zentralen Laufs (zentraler Worker, internes Token); Fehler -> None."""
+    return claim_target(run_id)[1]
+
+
+def central(run_id: str, collect):
+    """Zentralen Lauf lesen (Celery-Task): Ziel holen und `collect(run_id, target)` - nicht,
+    wenn ein anderer Auftrag den Lauf schon liest bzw. er beendet ist (0.109.1)."""
+    go, target = claim_target(run_id)
+    if not go:
+        log.info("Lauf %s: schon von einem anderen Auftrag gelesen bzw. beendet - uebersprungen",
+                 run_id)  # fmt: skip
         return None
-    data = response.json().get("target")
-    return Target(**data) if data else None
+    return collect(run_id, target)

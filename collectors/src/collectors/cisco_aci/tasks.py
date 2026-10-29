@@ -159,4 +159,4 @@ def _routing_message(routing) -> str | None:
 @app.task(name="collectors.cisco_aci.collect")
 def collect(run_id: str) -> None:
     # Zentraler Worker: Zugangsdaten des Geraets vom Orchestrator (internes Token)
-    collect_once(run_id, agent_api.run_target(run_id))
+    agent_api.central(run_id, collect_once)

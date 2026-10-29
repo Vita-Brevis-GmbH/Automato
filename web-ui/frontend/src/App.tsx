@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import {
   AuthConfig,
   Capability,
@@ -20,29 +20,32 @@ import {
   Tenant,
   ModuleInfo,
 } from "./api";
-import Agents from "./Agents";
-import AppDoc from "./AppDoc";
-import Customers, { OwnCustomerUsers } from "./Customers";
 import * as auth from "./auth";
-import Cabling from "./Cabling";
-import Design from "./Design";
-import Findings from "./Findings";
-import NamingProfiles from "./NamingProfiles";
-import NatTable from "./Nat";
-import NetBoxSync from "./NetBoxSync";
-import Objects from "./Objects";
-import Overview from "./Overview";
-import Reconcile from "./Reconcile";
-import Paths from "./Paths";
-import Routing from "./Routing";
-import RulesTable from "./RulesTable";
-import Runs from "./Runs";
-import System from "./System";
-import Tenants from "./Tenants";
 import { L, lang, setLang } from "./i18n";
 import { hiddenViews, MODULES_CHANGED, ModulesContext } from "./moduleState";
-import { ErrorBox, Icon, Note } from "./ui";
-import Users from "./Users";
+import { ErrorBox, Icon, Loading, Note } from "./ui";
+
+// Ansichten erst beim Öffnen laden (0.109.1): das erste Paket der Oberfläche bleibt klein
+const Agents = lazy(() => import("./Agents"));
+const AppDoc = lazy(() => import("./AppDoc"));
+const Customers = lazy(() => import("./Customers"));
+const OwnCustomerUsers = lazy(() => import("./Customers").then((m) => ({ default: m.OwnCustomerUsers })));
+const Cabling = lazy(() => import("./Cabling"));
+const Design = lazy(() => import("./Design"));
+const Findings = lazy(() => import("./Findings"));
+const NamingProfiles = lazy(() => import("./NamingProfiles"));
+const NatTable = lazy(() => import("./Nat"));
+const NetBoxSync = lazy(() => import("./NetBoxSync"));
+const Objects = lazy(() => import("./Objects"));
+const Overview = lazy(() => import("./Overview"));
+const Reconcile = lazy(() => import("./Reconcile"));
+const Paths = lazy(() => import("./Paths"));
+const Routing = lazy(() => import("./Routing"));
+const RulesTable = lazy(() => import("./RulesTable"));
+const Runs = lazy(() => import("./Runs"));
+const System = lazy(() => import("./System"));
+const Tenants = lazy(() => import("./Tenants"));
+const Users = lazy(() => import("./Users"));
 
 export type View =
   | "uebersicht"
@@ -628,7 +631,7 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
             )}
           </Note>
         ) : (
-          <>
+          <Suspense fallback={<Loading />}>
             {current === "uebersicht" && (
               <Overview
                 me={me}
@@ -756,7 +759,7 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
             {current === "agents" && <Agents tenants={tenants ?? []} tenantId={tenantId} onGo={go} />}
             {current === "netbox" && <NetBoxSync tenantId={tenantId} tenantLabel={tenantLabel} onGo={go} />}
             {current === "system" && <System />}
-          </>
+          </Suspense>
         )}
       </main>
       </ModulesContext.Provider>

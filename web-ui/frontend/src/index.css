@@ -337,12 +337,13 @@ tr.topo-boundary > td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 
 /* Detail-Drawer */
 .drawer-scrim { position: fixed; inset: 0; background: rgba(8,11,17,.45); z-index: 40; }
-.drawer { position: fixed; top: 0; right: 0; height: 100%; width: min(560px, 94vw); background: var(--surface); z-index: 41;
+.drawer { position: fixed; top: 0; right: 0; height: 100%; width: min(94vw, max(560px, 42vw)); max-width: 98vw; background: var(--surface); z-index: 41;
   border-left: 1px solid var(--border); box-shadow: -8px 0 30px rgba(0,0,0,.2); display: flex; flex-direction: column; }
 .drawer-head { padding: 18px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: flex-start; gap: 10px; }
 .drawer-head h2 { font-size: 16px; font-weight: 600; word-break: break-word; }
 .drawer-head .sub { color: var(--muted); font-size: 12px; margin-top: 3px; font-family: var(--font-mono); }
-.drawer-head .close { margin-left: auto; }
+.drawer-head .size { margin-left: auto; }
+.drawer-head .size + .close { margin-left: 0; }
 .drawer-body { padding: 18px 20px; overflow-y: auto; }
 .drawer-body table td { padding: 8px 10px; }
 .drawer-body table thead th { padding: 8px 10px; }
@@ -352,9 +353,9 @@ tr.topo-boundary > td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 
 /* Modal-Dialog */
 .modal-scrim { position: fixed; inset: 0; background: rgba(8,11,17,.45); z-index: 50; display: grid; place-items: center; padding: 16px; }
-.modal { width: min(500px, 100%); max-height: calc(100% - 32px); overflow-y: auto; background: var(--surface); border: 1px solid var(--border);
+.modal { position: relative; width: min(560px, 100%); max-width: 100%; max-height: calc(100% - 32px); overflow-y: auto; background: var(--surface); border: 1px solid var(--border);
   border-radius: 14px; box-shadow: var(--shadow); }
-.modal.wide { width: min(1040px, 100%); }
+.modal.wide { width: min(1100px, 100%); }
 /* Tabellen im Formular: volle Breite, Felder füllen die Zelle, lange Werte umbrechen statt
    quer zu scrollen (Kunden-Editor, Dev-Befund 0.35.0) */
 .modal table.form-table { width: 100%; table-layout: fixed; }
@@ -737,7 +738,7 @@ tbody tr.group-row td {
 .routing-changes tr.change-detail table td.mono { white-space: normal; word-break: break-word; }
 
 /* Warum dieser Weg? (0.109.0) */
-.drawer.wide { width: min(900px, 96vw); }
+.drawer.wide { width: min(96vw, max(760px, 62vw)); }
 .critfg { color: var(--crit); }
 .xplain-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
 .xplain-sec { margin: 0 0 14px; }
@@ -755,3 +756,14 @@ tbody tr.group-row td {
 .xroutes tr.chosen td { font-weight: 600; }
 .xroutes td.mono { white-space: nowrap; }
 .xexpect { border: 1px dashed var(--border-strong); border-radius: 8px; padding: 8px 10px; margin-bottom: 12px; }
+
+/* Fenster ziehbar, lange Namen (0.109.1): Rand ziehen, ⤢ fast volle Breite; Zellen in Panels
+   und Dialogen brechen nur um, wenn der Platz fehlt */
+.drawer-grip { position: absolute; left: 0; top: 0; bottom: 0; width: 7px; cursor: ew-resize; z-index: 2; }
+.modal-grip { position: absolute; right: 0; top: 0; bottom: 0; width: 7px; cursor: ew-resize; z-index: 2; }
+.drawer-grip:hover, .modal-grip:hover { background: var(--accent-weak); }
+.modal-head .size { margin-left: auto; }
+.iconbtn.size { font-size: 15px; line-height: 1; }
+.drawer-body td, .modal-body td, .drawer-body dd, .modal-body dd { overflow-wrap: anywhere; }
+.drawer-body .chip, .modal-body .chip { max-width: 100%; overflow-wrap: anywhere; white-space: normal; }
+.modal-head .size + .iconbtn { margin-left: 0; }

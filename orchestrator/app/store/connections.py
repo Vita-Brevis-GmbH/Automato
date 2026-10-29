@@ -5,7 +5,8 @@ Worker im selben Docker-Netz) und NetBox-Sync nehmen. Je Ziel ok | warn | error 
 Schritten und einem Hinweis zur Abhilfe:
 
 - **Plattform:** Datenbank (`SELECT 1`, seit 0.48.0 die Rolle: ohne DDL?), Redis (`PING`, Kanal
-  zum zentralen Worker; seit 0.49.0 mit TLS intern je ein Schritt `tls`),
+  zum zentralen Worker; seit 0.49.0 mit TLS intern je ein Schritt `tls`), seit 0.109.1 der
+  zentrale Worker selbst (antwortet er, Auftraege in der Warteschlange, wartende Laeufe),
   Keycloak (bei `auth_mode=oidc`: JWKS des Issuers).
 - **Quellsysteme:** jedes eingeschaltete, zentral gelesene Quellsystem ueber
   `reachability.check` (Name, TCP, bei NetBox `GET /api/status/` mit dem Lese-Token; nur
@@ -36,7 +37,7 @@ from app import credentials, tls
 from app.config import Settings
 from app.i18n import L, lang, use
 from app.models import Agent, SourceSystem
-from app.store import db_roles, reachability
+from app.store import db_roles, reachability, runs
 
 ORDER = {"ok": 0, "info": 0, "warn": 1, "error": 2}
 TIMEOUT = 3.0
@@ -65,12 +66,15 @@ def run(
     redis_check=None,
     source_check=None,
     oidc_check=None,
+    worker_check=None,
 ) -> dict:
     """Alle Pruefungen; `tenant_ids` None = alle Mandanten (globaler Admin)."""
     network = own_network()
     redis_url = tls.redis_url(settings)
     redis = redis_check or (lambda url: _redis(url, tls.ca_file(settings)))
     items = [_database(session), redis(redis_url)]
+    if items[-1].status == "ok":  # ohne Redis erreicht auch kein Auftrag den Worker
+        items.append((worker_check or _worker)(session, settings, redis_url, tenant_ids))
     if settings.auth_mode == "oidc":
         items.append((oidc_check or _oidc)(settings))
     sources, agents = _sources(session, tenant_ids)
@@ -183,6 +187,115 @@ def _redis(url: str, cafile: str | None = None) -> Item:
     return Item("redis", _platform(), _redis_name(), target, "ok" if ok else "warn", steps,
                 None if ok else L("Redis antwortet unerwartet – Logs prüfen.",
                                   "Redis responds unexpectedly – check the logs."))  # fmt: skip
+
+
+def _redis_command(url: str, cafile: str | None, command: bytes) -> str:
+    """Ein Redis-Befehl ueber TCP bzw. TLS (wie `_redis`); Antwortzeile ohne CRLF."""
+    parts = urlsplit(url or "")
+    host, port = parts.hostname or "localhost", parts.port or 6379
+    with socket.create_connection((host, port), timeout=TIMEOUT) as raw:
+        sock = raw
+        if parts.scheme == "rediss":
+            sock = ssl.create_default_context(cafile=cafile).wrap_socket(raw, server_hostname=host)
+        sock.settimeout(TIMEOUT)
+        db = (parts.path or "/0").lstrip("/") or "0"
+        if db != "0":
+            sock.sendall(f"SELECT {db}\r\n".encode())
+            sock.recv(64)
+        sock.sendall(command)
+        return sock.recv(64).decode(errors="replace").strip()
+
+
+def _queue_depth(url: str, cafile: str | None) -> int | None:
+    """Auftraege in der Warteschlange `collectors` (Celery-Liste in Redis); None = unbekannt."""
+    from app.jobs.celery_app import COLLECTOR_QUEUE
+
+    try:
+        answer = _redis_command(url, cafile, f"LLEN {COLLECTOR_QUEUE}\r\n".encode())
+    except OSError:
+        return None
+    return int(answer[1:]) if answer.startswith(":") and answer[1:].isdigit() else None
+
+
+def _worker_ping(settings: Settings) -> list[str] | None:
+    """Namen der zentralen Worker, die auf `ping` antworten ([] = keiner); None = Abfrage nicht
+    moeglich. Hoechstens ~4 s (die Abfrage laeuft in einem eigenen Thread)."""
+    from app.jobs import celery_app
+
+    def ask() -> list[str]:
+        replies = celery_app.get_celery_app().control.ping(timeout=2.0) or []
+        return sorted(name for r in replies for name in r)
+
+    pool = ThreadPoolExecutor(max_workers=1)
+    try:
+        return pool.submit(ask).result(timeout=4.0)
+    except Exception:  # noqa: BLE001 - Zeitueberschreitung bzw. Broker nicht erreichbar
+        return None
+    finally:
+        pool.shutdown(wait=False)
+
+
+def _worker(session: Session, settings: Settings, redis_url: str,
+            tenant_ids: set[int] | None, ping=None, depth=None) -> Item:  # fmt: skip
+    """Zentraler Worker (0.109.1, Befund des Anwenders: NetBox-Lauf wird nicht abgeholt):
+    antwortet er, wie viele Auftraege warten in der Warteschlange, welche Laeufe warten auf ihn.
+    Liest jedes Quellsystem ein Agent, ist ein fehlender Worker nur ein Hinweis."""
+    name = L("Zentraler Worker (Container „collector“)", "Central worker (container “collector”)")
+    workers = (ping or _worker_ping)(settings)
+    queued = (depth or (lambda: _queue_depth(redis_url, tls.ca_file(settings))))()
+    waiting = [r for r in runs.waiting_central(session)
+               if tenant_ids is None or r.tenant_id in tenant_ids]  # fmt: skip
+    central = select(SourceSystem.id).where(SourceSystem.enabled.is_(True),
+                                            SourceSystem.agent_id.is_(None))  # fmt: skip
+    if tenant_ids is not None:
+        central = central.where(SourceSystem.tenant_id.in_(tenant_ids))
+    needed = session.scalars(central.limit(1)).first() is not None
+    steps = []
+    if workers:
+        steps.append(_step("ping", True, ", ".join(workers)))
+    else:
+        steps.append(_step("ping", False, L("kein Worker antwortet", "no worker responds")
+                           if workers == [] else L("keine Antwort", "no response")))  # fmt: skip
+    if queued is not None:
+        steps.append(_step("warteschlange", queued == 0 or bool(workers),
+                           L(f"{queued} Aufträge in der Warteschlange",
+                             f"{queued} jobs in the queue")))  # fmt: skip
+    limit = max(1, settings.run_redispatch_minutes) * 2
+    now = datetime.now(UTC)
+    old = [r for r in waiting if r.queued_at is not None
+           and (now - runs._aware(r.queued_at)).total_seconds() > limit * 60]  # fmt: skip
+    if waiting:
+        oldest = int((now - runs._aware(waiting[0].queued_at)).total_seconds() // 60)
+        text_ = L(
+            f"{len(waiting)} Läufe warten (ältester seit {oldest} min)",
+            f"{len(waiting)} runs waiting (oldest for {oldest} min)",
+        )
+        steps.append(_step("läufe", not old, text_))
+    logs = "docker compose logs --tail 50 collector"
+    if not workers:
+        status = "error" if needed or waiting else "info"
+        hint = L(f"Worker starten bzw. prüfen: docker compose --profile collectors up -d "
+                 f"collector; Logs: {logs}. Ohne Worker bleiben zentral gelesene Läufe auf "
+                 "„wartet“.",
+                 f"Start or check the worker: docker compose --profile collectors up -d "
+                 f"collector; logs: {logs}. Without a worker, centrally collected runs stay "
+                 "“waiting”.")  # fmt: skip
+        if not needed and not waiting:
+            hint = L("Alle Quellsysteme liest ein Agent – der zentrale Worker wird nicht "
+                     "gebraucht.",
+                     "An agent collects all source systems – the central worker is not "
+                     "needed.")  # fmt: skip
+        return Item("worker", _platform(), name, None, status, steps, hint)
+    if old:
+        hint = (L("Aufträge fehlen in der Warteschlange (Redis neu gestartet) – Automato schickt "
+                  f"wartende Läufe alle {settings.run_redispatch_minutes} min erneut.",
+                  "Jobs are missing in the queue (Redis restarted) – Automato sends waiting runs "
+                  f"again every {settings.run_redispatch_minutes} min.")
+                if queued == 0 else
+                L(f"Der Worker ist beschäftigt bzw. holt nicht ab – Logs: {logs}",
+                  f"The worker is busy or does not pick up – logs: {logs}"))  # fmt: skip
+        return Item("worker", _platform(), name, None, "warn", steps, hint)
+    return Item("worker", _platform(), name, None, "ok", steps)
 
 
 def _oidc(settings: Settings) -> Item:

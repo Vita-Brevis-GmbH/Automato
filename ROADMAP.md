@@ -422,16 +422,54 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.107.0** | Module (Kern, Einstellungen, Worker, Gateway, Analyse, Wegsucher, Findings, Doku, Design, Schreibpfad) mit Grenzen-Prüfung in der CI und Schaltung je Mandant; Verbindungen nur nach dem Routing (Befund „Regel nie gebraucht“, Start am Eingang nach dem Rückweg); IPAM im Speicher, Namen der Gegenstellen schneller; Doku je System und Publizierte Dienste entfernt (ADR 0036) |
 | **0.108.0** | Doku und Verbindungen je Applikation als Stand (Fingerabdruck der Eingaben, sofort der letzte Stand, neu im Hintergrund, Vorrechnen nach Läufen und Änderungen, Befunde aktuell); Befunde der Zonen und des Verbunds beim Speichern im Hintergrund, Zonen-Prüfung 13 min → 3 s (ADR 0037) |
 | **0.109.0** | „Warum dieser Weg?“ in Weg-Suche und Verbindungen (Hop für Hop in Sätzen, alle Routen zum Ziel mit Grund, Policy-Routen, Next-Hop, Ende mit Hinweis, Stand des Routings), „Erwartet über …“ ein Gerät, Findings von Hand (bleiben nach dem Abgleich) (ADR 0038) |
+| **0.109.1** | Korrekturen: wartende Läufe erneut an den zentralen Worker (Redis ohne Datenträger verlor Aufträge, NetBox-Lauf blieb „wartet“), nur einmal gelesen, Prüfung „Zentraler Worker“, wer abholen muss in der Liste; Ansichten erst beim Öffnen geladen (1 057 → 270 kB); Seitenpanels und Dialoge ziehbar bzw. ⤢; Testclient mit httpx2; Fingerabdruck der Doku nächtlich in der CI |
 
-### Nächste Arbeiten (Stand 0.109.0)
+### Nächste Arbeiten (Stand 0.109.1)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
 **0.68.0** (2026-10-26), bis **0.102.0** (2026-10-28: „ich teste nach dem Freigeben der Version
 gleich durch“), bis **0.103.0** (2026-10-28, Rückmeldung ohne Einwand), bis **0.106.0**
 (2026-10-28: „Ansonsten sieht es super aus“; 0.104.0/0.105.0 in 0.106.0 überarbeitet, die zwei
 Testbefunde zu 0.106.0 in 0.107.0), bis **0.107.0** (2026-10-28, „108 go“ ohne Einwand), bis
-**0.108.0** (2026-10-29, Rückmeldung ohne Einwand). Zur Abnahme steht 0.109.0. Seit 0.104.0 gilt eine Version als abgenommen, sobald
-die nächste Rückmeldung des Anwenders keinen Einwand dazu enthält (`CLAUDE.md`, Ablauf).
+**0.108.0** (2026-10-29, Rückmeldung ohne Einwand), bis **0.109.0** (2026-10-29, Fehlerliste ohne
+Einwand zu 0.109.0). Zur Abnahme steht 0.109.1. Seit 0.104.0 gilt eine Version als abgenommen,
+sobald die nächste Rückmeldung des Anwenders keinen Einwand dazu enthält (`CLAUDE.md`, Ablauf).
+
+**Roadmap nach Versionen (Anwender 2026-10-29, ersetzt die Reihenfolgen unten):** bis zur
+Produktivschaltung weiter 0.1xx; **1.0.0 = produktiv**, danach 2.x mit neuem Namen und Cockpit,
+3.x Automatisierung.
+
+*Version 1 – bis zur Produktivschaltung (1.0.0):*
+
+| Nr. | Inhalt | Stand |
+|---|---|---|
+| 1 | Module in eigene Pakete, Findings als steckbare Prüfungen, Oberfläche je Modul (ADR 0036, weitere Stufen) | offen |
+| 2 | Prüfung, ob der Fingerabdruck der Doku jede Änderung bemerkt, im nächtlichen Lauf | **erledigt in 0.109.1** (CI-Schritt nachts bzw. von Hand, `AUTOMATO_TEST_DOC_SNAPSHOTS=1`) |
+| 3 | BGP in der Dokumentation; BGP-Filter je Zone aus Netzen und Ausschlüssen ableiten – als Vorschlag/Export, kein Schreibweg | offen |
+| 4 | Tests des Anwenders abschliessen; Juniper-Router einbinden und testen (Routing-Tabelle des MX für die Wege, seit 0.68.0 offen); Wege sauber und intensiv testen | offen |
+| 5 | Schreibpfad mit Nachkontrolle: nach „Übernehmen“ über den Lesepfad zurücklesen und vergleichen, Abweichungen als Befund | offen (Entscheid 2026-10-29: in Version 1) |
+| 6 | R14 vor dem Produktivbetrieb: OTP für alle, Oberfläche nur aus Management-Netz/VPN, Verschlüsselung des Datenträgers – umsetzen bzw. bestätigen, was ausserhalb von Automato erledigt ist | offen (Entscheid 2026-10-29: in Version 1) |
+| 7 | Fehler bereinigen: HTTP 500 beim Laden der Doku (Referenz im Protokoll nötig) | offen |
+| 8 | Produktiv gehen, wenn die meisten Fehler raus sind (DC, ADR 0013) = **1.0.0** | danach |
+
+*Version 2 – neuer Name und Cockpit (2.x):*
+
+| Nr. | Inhalt |
+|---|---|
+| 1 | Umbenennen des Tools (neuer Name) |
+| 2 | Einbinden in ein neues Cockpit (eigenes Repo bzw. Projekt, Orchestrator für die Produkte; ADR 0014 Entwurf v2) |
+| 3 | Magister im Cockpit |
+| 4 | Module nach Netzwerkschichten (Layer 1, Layer 2, Layer 3, Layer 4–7) und ein Modul, das die Wege miteinander vergleicht und abgleicht |
+| 5 | Statisches Routing in der Dokumentation |
+| 6 | Verkabelung mit Details (Modul, Geschwindigkeit, Kabelnummer usw.) |
+| 7 | Spanning-Tree-Topologien lernen und auslesen, Fehler erkennen |
+| 8 | Export automatisch in Wikis (Confluence und Open-Source-Wikis, z. B. BookStack v25.07.1) |
+| 9 | NSX ALB: Adressen der Service Engines, Content Switching, GSLB (Entscheid 2026-10-29) |
+
+*Version 3 – Automatisierung (3.x):* „Wiedergeburt“ von Automato mit Automatisierungen für
+Netzwerk und VMs (Proxmox, VMware usw.), in Zusammenarbeit mit Magister und dem
+Dokumentationstool; dazu „Prüfen vor dem Ändern“ (geplante Route bzw. Regel als Überlagerung über
+den gelesenen Stand; Entscheid 2026-10-29). Jeder neue Schreibweg mit eigener ADR und Freigabe.
 
 **Befunde des Anwenders aus dem Test (2026-10-27, Vorrang):**
 
@@ -462,9 +500,10 @@ die nächste Rückmeldung des Anwenders keinen Einwand dazu enthält (`CLAUDE.md
 | Modularität: Worker, Gateway, Doku, Wegsucher, Findings, Analyse als Module, Zonen als Design, je Mandant schaltbar, lesend starr getrennt vom Schreibpfad; Cockpit mit Vorgaben und Basis-Settings vorbereiten; Doku je System und Publizierte Dienste entfernen (2026-10-28) | **erste Stufe in 0.107.0** (ADR 0036: Verzeichnis, CI-Grenzen, Schaltung je Mandant, Karte Module); weitere Stufen siehe unten |
 | „Das Speichern dauert zu lange“, Doku im Hintergrund rechnen (2026-10-28) | **umgesetzt in 0.108.0** (ADR 0037: Stand je Applikation, Vorrechnen, Befunde der Zonen im Hintergrund) |
 | Analyse-Tool für Weg-Suche und Verbindungen: „weshalb dieser Pfad gewählt wird“, verständlich für den Menschen; „Erwartet über …“; Finding-Button zum Erfassen von Hand (2026-10-29) | **umgesetzt in 0.109.0** (ADR 0038: „Warum dieser Weg?“, „Erwartet über …“, Findings von Hand) |
-| BGP-Filter aus den Netzen und Ausschlüssen je Zone ableiten (2026-10-28, „später“) | offen – nur Vorschlag/Export (Prefix-Liste permit/deny je Zone), kein Schreibweg; mit dem Anwender abstimmen |
+| BGP-Filter aus den Netzen und Ausschlüssen je Zone ableiten (2026-10-28, „später“) | offen – Version 1 Nr. 3 (Vorschlag/Export, kein Schreibweg) |
+| Fehler (2026-10-29): interne NetBox „holt nicht ab“ (Lauf bleibt „wartet“), Paket der Oberfläche > 500 kB, Warnung httpx im Testclient, Fenster zu klein für lange Namen, viel Text bzw. viele Spalten | **umgesetzt in 0.109.1** (wartende Läufe erneut geschickt + Prüfung „Zentraler Worker“, Ansichten nachgeladen, httpx2, Panels und Dialoge ziehbar bzw. ⤢, Umbruch) |
 
-**Module – nächste Stufen (ADR 0036, Vorschlag):**
+**Module – nächste Stufen (ADR 0036, Vorschlag; seit 2026-10-29 in der Roadmap nach Versionen oben):**
 
 | Stufe | Inhalt |
 |---|---|

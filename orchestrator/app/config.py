@@ -83,6 +83,10 @@ class Settings(BaseSettings):
     # spaeter eintreffendes Ergebnis wird trotzdem eingespielt.
     run_timeout_minutes: int = 120
     run_queue_timeout_hours: int = 24
+    # Zentral gelesene Laeufe, die so viele Minuten auf den zentralen Worker warten, schickt der
+    # Zeitplan erneut in die Warteschlange (0.109.1: Redis ohne Datentraeger verliert Auftraege
+    # beim Neustart); 0 = nie. Doppeltes Lesen verhindert der Claim beim Abholen des Ziels.
+    run_redispatch_minutes: int = 5
     # NetBox-Sync: Vorschau bzw. Uebernahme ohne Lebenszeichen nach so vielen Minuten beenden
     netbox_sync_timeout_minutes: int = 30
 

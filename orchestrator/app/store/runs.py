@@ -192,6 +192,104 @@ def expire_stale(session: Session, now: datetime | None = None) -> int:
     return expired
 
 
+# -- Wartende Laeufe erneut anstossen (0.109.1) ---------------------------------------------
+# Redis haelt die Warteschlange zum zentralen Worker ohne Datentraeger: wird der Container neu
+# erstellt (Update, Neustart), sind wartende Auftraege weg und der Lauf bliebe bis zur Frist
+# „wartet“ (Befund des Anwenders: NetBox-Lauf wird nicht abgeholt). Der Zeitplan schickt sie
+# deshalb nach `run_redispatch_minutes` erneut; den Lauf liest trotzdem nur einer (`claim`).
+# Beides im Prozess (der Orchestrator laeuft als ein Prozess, wie `app_refresh`).
+
+_dispatched: dict[str, datetime] = {}  # Lauf -> letzter Auftrag an den zentralen Worker
+_claims: dict[str, str] = {}  # Lauf -> Auftrag (Celery-Task), der ihn liest
+_CLAIMS_MAX = 5000
+
+
+def waiting_central(session: Session) -> list[CollectorRun]:
+    """Zentral gelesene Laeufe, die noch auf den Worker warten (aelteste zuerst)."""
+    query = (
+        select(CollectorRun)
+        .where(CollectorRun.status == RunStatus.QUEUED, CollectorRun.execution == "inprocess")
+        .order_by(CollectorRun.queued_at)
+    )
+    return list(session.scalars(query))
+
+
+def redispatch_waiting(session: Session, dispatch, now: datetime | None = None) -> list[str]:
+    """Wartende zentrale Laeufe erneut in die Warteschlange (`dispatch(platform, run_id)`),
+    hoechstens einmal je `run_redispatch_minutes`. Rueckgabe = erneut geschickte Laeufe."""
+    minutes = get_settings().run_redispatch_minutes
+    if minutes <= 0:
+        return []
+    now = now or datetime.now(UTC)
+    limit = now - timedelta(minutes=minutes)
+    waiting = waiting_central(session)
+    keep = {r.id for r in waiting}
+    for run_id in [k for k in _dispatched if k not in keep]:
+        _dispatched.pop(run_id, None)
+    sent = []
+    for run in waiting:
+        last = _dispatched.get(run.id) or _aware(run.queued_at)
+        if last is None or last > limit:
+            continue
+        try:
+            dispatch(run.platform, run.id)
+        except Exception:  # noqa: BLE001 - Redis weg: beim naechsten Durchgang wieder
+            log.warning("Lauf %s nicht erneut geschickt (Warteschlange nicht erreichbar)", run.id,
+                        exc_info=True)  # fmt: skip
+            break
+        _dispatched[run.id] = now
+        sent.append(run.id)
+        log.info("Lauf %s (%s) wartet seit %s - erneut an den zentralen Worker", run.id,
+                 run.platform, _aware(run.queued_at))  # fmt: skip
+    return sent
+
+
+def claim(run: CollectorRun, task: str | None, now: datetime | None = None) -> bool:
+    """Zentraler Worker holt das Ziel: der erste Auftrag (`task`) liest den Lauf, ein erneut
+    geschickter bzw. spaeter eintreffender zweiter nicht. Ohne `task` (Worker vor 0.109.1)
+    wie bisher: jeder darf. Setzt den Lauf von „wartet“ auf „läuft“."""
+    if run.status is RunStatus.QUEUED:
+        run.status = RunStatus.RUNNING
+        run.started_at = now or datetime.now(UTC)
+        if task:
+            if len(_claims) >= _CLAIMS_MAX:
+                for old in list(_claims)[: _CLAIMS_MAX // 2]:
+                    _claims.pop(old, None)
+            _claims[run.id] = task
+        return True
+    if not task:
+        return True
+    return _claims.get(run.id) == task  # derselbe Auftrag fragt erneut (Wiederholung)
+
+
+def waiting_text(session: Session, run: CollectorRun) -> str | None:
+    """Wer einen wartenden Lauf abholen muss (Liste der Laeufe, 0.109.1): Agent mit letztem
+    Lebenszeichen bzw. der zentrale Worker, ob er schon erneut geschickt wurde."""
+    if run.status is not RunStatus.QUEUED:
+        return None
+    zone = ZoneInfo(get_settings().scheduler_timezone)
+
+    def at(dt: datetime | None) -> str:
+        return _aware(dt).astimezone(zone).strftime("%d.%m. %H:%M") if dt else "?"
+
+    if run.execution == "external":
+        src = session.get(SourceSystem, run.source_system_id) if run.source_system_id else None
+        agent = session.get(Agent, src.agent_id) if src is not None and src.agent_id else None
+        if agent is None:
+            return L("wartet auf einen Agenten", "waiting for an agent")
+        seen = (L(f"zuletzt gesehen {at(agent.last_seen)}", f"last seen {at(agent.last_seen)}")
+                if agent.last_seen else L("noch nie gesehen", "never seen"))  # fmt: skip
+        return L(f"wartet auf Agent „{agent.name}“ ({seen})",
+                 f"waiting for agent “{agent.name}” ({seen})")  # fmt: skip
+    again = _dispatched.get(run.id)
+    if again is not None:
+        return L(f"wartet auf den zentralen Worker – erneut geschickt {at(again)}; Worker prüfen "
+                 "(System → Verbindungen)",
+                 f"waiting for the central worker – sent again {at(again)}; check the worker "
+                 "(System → Connections)")  # fmt: skip
+    return L("wartet auf den zentralen Worker", "waiting for the central worker")
+
+
 _expiring = threading.Lock()
 
 

@@ -459,6 +459,54 @@ def test_next_run_merkt_sich_die_update_anfrage(monkeypatch):
     assert agent_api.next_run() is None and not agent_api.update_requested()
 
 
+def test_zentraler_lauf_nur_einmal_gelesen(monkeypatch):
+    """0.109.1: erneut geschickter Lauf - der zweite Auftrag liest nicht (Claim beim Ziel)."""
+    from collectors.common import agent as agent_api
+
+    class R:
+        def __init__(self, body):
+            self.body = body
+
+        def json(self):
+            return self.body
+
+    sent: list[dict] = []
+
+    def answer(body):
+        def get_json(url, params, headers):
+            sent.append(headers)
+            return R(body)
+
+        return get_json
+
+    monkeypatch.setattr(agent_api, "_task_id", lambda: "task-7")
+    target = {"name": "nb", "platform": "netbox", "base_url": "http://nb", "token": "t"}
+    monkeypatch.setattr(agent_api.http, "get_json", answer({"target": target}))
+    seen = []
+    agent_api.central("run-1", lambda run_id, t: seen.append((run_id, t.base_url)))
+    assert seen == [("run-1", "http://nb")] and sent[-1]["X-Run-Claim"] == "task-7"
+    monkeypatch.setattr(agent_api.http, "get_json", answer({"target": None, "skip": True}))
+    assert agent_api.central("run-1", lambda *a: seen.append(a)) is None
+    assert len(seen) == 1  # uebersprungen
+    assert agent_api.run_target("run-1") is None
+
+    def broken(url, params, headers):
+        raise OSError("weg")
+
+    monkeypatch.setattr(agent_api.http, "get_json", broken)
+    assert agent_api.claim_target("run-1") == (True, None)  # lokale Konfiguration
+    monkeypatch.setattr(agent_api, "_task_id", lambda: None)
+    monkeypatch.setattr(agent_api.http, "get_json", answer({"target": None}))
+    agent_api.central("run-2", lambda run_id, t: seen.append((run_id, t)))
+    assert seen[-1] == ("run-2", None) and "X-Run-Claim" not in sent[-1]
+
+
+def test_task_id_ausserhalb_von_celery():
+    from collectors.common import agent as agent_api
+
+    assert agent_api._task_id() is None
+
+
 def argparse_ns(**kw):
     import argparse
 

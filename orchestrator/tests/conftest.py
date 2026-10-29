@@ -41,6 +41,17 @@ def _credentials_key():
 
 
 @pytest.fixture(autouse=True)
+def _central_worker_answers(monkeypatch):
+    """Verbindungspruefung (0.109.1): der zentrale Worker antwortet - ohne echten Broker;
+    `tests/test_run_redispatch.py` prueft die anderen Faelle."""
+    from app.store import connections, runs
+
+    monkeypatch.setattr(connections, "_worker_ping", lambda settings: ["celery@test"])
+    runs._dispatched.clear()
+    runs._claims.clear()
+
+
+@pytest.fixture(autouse=True)
 def _doc_snapshots_off():
     """Doku als Stand (0.108.0) in Tests aus: viele Tests aendern Daten direkt in der Datenbank
     (ohne Lauf bzw. Audit) - `tests/test_doc_snapshots.py` schaltet ihn ein;

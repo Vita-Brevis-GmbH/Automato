@@ -146,6 +146,15 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   - **Hängende Läufe** (Agent beendet bzw. neu gestartet, Ergebnis-Upload verloren) beendet
     Automato selbst: laufend ohne Ergebnis nach `AUTOMATO_RUN_TIMEOUT_MINUTES` (Standard 120),
     nicht abgeholt nach `AUTOMATO_RUN_QUEUE_TIMEOUT_HOURS` (Standard 24).
+  - **Wartet und wird nicht abgeholt (0.109.1):** die Meldung des Laufs sagt, wer ihn abholen
+    muss – „wartet auf Agent „…“ (zuletzt gesehen …)“ bzw. „wartet auf den zentralen Worker“.
+    Redis hält die Warteschlange zum zentralen Worker ohne Datenträger: wird der Container neu
+    erstellt (Update, Neustart), sind wartende Aufträge weg. Automato schickt zentral gelesene
+    Läufe deshalb nach `AUTOMATO_RUN_REDISPATCH_MINUTES` (Standard 5, `0` = aus) erneut
+    („– erneut geschickt …“); gelesen wird trotzdem nur einmal. Antwortet der Worker nicht,
+    zeigt das System → Verbindungen bzw. `deploy/aufbau.sh pruefen` unter **Zentraler Worker**
+    (antwortet er, Aufträge in der Warteschlange, wartende Läufe) mit dem Befehl zum Starten
+    (`docker compose --profile collectors up -d collector`) und den Logs.
   - Sofort geht es mit **Abbrechen** (Letzte Läufe) bzw. **Abbrechen & neu starten** im
     Dialog „Alle einlesen“ (Operator). Liefert der Agent danach doch noch ab, wird das
     Ergebnis eingespielt.
@@ -1203,6 +1212,10 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   öffentliche Adresse im Interface-Netz am WAN-Anschluss bleibt ein Befund, ebenso das WAN-Netz
   selbst („Subnetz fehlt im IPAM“), private Adressen und VIPs. Steht die Adresse später im
   IPAM, gilt sie wieder als gefunden.
+  **Fenster (0.109.1):** Seitenpanels und Dialoge lassen sich am Rand mit der Maus breiter bzw.
+  schmaler ziehen (die Breite merkt sich der Browser je Art; Doppelklick auf den Rand = Vorgabe),
+  **⤢** öffnet sie fast über die ganze Breite, **⤡** zurück. Die Vorgabe richtet sich nach dem
+  Bildschirm; lange Namen in Tabellen der Panels brechen um, wenn der Platz fehlt.
   **Finding von Hand (0.109.0):** „+ Finding erfassen“ oben (Operator, nicht für Kunden-Benutzer)
   bzw. „Als Finding erfassen“ in „Warum dieser Weg?“: was nicht stimmt, was anzupassen ist,
   Schwere, Gerät, Quelle/Ziel/Dienst. Typ „Von Hand erfasst“ (Kategorie „Von Hand“); der Abgleich

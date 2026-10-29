@@ -425,6 +425,75 @@ export function Expandable({ items, noun }: { items: string[]; noun: [string, st
   );
 }
 
+// Breite von Seitenpanel und Dialog (0.109.1, Anwender: „Fenster zu klein“): am Rand mit der
+// Maus ziehen (gemerkt je Browser und Art, Doppelklick = Vorgabe) bzw. ⤢ fast volle Breite
+const WIDTH_KEY = "automato_panel_widths";
+
+function readWidths(): Record<string, number> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(WIDTH_KEY) ?? "{}");
+    return raw && typeof raw === "object" ? raw : {};
+  } catch {
+    return {};
+  }
+}
+
+function useResizable(kind: string, factor: 1 | 2) {
+  const [width, setWidth] = useState<number | null>(() => readWidths()[kind] ?? null);
+  const [full, setFull] = useState(false);
+  const store = (w: number | null) => {
+    try {
+      const all = readWidths();
+      if (w == null) delete all[kind];
+      else all[kind] = Math.round(w);
+      localStorage.setItem(WIDTH_KEY, JSON.stringify(all));
+    } catch {
+      /* localStorage nicht verfügbar */
+    }
+  };
+  // `factor` 2: Dialog in der Mitte wächst nach beiden Seiten; Seitenpanel rechts: nach links
+  const grip = (el: HTMLElement | null) => (e: React.PointerEvent) => {
+    if (!el || e.button !== 0) return;
+    e.preventDefault();
+    const start = e.clientX;
+    const base = el.getBoundingClientRect().width;
+    let last = base;
+    const move = (ev: PointerEvent) => {
+      const dx = factor === 2 ? ev.clientX - start : start - ev.clientX;
+      last = Math.max(360, Math.min(window.innerWidth * 0.98, base + dx * factor));
+      setFull(false);
+      setWidth(last);
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      store(last);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+  const reset = () => {
+    setWidth(null);
+    setFull(false);
+    store(null);
+  };
+  const style = full ? { width: "96vw" } : width ? { width: `${width}px` } : undefined;
+  return { style, full, toggle: () => setFull((f) => !f), grip, reset };
+}
+
+function SizeButton({ full, onClick }: { full: boolean; onClick: () => void }) {
+  return (
+    <button
+      className="iconbtn size"
+      onClick={onClick}
+      title={full ? L("Normale Breite", "Normal width") : L("Fast volle Breite (Rand ziehen: eigene Breite)", "Nearly full width (drag the edge: own width)")}
+      aria-label={full ? L("Normale Breite", "Normal width") : L("Breiter", "Wider")}
+    >
+      {full ? "⤡" : "⤢"}
+    </button>
+  );
+}
+
 export function Modal({
   title,
   onClose,
@@ -443,11 +512,20 @@ export function Modal({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+  const ref = useRef<HTMLDivElement>(null);
+  const size = useResizable(wide ? "modal-wide" : "modal", 2);
   return (
     <div className="modal-scrim" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className={`modal${wide ? " wide" : ""}`} role="dialog" aria-modal="true">
+      <div ref={ref} className={`modal${wide ? " wide" : ""}`} role="dialog" aria-modal="true" style={size.style}>
+        <div
+          className="modal-grip"
+          onPointerDown={(e) => size.grip(ref.current)(e)}
+          onDoubleClick={size.reset}
+          title={L("Ziehen: Breite ändern · Doppelklick: Vorgabe", "Drag: change width · double-click: default")}
+        />
         <div className="modal-head">
           <h2>{title}</h2>
+          <SizeButton full={size.full} onClick={size.toggle} />
           <button className="iconbtn" onClick={onClose} aria-label={L("Schliessen", "Close")}>
             <Icon name="close" />
           </button>
@@ -477,15 +555,24 @@ export function Drawer({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+  const ref = useRef<HTMLElement>(null);
+  const size = useResizable(wide ? "drawer-wide" : "drawer", 1);
   return (
     <>
       <div className="drawer-scrim" onClick={onClose} />
-      <aside className={`drawer${wide ? " wide" : ""}`} role="dialog" aria-modal="true">
+      <aside ref={ref} className={`drawer${wide ? " wide" : ""}`} role="dialog" aria-modal="true" style={size.style}>
+        <div
+          className="drawer-grip"
+          onPointerDown={(e) => size.grip(ref.current)(e)}
+          onDoubleClick={size.reset}
+          title={L("Ziehen: Breite ändern · Doppelklick: Vorgabe", "Drag: change width · double-click: default")}
+        />
         <div className="drawer-head">
           <div>
             <h2>{title}</h2>
             {sub && <div className="sub">{sub}</div>}
           </div>
+          <SizeButton full={size.full} onClick={size.toggle} />
           <button className="iconbtn close" onClick={onClose} aria-label={L("Schliessen", "Close")}>
             <Icon name="close" />
           </button>
