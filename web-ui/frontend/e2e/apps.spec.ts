@@ -775,10 +775,12 @@ test("Applikation: Doku als Stand – sofort der letzte, „wird aktualisiert“
   await expect(page.locator("h1.app-title")).toHaveText("Webshop");
   expect(stateCalls).toBeGreaterThanOrEqual(1);
   expect(docCalls).toBeGreaterThanOrEqual(2);
-  // „↻ neu berechnen“ fragt den Server mit fresh=true
-  const forced = page.waitForRequest((r) => /\/doc\?fresh=true/.test(r.url()));
+  // „↻ neu berechnen“ fragt den Server mit fresh=true (rechnet im Hintergrund, Stand bleibt sichtbar)
+  const forced = page.waitForResponse((r) => /\/doc\?fresh=true/.test(r.url()));
   await bar.getByRole("button", { name: /neu berechnen/ }).click();
-  await forced;
+  expect((await forced).ok()).toBeTruthy();
+  await expect(page.locator("h1.app-title")).toHaveText("Webshop");
   // Verbindungen ebenso mit ihrem Stand
   await expect(page.locator("#snapshot-connections")).toContainText("Stand von");
+  await page.unrouteAll({ behavior: "ignoreErrors" }); // Abfragen, die noch laufen
 });
