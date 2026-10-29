@@ -8,8 +8,10 @@ import {
   BgpPeerReport,
   BgpProcess,
   BgpVerdict,
+  BgpZoneSoll,
   fetchBgpConfig,
   fetchBgpPeer,
+  fetchBgpPeerZones,
   fetchL3OutRouteControl,
   L3OutRouteControl,
   RouteControl,
@@ -245,10 +247,103 @@ export function BgpPeerDrawer({ tenantId, peerId, onClose }: { tenantId: number;
                 <Entries id="bgp-out-entries" entries={r.out.entries} received={false} />
               </>
             )}
+            <ZoneSoll tenantId={tenantId} peerId={peerId} />
           </>
         )}
       </div>
     </Drawer>
+  );
+}
+
+// Soll aus den Zonen dahinter (0.114.0, ADR 0041 Stufe 2): Prefix-Liste aus Netzen und Ausschlüssen
+// der Zonen, Vergleich mit dem Eingangsfilter und CLI-Vorschlag zum Kopieren (kein Schreibweg)
+function ZoneSoll({ tenantId, peerId }: { tenantId: number; peerId: number }) {
+  const [z, setZ] = useState<BgpZoneSoll | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const [copied, setCopied] = useState<number | null>(null);
+  useEffect(() => {
+    fetchBgpPeerZones(tenantId, peerId).then(setZ).catch(setError);
+  }, [tenantId, peerId]);
+  const copy = (family: number, text: string) => {
+    void navigator.clipboard?.writeText(text).then(() => setCopied(family));
+  };
+  return (
+    <div id="bgp-zones">
+      <h3>{L("Soll aus den Zonen dahinter", "Target from the zones behind")}</h3>
+      <ErrorBox error={error} />
+      {!z && !error && <Loading />}
+      {z && (
+        <>
+          <div className={`note ${z.state === "differs" ? "warn" : ""}`} id="bgp-zones-state" data-state={z.state}>
+            {z.text}
+          </div>
+          {z.neighbor_zone && (
+            <div className="faint" style={{ margin: "4px 0" }}>
+              {L("Zone der Firewall", "Zone of the firewall")}: <b>{z.home?.name}</b> · {L("Zone am Nachbarn", "Zone at the neighbor")}:{" "}
+              <b>{z.neighbor_zone.name}</b> · {L("Zonen dahinter", "Zones behind")}: {(z.zones ?? []).map((x) => x.name).join(", ")}
+            </div>
+          )}
+          {(z.lists ?? []).map((x) => (
+            <div key={x.family} className="bgp-zone-list" data-family={x.family}>
+              <div className="faint" style={{ margin: "6px 0 4px" }}>
+                {x.open
+                  ? L("Heute ohne Eingangsfilter – erlaubt alles.", "No inbound filter today – permits everything.")
+                  : `${L("Heute", "Today")}: ${Object.entries(x.filters).map(([k, v]) => `${kindOf(k)} ${v}`).join(" · ")}`}
+              </div>
+              <table className="compact">
+                <thead>
+                  <tr>
+                    <th>{L("Netz", "Network")}</th>
+                    <th>{L("Soll", "Target")}</th>
+                    <th>{L("Zone", "Zone")}</th>
+                    <th>{L("Filter heute", "Filter today")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {x.entries.map((e) => (
+                    <tr key={`${e.action}-${e.prefix}`} data-prefix={e.prefix}>
+                      <td className="mono">{e.prefix}</td>
+                      <td>{e.action === "permit" ? L("erlauben", "permit") : L("sperren (Ausschluss)", "deny (exclusion)")}</td>
+                      <td>{e.zones.join(", ")}</td>
+                      <td>
+                        <Verdict v={e.verdict} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {x.missing.length > 0 && (
+                <div className="bgp-zone-missing" style={{ marginTop: 4 }}>
+                  <span className="chip warn">{L("fehlt im Filter", "missing in the filter")}</span>{" "}
+                  <span className="mono">{x.missing.join(", ")}</span>
+                  {x.missing_total > x.missing.length && <span className="faint"> +{x.missing_total - x.missing.length}</span>}
+                </div>
+              )}
+              {x.too_open.length > 0 && (
+                <div className="bgp-zone-open" style={{ marginTop: 4 }}>
+                  <span className="chip warn">{L("zu offen", "too open")}</span>{" "}
+                  {x.too_open.map((t) => (t.all ? L(`${t.filter}: alles`, `${t.filter}: everything`) : `${t.filter}: ${t.prefix}`)).join(" · ")}
+                </div>
+              )}
+              {x.excluded_allowed.length > 0 && (
+                <div style={{ marginTop: 4 }}>
+                  <span className="chip warn">{L("Ausschluss erlaubt", "exclusion permitted")}</span>{" "}
+                  <span className="mono">{x.excluded_allowed.join(", ")}</span>
+                </div>
+              )}
+              <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "8px 0 4px" }}>
+                <b>{L(`Vorschlag ${x.name} (FortiOS-CLI)`, `Proposal ${x.name} (FortiOS CLI)`)}</b>
+                <button className="btn btn-sm" onClick={() => copy(x.family, x.cli)}>
+                  {copied === x.family ? L("kopiert", "copied") : L("Kopieren", "Copy")}
+                </button>
+                <span className="faint">{L("nur Text – Automato schreibt nichts auf die Firewall", "text only – Automato writes nothing to the firewall")}</span>
+              </div>
+              <pre className="block bgp-cli">{x.cli}</pre>
+            </div>
+          ))}
+        </>
+      )}
+    </div>
   );
 }
 

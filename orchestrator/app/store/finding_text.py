@@ -715,7 +715,45 @@ def _aci_import(subject: str, d: dict) -> tuple[str, str]:
     )
 
 
+def _bgp_zones(subject: str, d: dict) -> tuple[str, str]:
+    """Eingangsfilter passt nicht zu den Zonen dahinter (0.114.0, ADR 0041 Stufe 2)."""
+    where, zones = _bgp_where(d), _list(d.get("zones") or [], 4)
+    parts_de, parts_en = [], []
+    if d.get("open"):
+        parts_de.append("kein Eingangsfilter")
+        parts_en.append("no inbound filter")
+    if d.get("missing"):
+        nets = _list(d["missing"], 4)
+        parts_de.append(f"gesperrt: {nets}")
+        parts_en.append(f"denied: {nets}")
+    if d.get("too_open"):
+        nets = _list(d["too_open"], 4)
+        parts_de.append(f"ausserhalb der Zonen erlaubt: {nets}")
+        parts_en.append(f"permitted outside the zones: {nets}")
+    if d.get("excluded_allowed"):
+        nets = _list(d["excluded_allowed"], 4)
+        parts_de.append(f"Ausschluss erlaubt: {nets}")
+        parts_en.append(f"exclusion permitted: {nets}")
+    return (
+        L(
+            f"{where}: der Eingangsfilter passt nicht zu den Zonen dahinter ({zones}) – "
+            f"{'; '.join(parts_de)}.",
+            f"{where}: the inbound filter does not match the zones behind ({zones}) – "
+            f"{'; '.join(parts_en)}.",
+        ),
+        L(
+            "Routing → BGP-Nachbarn → Soll/Ist → „Soll aus den Zonen“: Prefix-Liste als "
+            "CLI-Vorschlag prüfen und auf der Firewall übernehmen bzw. die Zonen im "
+            "Netzwerkdesign anpassen.",
+            "Routing → BGP neighbors → expected/actual → “target from the zones”: review the "
+            "prefix list proposal (CLI) and apply it on the firewall, or adjust the zones in the "
+            "network design.",
+        ),
+    )
+
+
 _TOPO_TEXT = {
+    "bgp_zone_mismatch": _bgp_zones,
     "bgp_expected_missing": _bgp_missing,
     "bgp_outside_filter": _bgp_outside,
     "bgp_no_inbound_filter": _bgp_open,

@@ -7,6 +7,36 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.114.0 – 2026-10-29
+
+Roadmap Version 1 Nr. 3, Stufe 2 (ADR 0041; Anwender 2026-10-29: „go 114“, gewählt Backup-Wege
+prüfen und das Soll aus allen Zonen, die über den Nachbarn erreicht werden). Abnahme bis 0.113.2.
+
+- **Backup-Wege gegen die BGP-Filter:** Ein Backup über einen BGP-Nachbarn gilt nur noch, wenn der
+  Eingangsfilter des Geräts das Zielnetz von diesem Nachbarn übernimmt und – ist der Nachbar eine
+  gelesene FortiGate – deren Ausgangsfilter es ihm ankündigt. Sonst zeigt die Weg-Suche keinen
+  Backup-Weg, sondern den Hinweis „Backup an fw-01 über 198.51.100.1 verworfen: Eingangsfilter
+  RM_ISP_IN vom Nachbarn 198.51.100.1 sperrt 10.5.0.0/16“ (Anwender zu 0.110: „die Firewalls davor
+  würden das Netzwerk niemals lernen, da sie in den Filtern gesperrt wurden“). Unbekannte
+  Bedingungen (AS-Path, Community) verwerfen nichts.
+- **Soll je BGP-Nachbar aus den Zonen dahinter:** im Soll/Ist eines BGP-Nachbarn (Routing →
+  BGP-Nachbarn) der neue Abschnitt „Soll aus den Zonen dahinter“:
+  - Zone der Firewall, Zone am Nachbarn (gelesenes Gerät mit seiner IP bzw. Übergang im
+    Zonenplan) und alle Zonen, deren kürzester Weg über sie führt;
+  - ihre Netze (wie erfasst und abgeleitet) als `permit … le 32`, die Ausschlüsse davor als
+    `deny`, mit dem Urteil des Filters heute je Netz;
+  - Abweichungen: „fehlt im Filter“ (Netz der Zonen gesperrt), „zu offen“ (Regel ausserhalb der
+    Zonen bzw. alles erlaubt), „Ausschluss erlaubt“, ohne Eingangsfilter;
+  - **FortiOS-CLI-Vorschlag** (`config router prefix-list` `PL_<Zone>_IN`, ohne Filter am Nachbarn
+    mit `set prefix-list-in`) mit „Kopieren“ – nur Text, Automato schreibt nichts auf die Firewall.
+- **Befund „BGP: Eingangsfilter passt nicht zu den Zonen“** (`bgp_zone_mismatch`, Info) in der
+  Gruppe BGP-Filter; Prüfung „BGP-Filter gegen die Zonen“ (Modul Analyse) im Teil-Durchgang Zonen –
+  neu nach jedem Speichern einer Zone und nach jedem Lauf.
+- API: `GET /routing/bgp/peers/{id}/zones`. Teil-Durchgänge synchronisieren die Befund-Typen aller
+  Prüfungen ihres Schritts (auch aus anderen Modulen).
+- Tests: `test_bgp_filters.py` (Backup verworfen), `test_bgp_zones.py` (Zonen dahinter, Soll,
+  Abweichungen, CLI, API, Befund), `test_checks.py`, UI-Test in `e2e/bgp_filters.spec.ts`.
+
 ## 0.113.2 – 2026-10-29
 
 Fehler des Anwenders zu 0.113 (2026-10-29), in einer Version. Abnahme bis 0.113.1.

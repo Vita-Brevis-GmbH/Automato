@@ -24,11 +24,13 @@ Route-Map-Regel ohne Bedingung passt immer. Nur gelesene Daten, kein Schreibweg.
 
 import ipaddress
 from collections import defaultdict
+from collections.abc import Collection
 from dataclasses import dataclass, field
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.i18n import L
 from app.models import TopoBgpObject, TopoL3Out, TopoPeer, TopoRoute
 from app.store import net_lists
 
@@ -227,6 +229,7 @@ class Filters:
         self._loaded = False
         self._remote: dict[Key, dict[str, int | None]] | None = None
         self._candidates: dict[Key, list[tuple[str, str, str | None]]] = {}
+        self._by_key: dict[tuple, TopoPeer] | None = None
 
     def peers(self) -> list[TopoPeer]:
         """Nachbarn mit gelesener Konfiguration."""
@@ -242,6 +245,38 @@ class Filters:
             if key in self.configs and (p.attrs or {}).get("config") is not None:
                 out.append(p)
         return out
+
+    def blocked(self, key: Key, peer_ip: str, prefix: str,
+                neighbors: Collection[tuple[Key, str]] = ()) -> str | None:  # fmt: skip
+        """Sperrt ein Filter den BGP-Pfad fuer `prefix` vom Nachbarn `peer_ip` (0.114.0, Stufe
+        2)? Der Eingangsfilter dieses Geraets bzw. der Ausgangsfilter des Nachbarn, wenn er eine
+        gelesene FortiGate ist (`neighbors`: dessen Kontext und sein Nachbar = dieses Geraet).
+        -> Grund (Anzeige) bzw. None (erlaubt, unbekannt oder nicht gelesen)."""
+        net = _net(prefix)
+        if net is None:
+            return None
+        if self._by_key is None:
+            self._by_key = {(p.source_system_id, p.node, p.context, p.peer_ip): p
+                            for p in self.peers()}  # fmt: skip
+        p = self._by_key.get((*key, peer_ip))
+        if p is not None:
+            fin = _ways((p.attrs or {}).get("config") or {}, net.version)[0]
+            if fin and self.configs[key].verdict(fin, net) == DENY:
+                names = ", ".join(fin.values())
+                return L(
+                    f"Eingangsfilter {names} vom Nachbarn {peer_ip} sperrt {net}",
+                    f"inbound filter {names} from neighbor {peer_ip} denies {net}",
+                )
+        for other, ip in neighbors:
+            q = self._by_key.get((*other, ip))
+            if q is None:
+                continue
+            fout = _ways((q.attrs or {}).get("config") or {}, net.version)[1]
+            if fout and self.configs[other].verdict(fout, net) == DENY:
+                names = ", ".join(fout.values())
+                return L(f"Ausgangsfilter {names} des Nachbarn {peer_ip} sperrt {net}",
+                         f"outbound filter {names} of neighbor {peer_ip} denies {net}")  # fmt: skip
+        return None
 
     def remote_as(self, key: Key, ip: str) -> int | None:
         if self._remote is None:

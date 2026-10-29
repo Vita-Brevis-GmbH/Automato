@@ -2884,6 +2884,36 @@ export const fetchBgpConfig = (tenantId: number) =>
   getJSON<BgpProcess[]>(`/api/routing/bgp/config${cq({ tenant_id: tenantId })}`);
 export const fetchBgpPeer = (tenantId: number, peerId: number) =>
   getJSON<BgpPeerReport>(`/api/routing/bgp/peers/${peerId}${cq({ tenant_id: tenantId })}`);
+// Soll aus den Zonen dahinter (0.114.0, ADR 0041 Stufe 2) – Vorschlag, kein Schreibweg
+export interface BgpZoneRef {
+  id: number;
+  name: string;
+  code?: string | null;
+}
+export interface BgpZoneList {
+  family: number;
+  name: string;
+  filters: Record<string, string>;
+  open: boolean;
+  entries: { prefix: string; action: "permit" | "deny"; zones: string[]; verdict: BgpVerdict }[];
+  missing: string[];
+  missing_total: number;
+  too_open: { prefix: string; filter: string; all?: boolean }[];
+  excluded_allowed: string[];
+  cli: string;
+}
+export interface BgpZoneSoll {
+  id: number;
+  peer_ip: string;
+  state: "ok" | "differs" | "open" | "no_zones" | "no_zone" | "no_neighbor_zone" | "no_nets";
+  text: string;
+  home?: BgpZoneRef;
+  neighbor_zone?: BgpZoneRef;
+  zones?: BgpZoneRef[];
+  lists?: BgpZoneList[];
+}
+export const fetchBgpPeerZones = (tenantId: number, peerId: number) =>
+  getJSON<BgpZoneSoll>(`/api/routing/bgp/peers/${peerId}/zones${cq({ tenant_id: tenantId })}`);
 export const fetchL3OutRouteControl = (tenantId: number, l3outId: number) =>
   getJSON<L3OutRouteControl>(`/api/routing/bgp/l3outs/${l3outId}${cq({ tenant_id: tenantId })}`);
 export const fetchFirewallChoices = (tenantId: number) =>

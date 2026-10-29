@@ -209,6 +209,7 @@ def _refresh_pass(session: Session, tenant_id: int, step: str, types: frozenset,
     issues: list[Issue] = []
     for check in checks.active(session, tenant_id, step):
         issues += checks.run(check, session, tenant_id, cx)
+    types = types | checks.types_of(step)  # auch Pruefungen anderer Module (0.114.0)
     _sync_findings(session, tenant_id, issues, types=types)
     return len(issues)
 

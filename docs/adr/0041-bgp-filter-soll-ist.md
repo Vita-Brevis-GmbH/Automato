@@ -2,7 +2,8 @@
 
 ## Status
 
-**Entwurf** (2026-10-29), umgesetzt in 0.113.0 (Stufe 1) – zur Abnahme durch den Anwender.
+**Angenommen** (2026-10-29): Stufe 1 in 0.113.0 (abgenommen mit 0.113.1), Stufe 2 in 0.114.0 –
+zur Abnahme durch den Anwender.
 
 Rückmeldung des Anwenders zu 0.110 (2026-10-29): „Ich habe in der Wegsuche Backup Wege erhalten,
 welche nicht funktionieren würden. Die Firewalls dahinter lernen zwar das Netzwerk auch, aber die
@@ -77,6 +78,32 @@ Anbindungen). Migration 0070 (`topo_bgp_object`, `topo_l3out.route_control`).
   Soll/Ist-Sicht sagt „nicht gelesen“.
 - Der Verlauf des Routings (ADR 0030) vergleicht die Filter noch nicht – Änderungen an
   Prefix-Listen erscheinen erst über ihre Wirkung (erhaltene Pfade).
-- **Stufe 2** (nächste Version): je Zone bzw. Übergang ableiten, welche Netze eine Firewall von
-  der anderen lernen darf, und Backup-Wege, die ein Filter sperrt, verwerfen bzw. markieren.
 - Kein neuer Schreibweg; alles Gelesene bleibt beim Quellsystem.
+
+## Stufe 2 (0.114.0)
+
+Anwender 2026-10-29 („go 114“, gewählt: Backup-Wege prüfen und das Soll aus **allen** Zonen, die
+über den Nachbarn erreicht werden):
+
+7. **Backup-Wege gegen die Filter** (`paths.Graph.backups`, `bgp_filters.Filters.blocked`): ein
+   BGP-Backup vom Nachbarn X gilt nur, wenn der Eingangsfilter des Geräts von X das Netz erlaubt
+   und – ist X eine gelesene FortiGate mit einem Nachbarn auf dieses Gerät – deren Ausgangsfilter
+   ebenso. Sonst kein Backup-Weg, sondern der Hinweis „Backup an … über X verworfen: Eingangsfilter
+   … vom Nachbarn X sperrt …“ (FortiGate mit soft-reconfiguration führt solche Pfade in der
+   BGP-Tabelle, übernimmt sie aber nie). Unbekannt (AS-Path, Community) verwirft nicht.
+8. **Soll je Nachbar aus den Zonen** (`store/bgp_zones`, Analyse): Zone der Firewall (Geräte der
+   Zone), Zone am Nachbarn (gelesenes Gerät mit seiner IP, sonst der Übergang mit seinem Netz bzw.
+   dem Interface dorthin), **Zonen dahinter** = alle, deren kürzester Weg im Zonenplan über die Zone
+   am Nachbarn führt. Soll = ihre Netze (wie erfasst und abgeleitet, grössere umfassen kleinere)
+   `permit … le 32`, Ausschlüsse davor `deny … le 32`, je Familie eine Prefix-Liste
+   `PL_<Zone am Nachbarn>_IN`.
+9. **Vergleich** mit den Eingangsfiltern: Netz der Zonen gesperrt („fehlt im Filter“), Ausschluss
+   erlaubt, Regel ausserhalb der Zonen bzw. „alles“ („zu offen“), ohne Eingangsfilter. Befund
+   `bgp_zone_mismatch` (Info, Prüfung `app/checks/analyse/bgp_zonen.py` im Teil-Durchgang „Zonen“ –
+   neu nach jedem Speichern einer Zone).
+10. **CLI-Vorschlag** (FortiOS `config router prefix-list`/`prefix-list6`, ohne Filter am Nachbarn
+    mit `set prefix-list-in`) zum Kopieren im Soll/Ist des Nachbarn – nur Text, Automato schreibt
+    nichts auf die Firewall. API `GET /routing/bgp/peers/{id}/zones`.
+
+Offen: Ausgangsfilter je Zone (was eine Firewall wem ankündigen soll – zum Provider meist nicht die
+internen Netze), ACI import-rtctrl aus den Zonen und der Vergleich im Verlauf des Routings.

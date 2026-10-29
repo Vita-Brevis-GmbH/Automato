@@ -5,6 +5,8 @@
                                        Nachbarn ohne Sitzung im Monitor
 - `GET /routing/bgp/peers/{id}`        Soll/Ist eines BGP-Nachbarn: Filter ein/aus, erwartet,
                                        erhalten und (berechnet) angekuendigt
+- `GET /routing/bgp/peers/{id}/zones`  Soll aus den Zonen dahinter (0.114.0): Zone am Nachbarn,
+                                       Zonen dahinter, Prefix-Liste, Abweichungen, CLI-Vorschlag
 - `GET /routing/bgp/l3outs/{id}`       Route Control eines ACI-L3Outs: Import (erwartet), erhalten,
                                        Export
 - `GET /routing/bgp/filtered`          Netze der Eingangsfilter fuer die Router einer Anbindung -
@@ -23,7 +25,7 @@ from app.auth.deps import require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
 from app.models import SourceSystem, TopoL3Out, TopoPeer
-from app.store import bgp_filters, customer_infra, paths
+from app.store import bgp_filters, bgp_zones, customer_infra, paths
 
 router = APIRouter(prefix="/routing/bgp", tags=["routing"])
 
@@ -108,6 +110,26 @@ def peer(
     if key not in f.configs or (p.attrs or {}).get("config") is None:
         return {**base, "peer_ip": p.peer_ip, "state": p.state, "configured": False}
     return {**base, **f.report(p), "configured": True}
+
+
+@router.get("/peers/{peer_id}/zones")
+def peer_zones(
+    peer_id: int,
+    tenant_id: int | None = None,
+    customer_id: int | None = None,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Soll des Nachbarn aus den Zonen dahinter (ADR 0041 Stufe 2) - Vorschlag, kein Schreibweg."""
+    tid = _tenant(session, principal, tenant_id)
+    p = session.get(TopoPeer, peer_id)
+    if (
+        p is None
+        or p.tenant_id != tid
+        or not _visible(session, principal, tid, customer_id, p.source_system_id, p.context)
+    ):
+        raise HTTPException(status_code=404, detail="peer not found")  # fmt: skip
+    return {"id": p.id, "peer_ip": p.peer_ip, **bgp_zones.for_peer(session, tid, p)}
 
 
 @router.get("/l3outs/{l3out_id}")

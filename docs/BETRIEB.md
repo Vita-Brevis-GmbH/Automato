@@ -475,6 +475,9 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
         privates Ziel (das Gerät kennt das Netz nicht – auch wenn die Firewall dahinter es
         lernt), kein BGP-Bestpfad als Backup und keine statische Route auf ein Adressobjekt
         (`dstaddr`). Fehlt ein erwarteter Backup-Weg, fehlt dem Gerät die Route dafür.
+      - **Gegen die BGP-Filter (0.114.0):** ein BGP-Backup, das der Eingangsfilter des Geräts
+        bzw. der Ausgangsfilter der Nachbar-FortiGate sperrt, ist kein Weg; der Hinweis unter
+        dem Weg sagt „Backup an … über … verworfen: Eingangsfilter … sperrt …“.
       - Die Spalte „Länge“ (0.20.0) sagt je Weg „gleich lang“ bzw. „+1 Hop“ gegenüber dem
         kürzesten Weg mit Ziel.
       - **Verbund als ein Hop (0.29.0):** Die Firewalls eines Verbunds (z. B. Session-Sync-
@@ -595,7 +598,11 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     „erlaubt/gesperrt/unbekannt“ nach dem Filter; angekündigt = berechnet aus besten Pfaden,
     network, aggregate und redistribute durch die Ausgangsfilter – die FortiGate meldet es nicht.
     Darüber aufklappbar die gelesene BGP-Konfiguration je Firewall mit konfigurierten Nachbarn
-    ohne Sitzung. Abweichungen stehen unter Findings → BGP-Filter), **HA &
+    ohne Sitzung. Abweichungen stehen unter Findings → BGP-Filter. Seit 0.114.0 im Soll/Ist
+    zusätzlich **„Soll aus den Zonen dahinter“**: Zone am Nachbarn und alle Zonen, die über ihn
+    erreicht werden (Netzwerkdesign → Zonen mit Geräten), ihre Netze und Ausschlüsse als
+    Prefix-Liste, „fehlt im Filter“ / „zu offen“ und ein FortiOS-CLI-Vorschlag zum Kopieren – nur
+    Text, eingespielt wird auf der Firewall von Hand), **HA &
     Session-Sync** (Modus, Gruppe, Mitglieder mit Rolle, FGSP-Peers), **Policy-Routen &
     SD-WAN** (Bedingung, Weg, Mitglieder nach Vorrang), **L3Outs (ACI)** (VRF, Border-Leafs mit
     Namen, Router-ID und statischen Routen, Interfaces/SVIs mit VLAN und Adressen, BGP-Peers

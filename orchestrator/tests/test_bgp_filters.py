@@ -214,3 +214,42 @@ def test_bgp_filter_mandant_und_kunde(client):
     r = client.get(f"/routing/bgp/peers/{peer['id']}", params={"tenant_id": other},
                    headers=viewer)  # fmt: skip
     assert r.status_code == 404  # Nachbar eines anderen Mandanten
+
+
+def test_backup_weg_den_ein_filter_sperrt_wird_verworfen(client):
+    """0.114.0 (ADR 0041 Stufe 2, Anwender zu 0.110): fw-01 lernt 10.5.0.0/16 vom Standort und
+    zusaetzlich vom ISP - dessen Route-Map ein sperrt 10.0.0.0/8, die FortiGate uebernimmt den
+    Pfad also nie. Kein Backup-Weg ueber den ISP, aber ein Hinweis mit dem Grund; der Partner ohne
+    Filter wird nicht verworfen."""
+    import copy
+
+    import test_paths as tp
+
+    fw = copy.deepcopy(FW)
+    routes = fw["routing"]["routes"]
+    routes[:] = [r for r in routes if r.get("prefix") != "10.5.0.0/16"]
+    routes += [
+        {"node": "fw-01", "context": "root", "prefix": "10.5.0.0/16", "table": "rib",
+         "protocol": "bgp", "next_hops": [{"ip": SITE, "interface": "site"}]},
+        _bgp("10.5.0.0/16", SITE), _bgp("10.5.0.0/16", ISP, best=False),
+        _bgp("10.5.0.0/16", PARTNER, best=False),
+    ]  # fmt: skip
+    fw["inventory"] = {"devices": [{"name": "fw-01", "role": "firewall"}], "interfaces": [
+        tp._if("fw-01", "site", "10.60.1.2/30", "site"),
+        tp._if("fw-01", "wan", "198.51.100.2/30", "wan"),
+        tp._if("fw-01", "partner", "192.0.2.10/30", "partner"),
+    ]}  # fmt: skip
+    tid = client.post("/tenants", json={"name": "Kunde A"}, headers=ADMIN).json()["id"]
+    body = {"tenant_id": tid, "name": "fw-01", "platform": "fortigate", "base_url": "https://x"}
+    sid = client.post("/systems", json=body, headers=ADMIN).json()["id"]
+    _deliver(client, tid, sid, "fortigate", fw)
+    out = client.get("/routing/trace", params={"tenant_id": tid, "dst": "10.5.0.1",
+                                               "start": f"{sid}|root"}).json()  # fmt: skip
+    backups = [p for p in out["paths"] if p.get("kind") == "backup"]
+    via = {h.get("egress", {}).get("next_hop") for p in backups for h in p["hops"]}
+    assert ISP not in via, backups
+    notes = " ".join(out["notes"])
+    assert (
+        "verworfen: Eingangsfilter RM_ISP_IN vom Nachbarn 198.51.100.1 sperrt 10.5.0.0/16" in notes
+    )
+    assert f"über {PARTNER} verworfen" not in notes  # ohne Filter: nur wie bisher (ohne Ziel)

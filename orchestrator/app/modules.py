@@ -175,6 +175,7 @@ MODULES: tuple[Module, ...] = (
         api=("routing", "bgp", "cabling", "reconcile", "topology", "data_quality"),
         store=(
             "bgp_filters",  # BGP-Filter Soll/Ist (0.113.0, ADR 0041)
+            "bgp_zones",  # Soll je Nachbar aus den Zonen dahinter (0.114.0, ADR 0041 Stufe 2)
             "boundary",
             "cabling",
             "data_quality",

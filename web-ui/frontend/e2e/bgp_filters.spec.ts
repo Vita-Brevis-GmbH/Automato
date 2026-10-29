@@ -24,6 +24,9 @@ test("BGP-Nachbar: Filter, Soll/Ist, BGP-Konfiguration und Befund (0.113.0)", as
   await expect(drawer.locator("#bgp-in-received tr[data-prefix='0.0.0.0/0']")).toContainText("erlaubt");
   // angekündigt (berechnet): redistribute connected durch PL_DC
   await expect(drawer.locator("#bgp-out-announced tr[data-prefix='10.20.0.0/24']")).toContainText("redistribute connected");
+  // Soll aus den Zonen (0.114.0): fw-05 liegt in keiner Zone - Grund statt Vorschlag
+  await expect(drawer.locator("#bgp-zones-state")).toHaveAttribute("data-state", "no_zone");
+  await expect(drawer.locator("#bgp-zones-state")).toContainText("gehört zu keiner Zone");
   await page.keyboard.press("Escape");
   await expect(drawer).toHaveCount(0);
 

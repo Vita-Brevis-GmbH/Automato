@@ -117,6 +117,9 @@ class FindingType(enum.StrEnum):
     BGP_OUTSIDE_FILTER = "bgp_outside_filter"
     BGP_NO_INBOUND_FILTER = "bgp_no_inbound_filter"
     ACI_IMPORT_NOT_ENFORCED = "aci_import_not_enforced"
+    # Stufe 2 (0.114.0): Eingangsfilter passt nicht zu den Zonen hinter dem Nachbarn (Netz der
+    # Zonen gesperrt, Ausschluss erlaubt, Regel ausserhalb der Zonen bzw. ohne Filter)
+    BGP_ZONE_MISMATCH = "bgp_zone_mismatch"
 
 
 class Severity(enum.StrEnum):

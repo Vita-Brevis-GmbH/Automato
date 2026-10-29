@@ -246,6 +246,8 @@ class Graph:
         self._leaks = None  # aci_shared.Leaks, erst bei Bedarf
         self._ribs: dict[Key | None, _Rib] = {}  # beste RIB-Routen je Kontext (0.74.1)
         self._boundary = None  # boundary.Boundary, erst bei Bedarf (ADR 0032)
+        self._bgp = None  # bgp_filters.Filters, erst bei einem BGP-Backup (0.114.0)
+        self._own_ips: dict[Key, set[str]] = {}
         self._rib_asked: Counter = Counter()  # Abfragen je Kontext bis zum Index
         self._loaded: dict[int, TopoRoute] = {}  # Routen aus dem Index, je Kennung
         self.exits = list(
@@ -561,9 +563,43 @@ class Graph:
                 hop = dict(h)
                 if not hop.get("interface"):  # BGP-Pfade ohne Interface: das Netz des Next-Hops
                     hop["interface"] = self.interface_to(key, nh, table)
-                out.append({"next_hop": hop, "prefix": r.prefix, "protocol": r.protocol,
-                            "distance": r.distance, "reason": reason})  # fmt: skip
+                found = {"next_hop": hop, "prefix": r.prefix, "protocol": r.protocol,
+                         "distance": r.distance, "reason": reason}  # fmt: skip
+                if r.table == "bgp":  # Filter sperrt den Pfad (0.114.0, ADR 0041 Stufe 2)
+                    peer = str(attrs.get("learned_from") or nh).split("%")[0].split("/")[0]
+                    blocked = self.bgp_blocked(key, r.node, peer, r.prefix)
+                    if blocked:
+                        found["blocked"] = blocked
+                out.append(found)
         return out
+
+    def bgp_blocked(self, key: Key, node: str | None, peer: str, prefix: str) -> str | None:
+        """Wuerde das Geraet das Netz `prefix` vom BGP-Nachbarn `peer` je uebernehmen (0.114.0,
+        Anwender zu 0.110: „die Firewalls davor wuerden das Netzwerk niemals lernen, da sie in
+        den Filtern gesperrt wurden“)? Sein Eingangsfilter bzw. - ist der Nachbar eine gelesene
+        FortiGate - deren Ausgangsfilter zu diesem Geraet. -> Grund bzw. None."""
+        from app.store import bgp_filters  # spaet: nur bei BGP-Backups
+
+        if self._bgp is None:
+            self._bgp = bgp_filters.Filters(self.session, self.tenant_id)
+        if not self._bgp.configs or key not in self.nodes:
+            return None
+        if key not in self._own_ips:
+            self._own_ips[key] = {ip for ip, uses in self.owners().items()
+                                  if any(k == key for k, *_ in uses)}  # fmt: skip
+        own = self._own_ips[key]
+        neighbors = [
+            ((k[0], member, k[1]), ip)
+            for k, *_ in self.owners().get(peer, [])
+            if k in self.nodes and k != key
+            for member in self.nodes[k].members
+            for ip in own
+        ]
+        for member in [node] if node else self.nodes[key].members:
+            blocked = self._bgp.blocked((key[0], member, key[1]), peer, prefix, neighbors)
+            if blocked:
+                return blocked
+        return None
 
     def interface_to(self, key: Key, ip_text: str, table: Table) -> str | None:
         """Interface, ueber das der Knoten eine IP direkt erreicht (angeschlossenes Netz)."""
@@ -1003,6 +1039,14 @@ def trace(
         # eine Abweichung je Weg: Backup-Next-Hops dieses Knotens (nicht bei Policy-Routen)
         if backups and dev is None and follow is None and route is not None:
             for b in g.backups(key, cur, table, route):
+                if b.get("blocked"):  # BGP-Filter sperrt den Pfad (0.114.0): nie ein Backup
+                    note = L(f"Backup an {node.label} über {b['next_hop'].get('ip')} verworfen: "
+                             f"{b['blocked']}",
+                             f"Backup at {node.label} via {b['next_hop'].get('ip')} discarded: "
+                             f"{b['blocked']}")  # fmt: skip
+                    if note not in notes:
+                        notes.append(note)
+                    continue
                 info = {k: b[k] for k in ("prefix", "protocol", "distance", "reason")}
                 deviation = {"hop": len(hops), "label": node.label, "reason": b["reason"]}
                 branches.append((b["next_hop"], {**hop, "backup": info}, deviation))

@@ -65,6 +65,7 @@ export const FINDING_LABEL: Record<string, string> = {
   bgp_outside_filter: L("BGP: erhalten, obwohl der Filter sperrt", "BGP: received although the filter denies"),
   bgp_no_inbound_filter: L("BGP: eBGP ohne Eingangsfilter", "BGP: eBGP without inbound filter"),
   aci_import_not_enforced: L("ACI: Import Route Control nicht erzwungen", "ACI: import route control not enforced"),
+  bgp_zone_mismatch: L("BGP: Eingangsfilter passt nicht zu den Zonen", "BGP: inbound filter does not match the zones"),
   link_speed_mismatch: L("Kabel: Speed abweichend", "Link: speed differs"),
   link_duplex_mismatch: L("Kabel: Duplex abweichend", "Link: duplex differs"),
   link_vlan_mismatch: L("Kabel: VLANs abweichend", "Link: VLANs differ"),
@@ -206,6 +207,10 @@ export const FINDING_HINT: Record<string, string> = {
     "Subnetze mit import-rtctrl an einem L3Out, der Import nicht erzwingt – sie wirken nicht",
     "Subnets with import-rtctrl on an L3Out that does not enforce import – they have no effect",
   ),
+  bgp_zone_mismatch: L(
+    "Der Eingangsfilter eines BGP-Nachbarn passt nicht zu den Netzen der Zonen dahinter (Netzwerkdesign) – Vorschlag als Prefix-Liste im Soll/Ist des Nachbarn",
+    "The inbound filter of a BGP neighbor does not match the networks of the zones behind (network design) – proposal as prefix list in the neighbor's expected/actual",
+  ),
   link_speed_mismatch: L(
     "zwei verbundene Switch-Ports mit verschiedener Geschwindigkeit",
     "two connected switch ports with different speeds",
@@ -339,7 +344,7 @@ export const FINDING_GROUPS: { key: string; label: string; help: string; types: 
       "Soll/Ist je BGP-Nachbar: erwartete Netze kommen nicht an, erhalten trotz Filter, eBGP ohne Filter, ACI Import Route Control nicht erzwungen",
       "Expected/actual per BGP neighbor: expected networks do not arrive, received despite the filter, eBGP without filter, ACI import route control not enforced",
     ),
-    types: ["bgp_expected_missing", "bgp_outside_filter", "bgp_no_inbound_filter", "aci_import_not_enforced"],
+    types: ["bgp_expected_missing", "bgp_outside_filter", "bgp_no_inbound_filter", "aci_import_not_enforced", "bgp_zone_mismatch"],
   },
   {
     key: "cabling",
