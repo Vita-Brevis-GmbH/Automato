@@ -29,6 +29,12 @@ test("BGP-Nachbar: Filter, Soll/Ist, BGP-Konfiguration und Befund (0.113.0)", as
 
   await page.goto("/#findings");
   await expect(page.locator(".fgroup", { hasText: "BGP-Filter" })).toContainText("BGP: erwartetes Netz kommt nicht an");
+  // 0.113.2: Detail mit Beschriftungen und den Netzen als Liste - keine leere Routentabelle
+  await page.locator("tbody tr.clickable", { hasText: "erwartetes Netz" }).first().click();
+  const detail = page.locator("tbody tr.subrow");
+  await expect(detail.locator("dl")).toContainText("Filter");
+  await expect(detail.locator(".kv-list")).toContainText("Netze: 203.0.113.0/24");
+  await expect(detail.locator("table.parallel-routes")).toHaveCount(0);
   expect(problems).toEqual([]);
 });
 

@@ -22,10 +22,12 @@ from sqlalchemy import delete, func, insert, select
 from sqlalchemy.orm import Session
 
 from app.models import (
+    CollectorRun,
     MatchStatus,
     Platform,
     ReferenceRecordRow,
     ReferenceRole,
+    RunStatus,
     SourceOfRecord,
     SourceSystem,
 )
@@ -603,11 +605,19 @@ def run_count(session: Session, run_id: str) -> int:
 
 
 def finalize_run(session: Session, run, source: SourceSystem) -> int:
-    """Lauf zum aktuellen Stand der Quelle machen; aeltere Eintraege der Quelle verwerfen."""
+    """Lauf zum aktuellen Stand der Quelle machen; aeltere Eintraege der Quelle verwerfen -
+    nicht die Teil-Uploads eines anderen, noch offenen Laufs (0.113.2: sonst endete der mit
+    „Teil-Upload unvollstaendig (0 von …)“); sie verwirft dessen Abschluss bzw. die Frist."""
+    still_open = select(CollectorRun.id).where(
+        CollectorRun.source_system_id == source.id,
+        CollectorRun.id != run.id,
+        CollectorRun.status.in_((RunStatus.QUEUED, RunStatus.RUNNING)),
+    )
     session.execute(
         delete(ReferenceRecordRow).where(
             ReferenceRecordRow.source_system_id == source.id,
             ReferenceRecordRow.collector_run_id != run.id,
+            ReferenceRecordRow.collector_run_id.not_in(still_open),
         )
     )
     source.reference_run_id = run.id

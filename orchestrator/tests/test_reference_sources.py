@@ -137,6 +137,67 @@ def test_teil_upload_und_ersetzen_des_stands(client, session_factory):
     assert r.status_code == 422  # keine Referenzquelle
 
 
+def _batch(client, run_id, records) -> int:
+    url = f"/internal/collector-runs/{run_id}/references"
+    return client.post(url, headers=TOKEN, json={"records": records}).status_code
+
+
+def _result(client, run_id, count) -> dict:
+    result = {"status": "completed", "reference_count": count}
+    r = client.post(f"/internal/collector-runs/{run_id}/result", headers=TOKEN, json=result)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_referenzquelle_nur_einmal_zugleich_und_kein_verlust(client, session_factory, monkeypatch):
+    """0.113.2 (Befund NetBox-Sync): zwei Laeufe derselben Quelle - der zuerst fertige verwarf
+    die Teil-Uploads des anderen („Teil-Upload unvollstaendig (0 von 13855)“)."""
+    tid = _tenant(client)
+    nb = _netbox(client, tid)
+    body = {"platform": "netbox", "tenant_id": tid, "source_system_id": nb["id"]}
+    first = client.post("/jobs/collect", json=body).json()["run_id"]
+    again = client.post("/jobs/collect", json=body)
+    assert again.status_code == 409 and "wird schon gelesen" in again.json()["detail"]
+    assert _batch(client, first, REC) == 204
+
+    # haengt scheinbar -> abbrechen und neu: der alte Auftrag liefert danach noch vollstaendig
+    assert client.post(f"/jobs/{first}/cancel", headers=ADMIN).status_code == 200
+    second = client.post("/jobs/collect", json=body).json()["run_id"]
+    assert _batch(client, second, REC[:2]) == 204
+    assert _result(client, first, 3)["status"] == "completed"  # spaetes, vollstaendiges Ergebnis
+    assert _batch(client, second, REC[2:]) == 204
+    ack = _result(client, second, 3)  # Teil-Uploads des offenen Laufs blieben erhalten
+    assert ack["status"] == "completed", ack
+    s = session_factory()
+    assert s.get(SourceSystem, nb["id"]).reference_run_id == second
+    assert s.query(ReferenceRecordRow).count() == 3
+    s.close()
+
+    # abgebrochen und unvollstaendig: der Grund des Abbruchs bleibt stehen
+    third = client.post("/jobs/collect", json=body).json()["run_id"]
+    assert _batch(client, third, REC[:1]) == 204
+    client.post(f"/jobs/{third}/cancel", headers=ADMIN)
+    ack = _result(client, third, 3)
+    assert ack["status"] == "failed" and ack["message"].startswith("abgebrochen von")
+    s = session_factory()
+    assert s.query(ReferenceRecordRow).count() == 3  # Teil-Upload verworfen, Stand bleibt
+    s.close()
+
+    # Zugangsdaten nicht entschluesselbar: Lauf endet mit Grund, der Worker liest nicht
+    from app import credentials
+    from app.store import agents as agent_store
+
+    def unavailable(src, agent_id):
+        raise credentials.CredentialsUnavailable("Schlüssel passt nicht")
+
+    monkeypatch.setattr(agent_store, "target_for", unavailable)
+    fourth = client.post("/jobs/collect", json=body).json()["run_id"]
+    got = client.get(f"/internal/collector-runs/{fourth}/target", headers=TOKEN).json()
+    assert got == {"target": None, "skip": True}
+    run = next(r for r in client.get("/jobs").json() if r["id"] == fourth)
+    assert run["status"] == "failed" and "Zugangsdaten nicht verfügbar" in run["message"]
+
+
 FW_RESULT = {
     "status": "completed",
     "rules": [

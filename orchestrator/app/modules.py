@@ -236,6 +236,7 @@ MODULES: tuple[Module, ...] = (
             "applications",
             "appdoc",
             "appdoc_filter",
+            "appdoc_path",  # unspezifische Regeln nur auf dem Weg (0.113.2)
             "appdoc_zones",
             "peer_names",
             "app_import",

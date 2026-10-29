@@ -162,6 +162,11 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   - Sofort geht es mit **Abbrechen** (Letzte Läufe) bzw. **Abbrechen & neu starten** im
     Dialog „Alle einlesen“ (Operator). Liefert der Agent danach doch noch ab, wird das
     Ergebnis eingespielt.
+  - **Referenzquellen (NetBox, DDI) nur einmal zugleich (0.113.2):** „Jetzt einlesen“ während
+    eines offenen Laufs antwortet „… wird schon gelesen: Lauf läuft seit … – abwarten bzw. den
+    Lauf abbrechen“. Ist das Ziel eines zentralen Laufs nicht abrufbar, versucht der Worker es
+    dreimal (2, 5, 15 s) und lässt den Lauf sonst stehen (erneut geschickt bzw. nach der Frist
+    beendet) – er liest nie ohne Adresse.
   - „Letzte Läufe“ zeigt immer **alle offenen Läufe** (auch ältere), dazu die letzten acht und
     den Link **Alle Läufe (N)** (0.13.0).
 - **Läufe** (0.13.0, seit 0.14.0 unter Administration): alle Collector-Läufe des Mandanten,
@@ -2191,7 +2196,10 @@ an (`deploy/agent-gateway`, Port 8443).
 - **Infoblox/NetBox „Teil-Upload unvollstaendig (N von M)“** — bis 0.11.1 konnte der letzte
   Teil-Upload noch nicht gespeichert sein, wenn das Ergebnis eintraf. Behoben in 0.11.2
   (Orchestrator aktualisieren; der Agent muss nichts tun). Tritt die Meldung danach noch auf,
-  ist ein Teil-Upload tatsächlich abgewiesen worden: Agent-Log prüfen.
+  ist ein Teil-Upload tatsächlich abgewiesen worden: Agent-Log prüfen. **„(0 von N)“, danach
+  „keine Adresse fuer die Referenzquelle“** (bis 0.113.1): zwei Läufe derselben Quelle bzw. ein
+  Worker-Auftrag ohne abrufbares Ziel verwarfen die Teil-Uploads des anderen – behoben in
+  0.113.2 (Orchestrator und zentralen Worker aktualisieren, dann neu einlesen).
 
 - **`deploy/update.sh`: „service "netbox" has neither an image nor a build context specified“**
   (Befund 0.42.0) — im Automato-Ordner liegt eine `docker-compose.override.yml` mit einem

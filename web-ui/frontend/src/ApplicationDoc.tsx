@@ -572,8 +572,8 @@ export default function ApplicationDocView({
               className="faint"
               style={{ fontSize: 12 }}
               title={L(
-                "Regeln, die die Systeme nach dem Routing ihrer Firewall nicht sehen können (Ein-/Ausgang passt nicht) – sie gehören nicht zur Applikation",
-                "Rules the systems cannot see according to the routing of their firewall (incoming/outgoing interface does not match) – they do not belong to the application",
+                "Regeln, die die Systeme nach dem Routing ihrer Firewall nicht sehen können (Ein-/Ausgang passt nicht) bzw. unspezifische Regeln einer Firewall, über die der Weg zur Gegenstelle nicht führt (0.113.2) – sie gehören nicht zur Applikation",
+                "Rules the systems cannot see according to the routing of their firewall (incoming/outgoing interface does not match) or unspecific rules of a firewall the path to the counterpart does not pass (0.113.2) – they do not belong to the application",
               )}
             >
               {L(`${s.impossible} routingtechnisch unmögliche ausgelassen`, `${s.impossible} impossible by routing omitted`)}

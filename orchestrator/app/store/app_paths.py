@@ -1027,6 +1027,22 @@ def _rule_label(rule: Rule) -> str:
     return rule.name if raw.get("kind") == "preferred_group" else f"Contract {rule.name}"
 
 
+def rule_nodes(rule: Rule, active: list[dict]) -> list[dict]:
+    """Hops der Wege (je Firewall im Verbund), die das Geraet der Regel sind - FortiGate mit
+    ihrem VDOM. Leer = die Regel liegt nicht auf dem Weg (0.107.0; Doku seit 0.113.2)."""
+    out: list[dict] = []
+    for path in active:
+        for h in path["hops"]:
+            for p in _parts(h):
+                if p["source_system_id"] != rule.source_system_id:
+                    continue
+                if rule.domain == RuleDomain.FIREWALL and rule.vdom and p["kind"] == "vdom" \
+                        and p["context"] != rule.vdom:  # fmt: skip
+                    continue
+                out.append(p)
+    return out
+
+
 def _state(rule: Rule, active: list[dict], data: appdoc.TenantData) -> dict:
     """Regel der Doku auf dem Weg: decides | possible | other (andere entscheidet vorher bzw.
     sie passt nicht) | off_path (ihr Geraet liegt nicht auf dem Weg) | unknown (kein Weg
@@ -1038,19 +1054,11 @@ def _state(rule: Rule, active: list[dict], data: appdoc.TenantData) -> dict:
         text = L("Weg nicht bekannt – nicht prüfbar", "path not known – not checkable")
         return base | {"state": "unknown", "text": text}
     found = None
-    nodes: list[dict] = []
-    for path in active:
-        for h in path["hops"]:
-            for p in _parts(h):
-                if p["source_system_id"] != rule.source_system_id:
-                    continue
-                if rule.domain == RuleDomain.FIREWALL and rule.vdom and p["kind"] == "vdom" \
-                        and p["context"] != rule.vdom:  # fmt: skip
-                    continue
-                nodes.append(p)
-                for e in (p.get("rules") or {}).get("rules") or []:
-                    if e.get("rule_id") == rule.id:
-                        found = found if found and found["decides"] else e
+    nodes = rule_nodes(rule, active)
+    for p in nodes:
+        for e in (p.get("rules") or {}).get("rules") or []:
+            if e.get("rule_id") == rule.id:
+                found = found if found and found["decides"] else e
     if found is not None:
         state = "decides" if found["decides"] else "possible"
         if state == "decides":

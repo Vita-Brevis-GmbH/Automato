@@ -42,6 +42,7 @@ from app.store import (
     aci_shared,
     appdoc_catalog,
     appdoc_filter,
+    appdoc_path,
     references,
     rule_index,
     rule_view,
@@ -558,6 +559,12 @@ class TenantData:
     @cached_property
     def relevance(self) -> relevance_store.Relevance:
         return relevance_store.Relevance(self.session, self.tenant_id)
+
+    @cached_property
+    def on_path(self) -> appdoc_path.OnPath:
+        """Unspezifische Firewall-Regeln nur von Firewalls auf dem Weg (0.113.2); teilt den
+        Graph der Relevanz."""
+        return appdoc_path.OnPath(self.session, self.tenant_id, lambda: self.relevance.graph)
 
     @cached_property
     def aci(self) -> aci_relevance.Classifier:
@@ -1364,6 +1371,11 @@ def _covered_rows(
             sides = {k: v for k, v in sides.items() if v[1] != "any"}
         zones = {"src": data.zones.get(r.src_zone_id), "dst": data.zones.get(r.dst_zone_id)}
         rels = {s: data.relevance.check(r, s, values, zones[s]) for s in sides}
+        for s, side in sides.items():
+            # unspezifisch (0.113.2): nur, wenn der Weg zur Gegenstelle ueber diese Firewall geht
+            if side[1] in BROAD and rels[s]["state"] != relevance_store.IMPOSSIBLE:
+                off = data.on_path.check(r, s, values, data.device(r))
+                rels[s] = off or rels[s]
         out += _fw_rows(data, r, sides, system_name, dnat, rels, shown, own)
     return out
 

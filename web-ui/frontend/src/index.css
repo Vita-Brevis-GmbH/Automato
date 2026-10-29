@@ -565,7 +565,14 @@ pre.block { background: var(--surface-2); border: 1px solid var(--border); borde
 /* lange Listen (NAT, Regeln): Kopfzeile fest, Scrollbalken unten immer im Bild (0.14.1) */
 .card-body.viewport { max-height: calc(100vh - 250px); overflow: auto; }
 .card-body.viewport thead th { position: sticky; top: 0; background: var(--surface); z-index: 1; }
-.kv.tight { grid-template-columns: 100px 1fr; gap: 3px 10px; font-size: 12px; margin: 4px 0 0; }
+.kv.tight { grid-template-columns: fit-content(220px) 1fr; gap: 3px 10px; font-size: 12px; margin: 4px 0 0; }
+/* 0.113.2: lange Beschriftungen bzw. Werte ohne Leerzeichen brechen um statt in die Nachbarspalte zu laufen */
+.kv dt { min-width: 0; overflow-wrap: anywhere; } .kv dd { overflow-wrap: anywhere; }
+.kv-list { font-size: 12px; overflow-wrap: anywhere; }
+/* Findings (0.113.2): Befund bekommt Platz, Typ und Objekt brechen um */
+td.finding-text { min-width: 280px; max-width: 520px; }
+td.finding-type { min-width: 120px; max-width: 200px; }
+td.finding-subject { min-width: 130px; max-width: 260px; overflow-wrap: break-word; }
 .refcard { border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px; margin-bottom: 8px; background: var(--surface); }
 .refcard-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 4px; }
 .members { margin-top: 6px; padding-left: 10px; border-left: 2px solid var(--border); display: flex; flex-direction: column; gap: 6px; }

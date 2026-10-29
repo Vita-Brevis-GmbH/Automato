@@ -86,7 +86,10 @@ def run_target(
     try:
         return {"target": agent_store.target_for(src, None)}
     except credentials.CredentialsUnavailable as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        # Lauf mit Grund beenden (0.113.2): der Worker liest ohne Ziel nicht - sonst wartete
+        # er bis zur Frist und wuerde immer wieder geschickt
+        runs.fail(session, run, f"Zugangsdaten nicht verfügbar: {exc}", actor="system:worker")
+        return {"target": None, "skip": True}
 
 
 class ResultAck(BaseModel):
@@ -163,18 +166,23 @@ def submit_references(
 
 def _finish_reference_run(session: Session, run, result: CollectorResult, actor) -> "ResultAck":
     """Referenzlauf abschliessen: Stand uebernehmen (oder verwerfen), Mandant neu abgleichen."""
-    run.finished_at = datetime.now(UTC)
-    run.message = result.message
     source = session.get(SourceSystem, run.source_system_id) if run.source_system_id else None
     received = references.run_count(session, run.id)
-    if result.status == "completed" and result.reference_count not in (None, received):
+    incomplete = result.status == "completed" and result.reference_count not in (None, received)
+    if run.status is RunStatus.FAILED and incomplete:
+        # schon abgebrochen (z. B. von Hand) und nicht vollstaendig: Grund des Abbruchs bleibt
+        # stehen statt „Teil-Upload unvollstaendig (0 von …)“ (0.113.2)
+        references.discard_run(session, run)
+        return ResultAck(run_id=run.id, status=run.status.value, message=run.message)
+    if incomplete:
         result = result.model_copy(
             update={
                 "status": "failed",
                 "message": f"Teil-Upload unvollstaendig ({received} von {result.reference_count})",
             }
         )
-        run.message = result.message
+    run.finished_at = datetime.now(UTC)
+    run.message = result.message
     if result.status == "completed" and source is not None and run.tenant_id:
 
         def finalize() -> None:

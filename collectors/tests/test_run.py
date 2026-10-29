@@ -490,11 +490,30 @@ def test_zentraler_lauf_nur_einmal_gelesen(monkeypatch):
     assert len(seen) == 1  # uebersprungen
     assert agent_api.run_target("run-1") is None
 
+    # 0.113.2: Ziel nicht abrufbar -> wiederholen, dann nicht lesen (nicht ohne Ziel lesen:
+    # „keine Adresse“ und dessen Abbruch verwarf die Teil-Uploads des echten Auftrags)
+    waits: list[float] = []
+    monkeypatch.setattr(agent_api, "_sleep", waits.append)
+    calls = []
+
     def broken(url, params, headers):
+        calls.append(url)
         raise OSError("weg")
 
     monkeypatch.setattr(agent_api.http, "get_json", broken)
-    assert agent_api.claim_target("run-1") == (True, None)  # lokale Konfiguration
+    assert agent_api.claim_target("run-1") == (False, None)
+    assert agent_api.central("run-1", lambda *a: seen.append(a)) is None and len(seen) == 1
+    assert len(calls) == 8 and waits[:3] == list(agent_api.TARGET_RETRY_DELAYS)
+
+    def flaky(url, params, headers):
+        calls.append(url)
+        if len(calls) == 9:
+            raise OSError("kurz weg")
+        return R({"target": target})
+
+    monkeypatch.setattr(agent_api.http, "get_json", flaky)
+    go, again = agent_api.claim_target("run-1")
+    assert go and again.base_url == "http://nb" and len(calls) == 10
     monkeypatch.setattr(agent_api, "_task_id", lambda: None)
     monkeypatch.setattr(agent_api.http, "get_json", answer({"target": None}))
     agent_api.central("run-2", lambda run_id, t: seen.append((run_id, t)))

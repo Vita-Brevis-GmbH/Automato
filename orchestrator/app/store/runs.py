@@ -337,6 +337,12 @@ def cancel(session: Session, run: CollectorRun, actor: str) -> None:
     _finish(session, run, f"abgebrochen von {who}", actor=actor)
 
 
+def fail(session: Session, run: CollectorRun, message: str, actor: str) -> None:
+    """Lauf mit Grund beenden, bevor er gelesen wird (z. B. Zugangsdaten nicht
+    entschluesselbar, 0.113.2). Gespeichert deutsch, wie `cancel`."""
+    _finish(session, run, message, actor=actor)
+
+
 def _finish(
     session: Session, run: CollectorRun, message: str, actor: str, now: datetime | None = None
 ) -> None:

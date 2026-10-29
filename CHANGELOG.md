@@ -7,6 +7,46 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.113.2 – 2026-10-29
+
+Fehler des Anwenders zu 0.113 (2026-10-29), in einer Version. Abnahme bis 0.113.1.
+
+- **Applikations-Doku: unspezifische Firewall-Regeln nur von Firewalls auf dem Weg.** Steht
+  dieselbe unspezifische Regel (System nur über ein Netz bzw. any) auf mehreren Firewalls, zählte
+  bisher nur das Routing der Firewall selbst. Jetzt wird wie bei den Verbindungen der Weg von der
+  Gegenstelle der Regel (Host bzw. Netz) zum System bzw. umgekehrt verfolgt: führt er nicht über
+  die Firewall der Regel, steht sie weder in der Doku nach Kategorie noch oben (Regeln &
+  Contracts, Kennzahlen), sondern zählt zu „routingtechnisch unmögliche ausgelassen“ mit dem Grund
+  „fw-03 liegt nicht auf dem Weg von … zu … – die Regel braucht dieses System nicht“. Ist der Weg
+  nicht bekannt bzw. endet er vor dem Ziel, bleibt die Regel; Gegenstelle any wird nicht geprüft.
+- **Findings: Texte laufen nicht mehr ineinander.** Die Netze der BGP-Befunde stehen als Liste
+  („Netze: …“) statt in einer leeren Routentabelle, ihre Felder haben Beschriftungen (Anzahl,
+  Filter, erhalten, L3Out, ACI-Tenant); lange Beschriftungen und Werte ohne Leerzeichen brechen um,
+  die Spalte „Befund“ bekommt Platz, Typ und Objekt brechen um.
+- **NetBox-/DDI-Lauf bricht nicht mehr ab** („Teil-Upload unvollstaendig (0 von 13855)“, danach
+  „keine Adresse fuer die Referenzquelle“):
+  - Eine Referenzquelle wird nur einmal zugleich gelesen: „Jetzt einlesen“ während eines offenen
+    Laufs antwortet „… wird schon gelesen: Lauf läuft seit … – abwarten bzw. den Lauf abbrechen“
+    (wie „Alle einlesen“ und der Zeitplan). Bisher wurde der zuerst fertige Lauf der Stand und
+    verwarf die Teil-Uploads des anderen.
+  - Der Abschluss eines Laufs verwirft die Teil-Uploads eines anderen, noch offenen Laufs derselben
+    Quelle nicht mehr (z. B. nach „abbrechen und neu“, wenn der alte Auftrag doch noch liefert).
+  - Der zentrale Worker liest nicht mehr ohne Ziel: ist es nicht abrufbar, versucht er es nach 2,
+    5 und 15 s erneut und lässt den Lauf sonst stehen (er wird erneut geschickt bzw. nach der Frist
+    beendet). Bisher scheiterte der Auftrag mit „keine Adresse fuer die Referenzquelle“, und sein
+    Abbruch verwarf die Teil-Uploads des Auftrags, der den Lauf wirklich las.
+  - Ein abgebrochener Lauf behält seinen Grund: ein spätes, unvollständiges Ergebnis überschreibt
+    ihn nicht mehr mit „Teil-Upload unvollstaendig (0 von …)“.
+  - Zugangsdaten nicht entschlüsselbar: der Lauf endet mit „Zugangsdaten nicht verfügbar: …“ statt
+    immer wieder geschickt zu werden.
+- API: `POST /jobs/collect` antwortet für eine Referenzquelle mit offenem Lauf mit 409;
+  `GET /internal/collector-runs/{id}/target` beendet den Lauf, wenn die Zugangsdaten nicht
+  entschlüsselbar sind (`skip`).
+- Tests: `test_reference_sources.py` (einmal zugleich, abbrechen und neu, Grund bleibt,
+  Zugangsdaten), `collectors/tests/test_run.py` (Ziel nicht abrufbar: wiederholen, nicht lesen),
+  `test_app_paths.py` (unspezifische Regel nur auf dem Weg), UI-Test in `e2e/bgp_filters.spec.ts`
+  (Detail des BGP-Befunds).
+
 ## 0.113.1 – 2026-10-29
 
 Fehler des Anwenders zu 0.112 (2026-10-29), in einer Version. Abnahme bis 0.113.0.

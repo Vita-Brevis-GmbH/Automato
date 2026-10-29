@@ -5,6 +5,7 @@ gegen `/internal/agent/*`; ausgehend HTTPS, kein DB-Zugriff.
 """
 
 import logging
+import time
 
 from collectors.common import http
 from collectors.common.dto import Target
@@ -64,21 +65,37 @@ def _task_id() -> str | None:
     return getattr(request, "id", None) if current_task else None
 
 
+# Ziel eines zentralen Laufs abrufen: Sekunden vor dem 2., 3. und 4. Versuch (0.113.2)
+TARGET_RETRY_DELAYS = (2.0, 5.0, 15.0)
+_sleep = time.sleep  # Tests ersetzen das Warten
+
+
 def claim_target(run_id: str) -> tuple[bool, Target | None]:
     """Ziel eines zentralen Laufs (zentraler Worker, internes Token) und ob dieser Auftrag ihn
-    liest (0.109.1): ein erneut geschickter Lauf wird nur einmal gelesen. Fehler -> (True,
-    None), dann gilt die lokale Konfiguration."""
+    liest (0.109.1): ein erneut geschickter Lauf wird nur einmal gelesen. Ohne Quellsystem
+    (`target` None) gilt die lokale Konfiguration.
+
+    Nicht abrufbar (Netz, Orchestrator antwortet mit Fehler) -> nach Wiederholungen **nicht**
+    lesen (0.113.2): ohne Ziel scheiterte der Lauf mit „keine Adresse fuer die
+    Referenzquelle“ und sein Abbruch verwarf die Teil-Uploads des Auftrags, der ihn wirklich
+    las. Der Lauf wartet weiter (wird erneut geschickt bzw. nach der Frist beendet)."""
     settings = get_settings()
     headers = {"X-Internal-Token": settings.internal_api_token}
     if task := _task_id():
         headers["X-Run-Claim"] = task
-    try:
-        response = http.get_json(
-            f"{settings.orchestrator_url}/internal/collector-runs/{run_id}/target", None, headers
-        )
-    except Exception as exc:  # noqa: BLE001 - dann gilt die lokale Konfiguration
-        log.warning("Ziel fuer Lauf %s nicht abrufbar: %s", run_id, exc)
-        return True, None
+    url = f"{settings.orchestrator_url}/internal/collector-runs/{run_id}/target"
+    for delay in (*TARGET_RETRY_DELAYS, None):
+        try:
+            response = http.get_json(url, None, headers)
+            break
+        except Exception as exc:  # noqa: BLE001 - erneut versuchen, dann nicht lesen
+            if delay is None:
+                log.warning("Ziel fuer Lauf %s nicht abrufbar: %s - nicht gelesen", run_id,
+                            http.describe_error(exc))  # fmt: skip
+                return False, None
+            log.warning("Ziel fuer Lauf %s nicht abrufbar: %s - neuer Versuch in %.0f s",
+                        run_id, http.describe_error(exc), delay)  # fmt: skip
+            _sleep(delay)
     body = response.json()
     if body.get("skip"):
         return False, None

@@ -30,6 +30,22 @@ def start_collect(
     session: Session = Depends(get_session, scope="function"),
 ):
     tenant_id = tenant_scope(principal, payload.tenant_id)  # Mandanten-Zugriff erzwingen
+    src = session.get(SourceSystem, payload.source_system_id) if payload.source_system_id else None
+    if src is not None and src.platform in REFERENCE_PLATFORMS:
+        # Referenzquelle nur einmal zugleich (0.113.2): der zuerst fertige Lauf wurde der Stand
+        # und verwarf die Teil-Uploads des anderen („Teil-Upload unvollstaendig (0 von …)“)
+        runs.expire_stale(session)
+        open_run = runs.blocking(session, src.id)
+        if open_run is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=L(
+                    f"„{src.name}“ wird schon gelesen: {runs.describe(session, open_run)} – "
+                    "abwarten bzw. den Lauf abbrechen",
+                    f"“{src.name}” is already being read: {runs.describe(session, open_run)} – "
+                    "wait or cancel the run",
+                ),
+            )
     try:
         run = runs.queue_collect(
             session,

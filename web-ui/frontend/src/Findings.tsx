@@ -110,6 +110,12 @@ const DETAIL_LABEL: Record<string, string | null> = {
   parts: null,
   contexts: null,
   context_count: null,
+  // BGP-Filter (0.113.0): Netze stehen als Liste darunter (`entries` als Präfixe)
+  total: L("Anzahl", "Count"),
+  filters: L("Filter", "Filters"),
+  received: L("erhalten", "received"),
+  l3out: "L3Out",
+  aci_tenant: L("ACI-Tenant", "ACI tenant"),
 };
 
 // Routing-Befund im Verbund (0.72.0): je Präfix, was auf der führenden bzw. dieser Firewall steht
@@ -135,7 +141,22 @@ type RouteEntry = {
 
 function RouteEntries({ f }: { f: Finding }) {
   const d = (f.detail ?? {}) as Record<string, unknown>;
-  const entries = (Array.isArray(d.entries) ? d.entries : []) as RouteEntry[];
+  const all = Array.isArray(d.entries) ? (d.entries as unknown[]) : [];
+  if (!all.length) return null;
+  // BGP-Filter (0.113.2): Netze als Präfixe - keine Routentabelle (zeigte leere Spalten)
+  if (all.every((e) => typeof e === "string")) {
+    const total = typeof d.total === "number" ? d.total : all.length;
+    return (
+      <div className="kv-list" style={{ marginTop: 6 }}>
+        <span className="faint">{L("Netze: ", "Networks: ")}</span>
+        <span className="mono">{(all as string[]).join(", ")}</span>
+        {total > all.length && (
+          <span className="faint">{L(` … und ${total - all.length} weitere`, ` … and ${total - all.length} more`)}</span>
+        )}
+      </div>
+    );
+  }
+  const entries = all.filter((e) => e && typeof e === "object") as RouteEntry[];
   if (!entries.length) return null;
   const count = typeof d.count === "number" ? d.count : entries.length;
   return (
@@ -551,11 +572,11 @@ export default function Findings({
                             <td>
                               <SeverityBadge severity={f.severity} />
                             </td>
-                            <td className="nowrap" title={FINDING_HINT[f.type] ?? f.type}>
+                            <td className="finding-type" title={FINDING_HINT[f.type] ?? f.type}>
                               {findingLabel(f.type)}
                             </td>
-                            <td className="mono">{f.subject_id}</td>
-                            <td style={{ maxWidth: 520 }}>
+                            <td className="mono finding-subject">{f.subject_id}</td>
+                            <td className="finding-text">
                               <div>{f.message ?? detailText(f.detail)}</div>
                               {f.hint && <div className="faint">→ {f.hint}</div>}
                             </td>

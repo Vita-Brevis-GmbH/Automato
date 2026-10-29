@@ -308,3 +308,30 @@ def test_zonen_in_den_verbindungen(client):
     assert zones["violation"] and out["summary"]["zone_violations"] == 1
     blocked = next(c for c in out["connections"] if c["service"] == "tcp/8080")
     assert not blocked["zones"]["violation"]  # gesperrt wie beabsichtigt
+
+
+def test_unspezifische_regel_nur_von_firewalls_auf_dem_weg(client):
+    """0.113.2 (Anwender zu 0.113): eine unspezifische Regel (System nur ueber ein Netz im Ziel)
+    auf fw-01 und fw-03 - der Weg von der Gegenstelle 10.60.0.5 zum System geht nur ueber fw-01.
+    Die Regel auf fw-03 steht weder in den Kategorien noch oben, sie ist nur gezaehlt."""
+    fw1 = copy.deepcopy(FW1)
+    fw1["rules"].append(_fw("13", "lan-dc", SRV, "10.50.0.0/16", 443, "to-fw02", "to-aci",
+                            ("transit", "aci")))  # fmt: skip
+    fw3 = copy.deepcopy(FW3)
+    fw3["rules"].append(_fw("32", "lan-dc", SRV, "10.50.0.0/16", 443, "any", "any",
+                            (None, None)))  # fmt: skip
+    tid = client.post("/tenants", json={"name": "Kunde A"}, headers=tp.ADMIN).json()["id"]
+    systems = (("fw-01", "fortigate", fw1), ("fw-02", "fortigate", FW2),
+               ("fw-03", "fortigate", fw3), ("apic-01", "cisco_aci", APIC))  # fmt: skip
+    for name, platform, result in systems:
+        tp._deliver(client, tid, tp._system(client, tid, name, platform), platform, result)
+    body = {"name": "Web", "members": [{"kind": "epg", "ref": ar.WEB}]}
+    app = client.post(f"/applications?tenant_id={tid}", json=body, headers=OP).json()
+    doc = client.get(f"/applications/{app['id']}/doc", params={"tenant_id": tid}).json()
+    names = {r["id"]: r["name"] for r in doc["rules"]}
+    lan = {h["rule_id"] for h in doc["hits"] if names.get(h["rule_id"]) == "lan-dc"}
+    assert len(lan) == 1  # nur die Regel auf fw-01 (oben: Regeln & Contracts)
+    rows = [r for t in doc["tables"] for r in t["rows"] if r.get("Description") == "lan-dc"]
+    assert len(rows) == 1 and "fw-01" in str(rows[0]), rows
+    assert "fw-03" not in str(rows)
+    assert doc["summary"]["impossible"] >= 1
