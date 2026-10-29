@@ -7,6 +7,41 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.111.0 – 2026-10-29
+
+Fehler und Funde des Anwenders zu 0.109 (2026-10-29), in einer Version. Abnahme bis 0.110.0.
+
+- **ACI: Export Route Control ist kein Netz der externen EPG.** Subnetze einer externen EPG nur
+  mit Scope `export-rtctrl` (bzw. ohne `import-security`) steuern das Routing und ordnen keinen
+  Verkehr zu – sie gelten nicht mehr als Gegenstelle in den Verbindungen, nicht als Treffer der
+  IP-Suche bei Regeln & Contracts, nicht für die Zonen der EPG und nicht in der Applikations-Doku
+  (`aci_relevance.assigns`). Ein Contract nur über ein solches Subnetz steht unter „ohne prüfbare
+  Gegenstelle“; im Regel-Detail bleibt das Subnetz mit „nur Routing“ sichtbar.
+- **Text „Contract vorhanden, Port nicht offen“:** stimmen Consumer und Provider, öffnet der
+  Contract aber den Dienst nicht, heisst es jetzt „Contract CT_x von … zu … öffnet tcp/80 nicht
+  (offen: tcp/443) – im ACI gesperrt“ statt „kein Contract“; der Contract steht mit „öffnet den
+  Dienst nicht“ bei den Regeln des Hops (Weg-Suche, Verbindungen).
+- **Transfernetz zum eigenen L3Out:** hinter einem L3Out mit Firewall führend (ADR 0034) zählt das
+  angeschlossene Netz am Interface der Firewall zu diesem L3Out als „hinaus“ – das Transfernetz
+  wird nicht mehr über einen anderen L3Out geführt, nur weil die Firewall es direkt angeschlossen
+  hat.
+- **Anbindungen: grosse Netzlisten.** „Netze dahinter“ als Liste (bis 5 000): einfügen in jeder
+  Schreibweise (CIDR, Netz und Maske, Wildcard, mit Text dazwischen), „Prüfen“ (gültig, ungültig,
+  doppelt), „Zusammenfassen“ und „Aus dem Routing“ (über Next-Hop bzw. Interface gelernte Routen
+  als Vorschlag). Speichern mit ungültigen Einträgen zeigt sie und speichert nicht; die Tabelle
+  kürzt lange Listen.
+- **Grosse Netze der Regeln zuordnen** (gewählt „kombiniert“, ADR 0040, Migration `0069`): routet
+  eine Firewall ein Netz-Objekt einer Regel (z. B. 10.0.0.0/8) nicht als Ganzes – Teile genauer
+  geroutet bzw. privat nur über die Default-Route –, entscheiden der Reihe nach die Zuordnung von
+  Hand, eine Zone (Netzwerkdesign), die Netze einer Anbindung; sonst „aufgeteilt“ bzw. „unklar“.
+  Neuer Befund **„Netz der Regel grösser als die Routen“** (Modul Wegsucher) mit Route, Next-Hop,
+  Teilen und Regeln; „Netz zuordnen“ im Befund und in den Verbindungen (Operator, Audit): zur
+  Zone, über die Anbindung, „Weg nach dem Routing stimmt“ oder „nur die genauer gerouteten Teile
+  zählen“. Die Zuordnungen von Hand stehen unter Routing → Anbindungen.
+- Tests: `test_net_assign.py`, neue Fälle in `test_aci_relevance.py`, `test_aci_check.py`,
+  `test_l3out_firewall.py`, `test_exit_paths.py`; UI-Test `e2e/net_lists.spec.ts`, angepasst
+  `e2e/apps.spec.ts` (Webshop ohne Verbindung über das Routing-Subnetz von EN_rt).
+
 ## 0.110.0 – 2026-10-29
 
 Findings als steckbare Prüfungen und Oberfläche je Modul (Roadmap Version 1 Nr. 1, Stufe 1;

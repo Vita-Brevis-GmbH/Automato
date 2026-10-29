@@ -92,18 +92,26 @@ def test_contracts_je_vrf_hop(client):
     rules, policy, _ = _aci(client, tid, **web)
     assert rules["verdict"] == "depends" and rules["rules"][0]["unsure"] == ["Dienst"]
 
-    # tcp/80 gilt nur für EN_any - die Quelle gehört aber zu EN_srv
+    # tcp/80 gilt nur für EN_any - die Quelle gehört aber zu EN_srv; deren Contract CT_srv
+    # oeffnet nur tcp/443 (0.111.0: Satz nennt ihn statt „kein Contract“)
     rules, policy, _ = _aci(client, tid, **web, service="tcp/80")
+    closed = rules.pop("rules")
     assert rules == {
         "verdict": "implicit_deny",
-        "rules": [],
-        "text": "kein Contract von externe EPG L3O_fw|EN_srv (10.20.0.0/24) zu EPG TE/AP1/EPG_web "
-        "– im ACI gesperrt",
+        "text": "Contract CT_srv von externe EPG L3O_fw|EN_srv (10.20.0.0/24) zu EPG "
+        "TE/AP1/EPG_web öffnet tcp/80 nicht (offen: tcp/443) – im ACI gesperrt",
         "src_epg": "externe EPG L3O_fw|EN_srv (10.20.0.0/24)",
         "dst_epg": "EPG TE/AP1/EPG_web",
         "l3outs": ["L3O_fw"],  # L3Out der externen EPG (Netzwerkplan, 0.74.0)
     }
+    assert [(e["name"], e["closed"], e["decides"], e["open"]) for e in closed] == [
+        ("CT_srv", True, False, ["tcp/443"])
+    ]
     assert policy["verdict"] == "deny"
+    en = client.get("/routing/trace", headers={"Accept-Language": "en"},
+                    params={"tenant_id": tid, **web, "service": "tcp/80"}).json()  # fmt: skip
+    text = next(h["rules"]["text"] for h in en["paths"][0]["hops"] if h["kind"] == "vrf")
+    assert "does not open tcp/80 (open: tcp/443)" in text
 
     # ausserhalb des /24: EN_any (über L3O_fw geleitet) bzw. EN_inet (unbekannt) - abhängig
     start = next(
@@ -117,7 +125,11 @@ def test_contracts_je_vrf_hop(client):
     assert rules["src_epg"] == (
         "externe EPG L3O_fw|EN_any (0.0.0.0/0) bzw. externe EPG L3O_inet|EN_inet (0.0.0.0/0)"
     )
-    assert [r["name"] for r in rules["rules"]] == ["CT_any"]
+    # CT_inet verbindet EN_inet mit der EPG, oeffnet tcp/80 aber nicht (0.111.0: zur Erklaerung)
+    assert [(r["name"], bool(r.get("closed"))) for r in rules["rules"]] == [
+        ("CT_any", False),
+        ("CT_inet", True),
+    ]
 
     # Startpunkt ohne Quelle: Contracts nicht prüfbar
     rules, policy, _ = _aci(client, tid, start=start, dst="10.50.1.10", service="tcp/443")

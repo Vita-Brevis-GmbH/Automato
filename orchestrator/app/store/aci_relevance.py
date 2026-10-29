@@ -57,6 +57,13 @@ def classifies(scope: str | None) -> bool:
     return scope is None or CLASSIFY in {s.strip() for s in scope.split(",")}
 
 
+def assigns(origin: str | None, scope: str | None) -> bool:
+    """Gehoert das Subnetz als Netz zur EPG? Bei externen EPGs nur mit `import-security`:
+    Export Route Control (`export-rtctrl`) u. a. steuern nur, was das ACI ankuendigt bzw.
+    annimmt (0.111.0, Anwender) - kein Netz der externen EPG."""
+    return origin != "ext" or classifies(scope)
+
+
 def _net(value: str) -> Net | None:
     try:
         return ipaddress.ip_network(value, strict=False)

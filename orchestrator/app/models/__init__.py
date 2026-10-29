@@ -59,6 +59,7 @@ from app.models.logical_zone import (
 )
 from app.models.naming_profile import DictionaryEntry, NamingProfile
 from app.models.nat_rule import NatRule
+from app.models.net_assignment import NET_ASSIGN_KINDS, NetAssignment
 from app.models.network_object import (
     Family,
     MatchStatus,
@@ -182,6 +183,8 @@ __all__ = [
     "SubjectKind",
     "Tenant",
     "TenantCheck",
+    "NetAssignment",
+    "NET_ASSIGN_KINDS",
     "TenantModule",
     "TopoChange",
     "TopoContext",

@@ -80,6 +80,7 @@ from app.store import (
     exits,
     l2_topo,
     l3out_firewall,
+    net_lists,
     path_explain,
     paths,
     policy_check,
@@ -1134,7 +1135,8 @@ class ExitIn(BaseModel):
     source_system_ids: list[int] = []  # nur fuer diese Firewalls (leer = jede)
     interfaces: list[str] = []  # Interfaces bzw. Zonen
     next_hops: list[str] = []  # IPs der Gegenstelle
-    prefixes: list[str] = []  # Netze dahinter (leer = alles, was dorthin geroutet wird)
+    # Netze dahinter (leer = alles, was dorthin geroutet wird); grosse Listen seit 0.111.0
+    prefixes: list[str] = Field(default_factory=list, max_length=net_lists.MAX_PREFIXES)
     routes: list[ExitRoute] = []  # manuell: Praefix -> weiter beim gelesenen Knoten
     description: str | None = Field(default=None, max_length=2000)
 
@@ -1272,6 +1274,33 @@ def exit_suggestions(
             r["shared"] = True  # Router der Umgebung, nicht des Kunden allein
             out.append(r)
     return out
+
+
+class PrefixText(BaseModel):
+    text: str = Field(max_length=500_000)
+
+
+@router.post("/exits/prefixes")
+def check_prefixes(body: PrefixText, principal: Principal = Depends(require_viewer)) -> dict:
+    """Netzliste pruefen (0.111.0): eingefuegter Text -> gueltige, ungueltige, doppelte und
+    zusammengefasste Netze. Speichert nichts."""
+    return net_lists.parse(body.text)
+
+
+@router.get("/exits/learned")
+def learned_prefixes(
+    tenant_id: int | None = None,
+    source_system_ids: Annotated[list[int] | None, Query()] = None,
+    next_hops: Annotated[list[str] | None, Query()] = None,
+    interfaces: Annotated[list[str] | None, Query()] = None,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Netze, die die Geraete ueber Next-Hops bzw. Interfaces einer Anbindung erhalten
+    (0.111.0): Vorschlag fuer „Netze dahinter“ aus dem gelesenen Routing."""
+    tid = _tenant(session, principal, tenant_id)
+    return net_lists.learned(session, tid, source_system_ids or [], next_hops or [],
+                             interfaces or [])  # fmt: skip
 
 
 class DismissIn(BaseModel):

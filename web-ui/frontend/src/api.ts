@@ -1838,6 +1838,7 @@ export interface AppConnRule {
   decides: boolean;
   reverse?: boolean; // ACI (0.69.1): Contract in der Rückrichtung (zustandslos)
   note?: string; // ACI (0.72.1): greift nicht, z. B. nur Antworten (Filter nur mit Quellport)
+  closed?: boolean; // ACI (0.111.0): verbindet die EPGs, öffnet den Dienst nicht
 }
 export interface AppConnCheck {
   label: string; // Firewall bzw. VRF (im Verbund je Firewall)
@@ -1897,6 +1898,7 @@ export interface AppConnection {
   part_of?: string;
   // Eingaben des Wegs für „Warum dieser Weg?“ (0.109.0)
   trace?: { src: string; dst: string; service: string | null; starts: string[] };
+  assign?: NetAssignState | null; // Netz grösser als die Routen (0.111.0, ADR 0040)
 }
 export interface AppConnZones {
   src: string[];
@@ -2441,6 +2443,7 @@ export interface HopRule {
   kind?: "contract" | "taboo" | "preferred_group";
   reverse?: boolean; // ACI (0.69.1): passt in der Rückrichtung (Provider → Consumer, zustandslos)
   note?: string; // ACI (0.72.1): greift nicht, z. B. nur Antworten (Filter nur mit Quellport)
+  closed?: boolean; // ACI (0.111.0): verbindet die EPGs, öffnet den Dienst nicht
   after?: boolean; // 0.78.4: passt, liegt aber hinter der entscheidenden Policy
 }
 export type PolicyVerdict = "allow" | "deny" | "implicit_deny" | "depends" | "unknown";
@@ -2852,6 +2855,67 @@ export const fetchExitSuggestions = (tenantId: number, opts: { covered?: boolean
 // erkannte Router nicht mehr vorschlagen bzw. wieder vorschlagen (Operator, 0.21.0)
 export const dismissExits = (tenantId: number, ips: string[], undo = false) =>
   sendJSON<{ ips: string[] }>(`/api/routing/exits/dismiss${undo ? "/undo" : ""}`, "POST", { tenant_id: tenantId, ips });
+// Grosse Netze der Regeln zuordnen (0.111.0, ADR 0040): von Hand, Zone, Anbindung, Teile nach dem Routing
+export interface NetAssignState {
+  prefix: string;
+  state: "zone" | "exit" | "route" | "ignore" | "split" | "unclear";
+  how: "manual" | "zone" | "exit" | "routing";
+  text: string;
+  open: boolean; // noch zuzuordnen (Befund)
+  zone_id?: number;
+  zone?: string;
+  exit_id?: number;
+  exit?: string;
+  id?: number; // Zuordnung von Hand
+  device?: string;
+}
+export type NetAssignKind = "zone" | "exit" | "route" | "ignore";
+export interface NetAssignment {
+  id: number;
+  tenant_id: number;
+  prefix: string;
+  kind: NetAssignKind;
+  zone_id: number | null;
+  zone: string | null;
+  exit_id: number | null;
+  exit: string | null;
+  note: string | null;
+  changed_by: string | null;
+  changed_at: string;
+}
+export const fetchNetAssignments = (tenantId: number) =>
+  getJSON<NetAssignment[]>(`/api/routing/net-assignments${qs({ tenant_id: tenantId })}`);
+export const setNetAssignment = (body: {
+  tenant_id: number;
+  prefix: string;
+  kind: NetAssignKind;
+  zone_id?: number | null;
+  exit_id?: number | null;
+  note?: string | null;
+}) => sendJSON<NetAssignment>("/api/routing/net-assignments", "PUT", body);
+export const deleteNetAssignment = (id: number) => sendJSON<void>(`/api/routing/net-assignments/${id}`, "DELETE");
+
+// Netzlisten der Anbindungen (0.111.0): Liste prüfen bzw. Netze aus dem gelesenen Routing
+export interface PrefixCheck {
+  valid: string[];
+  invalid: string[];
+  duplicates: number;
+  collapsed: string[];
+}
+export const checkPrefixes = (text: string) => sendJSON<PrefixCheck>("/api/routing/exits/prefixes", "POST", { text });
+export interface LearnedPrefixes {
+  prefixes: string[];
+  collapsed: string[];
+  total: number;
+  cut: boolean;
+}
+export const fetchLearnedPrefixes = (tenantId: number, sids: number[], hops: string[], ifaces: string[]) => {
+  const q = new URLSearchParams({ tenant_id: String(tenantId) });
+  sids.forEach((x) => q.append("source_system_ids", String(x)));
+  hops.forEach((x) => q.append("next_hops", x));
+  ifaces.forEach((x) => q.append("interfaces", x));
+  return getJSON<LearnedPrefixes>(`/api/routing/exits/learned?${q}`);
+};
 export const createExit = (body: TopoExitIn) => sendJSON<TopoExit>("/api/routing/exits", "POST", body);
 export const updateExit = (id: number, body: TopoExitIn) => sendJSON<TopoExit>(`/api/routing/exits/${id}`, "PUT", body);
 export const deleteExit = (id: number) => sendJSON<void>(`/api/routing/exits/${id}`, "DELETE");

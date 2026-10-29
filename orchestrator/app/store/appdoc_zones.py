@@ -268,13 +268,16 @@ class ZoneMap:
         if self._epg_nets is None:  # einmal je Doku: Subnetze aller EPGs des Mandanten
             self._epg_nets = defaultdict(list)
             if self.items:
+                from app.store.aci_relevance import assigns
+
                 rows = self.session.execute(
-                    select(EpgSubnet.epg_id, EpgSubnet.ip)
+                    select(EpgSubnet.epg_id, EpgSubnet.ip, EpgSubnet.origin, EpgSubnet.scope)
                     .join(Epg, Epg.id == EpgSubnet.epg_id)
                     .where(Epg.tenant_id == self.tenant_id)
                 )
-                for eid, ip in rows:
-                    self._epg_nets[eid].append(ip)
+                for eid, ip, origin, scope in rows:
+                    if assigns(origin, scope):  # Export Route Control: keine Zone (0.111.0)
+                        self._epg_nets[eid].append(ip)
         out: list[int] = []
         for e in epgs:
             found = list(self._epg_zones.get(e.id, []))

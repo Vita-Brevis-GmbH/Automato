@@ -689,10 +689,10 @@ test.describe.serial("Kunde TE", () => {
     await modal.getByLabel("Wert").fill("10.20.0.0/16");
     const preview = modal.locator("#customer-preview");
     await expect(preview.locator("tr", { hasText: "Netze" })).toContainText("10.20.0.0/16");
-    // Zugehörigkeit nach dem Weg (0.58.0): Regeln über das Netz, die das Routing nicht erreicht
-    const off = preview.locator("#customer-preview-offpath");
-    await expect(off).toContainText("nicht auf dem Weg");
-    await expect(off.locator("span[title]", { hasText: "CT_rt" })).toBeVisible(); // mit Begründung
+    // Zugehörigkeit nach dem Weg (0.58.0): Regeln über das Netz, die das Routing nicht erreicht – seit 0.111.0 zählt
+    // das Routing-Subnetz von EN_rt (Export Route Control) nicht mehr als Netz von CT_rt, die Beispieldaten haben
+    // keine solche Regel mehr (Server: test_customer_path.py)
+    await expect(preview.locator("#customer-preview-offpath")).toHaveCount(0);
     await modal.locator("button", { hasText: "+ Selektor" }).click();
     await modal.getByLabel("Art").nth(1).selectOption("prefix");
     await modal.getByLabel("Wert").nth(1).fill("10.20.128.0/17");

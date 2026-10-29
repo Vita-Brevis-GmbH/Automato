@@ -20,6 +20,7 @@ import {
   snatText,
 } from "./api";
 import { Fold, FoldTitle } from "./fold";
+import { NetAssignChip, NetAssignDialog } from "./modules/wege/NetAssign";
 import PathExplainDrawer from "./PathExplain";
 import { Verdict, VERDICT } from "./Paths";
 import { Dash, download, Empty, ErrorBox, ExportLangSelect, Icon, Loading, Note } from "./ui";
@@ -435,6 +436,7 @@ function ConnDetail({ c, onRule, onExplain }: { c: AppConnection; onRule: (id: n
                           {!r.label && r.name ? L(` „${r.name}“`, ` “${r.name}”`) : ""} ·{" "}
                           {r.action === "allow" ? L("erlauben", "accept") : L("sperren", "deny")}
                           {r.unsure.length ? L(` · möglich (${r.unsure.join(", ")})`, ` · possible (${r.unsure.join(", ")})`) : ""}
+                          {r.closed ? L(" · öffnet den Dienst nicht", " · does not open the service") : ""}
                           {r.note ? L(` · greift nicht: ${r.note}`, ` · does not apply: ${r.note}`) : ""}
                         </div>
                       ))
@@ -898,6 +900,8 @@ export default function ConnectionsCard({
   const [error, setError] = useState<unknown>(null);
   const [open, setOpen] = useState<string | null>(null);
   const [explain, setExplain] = useState<AppConnection | null>(null);
+  const [assigning, setAssigning] = useState<string | null>(null); // grosses Netz zuordnen (0.111.0)
+  const [bump, setBump] = useState(0); // nach dem Zuordnen neu laden
   const [onlyIssues, setOnlyIssues] = useState(false);
   const [q, setQ] = useState("");
   const [picked, setPicked] = useState<Picked>({});
@@ -910,7 +914,7 @@ export default function ConnectionsCard({
   // 0.74.1: erst laden, wenn der Bereich offen ist – die Wege sind der teuerste Teil der Doku
   const wanted = !fold || fold.open;
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
-  const loadKey = `${appId}:${reload}`;
+  const loadKey = `${appId}:${reload}:${bump}`;
   useEffect(() => {
     if (!wanted || loadedFor === loadKey) return;
     let current = true;
@@ -1135,6 +1139,17 @@ export default function ConnectionsCard({
                           {c.parts.join(", ")}
                         </div>
                       )}
+                      {c.assign && (
+                        <div className="conn-assign" onClick={(e) => e.stopPropagation()}>
+                          <NetAssignChip a={c.assign} />{" "}
+                          {c.assign.open && <span className="faint">{c.assign.text}</span>}
+                          {canCapture && tenantId != null && (
+                            <button className="linkbtn" onClick={() => setAssigning(c.assign!.prefix)}>
+                              {c.assign.how === "manual" ? L("ändern", "change") : L("zuordnen", "assign")}
+                            </button>
+                          )}
+                        </div>
+                      )}
                       {c.part_of && (
                         <div
                           className="faint conn-part-of"
@@ -1198,6 +1213,17 @@ export default function ConnectionsCard({
           }}
           canCapture={canCapture}
           onClose={() => setExplain(null)}
+        />
+      )}
+      {assigning && tenantId != null && (
+        <NetAssignDialog
+          tenantId={tenantId}
+          prefix={assigning}
+          onClose={() => setAssigning(null)}
+          onSaved={() => {
+            setAssigning(null);
+            setBump((b) => b + 1);
+          }}
         />
       )}
     </div>

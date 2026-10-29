@@ -103,6 +103,11 @@ Neue Texte halten sich an diese Liste, damit derselbe Begriff überall gleich he
 | ausblenden / einblenden | hide / show |
 | parallele Firewalls, Verbund | Parallel firewalls, parallel group |
 | Transfernetz | Transfer network |
+| Netze dahinter (Liste prüfen, zusammenfassen) | Networks behind (check, collapse list) |
+| Netz grösser als die Routen | Network wider than the routes |
+| Netz zuordnen, Zuordnung von Hand | Assign network, manual assignment |
+| aufgeteilt / unklar (Zuordnung) | split / unclear (assignment) |
+| Export Route Control (nur Routing) | Export Route Control (routing only) |
 | Topologie | Topology |
 | Relevanz | Relevance |
 | Gegenstelle | Peer |

@@ -369,6 +369,23 @@ class Behind:
         if route is None or not route["next_hops"]:
             return None  # keine Route (bzw. ohne Next-Hop, z. B. Blackhole): keine Aussage
         ports = self._aci_ports(fw.key) | ({fw.interface} if fw.interface else set())
+        # 0.111.0 (Anwender): die IP im Transfernetz dieses L3Outs (angeschlossen am Interface
+        # der Firewall zu ihm) liegt auf der Verbindung selbst - sie gehoert zu diesem L3Out,
+        # nicht „zurueck ins ACI“ (sonst gewann ein anderer L3Out mit seiner Default-Route)
+        hops = route["next_hops"] or []
+        if (fw.interface and route["protocol"] in ("connected", "local")
+                and all(h.get("interface") == fw.interface for h in hops)):  # fmt: skip
+            prefix = route["prefix"]
+            return (
+                "out",
+                route["prefix_len"],
+                L(
+                    f"{node.label} hat {prefix} angeschlossen ({fw.interface}, Transfernetz zum "
+                    "L3Out)",
+                    f"{node.label} has {prefix} connected ({fw.interface}, transfer network to the "
+                    "L3Out)",
+                ),
+            )
         owners = g.owners()
         ifaces: list[str] = []
         outward = False

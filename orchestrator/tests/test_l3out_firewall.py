@@ -491,3 +491,27 @@ def test_l3out_firewall_beim_loeschen_der_firewall(client, session_factory):
 
     assert session_factory().query(L3OutFirewall).count() == 0
     assert _l3outs(client, ids["tid"])["L3O_vpn"]["behind"]["origin"] == "derived"
+
+
+def test_transfernetz_gehoert_zu_seinem_l3out(client, session_factory):
+    """0.111.0 (Anwender): eine IP im Transfernetz eines L3Outs (10.255.1.0/29, an fw-bit am
+    Interface zu L3O_bit angeschlossen) kommt ueber diesen L3Out - bisher galt die
+    angeschlossene Route als „zurueck ins ACI“, und L3O_inet gewann mit der Default-Route."""
+    import ipaddress
+
+    from app.store import l3out_firewall
+
+    ids = _seed(client)
+    s = session_factory()
+    behind = l3out_firewall.Behind(s, ids["tid"])
+    d = behind.decide(ids["apic-01"], "TE:VRF1", ipaddress.ip_address("10.255.1.3"))
+    assert d.best == ["L3O_bit"], d
+    assert d.reasons["L3O_bit"] == (
+        "fw-bit hat 10.255.1.0/29 angeschlossen (to-aci, Transfernetz zum L3Out)"
+    )
+    # das Transfernetz von L3O_inet entsprechend; ein internes Netz weiter nach dem Routing
+    d = behind.decide(ids["apic-01"], "TE:VRF1", ipaddress.ip_address("10.255.2.4"))
+    assert d.best == ["L3O_inet"]
+    d = behind.decide(ids["apic-01"], "TE:VRF1", ipaddress.ip_address("192.168.10.5"))
+    assert d.best == ["L3O_bit"] and "L3O_inet" in d.back
+    s.close()

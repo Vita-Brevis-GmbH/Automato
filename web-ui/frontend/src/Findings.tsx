@@ -6,6 +6,7 @@ import type { View, ViewParams } from "./App";
 import { customerCan, type Me } from "./auth";
 import FindingDialog from "./FindingDialog";
 import Checks from "./modules/findings/Checks";
+import { NetAssignDialog } from "./modules/wege/NetAssign";
 import { FINDING_GROUPS, FINDING_HINT, FINDING_LABEL, findingLabel } from "./refs";
 import { Empty, ErrorBox, fmtTime, Icon, Loading, PageHead, SeverityBadge } from "./ui";
 import { L } from "./i18n";
@@ -284,6 +285,7 @@ export default function Findings({
   const [q, setQ] = useState(initialQuery);
   const [open, setOpen] = useState<number | null>(null); // aufgeklappter Befund
   const [adding, setAdding] = useState(false); // Finding von Hand (0.109.0)
+  const [assigning, setAssigning] = useState<string | null>(null); // grosses Netz zuordnen (0.111.0)
   const [tab, setTab] = useState(initialTab);
   const choose = (t: "befunde" | "pruefungen") => {
     setTab(t);
@@ -487,7 +489,15 @@ export default function Findings({
             </span>
           </div>
           <ErrorBox error={error} prefix="Findings" onClose={() => setError(null)} />
-          {adding && tenantId !== null && (
+          {assigning && tenantId !== null && (
+          <NetAssignDialog
+            tenantId={tenantId}
+            prefix={assigning}
+            onClose={() => setAssigning(null)}
+            onSaved={() => setAssigning(null)}
+          />
+        )}
+        {adding && tenantId !== null && (
             <FindingDialog
               tenantId={tenantId}
               draft={{}}
@@ -584,6 +594,16 @@ export default function Findings({
                                   <dd className="mono">{fmtTime(f.first_seen)}</dd>
                                 </dl>
                                 <RouteEntries f={f} />
+                              {f.type === "net_wider_than_routes" && canAdd && (
+                                <div style={{ marginTop: 6 }}>
+                                  <button className="btn btn-sm" onClick={() => setAssigning(String(f.detail?.value ?? ""))}>
+                                    {L("Netz zuordnen", "Assign network")}
+                                  </button>{" "}
+                                  <span className="faint">
+                                    {L("gilt ab dem nächsten Abgleich", "applies from the next reconciliation")}
+                                  </span>
+                                </div>
+                              )}
                                 {others.length > 0 && (
                                   <div style={{ marginTop: 6 }}>
                                     <span className="faint">{L("Anzeigen: ", "Show: ")}</span>

@@ -205,6 +205,9 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "module.switched": frozenset({"tenant_id", "module", "enabled", "changed"}),
     # Pruefungen der Findings je Mandant (0.110.0, ADR 0039)
     "check.switched": frozenset({"tenant_id", "check", "enabled"}),
+    # Grosse Netze der Regeln von Hand zuordnen (0.111.0, ADR 0040)
+    "net_assignment.set": frozenset({"tenant_id", "prefix", "kind", "zone_id", "exit_id"}),
+    "net_assignment.deleted": frozenset({"tenant_id", "prefix", "kind", "zone_id", "exit_id"}),
     "zone_policy.set": frozenset(
         {"tenant_id", "src_zone_id", "dst_zone_id", "intent", "services", "via"}
     ),

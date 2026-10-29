@@ -265,3 +265,36 @@ def test_anbindung_fehler_und_englisch(client):
     r = client.get("/routing/resolve", params={"tenant_id": tid, "q": "internet"}, headers=EN)
     (hit,) = (h for h in r.json()["hits"] if h["type"] == "exit")
     assert hit["detail"] == "any address on the Internet · manual"
+
+
+def test_netzlisten_fuer_anbindungen(client):
+    """0.111.0 (Anwender: „grosse Listen von Subnetzen angeben“): Liste einfuegen (Text neben
+    den Netzen ignoriert, „Netz Maske“, doppelte und ungueltige gemeldet, zusammenfassen) und
+    Netze aus dem Routing als Vorschlag (ueber Next-Hop bzw. Interface der Anbindung)."""
+    tid, sid, _ = _seed(client)
+    text = (
+        "MPLS Kunde A: 10.80.0.0/16, 10.81.0.0 255.255.0.0\n10.80.0.0/16 (doppelt)\n"
+        + "\n".join(f"172.16.{i}.0/24 Standort {i}" for i in range(4))
+        + "\n10.1.2.300/24"
+    )
+    r = client.post("/routing/exits/prefixes", json={"text": text}, headers=OPERATOR)
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert out["valid"] == ["10.80.0.0/16", "10.81.0.0/16", "172.16.0.0/24", "172.16.1.0/24",
+                            "172.16.2.0/24", "172.16.3.0/24"]  # fmt: skip
+    assert out["duplicates"] == 1 and out["invalid"] == ["10.1.2.300/24"]
+    assert out["collapsed"] == ["10.80.0.0/15", "172.16.0.0/22"]
+    # gelernt ueber den MPLS-Next-Hop bzw. das Interface (ohne Default-Route, ohne angeschlossene)
+    params = {"tenant_id": tid, "source_system_ids": [sid], "next_hops": ["10.90.0.2"]}
+    learned = client.get("/routing/exits/learned", params=params).json()
+    assert learned["prefixes"] == ["10.80.0.0/16", "10.81.0.0/16"]
+    assert learned["collapsed"] == ["10.80.0.0/15"] and learned["total"] == 2
+    by_iface = client.get(
+        "/routing/exits/learned", params={"tenant_id": tid, "interfaces": ["wan1"]}
+    ).json()
+    assert by_iface["total"] == 0  # nur die Default-Route
+    # grosse Liste speichern
+    body = {"tenant_id": tid, "name": "MPLS", "kind": "mpls", "next_hops": ["10.90.0.2"],
+            "prefixes": [f"10.{i // 256}.{i % 256}.0/24" for i in range(1200)]}  # fmt: skip
+    r = client.post("/routing/exits", json=body, headers=OPERATOR)
+    assert r.status_code == 201 and len(r.json()["prefixes"]) == 1200

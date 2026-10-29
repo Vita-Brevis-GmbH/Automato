@@ -1375,6 +1375,8 @@ def _epg_values(session: Session, data: TenantData, epg: Epg) -> tuple[list[str]
     own: list[str] = []
     shared: list[str] = []
     for s in session.scalars(select(EpgSubnet).where(EpgSubnet.epg_id == epg.id)):
+        if not aci_relevance.assigns(s.origin, s.scope):
+            continue  # Export Route Control: nur Routing, kein Netz der EPG (0.111.0)
         (shared if s.origin == "bd" and others else own).append(s.ip)
     own += session.scalars(select(EpgEndpoint.ip).where(EpgEndpoint.epg_id == epg.id))
     for vm in epg_store.vms_of(session, [epg.id]).get(epg.id, []):

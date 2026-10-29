@@ -14,6 +14,10 @@ import {
   Redundancy,
   fetchExits,
   fetchExitSuggestions,
+  checkPrefixes,
+  fetchLearnedPrefixes,
+  LearnedPrefixes,
+  PrefixCheck,
   fetchFirewallChoices,
   fetchHa,
   fetchL3Outs,
@@ -49,6 +53,7 @@ import {
   updateExit,
 } from "./api";
 import { Pager, useDebounced } from "./Objects";
+import { NetAssignList } from "./modules/wege/NetAssign";
 import TopologyTab from "./Topology";
 import { FoldTitle, useFolds } from "./fold";
 import { Dash, Empty, ErrorBox, fmtTime, Icon, Loading, Note, PageHead, SharedChip } from "./ui";
@@ -1328,7 +1333,9 @@ function ExitForm({
   const [sids, setSids] = useState<number[]>(draft.source_system_ids ?? []);
   const [ifaces, setIfaces] = useState((draft.interfaces ?? []).join(", "));
   const [hops, setHops] = useState((draft.next_hops ?? []).join(", "));
-  const [prefixes, setPrefixes] = useState((draft.prefixes ?? []).join(", "));
+  const [prefixes, setPrefixes] = useState((draft.prefixes ?? []).join("\n"));
+  const [checked, setChecked] = useState<PrefixCheck | null>(null); // Liste geprüft (0.111.0)
+  const [learned, setLearned] = useState<LearnedPrefixes | null>(null);
   const [routes, setRoutes] = useState<{ prefix: string; target: string }[]>(draft.routes ?? []);
   const [description, setDescription] = useState(draft.description ?? "");
   const [detected, setDetected] = useState<ExitSuggestion[] | null>(null);
@@ -1365,24 +1372,56 @@ function ExitForm({
     setHops(union(hopList, routers.map((r) => r.ip)).join(", "));
     if (sids.length) setSids(union(sids, related.flatMap((s) => s.source_system_ids)));
   };
-  const save = () => {
-    const body: TopoExitIn = {
-      tenant_id: tenantId,
-      name: name.trim(),
-      kind,
-      source_system_ids: sids,
-      interfaces: portList,
-      next_hops: hopList,
-      prefixes: csv(prefixes),
-      routes: routes.filter((r) => r.prefix.trim() && r.target),
-      description: description.trim() || null,
-    };
+  // Netzliste (0.111.0): Text mit Netzen, Namen bzw. Kommentaren – der Server erkennt die Netze
+  const check = () => {
+    setError(null);
+    return checkPrefixes(prefixes).then((c) => {
+      setChecked(c);
+      return c;
+    });
+  };
+  const collapseList = (c: PrefixCheck) => {
+    setPrefixes(c.collapsed.join("\n"));
+    setChecked({ ...c, valid: c.collapsed, duplicates: 0, invalid: [] });
+  };
+  const suggest = () => {
+    setError(null);
+    fetchLearnedPrefixes(tenantId, sids, hopList, portList).then(setLearned).catch(setError);
+  };
+  const addNets = (nets: string[]) => {
+    const now = prefixes.split(/\n/).map((x) => x.trim()).filter(Boolean);
+    setPrefixes(union(now, nets).join("\n"));
+    setChecked(null);
+    setLearned(null);
+  };
+  const save = async () => {
     setBusy(true);
     setError(null);
-    (draft.id ? updateExit(draft.id, body) : createExit(body))
-      .then(onSaved)
-      .catch(setError)
-      .finally(() => setBusy(false));
+    try {
+      const nets = await checkPrefixes(prefixes);
+      setChecked(nets);
+      if (nets.invalid.length) {
+        throw new Error(L(`Netze dahinter: ungültig – ${nets.invalid.slice(0, 5).join(", ")}`,
+                          `Networks behind: invalid – ${nets.invalid.slice(0, 5).join(", ")}`));
+      }
+      const body: TopoExitIn = {
+        tenant_id: tenantId,
+        name: name.trim(),
+        kind,
+        source_system_ids: sids,
+        interfaces: portList,
+        next_hops: hopList,
+        prefixes: nets.valid,
+        routes: routes.filter((r) => r.prefix.trim() && r.target),
+        description: description.trim() || null,
+      };
+      await (draft.id ? updateExit(draft.id, body) : createExit(body));
+      onSaved();
+    } catch (e) {
+      setError(e);
+    } finally {
+      setBusy(false);
+    }
   };
   return (
     <div className="card" id="exit-form" ref={card} style={{ scrollMarginTop: 72 }}>
@@ -1435,16 +1474,85 @@ function ExitForm({
             <label htmlFor="ex-hops">{L("Next-Hops (Gegenstelle)", "Next-hops (peer)")}</label>
             <input id="ex-hops" className="input" placeholder="198.51.100.1" value={hops} onChange={(e) => setHops(e.target.value)} />
           </div>
-          <div className="field">
-            <label htmlFor="ex-nets">{L("Netze dahinter", "Networks behind")}</label>
-            <input
-              id="ex-nets"
-              className="input"
-              placeholder={L("leer = alles, was dorthin geroutet wird", "empty = everything routed there")}
-              value={prefixes}
-              onChange={(e) => setPrefixes(e.target.value)}
-            />
+        </div>
+        <div className="field" id="ex-nets-field">
+          <label htmlFor="ex-nets">
+            {L("Netze dahinter", "Networks behind")}{" "}
+            <span className="faint">
+              {L(
+                "– leer = alles, was dorthin geroutet wird; Liste einfügen (je Zeile, Komma oder Leerzeichen, auch „Netz Maske“), Text daneben wird ignoriert",
+                "– empty = everything routed there; paste a list (per line, comma or space, also “network mask”), text next to it is ignored",
+              )}
+            </span>
+          </label>
+          <textarea
+            id="ex-nets"
+            className="input mono"
+            rows={Math.min(10, Math.max(3, prefixes.split("\n").length))}
+            placeholder={"10.0.0.0/8\n172.16.0.0 255.240.0.0  Kunde A"}
+            value={prefixes}
+            onChange={(e) => {
+              setPrefixes(e.target.value);
+              setChecked(null);
+            }}
+          />
+          <div className="filterbar" style={{ margin: "6px 0 0" }}>
+            <button className="btn btn-sm" id="ex-nets-check" onClick={() => void check().catch(setError)} disabled={!prefixes.trim()}>
+              {L("Liste prüfen", "Check list")}
+            </button>
+            <button
+              className="btn btn-sm"
+              id="ex-nets-learned"
+              onClick={suggest}
+              disabled={!hopList.length && !portList.length}
+              title={L(
+                "Netze, die die Geräte über diese Next-Hops bzw. Interfaces erhalten (gelesenes Routing, ohne Default-Route)",
+                "Networks the devices receive via these next-hops or interfaces (routing read, without default route)",
+              )}
+            >
+              {L("aus dem Routing vorschlagen", "suggest from routing")}
+            </button>
+            {checked && (
+              <span className="faint" id="ex-nets-summary">
+                {L(`${checked.valid.length} Netze`, `${checked.valid.length} networks`)}
+                {checked.duplicates ? L(` · ${checked.duplicates} doppelt`, ` · ${checked.duplicates} duplicate`) : ""}
+                {checked.invalid.length ? (
+                  <span className="critfg">
+                    {L(` · ungültig: ${checked.invalid.slice(0, 5).join(", ")}`, ` · invalid: ${checked.invalid.slice(0, 5).join(", ")}`)}
+                  </span>
+                ) : null}
+                {checked.collapsed.length < checked.valid.length && (
+                  <>
+                    {" · "}
+                    <button className="linkbtn" id="ex-nets-collapse" onClick={() => collapseList(checked)}>
+                      {L(`zusammenfassen (${checked.collapsed.length})`, `summarize (${checked.collapsed.length})`)}
+                    </button>
+                  </>
+                )}
+              </span>
+            )}
           </div>
+          {learned && (
+            <div className="note" id="ex-nets-learned-list" style={{ marginTop: 6 }}>
+              {learned.total === 0 ? (
+                L("Keine gelernten Netze über diese Next-Hops bzw. Interfaces.", "No networks learned via these next-hops or interfaces.")
+              ) : (
+                <>
+                  {L(
+                    `${learned.total} Netze im Routing über diese Anbindung (zusammengefasst ${learned.collapsed.length}): `,
+                    `${learned.total} networks in the routing via this exit (summarized ${learned.collapsed.length}): `,
+                  )}
+                  <span className="mono">{learned.collapsed.slice(0, 8).join(", ")}{learned.collapsed.length > 8 ? " …" : ""}</span>{" "}
+                  <button className="btn btn-sm" onClick={() => addNets(learned.collapsed)}>
+                    {L("zusammengefasst übernehmen", "add summarized")}
+                  </button>{" "}
+                  <button className="btn btn-sm btn-ghost" onClick={() => addNets(learned.prefixes)}>
+                    {L("einzeln übernehmen", "add one by one")}
+                  </button>
+                </>
+              )}
+            </div>
+          )}
         </div>
         <div className="field" id="ex-fws">
           <label>
@@ -1813,7 +1921,11 @@ function ExitsTab({
                     </button>
                   ) : null}
                 </td>
-                <td className="mono">{e.prefixes.join(", ") || <span className="faint">{L("alles", "everything")}</span>}</td>
+                <td className="mono" title={e.prefixes.length > 4 ? e.prefixes.join("\n") : undefined}>
+                  {e.prefixes.length > 4
+                    ? `${e.prefixes.slice(0, 3).join(", ")} … ${L(`(${e.prefixes.length} Netze)`, `(${e.prefixes.length} networks)`)}`
+                    : e.prefixes.join(", ") || <span className="faint">{L("alles", "everything")}</span>}
+                </td>
                 <td>
                   {e.routes.length ? (
                     <div className="objs">
@@ -1842,6 +1954,8 @@ function ExitsTab({
           })}
         </tbody>
       </List>
+      {/* 0.111.0: grosse Netze der Regeln, von Hand zugeordnet */}
+      <NetAssignList tenantId={tenantId} canEdit={canEdit} />
       {/* Vorschläge zu unterst; „übernehmen“ springt hoch zum Formular */}
       <SuggestedExits
         rows={suggested}

@@ -263,6 +263,9 @@ function HopRuleLine({ p }: { p: HopRule }) {
       {matchedVia(p)}
       {p.services.length ? ` · ${p.services.join(", ")}` : ""}
       {p.unsure.length ? L(` · möglich (${p.unsure.join(", ")})`, ` · possible (${p.unsure.join(", ")})`) : ""}
+      {p.closed ? (
+        <span className="aci-note aci-closed">{L(" · öffnet den Dienst nicht", " · does not open the service")}</span>
+      ) : null}
       {p.note ? (
         <span className="aci-note">
           {L(" · greift nicht: ", " · does not apply: ")}

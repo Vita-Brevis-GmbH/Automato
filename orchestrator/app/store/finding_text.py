@@ -575,7 +575,47 @@ def _l2(subject: str, d: dict, ftype: str) -> tuple[str, str]:
     return f"{d.get('text') or subject}.", L(*_L2_HINT[ftype])
 
 
+def _net_wider(subject: str, d: dict) -> tuple[str, str]:
+    """Netz der Regel groesser als die Routen (0.111.0, ADR 0040)."""
+    value, device = d.get("value") or subject, d.get("source") or L("dem Gerät", "the device")
+    via = d.get("route") or "?"
+    parts = d.get("parts") or []
+    total = d.get("parts_total") or len(parts)
+    rules = d.get("rules") or []
+    used = (
+        L(
+            f", verwendet in {len(rules)} Regel{'n' if len(rules) != 1 else ''}",
+            f", used in {len(rules)} rule{'s' if len(rules) != 1 else ''}",
+        )
+        if rules
+        else ""
+    )
+    if total:
+        shown = ", ".join(parts[:4]) + (L(" …", " …") if total > 4 else "")
+        what = L(f"{total} Teile darin sind genauer geroutet ({shown}), der Rest geht nur über "
+                 f"{via}",
+                 f"{total} parts of it are routed more specifically ({shown}), the rest only via "
+                 f"{via}")  # fmt: skip
+    else:
+        what = L(f"es geht nur über {via}", f"it only goes via {via}")
+    return (
+        L(
+            f"{device} routet {value} nicht als Ganzes{used}: {what}.",
+            f"{device} does not route {value} as a whole{used}: {what}.",
+        ),
+        L(
+            "Unklar, wohin das Netz der Regel gehört: von Hand einer Zone bzw. Anbindung "
+            "zuordnen, „nur die Teile“ oder „Weg nach dem Routing stimmt“ wählen – oder das Netz "
+            "in einer Zone bzw. bei den Netzen einer Anbindung eintragen.",
+            "Unclear where the network of the rule belongs: assign it to a zone or exit by hand, "
+            "choose “only the parts” or “path by the routing is right” – or enter the network in "
+            "a zone or in the networks of an exit.",
+        ),
+    )
+
+
 _TOPO_TEXT = {
+    "net_wider_than_routes": _net_wider,
     "topo_duplicate_ip": _dup_ip,
     "topo_mask_mismatch": _mask,
     "topo_route_loop": _loop,

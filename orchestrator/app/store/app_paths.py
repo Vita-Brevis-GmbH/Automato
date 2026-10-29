@@ -56,7 +56,7 @@ from app.models import (
     RuleIpRange,
     TopoL3Out,
 )
-from app.store import aci_direction, appdoc, epg_locate, paths, policy_check
+from app.store import aci_direction, appdoc, epg_locate, net_assign, paths, policy_check
 from app.store import epgs as epg_store
 from app.store import nat as nat_store
 from app.store.topology import endpoint, is_net, within
@@ -123,6 +123,7 @@ def build(session: Session, app: Application, doc: dict | None = None,
     l3 = L3Outs(session, {k[0] for k in graph.nodes})
     l3.locator = epg_locate.Locator(session, tid, data.aci, data.epgs_by_id)
     zctx = zone_path.ZoneContext(session, tid, graph) if zones else None
+    assigner = net_assign.Assigner(session, tid)  # grosse Netze der Regeln (0.111.0)
     unused: list[dict] = []  # Regeln nie auf dem Weg ihrer Verbindung (0.107.0)
 
     def keep(conn: dict) -> bool:
@@ -135,8 +136,9 @@ def build(session: Session, app: Application, doc: dict | None = None,
         return bool(conn["rules"]) or not conn["unused"]
 
     for c in list(conns.values())[:MAX_TRACES]:
-        conn = _connection(session, tid, graph, checks, data, rules, c, l3, zctx)
-        shown = keep(conn)
+        conn = _connection(session, tid, graph, checks, data, rules, c, l3, zctx, assigner)
+        # nur die genauer gerouteten Teile zaehlen (von Hand, 0.111.0): das ganze Netz nicht
+        shown = keep(conn) and (conn.get("assign") or {}).get("state") != "ignore"
         if shown:
             out.append(conn)
         # Netz als Ziel (0.79.1, Anwender): genauer geroutete Teile (z. B. ueber einen anderen
@@ -582,9 +584,15 @@ def _aci_counter(session: Session, data: appdoc.TenantData, h: dict) -> list[_Si
 
 
 def _subnets(session: Session, epg_id: int) -> list:
+    from app.store.aci_relevance import assigns
+
     out = []
-    for ip in session.scalars(select(EpgSubnet.ip).where(EpgSubnet.epg_id == epg_id)
-                              .order_by(EpgSubnet.origin, EpgSubnet.ip)):  # fmt: skip
+    for ip, origin, scope in session.execute(
+            select(EpgSubnet.ip, EpgSubnet.origin, EpgSubnet.scope)
+            .where(EpgSubnet.epg_id == epg_id)
+            .order_by(EpgSubnet.origin, EpgSubnet.ip)):  # fmt: skip
+        if not assigns(origin, scope):
+            continue  # nur Routing (Export Route Control) - kein Netz der externen EPG
         try:
             out.append(ipaddress.ip_interface(ip).network)
         except ValueError:
@@ -661,6 +669,7 @@ def _connection(
     c: _Conn,
     l3: "L3Outs | None" = None,
     zctx=None,
+    assigner: "net_assign.Assigner | None" = None,
 ) -> dict:
     res, start = connection_trace(session, tid, graph, checks, c.src.ip, c.dst.ip, c.service,
                                   c.starts)  # fmt: skip
@@ -680,6 +689,7 @@ def _connection(
     mismatch = _mismatch(states, verdict, text, reached)
     variants = path_variants(res["paths"])
     parts = _net_parts(c, first)
+    assign = _assign(c, first, assigner)
     return {
         "key": f"{c.src.ip}>{c.dst.ip}>{_service_text(c.service) or 'alle'}",
         "direction": c.direction,
@@ -705,6 +715,8 @@ def _connection(
         "zones": _zones_out(res.get("zones"), first),
         # Teile des Ziel-Netzes, die genauer anders geroutet werden (eigene Verbindungen)
         "parts": parts,
+        # Netz groesser als die Routen (0.111.0, ADR 0040): wohin es gehoert
+        "assign": assign,
         # Eingaben des Wegs fuer „Warum dieser Weg?“ (0.109.0, `GET /routing/explain`)
         "trace": {
             "src": c.src.ip,
@@ -774,6 +786,21 @@ def entries_of(session: Session, tid: int, graph: paths.Graph, checks: policy_ch
             if entry[:2] not in [e[:2] for e in out]:
                 out.append(entry)
     return out
+
+
+def _assign(c: _Conn, first: dict | None, assigner) -> dict | None:
+    """Ziel-Netz der Regel, das ein Geraet auf dem Weg nicht als Ganzes routet (0.111.0):
+    Zuordnung von Hand, nach Zone bzw. Anbindung, sonst Teile nach dem Routing bzw. unklar."""
+    if assigner is None or first is None or c.dst.kind != "object":
+        return None
+    net = net_assign.as_net(c.dst.ip)
+    if net is None:
+        return None
+    for h in first["hops"]:
+        route = h.get("route")
+        if net_assign.wider(net, route):
+            return assigner.decide(net, route).out() | {"device": h.get("label")}
+    return None
 
 
 def _net_parts(c: _Conn, first: dict | None) -> list[str]:
@@ -910,20 +937,24 @@ def _hop(h: dict, l3: L3Outs | None = None) -> dict:
                 "dst_epg": r.get("dst_epg"),
                 "rules": [
                     {
-                        k: e.get(k)
-                        for k in (
-                            "rule_id",
-                            "external_id",
-                            "name",
-                            "label",
-                            "kind",
-                            "action",
-                            "src",
-                            "dst",
-                            "services",
-                            "unsure",
-                            "decides",
-                        )
+                        **{
+                            k: e.get(k)
+                            for k in (
+                                "rule_id",
+                                "external_id",
+                                "name",
+                                "label",
+                                "kind",
+                                "action",
+                                "src",
+                                "dst",
+                                "services",
+                                "unsure",
+                                "decides",
+                            )
+                        },
+                        # ACI: greift nicht (nur Antworten) bzw. oeffnet den Dienst nicht (0.111.0)
+                        **{k: e[k] for k in ("note", "closed") if e.get(k)},
                     }  # fmt: skip
                     for e in r["rules"]
                 ],

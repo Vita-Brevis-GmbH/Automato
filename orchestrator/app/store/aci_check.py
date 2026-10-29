@@ -390,12 +390,13 @@ class AciChecker:
             return {"verdict": "allow", "rules": [], "text": text}
         ps, pd = self.proxies(s.epg, vrf), self.proxies(d.epg, dst_vrf or vrf)
         shown: list[dict] = []
+        closed_entries: list[dict] = []
         decisive = None
         for c in self.contracts(sid):
             hit = self._match(c, ps, pd, s, d, service)
             if hit is None:
                 continue
-            ok, back, consumer, provider, note = hit
+            ok, back, consumer, provider, note, closed = hit
             if back:  # Rueckrichtung: die Quelle ist Provider, das Ziel Consumer
                 via_src, via_dst = ps[min(provider)], pd[min(consumer)]
             else:
@@ -420,6 +421,12 @@ class AciChecker:
             }
             if note:  # greift nicht: nur Antworten (0.72.1) - zur Erklaerung, entscheidet nicht
                 entry |= {"note": note, "unsure": [], "services": c.names[:4]}
+            if closed:  # verbindet die EPGs, oeffnet den Dienst nicht (0.111.0) - zur Erklaerung
+                if c.allow and c.kind == "contract" and len(closed_entries) < SHOWN:
+                    closed_entries.append(
+                        entry | {"closed": True, "unsure": [], "open": c.services[:8]}
+                    )
+                continue
             if not ok:
                 if len(shown) < SHOWN:
                     shown.append(entry)
@@ -427,7 +434,7 @@ class AciChecker:
             shown.append(entry)
             decisive = entry  # Taboos stehen vorn: sie sperren vor allen Contracts
             break
-        return _verdict(decisive, shown, s, d)
+        return _verdict(decisive, shown, s, d, service, closed_entries)
 
     def _match(self, c: _Contract, ps: dict, pd: dict, s: Member, d: Member, service):
         """(Urteil Dienst, Rueckrichtung, Consumer, Provider) bzw. None: Consumer -> Provider
@@ -436,6 +443,7 @@ class AciChecker:
         nur Antworten (0.72.1), greift er dort nicht - mit Hinweis, wenn sonst nichts passt."""
         best = None
         note = None
+        closed = None  # Consumer und Provider passen, der Filter oeffnet den Dienst nicht
         for back in (False, True):
             if back and not c.reverse:
                 break
@@ -447,16 +455,18 @@ class AciChecker:
             if not self.cls.scope_allows(c.scope, a.epg, b.epg):
                 continue  # Scope (AP, VRF, Tenant) - auch bei Contracts aus common (0.43.1)
             if not back and c.replies_only:
-                note = (False, False, consumer, provider, aci_direction.replies())
+                note = (False, False, consumer, provider, aci_direction.replies(), False)
                 continue
             ok = service_ok(c.reverse if back else c.services, service)
             if ok is False:
+                if closed is None and not back:
+                    closed = (False, back, consumer, provider, None, True)
                 continue
             if best is None or (ok and not best[0]):
-                best = (ok, back, consumer, provider, None)
+                best = (ok, back, consumer, provider, None, False)
             if ok:
                 break
-        return best or note
+        return best or note or closed
 
 
 def _label(c: _Contract) -> str:
@@ -467,7 +477,8 @@ def _label(c: _Contract) -> str:
     return f"Contract {c.name}"
 
 
-def _verdict(decisive: dict | None, shown: list[dict], s: Member, d: Member) -> dict:
+def _verdict(decisive: dict | None, shown: list[dict], s: Member, d: Member,
+             service=None, closed: list[dict] | None = None) -> dict:  # fmt: skip
     # Contracts, die nur Antworten zulassen (`note`), greifen nicht - kein „moeglich“
     before = [e for e in shown if not e["decides"] and not e.get("note")]
     if decisive is not None:
@@ -490,12 +501,32 @@ def _verdict(decisive: dict | None, shown: list[dict], s: Member, d: Member) -> 
         text = L("nur mögliche Contracts (Dienst nicht angegeben), sonst gesperrt",
                  "only possible contracts (service not specified), otherwise blocked")  # fmt: skip
         return {"verdict": "depends", "rules": shown, "text": text}
+    notes = [e for e in shown if e.get("note")]
+    if closed:
+        # 0.111.0 (Anwender): der vorhandene Contract hat den Port nicht offen - statt „kein
+        # Contract“; mit den Diensten, die er oeffnet
+        labels = ", ".join(e["label"] for e in closed[:3])
+        opened = ", ".join(dict.fromkeys(x for e in closed[:3] for x in e["open"])) or "–"
+        want = _want_text(service)
+        text = L(f"{labels} von {s.text} zu {d.text} öffnet {want} nicht (offen: {opened}) – "
+                 "im ACI gesperrt",
+                 f"{labels} from {s.text} to {d.text} does not open {want} (open: {opened}) – "
+                 "blocked in the ACI")  # fmt: skip
+        if notes:
+            text += f" ({notes[0]['label']}: {notes[0]['note']})"
+        return {"verdict": "implicit_deny", "rules": closed + notes, "text": text}
     text = L(f"kein Contract von {s.text} zu {d.text} – im ACI gesperrt",
              f"no contract from {s.text} to {d.text} – blocked in the ACI")  # fmt: skip
-    notes = [e for e in shown if e.get("note")]
     if notes:
         text += f" ({notes[0]['label']}: {notes[0]['note']})"
     return {"verdict": "implicit_deny", "rules": notes, "text": text}
+
+
+def _want_text(service) -> str:
+    """Gesuchter Dienst im Satz: `tcp/1433`, `icmp` bzw. „den Dienst“."""
+    if not service:
+        return L("den Dienst", "the service")
+    return service[0] if service[1] is None else f"{service[0]}/{service[1]}"
 
 
 def _either(texts) -> str:

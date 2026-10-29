@@ -397,22 +397,15 @@ test("Applikation: Verbindungen Ende zu Ende mit Weg, Regeln je Hop und Abweichu
   await open(page);
   const card = page.locator("#app-connections");
   await expect(card).toContainText("Verbindungen Ende zu Ende");
-  await expect(card.locator(".card-head")).toContainText("6 Verbindungen");
-  await expect(card.locator(".card-head")).toContainText("1 Abweichungen");
+  await expect(card.locator(".card-head")).toContainText("5 Verbindungen");
+  // CT_rt: die externe EPG EN_rt hat nur ein Subnetz für das Routing (Export Route Control) – seit
+  // 0.111.0 keine Gegenstelle (Anwender: „ist ganz was anderes“), der Contract bleibt in der Doku
   await expect(card).toContainText("ohne prüfbare Gegenstelle");
-  // CT_rt: Subnetz nur für das Routing – die Doku zeigt den Contract, der Weg sperrt
-  const row = card.locator("tbody tr.clickable").filter({ hasText: "EN_rt" });
-  await expect(row).toContainText("Abweichung");
-  await expect(row).toContainText("apic-01 · VRF TE:VRF1");
-  await expect(row).toContainText("gesperrt");
-  await expect(row).not.toContainText("+1"); // die EPG zählt nicht als weiteres System
-  await row.click();
-  const detail = card.locator("tr.detail-row");
-  await expect(detail).toContainText("Contract CT_rt:SJ_1 erlaubt – der Weg ist gesperrt an apic-01 · VRF TE:VRF1");
-  await expect(detail.locator(".conn-rules")).toContainText("greift nicht");
+  await expect(card).toContainText("CT_rt:SJ_1");
+  await expect(card.locator("tbody tr.clickable").filter({ hasText: "EN_rt" })).toHaveCount(0);
   // ohne gelesenes Routing: nicht prüfbar statt „nicht auf dem Weg“
   await card.locator("button.toggle", { hasText: "nur Abweichungen" }).click();
-  await expect(card.locator("tbody tr.clickable")).toHaveCount(6);
+  await expect(card.locator("tbody tr.clickable")).toHaveCount(5);
   await card.locator("tbody tr.clickable").filter({ hasText: "H_db01" }).click();
   await expect(card.locator(".conn-rules")).toContainText("nicht prüfbar");
   // Zonen je Verbindung (0.78.0): das Ziel liegt in der Zone Internet
@@ -424,7 +417,8 @@ test("Applikation: Verbindungen Ende zu Ende mit Weg, Regeln je Hop und Abweichu
   expect(text).toContain("## Verbindungen Ende zu Ende");
   expect(text).toContain("| Richtung | Quelle | Ziel | Dienst | Weg (entscheidende Regel) | Urteil | Zonen | Abweichung |");
   expect(text).toMatch(/H_db01.*\| Internet \|/); // Zone des Ziels (0.78.0)
-  expect(text).toMatch(/EN_rt.*apic-01 · VRF TE:VRF1.*Contract CT_rt:SJ_1 erlaubt – der Weg ist gesperrt/);
+  // keine Verbindung über das Routing-Subnetz (0.111.0)
+  expect(text.split("## Verbindungen Ende zu Ende")[1].split("\n## ")[0]).not.toContain("EN_rt");
   // Für Confluence (0.71.0): ZIP mit Word und dem Netzwerkplan als draw.io
   await page.locator("#app-doc-export").click();
   await expect(page.locator("#app-doc-confluence")).toHaveText("Word + draw.io (ZIP)");
@@ -464,14 +458,14 @@ test("Applikation: Verbindungen Ende zu Ende mit Weg, Regeln je Hop und Abweichu
 test("Applikation: Verbindung erklärt (Warum dieser Weg?) und Finding von Hand (0.109.0)", async ({ page }) => {
   await open(page);
   const card = page.locator("#app-connections");
-  await card.locator("tbody tr.clickable").filter({ hasText: "EN_rt" }).click();
+  // ohne gelesenes Routing der Quelle: der Start sagt warum (Hop für Hop prüft paths.spec.ts)
+  await card.locator("tbody tr.clickable").filter({ hasText: "H_db01" }).click();
   await card.locator("tr.detail-row button.conn-explain").click();
   const drawer = page.locator(".drawer");
   await expect(drawer.locator("h2")).toHaveText("Warum dieser Weg?");
-  await expect(drawer.locator(".drawer-head .sub")).toContainText("→ 10.10.10.5");
-  await expect(drawer.locator("#xplain-start")).toContainText("Start bei apic-01 · VRF TE:VRF1: als Startpunkt gewählt");
-  await expect(drawer.locator(".xplain-hop").first()).toContainText("apic-01");
-  await expect(drawer.locator("#xplain-end")).toBeVisible();
+  await expect(drawer.locator(".drawer-head .sub")).toContainText("→ 172.16.5.9");
+  await expect(drawer.locator("#xplain-start")).toContainText("Kein Startpunkt gefunden");
+  await expect(drawer).toContainText("Kein Weg gefunden");
   await expect(drawer.locator("#xplain-capture")).toBeVisible();
   await drawer.locator("button.close").click();
   await expect(drawer).toHaveCount(0);
@@ -506,34 +500,32 @@ test("Applikation: Verbindungen nach Urteil, Regeln und Hinweisen filtern (0.80.
   await open(page);
   const card = page.locator("#app-connections");
   const rows = card.locator("tbody tr.clickable");
-  await expect(rows).toHaveCount(6);
+  await expect(rows).toHaveCount(5);
   const filter = card.locator("#app-conn-filter");
   await expect(filter).toContainText("Urteil");
   await expect(filter).toContainText("Regel auf dem Weg");
-  // gesperrt: nur die gesperrten Verbindungen, Zahl am Knopf = Zeilen
-  const deny = filter.locator("#conn-filter-verdict-deny");
-  const n = Number(await deny.locator(".facet-count").innerText());
+  // nur Arten, die es gibt: ohne gelesenes Routing nichts gesperrt
+  await expect(filter.locator("#conn-filter-verdict-deny")).toHaveCount(0);
+  // eingehend: nur die eingehenden Verbindungen, Zahl am Knopf = Zeilen
+  const inbound = filter.locator("#conn-filter-direction-in");
+  const n = Number(await inbound.locator(".facet-count").innerText());
   expect(n).toBeGreaterThan(0);
-  await deny.click();
-  await expect(deny).toHaveClass(/on/);
+  await inbound.click();
+  await expect(inbound).toHaveClass(/on/);
   await expect(rows).toHaveCount(n);
-  for (const r of await rows.all()) await expect(r.locator("td").nth(5)).toContainText("gesperrt");
-  await expect(card.locator("#conn-filter-count")).toHaveText(`${n} von 6`);
-  // zwischen den Gruppen „und“: gesperrt und Abweichung = CT_rt
-  await filter.locator("#conn-filter-flag-mismatch").click();
-  await expect(rows).toHaveCount(1);
-  await expect(rows.first()).toContainText("EN_rt");
-  // in der Gruppe „oder“: gesperrt oder abhängig
-  await filter.locator("#conn-filter-flag-mismatch").click();
-  const depends = filter.locator("#conn-filter-verdict-depends");
-  const m = (await depends.count()) ? Number(await depends.locator(".facet-count").innerText()) : 0;
-  if (m) await depends.click();
-  await expect(rows).toHaveCount(n + m);
+  await expect(rows.filter({ hasText: "H_db01" })).toHaveCount(0);
+  await expect(card.locator("#conn-filter-count")).toHaveText(`${n} von 5`);
+  // zwischen den Gruppen „und“: eingehend und offen (alle offen)
+  await filter.locator("#conn-filter-verdict-open").click();
+  await expect(rows).toHaveCount(n);
+  // in der Gruppe „oder“: eingehend oder ausgehend
+  await filter.locator("#conn-filter-direction-out").click();
+  await expect(rows).toHaveCount(5);
   await card.locator("#conn-filter-reset").click();
-  await expect(rows).toHaveCount(6);
-  // Regel auf dem Weg: „greift nicht“ (der Contract der Doku entscheidet nicht)
-  await filter.locator("#conn-filter-state-other").click();
-  await expect(rows.filter({ hasText: "EN_rt" })).toHaveCount(1);
+  await expect(rows).toHaveCount(5);
+  // Regel auf dem Weg: „nicht prüfbar“ (ohne gelesenes Routing)
+  await filter.locator("#conn-filter-state-unknown").click();
+  await expect(rows).toHaveCount(5);
   await card.locator("#conn-filter-reset").click();
   await expect(card.locator("#conn-filter-count")).toHaveCount(0);
 });
@@ -600,39 +592,25 @@ test("Applikation: Wege uneinheitlich, Bereiche zuklappen, Export mit Auswahl (0
 test("Applikation: Netzwerkplan mit Knoten, Diensten, Interfaces und Export (0.67.0)", async ({ page }) => {
   await open(page);
   const card = page.locator("#app-connections");
-  await expect(card.locator(".card-head")).toContainText("6 Verbindungen");
+  await expect(card.locator(".card-head")).toContainText("5 Verbindungen");
   await card.locator("#app-conn-plan").click();
   const svg = card.locator("#app-plan-svg");
   await expect(svg).toBeVisible();
-  await expect(svg.locator("g.app-plan-node")).toHaveCount(7);
-  await expect(svg.locator("g.app-plan-edge")).toHaveCount(6);
-  await expect(svg.locator(".app-plan-col")).toHaveText(["Applikation", "Weg", "Gegenstellen"]);
-  // 0.74.0 kompakt: die EPG mit ihrer VM im Rahmen des APs, das ACI als L3Out der externen EPG
+  // ohne gelesenes Routing ohne Weg: die Applikation und ihre Gegenstellen
+  await expect(svg.locator("g.app-plan-node")).toHaveCount(5);
+  await expect(svg.locator("g.app-plan-edge")).toHaveCount(4);
+  await expect(svg.locator(".app-plan-col")).toHaveText(["Applikation", "Gegenstellen"]);
+  // 0.74.0 kompakt: die EPG mit ihrer VM im Rahmen des APs
   const node = (name: string) => svg.locator(`g.app-plan-node[data-node="${name}"]`);
   await expect(svg.locator('g.app-plan-group[data-group="TE/AP"]')).toBeVisible();
   await expect(node("EG_db").locator(".app-plan-vm")).toHaveText("• web01-007-ka");
   const own = await node("EG_db").boundingBox();
-  const aci = await node("L3O_fw").boundingBox();
-  const peer = await node("externe EPG L3O_fw|EN_rt (10.20.0.0/16)").boundingBox();
-  expect(own!.x).toBeLessThan(aci!.x);
-  expect(aci!.x).toBeLessThan(peer!.x);
-  await expect(node("L3O_fw")).toHaveAttribute("data-kind", "l3out");
-  await expect(node("L3O_fw")).toHaveAttribute("data-verdict", "deny");
-  // je Linie die Dienste (← zur Applikation hin, ✕ vorher gesperrt) und die Interfaces
+  const peer = await node("H_db01 (172.16.5.9)").boundingBox();
+  expect(own!.x).toBeLessThan(peer!.x);
+  // je Linie die Dienste (← zur Applikation hin, → von ihr weg)
   const edge = (a: string, b: string) => svg.locator(`g.app-plan-edge[data-edge="${a} → ${b}"]`);
-  const ext = edge("L3O_fw", "externe EPG L3O_fw|EN_rt (10.20.0.0/16)");
-  await expect(ext).toHaveAttribute("data-verdict", "deny");
-  await expect(ext.locator(".app-plan-label")).toHaveText("← tcp/22");
-  const inner = edge("EG_db", "L3O_fw");
-  await expect(inner).toHaveAttribute("data-verdict", "blocked");
-  await expect(inner.locator(".app-plan-label")).toHaveText("✕ tcp/22");
-  await expect(inner.locator(".app-plan-port")).toHaveText("vlan5");
   await expect(edge("EG_db", "N_clients (10.5.0.0/16)").locator(".app-plan-label")).toHaveText("← tcp/443, tcp/9000");
-  // Ebene „Regeln“ unter dem L3Out; Ebenen ausblenden (Regeln, Dienste)
-  const rules = svg.locator('g.app-plan-rulebox[data-node="L3O_fw"]');
-  await expect(rules).toContainText("✕ implizit gesperrt");
-  await card.locator("#app-plan-rules").uncheck();
-  await expect(svg.locator("g.app-plan-rulebox")).toHaveCount(0);
+  await expect(edge("EG_db", "H_db01 (172.16.5.9)").locator(".app-plan-label")).toHaveText("→ tcp/443");
   await card.locator("#app-plan-services").uncheck();
   await expect(svg.locator(".app-plan-label")).toHaveCount(0);
   await card.locator("#app-plan-services").check();
@@ -644,15 +622,15 @@ test("Applikation: Netzwerkplan mit Knoten, Diensten, Interfaces und Export (0.6
   await expect(card.locator("#app-plan-zoom-reset")).toHaveText("100 %");
   expect(Number(await svg.getAttribute("width"))).toBe(width);
   // Suche der Karte hebt hervor, der Rest wird blass
-  await card.getByPlaceholder("System, Gegenstelle, Firewall, Regel…").fill("EN_rt");
-  await expect(svg.locator("g.app-plan-edge.dim")).toHaveCount(4);
+  await card.getByPlaceholder("System, Gegenstelle, Firewall, Regel…").fill("H_db01");
+  await expect(svg.locator("g.app-plan-edge.dim")).toHaveCount(3);
   await expect(card.locator("#app-plan-export")).toContainText("Export (1 Verbindungen)");
   await card.getByPlaceholder("System, Gegenstelle, Firewall, Regel…").fill("");
   await expect(svg.locator("g.app-plan-edge.dim")).toHaveCount(0);
-  // Klick auf einen Knoten: seine Verbindungen, Export nur mit ihnen (ohne Ebene „Regeln“)
-  await node("L3O_fw").click();
+  // Klick auf einen Knoten: seine Verbindungen, Export nur mit ihnen
+  await node("H_db01 (172.16.5.9)").click();
   const focus = card.locator("#app-plan-focus");
-  await expect(focus).toContainText("L3O_fw – 1 Verbindungen");
+  await expect(focus).toContainText("H_db01 (172.16.5.9) – 1 Verbindungen");
   const [file] = await Promise.all([
     page.waitForEvent("download"),
     card.locator("#app-plan-export button", { hasText: "draw.io" }).click(),
@@ -660,15 +638,38 @@ test("Applikation: Netzwerkplan mit Knoten, Diensten, Interfaces und Export (0.6
   expect(file.suggestedFilename()).toMatch(/^netzwerkplan-webshop-\d{4}-\d{2}-\d{2}\.drawio$/);
   const xml = readFileSync((await file.path())!, "utf-8");
   expect(xml).toContain("Netzwerkplan Webshop");
-  expect(xml).toContain("1 Verbindungen (von 6, gefiltert)");
-  expect(xml).toContain('automato_ports_b="vlan5"');
-  expect(xml).not.toContain("automato_rules");
+  expect(xml).toContain("1 Verbindungen (von 5, gefiltert)");
   // Details öffnen die Verbindung in der Tabelle
   await focus.locator("button", { hasText: "Details" }).click();
   await expect(card.locator("#app-conn-table")).toHaveClass(/on/);
-  await expect(card.locator("tr.detail-row")).toContainText("Contract CT_rt:SJ_1 erlaubt – der Weg ist gesperrt");
-  // die gewählte Ansicht und die Ebenen bleiben
+  await expect(card.locator("tr.detail-row")).toContainText("Kein gelesenes Gerät hat 10.10.10.5 angeschlossen");
+
+  // mit Weg (Portal Süd über den Verbund Süd): die Firewall als Knoten, Interfaces und Ebene „Regeln“
+  await page.goto("/#apps");
+  await rows(page).filter({ hasText: "Portal Süd" }).click();
+  await expect(page.locator("h1.app-title")).toHaveText("Portal Süd");
   await card.locator("#app-conn-plan").click();
+  await expect(svg.locator(".app-plan-col")).toHaveText(["Applikation", "Weg", "Gegenstellen"]);
+  await expect(node("Verbund Süd")).toHaveAttribute("data-kind", "firewall");
+  await expect(node("Verbund Süd")).toHaveAttribute("data-verdict", "depends");
+  const inner = edge("10.89.0.8", "Verbund Süd");
+  await expect(inner).toHaveAttribute("data-verdict", "depends");
+  await expect(inner.locator(".app-plan-label")).toHaveText("← tcp/443");
+  await expect(inner.locator(".app-plan-port")).toHaveText("srv");
+  await expect(edge("Verbund Süd", "10.88.0.6").locator(".app-plan-port")).toHaveText("lan");
+  const rules = svg.locator('g.app-plan-rulebox[data-node="Verbund Süd"]');
+  await expect(rules).toContainText("✕ fw-10: portal-https");
+  await card.locator("#app-plan-rules").uncheck();
+  await expect(svg.locator("g.app-plan-rulebox")).toHaveCount(0);
+  // Export ohne Ebene „Regeln“, mit den Interfaces
+  const [south] = await Promise.all([
+    page.waitForEvent("download"),
+    card.locator("#app-plan-export button", { hasText: "draw.io" }).click(),
+  ]);
+  const drawio = readFileSync((await south.path())!, "utf-8");
+  expect(drawio).toContain('automato_ports_b="srv"');
+  expect(drawio).not.toContain("automato_rules");
+  // die gewählte Ansicht und die Ebenen bleiben
   await page.reload();
   await expect(page.locator("#app-plan-svg")).toBeVisible();
   await expect(page.locator("#app-plan-rules")).not.toBeChecked();

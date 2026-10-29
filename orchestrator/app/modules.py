@@ -182,6 +182,7 @@ MODULES: tuple[Module, ...] = (
             "l2_export",
             "l2_topo",
             "l3out_firewall",
+            "net_lists",  # Netzlisten der Anbindungen (0.111.0)
             "parallel_net",
             "reconcile",
             "topo_changes",
@@ -196,6 +197,7 @@ MODULES: tuple[Module, ...] = (
             "Weg-Suche und Verbindungen Ende zu Ende (Routing, Policies, Contracts je Hop)",
             "Path search and end-to-end connections (routing, policies, contracts per hop)",
         ),
+        api=("net_assign",),  # grosse Netze der Regeln zuordnen (0.111.0)
         store=(
             "paths",
             "policy_check",
@@ -206,6 +208,7 @@ MODULES: tuple[Module, ...] = (
             "app_plan",
             "zone_path",
             "path_explain",  # Warum dieser Weg? (0.109.0)
+            "net_assign",  # grosse Netze der Regeln zuordnen (0.111.0)
         ),
         views=("wege",),
     ),  # fmt: skip

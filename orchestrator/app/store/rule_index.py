@@ -147,8 +147,11 @@ class _Builder:
         self.epgs = epg_store.by_ids(session, epg_ids)
         self.epg_values: dict[int, list[str]] = defaultdict(list)
         if epg_ids:
+            from app.store.aci_relevance import assigns
+
             for s in session.scalars(select(EpgSubnet).where(EpgSubnet.epg_id.in_(epg_ids))):
-                self.epg_values[s.epg_id].append(s.ip)
+                if assigns(s.origin, s.scope):  # nicht Export Route Control (0.111.0)
+                    self.epg_values[s.epg_id].append(s.ip)
             for ep in session.scalars(select(EpgEndpoint).where(EpgEndpoint.epg_id.in_(epg_ids))):
                 self.epg_values[ep.epg_id].append(ep.ip)
         self.ctx = references.context(session, tenant_id)

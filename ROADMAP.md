@@ -424,8 +424,9 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.109.0** | „Warum dieser Weg?“ in Weg-Suche und Verbindungen (Hop für Hop in Sätzen, alle Routen zum Ziel mit Grund, Policy-Routen, Next-Hop, Ende mit Hinweis, Stand des Routings), „Erwartet über …“ ein Gerät, Findings von Hand (bleiben nach dem Abgleich) (ADR 0038) |
 | **0.109.1** | Korrekturen: wartende Läufe erneut an den zentralen Worker (Redis ohne Datenträger verlor Aufträge, NetBox-Lauf blieb „wartet“), nur einmal gelesen, Prüfung „Zentraler Worker“, wer abholen muss in der Liste; Ansichten erst beim Öffnen geladen (1 057 → 270 kB); Seitenpanels und Dialoge ziehbar bzw. ⤢; Testclient mit httpx2; Fingerabdruck der Doku nächtlich in der CI |
 | **0.110.0** | Findings als steckbare Prüfungen: je Prüfung eine Datei im Paket ihres Moduls (`app/checks/<modul>/`), vom Abgleich selbst gefunden, je Mandant schaltbar (Admin, Audit), Reiter „Prüfungen“ mit Dauer und Anzahl; Oberfläche je Modul (`src/modules/<modul>/`, Navigation aus dem Verzeichnis) (ADR 0039) |
+| **0.111.0** | Fehler und Funde zu 0.109: Export Route Control keine Gegenstelle der externen EPG; „Contract öffnet tcp/xy nicht (offen: …)“ statt „kein Contract“; Transfernetz zum eigenen L3Out; grosse Netzlisten bei Anbindungen (einfügen, prüfen, zusammenfassen, aus dem Routing); grosse Netze der Regeln zuordnen (von Hand, Zone, Anbindung, Teile nach dem Routing, Befund „Netz der Regel grösser als die Routen“) (ADR 0040) |
 
-### Nächste Arbeiten (Stand 0.110.0)
+### Nächste Arbeiten (Stand 0.111.0)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
 **0.68.0** (2026-10-26), bis **0.102.0** (2026-10-28: „ich teste nach dem Freigeben der Version
@@ -433,8 +434,9 @@ gleich durch“), bis **0.103.0** (2026-10-28, Rückmeldung ohne Einwand), bis *
 (2026-10-28: „Ansonsten sieht es super aus“; 0.104.0/0.105.0 in 0.106.0 überarbeitet, die zwei
 Testbefunde zu 0.106.0 in 0.107.0), bis **0.107.0** (2026-10-28, „108 go“ ohne Einwand), bis
 **0.108.0** (2026-10-29, Rückmeldung ohne Einwand), bis **0.109.0** (2026-10-29, Fehlerliste ohne
-Einwand zu 0.109.0), bis **0.109.1** (2026-10-29, „go 110“ ohne Einwand). Zur Abnahme steht
-0.110.0. Seit 0.104.0 gilt eine Version als abgenommen,
+Einwand zu 0.109.0), bis **0.109.1** (2026-10-29, „go 110“ ohne Einwand), bis **0.110.0**
+(2026-10-29, Fehlerliste zu 0.109 ohne Einwand zu 0.110.0). Zur Abnahme steht 0.111.0. Seit
+0.104.0 gilt eine Version als abgenommen,
 sobald die nächste Rückmeldung des Anwenders keinen Einwand dazu enthält (`CLAUDE.md`, Ablauf).
 
 **Roadmap nach Versionen (Anwender 2026-10-29, ersetzt die Reihenfolgen unten):** bis zur

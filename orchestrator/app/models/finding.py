@@ -106,6 +106,10 @@ class FindingType(enum.StrEnum):
     SOURCE_PARTIAL = "source_partial"
     # von Hand erfasst (0.109.0, z. B. aus „Warum dieser Weg?“): bleibt, bis jemand ihn erledigt
     MANUAL = "manual"
+    # Netz einer Regel groesser als die Routen (0.111.0, ADR 0040): das Routing kennt es nicht als
+    # Ganzes (Teile genauer geroutet bzw. nur die Default-Route), keine Zone/Anbindung bzw.
+    # Zuordnung von Hand sagt, wohin es gehoert
+    NET_WIDER_THAN_ROUTES = "net_wider_than_routes"
 
 
 class Severity(enum.StrEnum):

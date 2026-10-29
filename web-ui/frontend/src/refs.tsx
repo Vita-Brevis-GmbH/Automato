@@ -60,6 +60,7 @@ export const FINDING_LABEL: Record<string, string> = {
   app_connection_mismatch: L("Applikation: Wege uneinheitlich", "Application: inconsistent paths"),
   app_contract_narrower: L("Applikation: Contract enger als Firewall", "Application: contract narrower than firewall"),
   app_rule_unused: L("Applikation: Regel nie gebraucht", "Application: rule never needed"),
+  net_wider_than_routes: L("Netz der Regel grösser als die Routen", "Network of the rule wider than the routes"),
   link_speed_mismatch: L("Kabel: Speed abweichend", "Link: speed differs"),
   link_duplex_mismatch: L("Kabel: Duplex abweichend", "Link: duplex differs"),
   link_vlan_mismatch: L("Kabel: VLANs abweichend", "Link: VLANs differ"),
@@ -180,6 +181,10 @@ export const FINDING_HINT: Record<string, string> = {
   app_rule_unused: L(
     "Regel einer Applikation auf einer Firewall bzw. im ACI, über die der Verkehr ihrer Verbindungen nach dem Routing nie geht",
     "Rule of an application on a firewall or in the ACI the traffic of its connections never passes according to the routing",
+  ),
+  net_wider_than_routes: L(
+    "Netz-Objekt einer Regel (z. B. 10.0.0.0/8), das die Firewall nicht als Ganzes routet – zuordnen: Zone, Anbindung, nur die Teile oder Weg nach dem Routing",
+    "Network object of a rule (e.g. 10.0.0.0/8) the firewall does not route as a whole – assign: zone, exit, only the parts or path by the routing",
   ),
   link_speed_mismatch: L(
     "zwei verbundene Switch-Ports mit verschiedener Geschwindigkeit",
@@ -302,10 +307,10 @@ export const FINDING_GROUPS: { key: string; label: string; help: string; types: 
     key: "topology",
     label: L("Topologie", "Topology"),
     help: L(
-      "Plausibilität von Netzen und Routing: doppelte IPs, Masken, Schleifen, Routen ohne Wirkung, BGP",
-      "Plausibility of networks and routing: duplicate IPs, masks, loops, routes without effect, BGP",
+      "Plausibilität von Netzen und Routing: doppelte IPs, Masken, Schleifen, Routen ohne Wirkung, BGP, Netze der Regeln grösser als die Routen",
+      "Plausibility of networks and routing: duplicate IPs, masks, loops, routes without effect, BGP, networks of rules wider than the routes",
     ),
-    types: ["topo_duplicate_ip", "topo_mask_mismatch", "topo_route_loop", "topo_static_unused", "topo_bgp_down"],
+    types: ["topo_duplicate_ip", "topo_mask_mismatch", "topo_route_loop", "topo_static_unused", "topo_bgp_down", "net_wider_than_routes"],
   },
   {
     key: "cabling",

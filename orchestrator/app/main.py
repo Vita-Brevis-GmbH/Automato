@@ -23,6 +23,7 @@ from app.api import (
     jobs,
     naming_profiles,
     nat,
+    net_assign,
     netbox_sync,
     objects,
     reconcile,
@@ -125,6 +126,8 @@ def create_app() -> FastAPI:
     app.include_router(virtual.router)
     app.include_router(netbox_sync.router, dependencies=[Depends(modules.guard("schreibpfad"))])
     app.include_router(system.router)
+    # vor dem Routing: /routing/net-assignments gehoert zum Wegsucher (0.111.0)
+    app.include_router(net_assign.router, dependencies=[Depends(modules.guard("wege"))])
     app.include_router(routing.router, dependencies=[Depends(modules.guard(None))])
     app.include_router(topology.router, dependencies=[Depends(modules.guard("analyse"))])
     app.include_router(customers.router)

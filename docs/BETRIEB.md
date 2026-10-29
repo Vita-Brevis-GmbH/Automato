@@ -499,7 +499,10 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
       - Gleiche EPG: ohne Contract erlaubt. Taboo-Contracts des Ziels sperren zuerst. Sonst
         erlaubt ein Contract mit der Quelle als Consumer und dem Ziel als Provider – direkt,
         über vzAny der VRF, eine ESG oder die Preferred Group – mit passendem Filter. Kein
-        Contract: im ACI gesperrt.
+        Contract: im ACI gesperrt. Stimmen Consumer und Provider, öffnet der Contract den Dienst
+        aber nicht (0.111.0), heisst es „Contract CT_x von … zu … öffnet tcp/80 nicht (offen:
+        tcp/443) – im ACI gesperrt“; der Contract steht mit „öffnet den Dienst nicht“ bei den
+        Regeln des Hops.
       - Ohne Dienst ist nur ein Filter `ip/any` sicher, sonst „möglich“. Ordnet das ACI die
         Quelle nicht eindeutig zu (z. B. 0.0.0.0/0 in zwei L3Outs), ist der Hop „abhängig“,
         wenn die Kandidaten verschieden ausgehen.
@@ -571,6 +574,9 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
       erkannt“ = kein Firewall-Interface im Transfernetz bzw. als Peer – von Hand zuordnen,
       sonst gilt für diesen L3Out weiter das ACI. Befunde der Applikationen und Zonen sowie die
       Kunden ziehen danach von selbst nach.
+    - **Transfernetz (0.111.0):** das Netz am Interface der Firewall zu diesem L3Out gehört zu
+      ihm („hinaus“), auch wenn die Firewall es direkt angeschlossen hat – der Weg ins
+      Transfernetz läuft nicht über einen anderen L3Out.
   - **Namen aus dem IPAM:** DNS-Name bzw. Name der IP aus DDI/NetBox. Ohne Eintrag zur IP
     erscheint blass das kleinste IPAM-Netz mit Beschreibung. Für Transfernetze lohnt sich
     deshalb eine Beschreibung im IPAM (z. B. „Transfer ISP B“).
@@ -600,6 +606,29 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
       eingetragen“ markiert erkannte Router, die noch fehlen; ein Knopf übernimmt sie.
     - Danach in der Weg-Suche einfach neu suchen. Das Ende nennt bei mehreren Routern
       „Router n von N“. „Als Anbindung erfassen“ in der Weg-Suche öffnet das Formular hier.
+    - **Netze dahinter als Liste** (0.111.0, bis 5 000): eine Liste einfügen, je Zeile bzw. mit
+      Komma, in jeder Schreibweise (`10.80.0.0/16`, `10.81.0.0 255.255.0.0`, Wildcard
+      `0.0.255.255`, Text dazwischen wird übergangen).
+      - „Prüfen“ zählt gültige, doppelte und ungültige Einträge; „Zusammenfassen“ fasst
+        angrenzende Netze zusammen (z. B. vier /24 zu einem /22).
+      - „Aus dem Routing“ schlägt die Routen vor, die über die Next-Hops bzw. Interfaces der
+        Anbindung gelernt sind (ohne Default-Route), zum Übernehmen. Die grossen Netze (z. B.
+        10.0.0.0/8 hinter dem MPLS) bleiben von Hand einzutragen – sie entscheiden, wohin ein
+        grosses Netz einer Regel gehört (unten).
+      - Speichern mit ungültigen Einträgen nennt sie und speichert nicht.
+    - **Grosse Netze der Regeln** (0.111.0, ADR 0040): routet eine Firewall ein Netz einer Regel
+      (z. B. 10.0.0.0/8) nicht als Ganzes – Teile laufen über genauere Routen, oder es bleibt nur
+      die Default-Route (private Netze) –, gehört es zu, in dieser Reihenfolge:
+      1. der Zuordnung von Hand (Operator): zur Zone …, über die Anbindung …, „Weg nach dem
+         Routing stimmt“ bzw. „nur die genauer gerouteten Teile zählen“ (die Verbindung über das
+         ganze Netz fällt weg, die Teile bleiben);
+      2. der Zone, die das ganze Netz enthält (Netzwerkdesign);
+      3. der Anbindung, deren Netze dahinter es enthalten.
+      Sonst bleibt es „aufgeteilt“ bzw. „unklar“: Befund **„Netz der Regel grösser als die
+      Routen“** (Findings → Topologie) mit Route, Next-Hop, Teilen und Regeln, dort „Netz
+      zuordnen“. In den Verbindungen Ende zu Ende steht der Zustand als Chip mit „zuordnen“ bzw.
+      „ändern“. Die Liste „Grosse Netze der Regeln“ hier unter Anbindungen zeigt die Zuordnungen
+      von Hand; „ändern“ öffnet den Dialog mit „Zuordnung entfernen“.
   - **Topologie** (0.50.0, ADR 0019, `GET /topology`): das Modell der Umgebung als Liste.
     - Knoten: Firewalls bzw. VDOMs, ACI-VRFs (alle Border-Leafs), Segmente (ein Netz mit mehr
       als zwei gelesenen Geräten), Anbindungen (von Hand) und Router ohne gelesenes Gerät
@@ -868,6 +897,11 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
       leitet; die übrigen bleiben sichtbar („unbekannt“).
     - Das Regel-Detail zeigt bei Subnetzen externer EPGs „nur Routing“, wenn sie nicht
       zuordnen.
+    - **Export Route Control ist kein Netz der EPG (0.111.0):** ein Subnetz nur mit
+      `export-rtctrl` (ohne `import-security`) steuert, welche Routen der L3Out ankündigt, und
+      ordnet keinen Verkehr zu. Es zählt nicht als Gegenstelle der Verbindungen, nicht in der
+      IP-Suche, nicht für Zonen und nicht in der Applikations-Doku; ein Contract nur darüber
+      steht unter „ohne prüfbare Gegenstelle“.
   - **Nur Tenant/VRF des Systems (0.42.3):** Gleiche Adressen gibt es in mehreren ACI-Tenants
     bzw. VRFs.
     - Steht ein System in einer EPG (Portgruppe seiner VM), zählen gelernte Endpunkte mit
