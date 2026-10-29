@@ -17,6 +17,7 @@ import {
   fetchInventory,
   fetchObjects,
   fetchRoutes,
+  fetchRulePathSearch,
   fetchRoutingSummary,
   HopRule,
   HopRules,
@@ -26,9 +27,11 @@ import {
   lookupRoute,
   NameHit,
   NameResult,
+  PathValue,
   resolveName,
   RouteLookup,
   RoutingNode,
+  RulePathSearch,
   snatText,
   TopoRoute,
   TraceExitEnd,
@@ -1779,6 +1782,63 @@ function LookupTable({ rows }: { rows: RouteLookup[] }) {
 type Endpoint = { text: string; hit: NameHit | null; over?: string; fw?: number | null };
 const endpointOf = (text?: string): Endpoint => ({ text: text ?? "", hit: null });
 
+// Aus einer Regel (0.112.0): ihre Quellen, Ziele und Dienste zur Wahl - Klick sucht mit diesem Wert neu
+function RuleChoice({
+  r,
+  src,
+  dst,
+  service,
+  onPick,
+}: {
+  r: RulePathSearch;
+  src: string;
+  dst: string;
+  service: string;
+  onPick: (p: { src?: PathValue | null; dst?: PathValue | null; service?: string }) => void;
+}) {
+  const side = (label: string, values: PathValue[], now: string, key: "src" | "dst") => (
+    <span className="rule-choice-side" data-side={key}>
+      <b>{label}</b>{" "}
+      {values.length === 0 ? (
+        <span className="faint">any</span>
+      ) : (
+        values.map((v) => (
+          <button
+            key={v.value}
+            type="button"
+            className={`chip ${v.value === now ? "info" : ""}`}
+            onClick={() => onPick({ [key]: v })}
+            title={v.name ?? v.value}
+          >
+            {v.name ? `${v.name} (${v.value})` : v.value}
+          </button>
+        ))
+      )}
+    </span>
+  );
+  return (
+    <div className="card" id="rule-choice" style={{ marginBottom: 10 }}>
+      <div className="card-body pad" style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "baseline" }}>
+        <span className="faint">{L(`Aus Regel „${r.name}“:`, `From rule “${r.name}”:`)}</span>
+        {side(L("Quelle", "Source"), r.src, src, "src")}
+        {side(L("Ziel", "Destination"), r.dst, dst, "dst")}
+        <span className="rule-choice-side" data-side="service">
+          <b>{L("Dienst", "Service")}</b>{" "}
+          {r.services.length === 0 ? (
+            <span className="faint">{L("alle", "all")}</span>
+          ) : (
+            r.services.map((v) => (
+              <button key={v} type="button" className={`chip ${v === service ? "info" : ""}`} onClick={() => onPick({ service: v })}>
+                {v}
+              </button>
+            ))
+          )}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 // Eingabe aus der URL (#wege?src=…&src_name=…&src_exit=…) wie gewählt wiederherstellen
 function endpointFrom(p: ViewParams | undefined, side: "src" | "dst"): Endpoint {
   const value = p?.[side] ?? "";
@@ -2126,9 +2186,10 @@ function PathSearch({
   const dstNow = dst;
   const startNow = start;
   // `over`: Werte statt des Zustands (Richtung tauschen sucht sofort mit den getauschten)
-  const run = async (over?: { src: Endpoint; dst: Endpoint; start: string }) => {
+  const run = async (over?: { src: Endpoint; dst: Endpoint; start: string; service?: string }) => {
     const src = over?.src ?? srcNow;
     const dst = over?.dst ?? dstNow;
+    const svc = over?.service ?? service;
     if (!dst.text.trim()) return;
     setBusy(true);
     setError(null);
@@ -2151,16 +2212,16 @@ function PathSearch({
       const a = { src: named(src, s), dst: named(dst, d) };
       setAsked(a);
       // Eingaben in der URL (#wege?src=…&dst=…&service=…): Zurück bzw. ein neuer Tab stellt die Suche wieder her
-      window.history.replaceState(null, "", searchUrl(a.src, a.dst, service, start, slack));
+      window.history.replaceState(null, "", searchUrl(a.src, a.dst, svc, start, slack));
       if (s.ip || start || s.exit) {
         const sl = slack === "" ? 0 : Number(slack);
-        setAsks({ dst: d.ip, src: s.ip, start, service, slack: sl, srcExit: s.exit, dstExit: d.exit });
+        setAsks({ dst: d.ip, src: s.ip, start, service: svc, slack: sl, srcExit: s.exit, dstExit: d.exit });
         setTrace(
           await traceRoute(tenantId, {
             dst: d.ip,
             src: s.ip,
             start,
-            service,
+            service: svc,
             slack: slack === "" ? 0 : Number(slack),
             srcExit: s.exit,
             dstExit: d.exit,
@@ -2198,6 +2259,32 @@ function PathSearch({
   // Link mit Ziel (auch Zurück zu einer Suche): gleich suchen (einmal beim Öffnen)
   useEffect(() => {
     if (initial?.dst || initial?.dst_exit) void run();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Knopf „Weg-Suche“ an einer Regel (0.112.0, #wege?rule=<id>): Quelle, Ziel und Dienst der Regel, die erste Wahl gleich
+  // suchen; die übrigen Werte der Regel zur Auswahl
+  const [fromRule, setFromRule] = useState<RulePathSearch | null>(null);
+  const pickRule = (r: RulePathSearch, pick: { src?: PathValue | null; dst?: PathValue | null; service?: string }) => {
+    const ep = (v: PathValue | null | undefined) =>
+      v ? endpointFrom({ src: v.value, ...(v.name ? { src_name: v.name } : {}) }, "src") : endpointOf("");
+    const next = {
+      src: "src" in pick ? ep(pick.src) : srcNow,
+      dst: "dst" in pick ? ep(pick.dst) : dstNow,
+      start: "",
+      service: pick.service ?? service,
+    };
+    setSrc(next.src);
+    setDst(next.dst);
+    setStart("");
+    setService(next.service);
+    setFromRule(r);
+    if (next.dst.text.trim()) void run(next);
+  };
+  useEffect(() => {
+    const id = Number(initial?.rule);
+    if (!id) return;
+    fetchRulePathSearch(id)
+      .then((r) => pickRule(r, { src: r.src[0] ?? null, dst: r.dst[0] ?? null, service: r.services[0] ?? "" }))
+      .catch(setError);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const label = (a: Asked, end?: TraceExitEnd) =>
     end
@@ -2320,6 +2407,7 @@ function PathSearch({
           </>,
         )}
       </div>
+      {fromRule && <RuleChoice r={fromRule} src={src.hit?.ip ?? src.text} dst={dst.hit?.ip ?? dst.text} service={service} onPick={(p) => pickRule(fromRule, p)} />}
       <ErrorBox error={error} prefix={L("Weg suchen", "Search path")} />
       <DetailCtx.Provider value={setDetail}>
       {trace && (

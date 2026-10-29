@@ -548,6 +548,39 @@ def test_redundante_wege_mit_backup_und_verbund(client):
     }
 
 
+def test_backup_nur_was_das_geraet_gelernt_hat(client):
+    """0.112.0 (Anwender: Backup-Wege, die nicht funktionieren - „Der Pfad ist also nur eine
+    Hochrechnung“): kein Backup ueber die Default-Route fuer ein privates Ziel (fw-r kennt das
+    Netz hinter fw-s nicht), kein BGP-Bestpfad mit rekursivem Next-Hop, keine statische Route
+    auf ein Adressobjekt (als 0.0.0.0/0 gespeichert)."""
+    fwr = {**FWR, "routing": {**FWR["routing"], "routes": [
+        *FWR["routing"]["routes"],
+        _r("fw-r", "root", "0.0.0.0/0", [{"ip": "10.77.0.2", "interface": "to-fws"}],
+           table="static", distance=200, attrs={"dstaddr": "N_hinter_fws"}),
+        _r("fw-r", "root", "0.0.0.0/0", [{"ip": "10.77.0.2"}], "bgp", table="bgp",
+           attrs={"as_path": "64999"}),  # Bestpfad, Next-Hop rekursiv
+    ]}}  # fmt: skip
+    fws = {**FWS, "routing": {**FWS["routing"], "routes": [
+        *FWS["routing"]["routes"],
+        _r("fw-s", "root", "10.99.0.0/16", [{"interface": "srv"}], "connected"),
+    ]}}  # fmt: skip
+    tid = client.post("/tenants", json={"name": "Kunde A"}, headers=ADMIN).json()["id"]
+    for name, result in (("fw-r", fwr), ("fw-s", fws)):
+        _deliver(client, tid, _system(client, tid, name, "fortigate"), "fortigate", result)
+
+    # privates Ziel: fw-r kennt es nur ueber die Default-Route - kein Weg ueber fw-s hochgerechnet
+    out = _trace(client, tid, src="10.10.0.5", dst="10.99.0.5")
+    assert [(p["kind"], _labels(p)) for p in out["paths"]] == [("active", ["fw-r"])]
+
+    # öffentliches Ziel wie bisher: zweiter Provider und schwebende Route (Distanz 250, nicht
+    # die Route auf das Adressobjekt), kein Backup über den BGP-Bestpfad
+    out = _trace(client, tid, src="10.10.0.5", dst="198.18.0.10")
+    assert [(p["kind"], _labels(p)) for p in out["paths"]] == [
+        ("active", ["fw-r"]), ("backup", ["fw-r"]), ("backup", ["fw-r", "fw-s"])]  # fmt: skip
+    reasons = [p["hops"][0]["backup"]["reason"] for p in out["paths"][1:]]
+    assert reasons == ["BGP-Backup (AS-Pfad 64501 64502)", "statische Backup-Route (Distanz 250)"]
+
+
 def _wan(name: str, own: int, to_x: bool) -> dict:
     """Firewall eines Verbunds an vier WAN-Routern mit BGP (zwei Interfaces in der Zone wan):
     10.60.0.0/16 aktiv ueber zwei Router (ECMP), die anderen zwei als BGP-Backup."""

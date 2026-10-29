@@ -193,6 +193,21 @@ def _single_ip(q: str | None) -> str | None:
         return None
 
 
+@router.get("/{rule_id}/path-search")
+def rule_path_search(
+    rule_id: int,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Quelle, Ziel und Dienst einer Regel fuer die Weg-Suche (0.112.0): `#wege?rule=<id>`."""
+    r = rules_store.get_rule(session, rule_id)
+    if r is None:
+        raise HTTPException(status_code=404, detail="rule not found")
+    tenant_scope(principal, r.tenant_id)
+    visible(session, own_view(session, principal, r.tenant_id), "rule", r.id)  # ADR 0018
+    return rules_store.path_search(session, r)
+
+
 @router.get("/{rule_id}", response_model=RuleDetailOut)
 def get_rule(
     rule_id: int,

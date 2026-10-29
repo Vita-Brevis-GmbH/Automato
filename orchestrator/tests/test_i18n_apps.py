@@ -45,10 +45,12 @@ def test_kategorien_spalten_und_marker():
         assert labels == [SHOWN.get(c, c) for c in cols]
         assert labels[cols.index(appdoc.SOURCE)] == "Source"
         assert appdoc.reverse_mark() == "(reverse direction)"
-        assert appdoc.both_mark() == "(↔ both directions)"
+        assert appdoc.both_mark() == "(↔ also from the provider)"
+        assert appdoc.both_mark(["icmp/any"]) == "(↔ also from the provider: icmp/any)"
     # die Auswertung erkennt beide Fassungen der Marker
     assert app_paths._named("tcp/any, udp/53 (reverse direction)") == [("tcp", None), ("udp", 53)]
     assert app_paths._named("tcp/any (Rückrichtung)") == [("tcp", None)]
+    assert app_paths._named("tcp/22 (↔ auch vom Provider aus: icmp/any)") == [("tcp", 22)]
     assert appdoc.has_both("tcp/22 (↔ both directions)")
     assert appdoc.has_both("tcp/22 (↔ beide Richtungen)") and not appdoc.has_both("tcp/22")
 
@@ -144,7 +146,7 @@ def test_rueckrichtung_englisch(client):
     doc = client.get(f"/applications/{aid}/doc", headers=EN).json()
     (open_row,) = (r for t in doc["tables"] for r in t["rows"]
                    if r["Description"].startswith("CT_open"))  # fmt: skip
-    assert open_row["TCP/UDP"].endswith("(↔ both directions)")
+    assert open_row["TCP/UDP"].endswith("(↔ also from the provider: icmp/any)")
     back = [h for h in doc["hits"] if h["reverse"]]
     assert back and all(h["via"].endswith(" · reverse direction") for h in back)
     assert all(h["services"].endswith("(reverse direction)") for h in back)

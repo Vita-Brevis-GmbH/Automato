@@ -108,6 +108,8 @@ Neue Texte halten sich an diese Liste, damit derselbe Begriff überall gleich he
 | Netz zuordnen, Zuordnung von Hand | Assign network, manual assignment |
 | aufgeteilt / unklar (Zuordnung) | split / unclear (assignment) |
 | Export Route Control (nur Routing) | Export Route Control (routing only) |
+| auch vom Provider aus (ACI, Filter ohne Ports) | also from the provider (ACI, filter without ports) |
+| Eingang nach der Route zur Quelle | incoming by the route to the source |
 | Topologie | Topology |
 | Relevanz | Relevance |
 | Gegenstelle | Peer |

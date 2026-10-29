@@ -307,3 +307,90 @@ def test_sperre_zuoberst_zeigt_die_policies_dahinter(client, session_factory):
                                       ("tcp", 443))  # fmt: skip
         assert result["verdict"] == "deny" and "after" not in result
         assert result["text"] == "gesperrt durch Policy 9 „Default Block Darknet“"
+
+
+GEO = _fw(
+    "fw-g",
+    [_policy(1, "block-geo", "any", "any", ["all"], ["geo:G_RU"], ["all"], "deny"),
+     _policy(2, "block-isdb", "any", "any", ["all"], ["isdb:Botnet-C&C.Server"], ["all"], "deny",
+             **{"internet-service": "enable",
+                "internet-service-name": [{"name": "Botnet-C&C.Server"}]}),
+     _policy(3, "block-custom", "any", "internet", ["all"], ["isdb:Eigener-Dienst"], ["all"],
+             "deny", **{"internet-service": "enable",
+                        "internet-service-custom": [{"name": "Eigener-Dienst"}]}),
+     _policy(4, "lan-to-dmz", "lan", "dmz", ["all"], ["10.30.0.0/24"], ["tcp/443"]),
+     _policy(5, "lan-to-inet", "lan", "internet", ["all"], ["all"], ["all"])],
+    [_iface("lan", "10.10.0.1/24", "lan"), _iface("dmz", "10.30.0.1/24", "dmz"),
+     _iface("wan", "198.51.100.2/30", "internet")],
+    [_route("10.10.0.0/24", [{"interface": "lan"}], "connected"),
+     _route("10.30.0.0/24", [{"interface": "dmz"}], "connected"),
+     _route("198.51.100.0/30", [{"interface": "wan"}], "connected"),
+     _route("10.50.0.0/16", [{"ip": "10.10.0.254", "interface": "lan"}]),
+     _route("0.0.0.0/0", [{"ip": "198.51.100.1", "interface": "wan"}])],
+    objects=[{"name": "G_RU", "category": "address", "obj_type": "geography", "values": [],
+              "vdom": "root"}],
+)  # fmt: skip
+
+
+def test_abhaengig_mit_grund_geo_isdb_und_eingang_nach_der_route(client):
+    """0.112.0 (Anwender: „abhängig“, obwohl die Regeln offen sind): Land und Internet Service
+    treffen keine private Adresse; der Grund steht im Urteil des Wegs; am gewählten Start ohne
+    angeschlossene Quelle ist der Eingang das Interface der Route zur Quelle."""
+    tid = client.post("/tenants", json={"name": "Kunde A"}, headers=ADMIN).json()["id"]
+    body = {"tenant_id": tid, "name": "fw-g", "platform": "fortigate", "base_url": "https://x"}
+    sid = client.post("/systems", json=body, headers=ADMIN).json()["id"]
+    run = {"platform": "fortigate", "tenant_id": tid, "source_system_id": sid}
+    run_id = client.post("/jobs/collect", json=run).json()["run_id"]
+    r = client.post(f"/internal/collector-runs/{run_id}/result", headers=TOKEN, json=GEO)
+    assert r.status_code == 200 and r.json()["status"] == "completed", r.text
+
+    # privates Ziel: Geo- und ISDB-Sperre treffen es nicht - Policy 4 entscheidet sicher
+    rules, policy = _hop(client, tid, src="10.10.0.5", dst="10.30.0.10", service="tcp/443")
+    assert rules["text"] == "erlaubt durch Policy 4 „lan-to-dmz“"
+    assert [x["external_id"] for x in rules["rules"]] == ["4"]
+    assert policy == {"verdict": "allow", "text": "erlaubt"}
+
+    # öffentliches Ziel: Land und Internet Service möglich - abhängig, mit Grund im Weg
+    rules, policy = _hop(client, tid, src="10.10.0.5", dst="203.0.113.10", service="tcp/443")
+    assert [(x["external_id"], x["unsure"]) for x in rules["rules"]] == [
+        ("1", ["Ziel"]), ("2", ["Ziel"]), ("3", ["Ziel"]), ("5", [])]  # fmt: skip
+    assert policy == {
+        "verdict": "depends",
+        "text": "abhängig an fw-g (Policy 1 „block-geo“ kann vor Policy 5 „lan-to-inet“ greifen "
+        "– abhängig von: Ziel)",
+    }
+    en = client.get("/routing/trace", headers={"Accept-Language": "en"},
+                    params={"tenant_id": tid, "src": "10.10.0.5", "dst": "203.0.113.10",
+                            "service": "tcp/443"}).json()  # fmt: skip
+    assert en["paths"][0]["policy"]["text"].startswith("depends at fw-g (Policy 1 “block-geo”")
+
+    # eigener Internet Service: kann private Adressen enthalten - bleibt möglich
+    rules, _ = _hop(client, tid, src="10.10.0.5", dst="10.99.0.5", service="tcp/443")
+    assert [(x["external_id"], x["unsure"]) for x in rules["rules"]] == [("3", ["Ziel"]), ("5", [])]
+
+    # Start gewählt, Quelle nicht angeschlossen: Eingang lan nach der Route zur Quelle
+    nodes = client.get("/routing/summary", params={"tenant_id": tid}).json()["nodes"]
+    params = {"tenant_id": tid, "start": nodes[0]["key"], "src": "10.50.0.5",
+              "dst": "10.30.0.10", "service": "tcp/443"}  # fmt: skip
+    (path,) = client.get("/routing/trace", params=params).json()["paths"]
+    (hop,) = path["hops"]
+    assert hop["ingress"]["interface"] == "lan"
+    assert hop["via"] == "gewählt, Eingang lan nach der Route zur Quelle"
+    assert hop["rules"]["text"] == "erlaubt durch Policy 4 „lan-to-dmz“"
+
+
+def test_regel_in_der_weg_suche(client):
+    """0.112.0 (Anwender: Knopf Weg-Suche bei Regeln und in der Doku): Quelle, Ziel und Dienst
+    einer Regel für `#wege?rule=<id>` - ohne any, Dienste wie in der Weg-Suche."""
+    tid = _seed(client)
+    rules = {r["name"]: r["id"] for r in client.get("/rules", params={"tenant_id": tid}).json()}
+    web = client.get(f"/rules/{rules['lan-to-dmz-web']}/path-search").json()
+    assert web == {
+        "rule_id": rules["lan-to-dmz-web"], "name": "lan-to-dmz-web",
+        "src": [{"value": "10.10.0.0/24", "name": None}],
+        "dst": [{"value": "10.30.0.10", "name": None}],
+        "services": ["tcp/443"],
+    }  # fmt: skip
+    deny = client.get(f"/rules/{rules['lan-to-dmz-deny']}/path-search").json()
+    assert (deny["src"], deny["dst"], deny["services"]) == ([], [], [])  # any, alle Dienste
+    assert client.get("/rules/999999/path-search").status_code == 404

@@ -5,6 +5,8 @@ sowie Batch-Lookups fuer Netzwerkobjekte und Zonen, damit die Anreicherung der
 Liste ohne N+1-Queries auskommt.
 """
 
+import ipaddress
+
 from sqlalchemy import and_, delete, exists, func, select
 from sqlalchemy.orm import Session, aliased, selectinload
 
@@ -232,3 +234,57 @@ def zone_names(session: Session, ids: set[int]) -> dict[int, str]:
     if not ids:
         return {}
     return {z.id: z.name for z in session.scalars(select(Zone).where(Zone.id.in_(ids)))}
+
+
+def path_search(session: Session, rule: Rule) -> dict:
+    """Weg-Suche fuer eine Regel (0.112.0, Anwender: „Knopf Wegsuche, damit ich einfach nach
+    den Fällen suchen kann“): je Seite die Hosts bzw. Netze der Regel (ohne any) mit ihrem
+    Objekt - der erste ist vorgewaehlt -, die Dienste wie in der Weg-Suche (tcp/443, icmp)."""
+    sides: dict[str, list[dict]] = {"src": [], "dst": []}
+    rows = session.execute(
+        select(RuleIpRange.role, RuleIpRange.family, RuleIpRange.lo, RuleIpRange.hi,
+               RuleIpRange.via)
+        .where(RuleIpRange.rule_id == rule.id, RuleIpRange.is_any.is_(False))
+        .order_by(RuleIpRange.id)
+    )  # fmt: skip
+    for role, family, lo, hi, via in rows:
+        values = sides.get(role)
+        value = _range_value(family, lo, hi)
+        if values is None or value is None or len(values) >= PATH_SEARCH_MAX:
+            continue
+        if all(v["value"] != value for v in values):
+            values.append({"value": value, "name": via if via and via != value else None})
+    services = []
+    for s in sorted(rule.services, key=lambda s: s.canonical_name or ""):
+        text = _service_value(s)
+        if text and text not in services:
+            services.append(text)
+    return {"rule_id": rule.id, "name": rule.name, "src": sides["src"], "dst": sides["dst"],
+            "services": services[:PATH_SEARCH_MAX]}  # fmt: skip
+
+
+PATH_SEARCH_MAX = 20  # Werte je Seite zur Auswahl
+
+
+def _range_value(family: int, lo: str, hi: str) -> str | None:
+    """Bereich der Regel als IP bzw. Netz fuer die Weg-Suche (ein Bereich: sein erstes Netz)."""
+    make = ipaddress.IPv6Address if family == 6 else ipaddress.IPv4Address
+    try:
+        first, last = make(int(lo, 16)), make(int(hi, 16))
+    except (TypeError, ValueError):
+        return None
+    if first == last:
+        return str(first)
+    return str(next(ipaddress.summarize_address_range(first, last)))
+
+
+def _service_value(s) -> str | None:
+    """Dienst wie in der Weg-Suche: tcp/443, udp/53, tcp (alle Ports), icmp; alles = None."""
+    proto = getattr(s.proto, "value", s.proto)
+    if proto in ("tcp", "udp"):
+        if s.port_start and (s.port_start > 1 or (s.port_end or 0) < 65535):
+            return f"{proto}/{s.port_start}"
+        return proto
+    if proto in ("icmp", "icmpv6"):
+        return "icmp"
+    return None

@@ -1215,7 +1215,8 @@ def _hits_and_tables(
             if rid is not None:
                 group["rules"].setdefault(rid, row.get(appdoc.DESCRIPTION) or "")
             if row.get(appdoc.REVERSE) and group["row"] is not row:
-                group["both"] = True  # ACI (0.69.1): Rueckrichtung in derselben Kategorie
+                # ACI (0.69.1): Rueckrichtung in derselben Kategorie - mit ihren Diensten
+                group["both"] = row[appdoc.REVERSE]
             name = row.get(appdoc.APP)
             if name and name not in group["systems"]:
                 group["systems"].append(name)
@@ -1273,7 +1274,8 @@ def _hits_and_tables(
         for key in appdoc.INTERNAL:  # nur fuer die Treffer
             row.pop(key, None)
         if group.get("both") and not row.get(appdoc.REVERSE):
-            row[appdoc.SERVICE] = f"{row.get(appdoc.SERVICE) or ''} {appdoc.both_mark()}".strip()
+            mark = appdoc.both_mark(group["both"] if isinstance(group["both"], list) else None)
+            row[appdoc.SERVICE] = f"{row.get(appdoc.SERVICE) or ''} {mark}".strip()
         row["_rules"] = list(group["rules"])
         names = list(dict.fromkeys(n for n in group["rules"].values() if n))
         if len(group["rules"]) > 1:  # IPv4/IPv6-Paar

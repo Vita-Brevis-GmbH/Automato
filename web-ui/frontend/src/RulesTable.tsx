@@ -21,6 +21,7 @@ import { L } from "./i18n";
 import RuleDetailDrawer from "./RuleDetail";
 import { FAMILY_LABEL, FamilyMarks, serviceNames, SideMarks, useVdomShown, VdomChip } from "./refs";
 import { ActionBadge, Dash, Empty, ErrorBox, Icon, Loading, Note, PageHead } from "./ui";
+import { RuleWegeLink } from "./modules/wege/RuleWegeLink";
 
 // Seitengrösse: Server filtert nach Art/System/Suche, der Rest wird mit "Weitere laden" geholt.
 const PAGE = 500;
@@ -824,6 +825,7 @@ export default function RulesTable({
                       ) : (
                         <span className="chip ok">✓</span>
                       )}
+                      <RuleWegeLink ruleId={r.id} compact />
                     </td>
                   </tr>
                   );

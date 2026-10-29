@@ -459,6 +459,10 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
       - Je Weg stehen die Knoten nacheinander, die Next-Hops, die Anzahl Hops und das Ende.
       - Die Auswahl „Backup“ steuert, wie viel länger ein Backup-Weg sein darf: gleich lang,
         bis +1 Hop (Standard), bis +2 Hops, ausblenden.
+      - **Nur, was das Gerät gelernt hat (0.112.0):** kein Backup über die Default-Route für ein
+        privates Ziel (das Gerät kennt das Netz nicht – auch wenn die Firewall dahinter es
+        lernt), kein BGP-Bestpfad als Backup und keine statische Route auf ein Adressobjekt
+        (`dstaddr`). Fehlt ein erwarteter Backup-Weg, fehlt dem Gerät die Route dafür.
       - Die Spalte „Länge“ (0.20.0) sagt je Weg „gleich lang“ bzw. „+1 Hop“ gegenüber dem
         kürzesten Weg mit Ziel.
       - **Verbund als ein Hop (0.29.0):** Die Firewalls eines Verbunds (z. B. Session-Sync-
@@ -477,6 +481,14 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
       - „möglich (…)“ nennt, was sich nicht prüfen lässt: Eingang/Quelle bei gewähltem Start,
         FQDN/ISDB, Benutzer/Gruppen, Zeitplan, Dienst. Kann eine solche Policy vor der
         entscheidenden greifen, ist der Hop „abhängig“.
+        - Seit 0.112.0 steht der Grund im Urteil des Wegs („abhängig an fw-x (Policy 3 … kann
+          vor Policy 7 … greifen – abhängig von: Ziel)“); in den Verbindungen Ende zu Ende bei
+          mehreren aktiven Wegen jeder Weg mit seinem Urteil.
+        - Länder (Geografie-Objekte) und Internet Services (FortiGuard) treffen keine private
+          Adresse – eine Sperre „Land X“ zuoberst macht internen Verkehr nicht „abhängig“;
+          eigene Internet Services bleiben „möglich“.
+        - Startpunkt gewählt und die Quelle hängt dort nicht an: der Eingang ist das Interface
+          der Route zur Quelle („gewählt, Eingang lan nach der Route zur Quelle“).
       - Seit 0.78.4 steht je Policy, **über welches Objekt** Quelle und Ziel passen
         („Quelle any, Ziel G_darknet“), und unter **„dahinter, nicht erreicht“** bis zu fünf
         weitere passende Policies nach der entscheidenden – z. B. hinter einer Sperre
@@ -507,8 +519,12 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
         Quelle nicht eindeutig zu (z. B. 0.0.0.0/0 in zwei L3Outs), ist der Hop „abhängig“,
         wenn die Kandidaten verschieden ausgehen.
       - **ACI ist zustandslos (0.69.1):** Filter ohne Ports (`ip`, `tcp/any`, ICMP) gelten auch
-        vom Provider zum Consumer („↩ Rückrichtung“, Regel-Detail „↔ beide Richtungen“); mit
-        Zielport (`tcp/443`) bzw. `stateful` kommen zurück nur Antworten.
+        vom Provider zum Consumer („↩ Rückrichtung“; Regel-Detail und Doku nach Kategorie seit
+        0.112.0 „↔ auch vom Provider aus: icmp/any“ mit genau diesen Diensten); mit Zielport
+        (`tcp/443`) bzw. `stateful` kommen zurück nur Antworten. Grund: ein Subject mit „Apply
+        Both Directions“ (Standard) wendet seine Filter auch rückwärts an, ohne Ports ist das
+        derselbe Verkehr. Nur in eine Richtung: „Apply Both Directions“ ausschalten bzw. Filter
+        mit Zielport.
       - **Nur Antworten (0.72.1):** Lassen die Filter eines Subjects vom Consumer zum Provider
         nur Antworten zu (Eintrag nur mit Quellport, z. B. 443, bzw. TCP ohne SYN), greift der
         Contract in dieser Richtung nicht – das Urteil ist „gesperrt“ statt „möglich“, der
@@ -786,7 +802,11 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     dem Grund, warum das System dazugehört. **EPGs im ACI** mit BD, VRF, Subnetzen, VMs,
     Endpunkten. Klick auf ein System bzw. eine EPG filtert die Regeln.
   - **Regeln & Contracts** wie in der Regel-Ansicht (Aktion, Herkunft Firewall/ACI mit
-    Quellsystem, Quelle, Ziel, Dienste, NAT) mit Richtung, Bezug und Kategorie. Unter
+    Quellsystem, Quelle, Ziel, Dienste, NAT) mit Richtung, Bezug und Kategorie. **Knopf
+    Weg-Suche (0.112.0)** je Regel – auch in der Regel-Liste, im Regel-Detail und in der Doku
+    nach Kategorie: die Weg-Suche öffnet sich in einem neuen Tab mit Quelle, Ziel und Dienst
+    der Regel und sucht gleich; darüber „Aus Regel …“ mit den übrigen Quellen, Zielen und
+    Diensten der Regel zum Anklicken (any steht nicht zur Wahl). Unter
     Quelle bzw. Ziel steht je Objekt der Regel, über das sie Systeme der Applikation erfasst
     (Host, Netz, any, EPG), welche Systeme darin liegen – eine Regel über ein Subnetz oder any
     erscheint einmal, nicht je VM (0.14.1). **Unspezifische Regeln** (any, Netz, vzAny,

@@ -84,6 +84,7 @@ from app.store.topology import (
     endpoint,
     ip_hex,
     is_net,
+    is_private,
     matches,
     span,
     table_of,
@@ -96,6 +97,7 @@ MAX_BACKUP = 16  # Backup-Wege (vor dem Filter nach Laenge)
 INNER = 5  # genauere Routen innerhalb eines Netzes je Hop (Anzeige)
 REACHED = ("connected", "fabric", "exit", "external")  # Ende = Ziel erreicht bzw. nach aussen
 _CONNECTED = ("connected", "local")
+_OBJECT_ROUTE = ("dstaddr",)  # FortiGate: statische Route auf ein Adressobjekt (0.112.0)
 _RIB_AFTER = 16  # Abfragen je Kontext, ab denen die RIB als Index im Speicher liegt
 Key = tuple[int, str]  # (Quellsystem, Kontext: VDOM bzw. Tenant:VRF)
 __all__ = ["MGMT", "Graph", "trace"]
@@ -480,6 +482,13 @@ class Graph:
             return {}
         return {"inner": list(other.values())[:INNER], "inner_total": len(other)}
 
+    def rpf_interface(self, key: Key, ip) -> str | None:
+        """Interface, ueber das der Knoten die Quelle erreicht (Reverse Path, 0.112.0) - der
+        Eingang ihres Verkehrs; mehrere Interfaces (ECMP) bzw. keine Route: None."""
+        route = self.route(key, ip)
+        ifaces = {h.get("interface") for h in (route or {}).get("next_hops") or []}
+        return ifaces.pop() if len(ifaces) == 1 and None not in ifaces else None
+
     def connected_nodes(self, ip) -> list[tuple[Key, str | None, Table]]:
         """Knoten mit einem angeschlossenen Netz, das die IP enthaelt (laengstes je Knoten, bei
         gleicher Laenge die Standard-VRF): Knoten, Interface, VRF."""
@@ -500,7 +509,15 @@ class Graph:
     def backups(self, key: Key, ip, table: Table, route: dict) -> list[dict]:
         """Backup-Next-Hops fuer das Praefix der aktiven Route: BGP-Pfade und eingeschaltete
         statische Routen derselben VRF mit einem anderen Next-Hop (z. B. schwebende Route mit
-        hoeherer Distanz, zweiter Provider)."""
+        hoeherer Distanz, zweiter Provider).
+
+        Nur, was das Geraet fuer das Ziel wirklich gelernt hat (0.112.0, Anwender: „Der Pfad ist
+        also nur eine Hochrechnung“): kein Backup ueber die Default-Route fuer ein privates Ziel
+        (das Geraet kennt das Netz dort nicht, die Firewall dahinter schon), kein BGP-Bestpfad
+        (anderer Next-Hop nur durch Rekursion) und keine statische Route auf ein Adressobjekt
+        bzw. eine SD-WAN-Zone (als 0.0.0.0/0 gespeichert, das wirkliche Ziel ist unbekannt)."""
+        if route.get("prefix_len") == 0 and is_private(ip):
+            return []
         lo, hi = (ip_hex(v) for v in span(ip))
         active = {h.get("ip") for h in route.get("next_hops") or []}
         out: list[dict] = []
@@ -519,6 +536,10 @@ class Graph:
         ):
             if table_of(r) != table or (r.table == "static" and not r.best):
                 continue  # andere VRF bzw. abgeschaltete statische Route
+            if r.table == "bgp" and r.best:
+                continue  # der aktive Pfad selbst (Next-Hop nur rekursiv anders)
+            if r.table == "static" and any((r.attrs or {}).get(k) for k in _OBJECT_ROUTE):
+                continue  # Ziel ist ein Objekt bzw. eine SD-WAN-Zone, nicht das Praefix
             for h in r.next_hops or []:
                 nh = h.get("ip")
                 if not nh or nh in active or any(o["next_hop"]["ip"] == nh for o in out):
@@ -829,7 +850,16 @@ def trace(
         # Eingang (und damit VRF) am Startpunkt: das angeschlossene Netz der Quelle, falls bekannt
         found = g.connected_nodes(src) if src else []
         iface = next((i for k, i, _ in found if k == chosen), None)
-        starts = [(chosen, iface, L("gewählt", "selected"))]
+        how = L("gewählt", "selected")
+        if iface is None and src is not None and g.nodes[chosen].kind in ("firewall", "vdom"):
+            # 0.112.0 (Anwender: „abhängig“, obwohl die Regeln offen sind): ohne Eingang war jede
+            # Policy mit Interface bzw. Zone davor nur „möglich“ - die Firewall erwartet den
+            # Verkehr der Quelle dort, wohin ihre Route zur Quelle zeigt (Reverse Path)
+            iface = g.rpf_interface(chosen, src)
+            if iface is not None:
+                how = L(f"gewählt, Eingang {iface} nach der Route zur Quelle",
+                        f"selected, incoming {iface} by the route to the source")  # fmt: skip
+        starts = [(chosen, iface, how)]
     elif src is not None:
         how = L("Quelle angeschlossen", "Source connected")
         starts = [(k, iface, how) for k, iface, _ in g.connected_nodes(src)]
@@ -1161,8 +1191,8 @@ def _merged(same: list[dict]) -> dict:
         if len(verdicts) == 1:  # gleiches Urteil: ueber alle Firewalls des Verbunds
             from app.store import policy_check  # spaet importiert wie in trace()
 
-            hops_rules = [(h["label"], h["rules"]["verdict"], h["kind"]) for p in same
-                          for h in p["hops"] if h.get("rules")]  # fmt: skip
+            hops_rules = [(h["label"], h["rules"]["verdict"], h["kind"], h["rules"].get("text"))
+                          for p in same for h in p["hops"] if h.get("rules")]  # fmt: skip
             merged["policy"] = policy_check._overall(list(dict.fromkeys(hops_rules)))
         else:
             who = [", ".join(h["label"] for h in p["hops"] if h.get("group")) for p in same]

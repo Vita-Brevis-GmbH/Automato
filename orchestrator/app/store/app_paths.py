@@ -625,6 +625,7 @@ def _named(text: str) -> list[tuple[str, int | None] | None]:
     text = text or ""
     for mark in appdoc.REVERSE_MARKS:
         text = text.replace(mark, "")
+    text = text.split("(↔")[0]  # Zusatz „auch vom Provider aus: …“ (0.112.0) nennt keine eigenen
     for name in text.split(","):
         proto, _, port = name.strip().lower().partition("/")
         if proto in ("tcp", "udp"):
@@ -873,7 +874,16 @@ def _verdict(active: list[dict], notes: list[str]) -> tuple[str, str]:
             "je nach Weg (ECMP) erlaubt bzw. gesperrt",
             "allowed or blocked depending on the path (ECMP)",
         )
-    return "depends", "; ".join(dict.fromkeys(x["text"] for x in policies if x))
+    # 0.112.0 (Anwender: „ich weiss nicht, warum es dort abhängig sagt“): je aktivem Weg (ECMP,
+    # mehrere Starts) sein Urteil - der gezeigte erste kann stimmen, ein anderer nicht
+    ways = []
+    none = L("keine Regeln auf dem Weg", "no rules on the path")
+    for p, x in zip(active, policies, strict=True):
+        via = " → ".join(h["label"] for h in p["hops"] if h.get("rules")) or "–"
+        ways.append(f"{via}: {x['text'] if x else none}")
+    n = len(active)
+    head = L(f"{n} aktive Wege verschieden – ", f"{n} active paths differ – ")
+    return "depends", head + "; ".join(dict.fromkeys(ways))
 
 
 def path_variants(found: list[dict]) -> list[dict]:
@@ -889,13 +899,13 @@ def path_variants(found: list[dict]) -> list[dict]:
             seq = []
             for h in checked:
                 x = part if h is split else h
-                if x.get("rules"):
-                    seq.append((x["label"], x["rules"]["verdict"], x["kind"]))
+                if r := x.get("rules"):
+                    seq.append((x["label"], r["verdict"], x["kind"], r.get("text")))
             overall = policy_check._overall(seq) or {
                 "verdict": "unknown",
                 "text": L("keine Regeln", "no rules"),
             }
-            via = " → ".join(label for label, _v, _k in seq) or "–"
+            via = " → ".join(x[0] for x in seq) or "–"
             out.append({"kind": kind, "via": via, "verdict": overall["verdict"],
                         "text": overall["text"], "reason": reason})  # fmt: skip
     return out

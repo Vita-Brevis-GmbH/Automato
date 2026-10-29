@@ -5,6 +5,8 @@ import { DocHide, DocTable, DocTableZone } from "./api";
 import { Fold, FoldTitle } from "./fold";
 import { Expandable } from "./ui";
 import { L, locale } from "./i18n";
+import { RuleWegeLink } from "./modules/wege/RuleWegeLink";
+import { useModule } from "./moduleState";
 
 // Zelle der Kategorien; „Description“ öffnet die Regel (bei einem Paar je Familie ein Link). Seit
 // 0.84.0 steht die Seite der Applikation je nach Richtung in Source bzw. Destination (`_app_col`);
@@ -116,6 +118,9 @@ export function DocTableView({
   const aci = table.enforcement === "aci";
   const hidden = table.hidden ?? [];
   const editable = !!hide?.canEdit;
+  // Knopf Weg-Suche je Zeile (0.112.0): mit Quelle, Ziel und Dienst der Regel
+  const wege = useModule("wege") && !!onRule;
+  const actions = editable || wege;
   const open = fold?.open ?? true;
   return (
     <div className="card">
@@ -148,7 +153,7 @@ export function DocTableView({
                 {table.columns.map((c, i) => (
                   <th key={c}>{colLabel(table, c, i)}</th>
                 ))}
-                {editable && <th className="no-print" />}
+                {actions && <th className="no-print" />}
               </tr>
             </thead>
             <tbody>
@@ -158,7 +163,7 @@ export function DocTableView({
                 <Fragment key={i}>
                 {group && (
                   <tr className="doc-l3out">
-                    <td colSpan={table.columns.length + (editable ? 1 : 0)}>{group}</td>
+                    <td colSpan={table.columns.length + (actions ? 1 : 0)}>{group}</td>
                   </tr>
                 )}
                 <tr>
@@ -171,9 +176,12 @@ export function DocTableView({
                       )}
                     </td>
                   ))}
-                  {editable && (
+                  {actions && (
                     <td className="no-print">
-                      {Array.isArray(row._rules) && row._rules.length > 0 && (
+                      {wege && Array.isArray(row._rules) && typeof row._rules[0] === "number" && (
+                        <RuleWegeLink ruleId={row._rules[0] as number} compact />
+                      )}
+                      {editable && Array.isArray(row._rules) && row._rules.length > 0 && (
                         <button
                           className="linkbtn doc-hide-btn"
                           title={L(

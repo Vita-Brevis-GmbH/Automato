@@ -63,6 +63,18 @@ def is_net(x) -> bool:
     return isinstance(x, ipaddress.IPv4Network | ipaddress.IPv6Network)
 
 
+_PRIVATE = tuple(ipaddress.ip_network(n) for n in (
+    "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "169.254.0.0/16",
+    "127.0.0.0/8", "fc00::/7", "fe80::/10"))  # fmt: skip
+
+
+def is_private(x) -> bool:
+    """Adresse bzw. ganzes Netz privat (RFC 1918, CGNAT, Link-Local, ULA) - kein Land, kein
+    Internet Service, nicht ueber eine Default-Route ins Internet (0.112.0)."""
+    net = x if is_net(x) else ipaddress.ip_network(x)
+    return any(net.version == p.version and net.subnet_of(p) for p in _PRIVATE)
+
+
 def span(x) -> tuple[int, int]:
     """Erste und letzte Adresse einer IP bzw. eines Netzes als Zahl."""
     if is_net(x):

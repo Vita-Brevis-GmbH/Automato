@@ -49,6 +49,7 @@ import { siteLabel } from "./sites";
 import { SnapshotBar } from "./SnapshotBar";
 import { ActionBadge, Dash, download, Drawer, Empty, ErrorBox, Expandable, ExportLangSelect, Icon, Loading, Modal } from "./ui";
 import { L } from "./i18n";
+import { RuleWegeLink } from "./modules/wege/RuleWegeLink";
 
 type Go = (v: View, p?: ViewParams) => void;
 
@@ -1153,6 +1154,9 @@ function RuleRow({
         ) : (
           <span className="chip ok">✓</span>
         )}
+        <span className="no-print">
+          <RuleWegeLink ruleId={r.id} compact />
+        </span>
       </td>
     </tr>
   );

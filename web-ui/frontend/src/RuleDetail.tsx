@@ -15,6 +15,7 @@ import { EpgCard } from "./EpgCard";
 import { FamilyMarks, RefCard, serviceNames, SideMarks, useVdomShown, VdomChip, VmChip, VmSection } from "./refs";
 import { ActionBadge, Dash, Drawer, ErrorBox, fmtTime, Loading, MatchBadge, Note } from "./ui";
 import { L } from "./i18n";
+import { RuleWegeLink } from "./modules/wege/RuleWegeLink";
 
 function EndpointList({ items }: { items: Endpoint[] }) {
   if (!items.length) return <Dash />;
@@ -304,7 +305,7 @@ export default function RuleDetailDrawer({
           <dl className="kv">
             <dt>{L("Aktion", "Action")}</dt>
             <dd>
-              <ActionBadge action={detail.action} />
+              <ActionBadge action={detail.action} /> <RuleWegeLink ruleId={detail.id} />
             </dd>
             {vdomShown(detail.source_system_id, detail.vdom) && (
               <>
@@ -491,7 +492,12 @@ export default function RuleDetailDrawer({
                     <dt>{L("Richtung", "Direction")}</dt>
                     <dd id="rule-aci-direction">
                       {detail.aci_direction.both ? (
-                        <span className="chip warn">{L("↔ beide Richtungen", "↔ both directions")}</span>
+                        <span className="chip warn">
+                          {L(
+                            `↔ auch vom Provider aus: ${detail.aci_direction.reverse.join(", ")}`,
+                            `↔ also from the provider: ${detail.aci_direction.reverse.join(", ")}`,
+                          )}
+                        </span>
                       ) : detail.aci_direction.replies_only ? (
                         <span className="chip warn">
                           {detail.aci_direction.reverse.length

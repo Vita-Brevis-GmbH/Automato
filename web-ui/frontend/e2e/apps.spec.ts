@@ -835,3 +835,13 @@ test("Applikation: Doku als Stand – sofort der letzte, „wird aktualisiert“
   await expect(page.locator("#snapshot-connections")).toContainText("Stand von");
   await page.unrouteAll({ behavior: "ignoreErrors" }); // Abfragen, die noch laufen
 });
+
+test("Applikation: Knopf Weg-Suche bei den Regeln und in der Doku nach Kategorie (0.112.0)", async ({ page }) => {
+  await open(page);
+  const rule = page.locator("#app-rules tbody tr a.rule-wege").first();
+  await expect(rule).toHaveAttribute("href", /^#wege\?rule=\d+$/);
+  await expect(rule).toHaveAttribute("target", "_blank");
+  await page.locator("#app-categories h2.fold-title").click();
+  const cat = page.locator("#app-categories table.doc-rows a.rule-wege").first();
+  await expect(cat).toHaveAttribute("href", /^#wege\?rule=\d+$/);
+});

@@ -7,6 +7,39 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.112.0 – 2026-10-29
+
+Fehler und Wunsch des Anwenders zu 0.110 (2026-10-29), in einer Version. Abnahme bis 0.111.0.
+
+- **„Abhängig“ mit Grund:** das Urteil eines Wegs nennt den Grund je Firewall, z. B. „abhängig
+  an fw-08 (Policy 3 „block-geo“ kann vor Policy 7 „web“ greifen – abhängig von: Ziel)“, nicht
+  nur „abhängig an fw-08“. Sind mehrere aktive Wege (ECMP, mehrere Starts) verschieden, nennt
+  die Verbindung jeden Weg mit seinem Urteil – der gezeigte erste kann stimmen, ein anderer nicht.
+- **Weniger „abhängig“, wo die Regeln klar offen sind:**
+  - Länder (Adressobjekte vom Typ Geografie) und Internet Services (FortiGuard) treffen keine
+    private Adresse (RFC 1918, CGNAT, Link-Local, ULA) – eine Sperre „Land X“ bzw. „Botnet“
+    davor macht Verkehr zwischen internen Netzen nicht mehr „abhängig“. Eigene Internet Services
+    (`custom`) bleiben „möglich“, sie können private Netze enthalten.
+  - Startpunkt gewählt bzw. Verbindung ab dem Gerät der Regel, die Quelle hängt dort nicht an:
+    der Eingang ist das Interface der Route zur Quelle (Reverse Path) statt unbekannt – Policies
+    mit Interface bzw. Zone davor sind damit sicher prüfbar.
+- **Backup-Wege nur, was das Gerät gelernt hat:** kein Backup über die Default-Route für ein
+  privates Ziel (die Firewall davor kennt das Netz nicht, nur die dahinter – „Hochrechnung“),
+  kein BGP-Bestpfad als Backup (anderer Next-Hop nur durch Rekursion) und keine statische Route
+  auf ein Adressobjekt (`dstaddr`, als 0.0.0.0/0 gespeichert).
+- **„↔ beide Richtungen“ verständlich:** in der Doku nach Kategorie steht jetzt, was der Provider
+  auch zum Consumer aufbauen kann, z. B. „tcp/1433, icmp/any (↔ auch vom Provider aus:
+  icmp/any)“. Grund: ACI ist zustandslos – ein Filter ohne Ports (ip, ICMP) in einem Subject mit
+  „Apply Both Directions“ gilt auch rückwärts. Im Regel-Detail ebenso („↔ auch vom Provider aus:
+  …“).
+- **Knopf „Weg-Suche“** bei Regeln & Contracts (Liste und Detail), bei den Regeln der Applikation
+  und in der Doku nach Kategorie: öffnet die Weg-Suche in einem neuen Tab mit Quelle, Ziel und
+  Dienst der Regel (`#wege?rule=<id>`, `GET /rules/{id}/path-search`) und sucht gleich; die
+  übrigen Quellen, Ziele und Dienste der Regel stehen zur Wahl darüber.
+- Tests: neue Fälle in `test_policy_check.py` (Geo/ISDB, Grund, Eingang nach der Route, Regel
+  in der Weg-Suche), `test_paths.py` (Backup nur Gelerntes), angepasst `test_aci_direction.py`,
+  `test_i18n_apps.py`; UI-Tests in `e2e/paths.spec.ts` und `e2e/apps.spec.ts`.
+
 ## 0.111.0 – 2026-10-29
 
 Fehler und Funde des Anwenders zu 0.109 (2026-10-29), in einer Version. Abnahme bis 0.110.0.

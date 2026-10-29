@@ -172,7 +172,7 @@ def column_labels(columns: list[str]) -> list[str]:
 # Marker im Dienst-Text (ACI zustandslos, 0.69.1) - beide Sprachen, damit die Auswertung
 # (`app_paths._named`, `_merge_reverse`) jede Fassung erkennt
 REVERSE_MARKS = ("(Rückrichtung)", "(reverse direction)")
-BOTH_MARKS = ("beide Richtungen", "both directions")
+BOTH_MARKS = ("↔",)
 
 
 def reverse_mark() -> str:
@@ -180,9 +180,15 @@ def reverse_mark() -> str:
     return L("(Rückrichtung)", "(reverse direction)")
 
 
-def both_mark() -> str:
-    """Zusatz am Dienst, wenn beide Richtungen in derselben Kategorie stehen."""
-    return L("(↔ beide Richtungen)", "(↔ both directions)")
+def both_mark(services: list[str] | None = None) -> str:
+    """Zusatz am Dienst, wenn die Rueckrichtung in derselben Kategorie steht: was der Provider
+    auch zum Consumer aufbauen kann (0.112.0, Anwender: „(↔ beide Richtungen)“ bei Contracts
+    nur in eine Richtung - es sind die Filter ohne Ports, z. B. ip oder ICMP; ACI ist
+    zustandslos, „Apply Both Directions“)."""
+    names = ", ".join(services or [])
+    if names:
+        return L(f"(↔ auch vom Provider aus: {names})", f"(↔ also from the provider: {names})")
+    return L("(↔ auch vom Provider aus)", "(↔ also from the provider)")
 
 
 def has_both(text: str | None) -> bool:
@@ -283,7 +289,8 @@ def _merge_reverse(rows: list[dict]) -> list[dict]:
         twin = forward.get((row.get(RULE), row.get(SIDE), row.get(OBJECT)))
         if row.get(REVERSE) and twin is not None:
             if not has_both(twin.get(SERVICE)):
-                twin[SERVICE] = f"{twin.get(SERVICE) or ''} {both_mark()}".strip()
+                mark = both_mark(row.get(REVERSE))
+                twin[SERVICE] = f"{twin.get(SERVICE) or ''} {mark}".strip()
             continue
         out.append(row)
     return out

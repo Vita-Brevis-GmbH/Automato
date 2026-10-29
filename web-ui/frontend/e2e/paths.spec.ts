@@ -220,3 +220,29 @@ test("Seitenpanel: breiter mit ⤢, Rand ziehen, Breite gemerkt", async ({ page 
   await drawer.locator(".drawer-grip").dblclick();
   expect(Math.round(await width())).toBe(Math.round(normal));
 });
+
+// 0.112.0 (Anwender: „bei den Regeln & Contracts, Firewall Regeln in der Applikation und Doku nach Kategorie auch den
+// Knopf Wegsuche anbieten“): der Knopf öffnet #wege?rule=<id> in einem neuen Tab, die Weg-Suche füllt Quelle, Ziel und
+// Dienst der Regel, sucht gleich und bietet die übrigen Werte der Regel zur Wahl
+test("Regel in der Weg-Suche: Knopf an der Regel, Werte der Regel zur Wahl (0.112.0)", async ({ page, problems }) => {
+  await page.goto("/#regeln");
+  await page.locator(".filterbar .search input").fill("lan-to-dmz-web");
+  const row = page.locator("tbody tr").filter({ hasText: "lan-to-dmz-web" }).first();
+  const link = row.locator("a.rule-wege");
+  await expect(link).toHaveAttribute("target", "_blank");
+  const href = (await link.getAttribute("href"))!;
+  expect(href).toMatch(/^#wege\?rule=\d+$/);
+  // auch im Regel-Detail
+  await row.click();
+  await expect(page.locator(".drawer a.rule-wege")).toHaveAttribute("href", href);
+  await page.goto(`/${href}`);
+  const choice = page.locator("#rule-choice");
+  await expect(choice).toContainText("Aus Regel „lan-to-dmz-web“");
+  await expect(page.getByPlaceholder(SRC)).toHaveValue("10.10.0.0/24");
+  await expect(page.getByPlaceholder(DST)).toHaveValue("10.30.0.10");
+  await expect(page.getByPlaceholder("Dienst: tcp/443")).toHaveValue("tcp/443");
+  await expect(page.locator(".card[id^='trace-']", { hasText: "Regeln: erlaubt" }).first()).toBeVisible();
+  await expect(page).toHaveURL(/#wege\?src=10\.10\.0\.0%2F24&dst=10\.30\.0\.10&service=tcp%2F443$/);
+  await expect(choice.locator("[data-side='service'] .chip.info")).toHaveText("tcp/443");
+  expect(problems).toEqual([]);
+});

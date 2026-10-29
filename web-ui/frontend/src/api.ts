@@ -1603,6 +1603,20 @@ export const upsertEntry = (
 export const deleteEntry = (entryId: number) =>
   sendJSON<void>(`/api/naming-profiles/dictionary/${entryId}`, "DELETE");
 
+// Regel in der Weg-Suche (0.112.0, #wege?rule=<id>): Hosts bzw. Netze je Seite (ohne any) und Dienste wie in der Weg-Suche
+export interface PathValue {
+  value: string;
+  name: string | null;
+}
+export interface RulePathSearch {
+  rule_id: number;
+  name: string;
+  src: PathValue[];
+  dst: PathValue[];
+  services: string[];
+}
+export const fetchRulePathSearch = (ruleId: number) => getJSON<RulePathSearch>(`/api/rules/${ruleId}/path-search`);
+
 // Dokumentation
 export async function fetchRules(opts: {
   q?: string;
