@@ -61,6 +61,10 @@ export const FINDING_LABEL: Record<string, string> = {
   app_contract_narrower: L("Applikation: Contract enger als Firewall", "Application: contract narrower than firewall"),
   app_rule_unused: L("Applikation: Regel nie gebraucht", "Application: rule never needed"),
   net_wider_than_routes: L("Netz der Regel grösser als die Routen", "Network of the rule wider than the routes"),
+  bgp_expected_missing: L("BGP: erwartetes Netz kommt nicht an", "BGP: expected network does not arrive"),
+  bgp_outside_filter: L("BGP: erhalten, obwohl der Filter sperrt", "BGP: received although the filter denies"),
+  bgp_no_inbound_filter: L("BGP: eBGP ohne Eingangsfilter", "BGP: eBGP without inbound filter"),
+  aci_import_not_enforced: L("ACI: Import Route Control nicht erzwungen", "ACI: import route control not enforced"),
   link_speed_mismatch: L("Kabel: Speed abweichend", "Link: speed differs"),
   link_duplex_mismatch: L("Kabel: Duplex abweichend", "Link: duplex differs"),
   link_vlan_mismatch: L("Kabel: VLANs abweichend", "Link: VLANs differ"),
@@ -185,6 +189,22 @@ export const FINDING_HINT: Record<string, string> = {
   net_wider_than_routes: L(
     "Netz-Objekt einer Regel (z. B. 10.0.0.0/8), das die Firewall nicht als Ganzes routet – zuordnen: Zone, Anbindung, nur die Teile oder Weg nach dem Routing",
     "Network object of a rule (e.g. 10.0.0.0/8) the firewall does not route as a whole – assign: zone, exit, only the parts or path by the routing",
+  ),
+  bgp_expected_missing: L(
+    "Der Eingangsfilter eines BGP-Nachbarn (bzw. Import Route Control eines L3Outs) erlaubt Netze ausdrücklich, angekommen ist nichts davon",
+    "The inbound filter of a BGP neighbor (or import route control of an L3Out) explicitly permits networks, none of them arrived",
+  ),
+  bgp_outside_filter: L(
+    "In der Routing-Tabelle stehen Netze vom Nachbarn, die sein Eingangsfilter nach der gelesenen Konfiguration sperrt",
+    "The routing table holds networks from the neighbor its inbound filter denies according to the configuration read",
+  ),
+  bgp_no_inbound_filter: L(
+    "eBGP-Nachbar ohne Prefix-Liste bzw. Route-Map im Eingang – die Firewall übernimmt alles",
+    "eBGP neighbor without prefix list or route map inbound – the firewall accepts everything",
+  ),
+  aci_import_not_enforced: L(
+    "Subnetze mit import-rtctrl an einem L3Out, der Import nicht erzwingt – sie wirken nicht",
+    "Subnets with import-rtctrl on an L3Out that does not enforce import – they have no effect",
   ),
   link_speed_mismatch: L(
     "zwei verbundene Switch-Ports mit verschiedener Geschwindigkeit",
@@ -311,6 +331,15 @@ export const FINDING_GROUPS: { key: string; label: string; help: string; types: 
       "Plausibility of networks and routing: duplicate IPs, masks, loops, routes without effect, BGP, networks of rules wider than the routes",
     ),
     types: ["topo_duplicate_ip", "topo_mask_mismatch", "topo_route_loop", "topo_static_unused", "topo_bgp_down", "net_wider_than_routes"],
+  },
+  {
+    key: "bgp_filter",
+    label: L("BGP-Filter", "BGP filters"),
+    help: L(
+      "Soll/Ist je BGP-Nachbar: erwartete Netze kommen nicht an, erhalten trotz Filter, eBGP ohne Filter, ACI Import Route Control nicht erzwungen",
+      "Expected/actual per BGP neighbor: expected networks do not arrive, received despite the filter, eBGP without filter, ACI import route control not enforced",
+    ),
+    types: ["bgp_expected_missing", "bgp_outside_filter", "bgp_no_inbound_filter", "aci_import_not_enforced"],
   },
   {
     key: "cabling",

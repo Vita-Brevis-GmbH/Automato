@@ -32,6 +32,43 @@ import test_virtual_server as vs  # noqa: E402
 TOKEN = {"X-Internal-Token": "dev-only-token"}
 
 
+def _bgp_filters(routing: dict) -> None:
+    """FortiGate fw-05 (0.113.0): Konfiguration des ISP-Nachbarn, Filter, gelernt-von der Pfade."""
+    for r in routing["routes"]:
+        if r["table"] == "bgp":
+            r["attrs"] = {**r.get("attrs", {}), "learned_from": r["next_hops"][0]["ip"]}
+    isp = next(p for p in routing["peers"] if p["peer_ip"] == "198.51.100.1")
+    isp["attrs"] = {"config": {"remote_as": "64500", "description": "ISP A",
+                               "filters": {"in": {"prefix_list": "PL_ISP_IN"},
+                                           "out": {"prefix_list": "PL_DC"}}}}  # fmt: skip
+
+    def obj(kind, name, rules):
+        return {"node": "fw-05", "context": "root", "kind": kind, "name": name, "family": 4,
+                "data": {"rules": rules}}  # fmt: skip
+
+    routing["bgp"] = [
+        {"node": "fw-05", "context": "root", "kind": "bgp", "name": "bgp",
+         "data": {"as": "65001", "router_id": "10.20.0.1", "redistribute": [{"name": "connected"}],
+                  "neighbors": {"198.51.100.1": {}, "198.51.100.13": {"shutdown": True}}}},
+        obj("prefix_list", "PL_ISP_IN", [
+            {"id": 1, "action": "permit", "prefix": "0.0.0.0/0"},
+            {"id": 2, "action": "permit", "prefix": "203.0.113.0/24"}]),
+        obj("prefix_list", "PL_DC", [{"id": 1, "action": "permit", "prefix": "10.20.0.0/16",
+                                      "le": 24}]),
+    ]  # fmt: skip
+
+
+def _route_control(routing: dict) -> dict:
+    """APIC (0.113.0): L3O_inet mit erzwungenem Import (0/0 aggregate) und Export 10.20.0.0/24."""
+    out = json.loads(json.dumps(routing))
+    out["l3outs"][0]["route_control"] = {
+        "enforce": ["export", "import"],
+        "import": [{"prefix": "0.0.0.0/0", "epg": "EN_inet", "aggregate": True}],
+        "export": [{"prefix": "10.20.0.0/24", "epg": "EN_inet"}],
+    }
+    return out
+
+
 def run(app) -> None:
     c = TestClient(app)
 
@@ -143,6 +180,9 @@ def run(app) -> None:
     ]
     inventory = {"devices": [{"name": "fw-05", "role": "firewall"}], "interfaces": ports}
     routing = json.loads(json.dumps(rt.FW["routing"]).replace('"fw-01"', '"fw-05"'))
+    # BGP-Filter (0.113.0, ADR 0041): der ISP-Nachbar mit Prefix-Liste ein (Default-Route und
+    # 203.0.113.0/24 - kommt nicht an) und aus (10.20.0.0/16 bis /24), redistribute connected
+    _bgp_filters(routing)
     # Verlauf des Routings (ADR 0030): ein Lauf davor mit anderem Stand - Default nur ueber
     # wan1, BGP-Nachbar Idle, dazu 10.98.0.0/16; der Lauf danach ist der Stand der Tests
     before = json.loads(json.dumps(routing))
@@ -266,7 +306,7 @@ def run(app) -> None:
     inventory = {**st.INVENTORY, "interfaces": [trunk]}
     run_result(
         apic, "cisco_aci", rules=contracts, objects=filters, inventory=inventory, epgs=epgs,
-        routing=rt.APIC["routing"],
+        routing=_route_control(rt.APIC["routing"]),
     )  # fmt: skip
 
     # vCenter: VM hinter H_web01 (10.10.10.5) an der Portgruppe der EPG EG_db (ACI-VMM-Name)

@@ -108,6 +108,12 @@ Neue Texte halten sich an diese Liste, damit derselbe Begriff überall gleich he
 | Netz zuordnen, Zuordnung von Hand | Assign network, manual assignment |
 | aufgeteilt / unklar (Zuordnung) | split / unclear (assignment) |
 | Export Route Control (nur Routing) | Export Route Control (routing only) |
+| Soll/Ist (BGP-Filter) | expected/actual (BGP filters) |
+| erwartet / erhalten / angekündigt (berechnet) | expected / received / announced (computed) |
+| Prefix-Liste, Route-Map, Access-Liste | prefix list, route map, access list |
+| Eingangsfilter / Ausgangsfilter | inbound filter / outbound filter |
+| Import Route Control nicht erzwungen | import route control not enforced |
+| aus den BGP-Filtern (Netze dahinter) | from the BGP filters (networks behind) |
 | auch vom Provider aus (ACI, Filter ohne Ports) | also from the provider (ACI, filter without ports) |
 | Eingang nach der Route zur Quelle | incoming by the route to the source |
 | Topologie | Topology |

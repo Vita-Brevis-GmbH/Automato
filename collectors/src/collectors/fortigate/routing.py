@@ -7,7 +7,10 @@ Gelesen wird nur lesend:
 - statische Routen (`router/static`/`static6`, auch inaktive bzw. mit hoeherer Distanz),
 - Policy-Routen (`router/policy`/`policy6`) und SD-WAN-Regeln (`system/sdwan`),
 - HA (`system/ha`, `system/ha-peer`) und Session-Sync zu anderen Clustern (FGSP:
-  `system/standalone-cluster` bzw. `system/cluster-sync`).
+  `system/standalone-cluster` bzw. `system/cluster-sync`),
+- die BGP-Konfiguration (`router/bgp`: AS, Nachbarn bzw. Nachbar-Gruppen mit ihren Filtern ein
+  und aus, network, aggregate, redistribute) und die Filter (`router/prefix-list`/`6`,
+  `router/route-map`, `router/access-list`/`6`) - 0.113.0, ADR 0041.
 
 Felder werden nur ueber eine Positivliste uebernommen: Passwoerter, Pre-Shared-Keys und
 Schluessel (z. B. `system/ha` `password`, FGSP `psksecret`) kommen nie mit.
@@ -22,6 +25,7 @@ import ipaddress
 from typing import Any
 
 from collectors.common.dto import (
+    NormalizedBgpObject,
     NormalizedHa,
     NormalizedNextHop,
     NormalizedPeer,
@@ -44,6 +48,12 @@ TABLE_LABELS = {
     "policy4": "Policy-Routen IPv4",
     "policy6": "Policy-Routen IPv6",
     "sdwan": "SD-WAN",
+    "bgp_config": "BGP-Konfiguration",
+    "prefix_lists4": "Prefix-Listen IPv4",
+    "prefix_lists6": "Prefix-Listen IPv6",
+    "route_maps": "Route-Maps",
+    "access_lists4": "Access-Listen IPv4",
+    "access_lists6": "Access-Listen IPv6",
 }
 
 _PROTOCOL = {"connect": "connected", "connected": "connected"}
@@ -421,8 +431,196 @@ def normalize(
         inv.policy_routes += policy_routes(raw.get("policy4"), node, vdom)
         inv.policy_routes += policy_routes(raw.get("policy6"), node, vdom)
         inv.policy_routes += sdwan(raw.get("sdwan"), node, vdom)
+        process, neighbors = bgp_config(raw.get("bgp_config"), node, vdom)
+        if process is not None:
+            inv.bgp.append(process)
+        inv.bgp += bgp_filters(raw, node, vdom)
+        _attach_config(inv.peers, neighbors, node, vdom)
     if global_ha:
         cluster = ha(global_ha.get("ha"), global_ha.get("peers"), global_ha.get("sync"), node)
         if cluster is not None:
             inv.ha.append(cluster)
     return inv
+
+
+# -- BGP-Konfiguration und Filter (0.113.0, ADR 0041) ------------------------------------------
+
+# Filter eines Nachbarn je Richtung: Feld der FortiGate -> (Richtung, Art)
+_NEIGHBOR_FILTERS = {
+    f"{kind}-{way}{six}": (f"{way}{six}", kind.replace("-", "_"))
+    for kind in ("route-map", "prefix-list", "distribute-list", "filter-list")
+    for way in ("in", "out")
+    for six in ("", "6")
+}
+# Positivliste je Nachbar (nie `password`, `auth-*`)
+_NEIGHBOR_KEEP = (
+    "description", "update-source", "interface", "ebgp-enforce-multihop", "next-hop-self",
+    "soft-reconfiguration", "remove-private-as", "allowas-in-enable", "activate", "activate6",
+    "route-reflector-client", "default-originate-routemap",
+)  # fmt: skip
+# Bedingungen und Aenderungen einer Route-Map-Regel (Positivliste)
+_MATCH = ("match-ip-address", "match-ip6-address", "match-ip-nexthop", "match-ip6-nexthop",
+          "match-as-path", "match-community", "match-extcommunity", "match-interface",
+          "match-metric", "match-origin", "match-route-type", "match-tag", "match-vrf")  # fmt: skip
+_SET = ("set-local-preference", "set-metric", "set-weight", "set-origin", "set-tag",
+        "set-ip-nexthop", "set-ip6-nexthop", "set-aspath", "set-community", "set-route-tag",
+        "set-community-additive", "set-metric-type")  # fmt: skip
+
+
+def _flat(value: Any) -> Any:
+    """Listen der FortiGate ([{"as": "65000"}], [{"community": "65000:1"}]) -> Werte."""
+    if isinstance(value, list):
+        return [next(iter(v.values()), None) if isinstance(v, dict) else v for v in value]
+    return value
+
+
+def _neighbor(row: dict) -> dict[str, Any]:
+    filters: dict[str, dict[str, str]] = {}
+    for field, (way, kind) in _NEIGHBOR_FILTERS.items():
+        if row.get(field):
+            filters.setdefault(way, {})[kind] = str(row[field])
+    out: dict[str, Any] = {"filters": filters, **_keep(row, _NEIGHBOR_KEEP)}
+    if row.get("remote-as"):
+        out["remote_as"] = str(row["remote-as"])
+    if row.get("shutdown") == "enable":
+        out["shutdown"] = True
+    return out
+
+
+def _single(cfg: Any) -> dict:
+    """`router/bgp` ist eine Einzeltabelle: dict (bzw. Liste mit einem Eintrag)."""
+    if isinstance(cfg, list):
+        cfg = cfg[0] if cfg else {}
+    return cfg if isinstance(cfg, dict) else {}
+
+
+def bgp_config(cfg: Any, node: str, vdom: str) -> tuple[NormalizedBgpObject | None, dict]:
+    """BGP-Prozess (AS, Router-ID, network, aggregate, redistribute) und die Konfiguration je
+    Nachbar (IP -> Filter ein/aus); Nachbar-Gruppen und -Bereiche (dynamische Nachbarn) unter
+    `groups`/`ranges`."""
+    cfg = _single(cfg)
+    if not cfg or not (cfg.get("as") or cfg.get("neighbor")):
+        return None, {}
+    neighbors = {str(n["ip"]): _neighbor(n) for n in cfg.get("neighbor") or []
+                 if isinstance(n, dict) and n.get("ip")}  # fmt: skip
+    groups = {str(g["name"]): _neighbor(g) for g in cfg.get("neighbor-group") or []
+              if isinstance(g, dict) and g.get("name")}  # fmt: skip
+    rows = [*(cfg.get("neighbor-range") or []), *(cfg.get("neighbor-range6") or [])]
+    ranges = [
+        {"prefix": p, "group": str(r.get("neighbor-group") or "")}
+        for r in rows
+        if isinstance(r, dict) and (p := prefix(r.get("prefix") or r.get("prefix6")))
+    ]
+    networks = [{"prefix": p, **({"route_map": str(n["route-map"])} if n.get("route-map") else {})}
+                for key, field in (("network", "prefix"), ("network6", "prefix6"))
+                for n in cfg.get(key) or []
+                if isinstance(n, dict) and (p := prefix(n.get(field)))]  # fmt: skip
+    aggregates = [{"prefix": p, "summary_only": a.get("summary-only") == "enable"}
+                  for key, field in (("aggregate-address", "prefix"),
+                                     ("aggregate-address6", "prefix6"))
+                  for a in cfg.get(key) or []
+                  if isinstance(a, dict) and (p := prefix(a.get(field)))]  # fmt: skip
+    redistribute = [{"name": str(r["name"]),
+                     **({"route_map": str(r["route-map"])} if r.get("route-map") else {})}
+                    for key in ("redistribute", "redistribute6")
+                    for r in cfg.get(key) or []
+                    if isinstance(r, dict) and r.get("name")
+                    and r.get("status") == "enable"]  # fmt: skip
+    data = {
+        "as": str(cfg["as"]) if cfg.get("as") else None,
+        "router_id": cfg.get("router-id") or None,
+        "networks": networks,
+        "aggregates": aggregates,
+        "redistribute": redistribute,
+        "neighbors": neighbors,
+        "groups": groups,
+        "ranges": ranges,
+    }
+    data = {k: v for k, v in data.items() if v not in (None, [], {})}
+    process = NormalizedBgpObject(node=node, context=vdom, kind="bgp", name="bgp", data=data)
+    return process, {"neighbors": neighbors, "groups": groups, "ranges": ranges}
+
+
+def _rule_prefix(value: Any) -> str | None:
+    if isinstance(value, str) and value.strip().lower() in ("any", ""):
+        return "any" if value.strip() else None
+    return prefix(value)
+
+
+def _length(value: Any) -> int | None:
+    n = _int(value)
+    return n if n else None  # 0 = nicht gesetzt
+
+
+def bgp_filters(raw: dict, node: str, vdom: str) -> list[NormalizedBgpObject]:
+    """Prefix-Listen, Access-Listen und Route-Maps mit ihren Regeln (Reihenfolge nach ID)."""
+    out: list[NormalizedBgpObject] = []
+    for key, family, field in (("prefix_lists4", 4, "prefix"), ("prefix_lists6", 6, "prefix6")):
+        for pl in raw.get(key) or []:
+            if not isinstance(pl, dict) or not pl.get("name"):
+                continue
+            rules = [{"id": _int(r.get("id")), "action": r.get("action") or "permit",
+                      "prefix": _rule_prefix(r.get(field)), "ge": _length(r.get("ge")),
+                      "le": _length(r.get("le"))}
+                     for r in pl.get("rule") or [] if isinstance(r, dict)]  # fmt: skip
+            out.append(_object(node, vdom, "prefix_list", pl, rules, family))
+    for key, family, field in (("access_lists4", 4, "prefix"), ("access_lists6", 6, "prefix6")):
+        for acl in raw.get(key) or []:
+            if not isinstance(acl, dict) or not acl.get("name"):
+                continue
+            rules = [{"id": _int(r.get("id")), "action": r.get("action") or "permit",
+                      "prefix": _rule_prefix(r.get(field)),
+                      "exact": r.get("exact-match") == "enable",
+                      **({"wildcard": r["wildcard"]} if r.get("wildcard") else {})}
+                     for r in acl.get("rule") or [] if isinstance(r, dict)]  # fmt: skip
+            out.append(_object(node, vdom, "access_list", acl, rules, family))
+    for rm in raw.get("route_maps") or []:
+        if not isinstance(rm, dict) or not rm.get("name"):
+            continue
+        rules = []
+        for r in rm.get("rule") or []:
+            if not isinstance(r, dict):
+                continue
+            match = {k[6:]: _flat(r[k]) for k in _MATCH if r.get(k) not in (None, "", [], 0)}
+            sets = {k[4:]: _flat(r[k]) for k in _SET if r.get(k) not in (None, "", [], 0)}
+            rules.append({"id": _int(r.get("id")), "action": r.get("action") or "permit",
+                          "match": match, "set": sets})  # fmt: skip
+        out.append(_object(node, vdom, "route_map", rm, rules))
+    return out
+
+
+def _object(node: str, vdom: str, kind: str, row: dict, rules: list[dict],
+            family: int | None = None) -> NormalizedBgpObject:  # fmt: skip
+    data = {"rules": sorted(rules, key=lambda r: r["id"] or 0), **_keep(row, ("comments",))}
+    return NormalizedBgpObject(node=node, context=vdom, kind=kind, name=str(row["name"]),
+                               family=family, data=data)  # fmt: skip
+
+
+def _in_range(ip: str, ranges: list[dict]) -> str | None:
+    """Nachbar-Gruppe eines dynamischen Nachbarn (neighbor-range)."""
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return None
+    for r in ranges:
+        net = ipaddress.ip_network(r["prefix"])
+        if addr.version == net.version and addr in net and r.get("group"):
+            return r["group"]
+    return None
+
+
+def _attach_config(peers: list[NormalizedPeer], cfg: dict, node: str, vdom: str) -> None:
+    """Konfiguration je Nachbar an die gelesenen Nachbarn (Monitor) haengen. Konfigurierte ohne
+    Eintrag im Monitor (abgeschaltet, nie verbunden) stehen nur im BGP-Prozess (`neighbors`) -
+    keine Nachbarn ohne Zustand (Verlauf, Anbindungen und Befunde bleiben wie bisher)."""
+    if not cfg:
+        return
+    neighbors, groups, ranges = cfg["neighbors"], cfg["groups"], cfg["ranges"]
+    for p in peers:
+        if p.node != node or p.context != vdom:
+            continue
+        conf = neighbors.get(p.peer_ip)
+        if conf is None and (group := _in_range(p.peer_ip, ranges)) in groups:
+            conf = {**groups[group], "group": group}
+        if conf is not None:
+            p.attrs["config"] = conf

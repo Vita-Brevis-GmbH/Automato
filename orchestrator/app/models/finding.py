@@ -110,6 +110,13 @@ class FindingType(enum.StrEnum):
     # Ganzes (Teile genauer geroutet bzw. nur die Default-Route), keine Zone/Anbindung bzw.
     # Zuordnung von Hand sagt, wohin es gehoert
     NET_WIDER_THAN_ROUTES = "net_wider_than_routes"
+    # BGP-Filter (0.113.0, ADR 0041, `store/bgp_filters`): Filter erlaubt Netze, der Nachbar
+    # liefert nichts davon; erhalten, obwohl der Filter sperrt; eBGP-Nachbar ohne Eingangsfilter;
+    # ACI: import-rtctrl eingetragen, aber am L3Out nicht erzwungen (wirkt nicht)
+    BGP_EXPECTED_MISSING = "bgp_expected_missing"
+    BGP_OUTSIDE_FILTER = "bgp_outside_filter"
+    BGP_NO_INBOUND_FILTER = "bgp_no_inbound_filter"
+    ACI_IMPORT_NOT_ENFORCED = "aci_import_not_enforced"
 
 
 class Severity(enum.StrEnum):

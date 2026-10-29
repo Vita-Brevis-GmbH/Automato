@@ -267,6 +267,13 @@ class FortiGateClient:
             "policy4": lambda: self._get("router/policy", vdom),
             "policy6": lambda: self._get("router/policy6", vdom),
             "sdwan": lambda: self._get("system/sdwan", vdom),
+            # BGP-Konfiguration und Filter (0.113.0, ADR 0041) - Soll gegen die gelernten Pfade
+            "bgp_config": lambda: self._get("router/bgp", vdom),
+            "prefix_lists4": lambda: self._get("router/prefix-list", vdom),
+            "prefix_lists6": lambda: self._get("router/prefix-list6", vdom),
+            "route_maps": lambda: self._get("router/route-map", vdom),
+            "access_lists4": lambda: self._get("router/access-list", vdom),
+            "access_lists6": lambda: self._get("router/access-list6", vdom),
         }
         out: dict[str, Any] = {"missing": []}
         for key, read in reads.items():

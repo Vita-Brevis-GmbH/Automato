@@ -16,6 +16,8 @@ import {
   fetchExitSuggestions,
   checkPrefixes,
   fetchLearnedPrefixes,
+  fetchFilteredPrefixes,
+  FilteredPrefixes,
   LearnedPrefixes,
   PrefixCheck,
   fetchFirewallChoices,
@@ -54,6 +56,7 @@ import {
 } from "./api";
 import { Pager, useDebounced } from "./Objects";
 import { NetAssignList } from "./modules/wege/NetAssign";
+import { BgpConfig, BgpPeerDrawer, FilterCell, RouteControlCell, RouteControlDrawer } from "./modules/analyse/BgpFilters";
 import TopologyTab from "./Topology";
 import { FoldTitle, useFolds } from "./fold";
 import { Dash, Empty, ErrorBox, fmtTime, Icon, Loading, Note, PageHead, SharedChip } from "./ui";
@@ -716,8 +719,11 @@ function PeersTab({ tenantId }: { tenantId: number }) {
   );
   const up = (p: TopoPeer) => (p.state ?? "").toLowerCase() === "established";
   const rows = f.shown?.filter((p) => !state || (state === "up") === up(p)) ?? null;
+  const [open, setOpen] = useState<number | null>(null); // Soll/Ist eines Nachbarn (0.113.0)
+  const configured = (all ?? []).some((p) => p.attrs?.config);
   return (
     <>
+      <BgpConfig tenantId={tenantId} />
       <RowFilter
         f={f}
         placeholder={L("Nachbar, Name, AS, Zustand…", "Neighbor, name, AS, state…")}
@@ -738,11 +744,12 @@ function PeersTab({ tenantId }: { tenantId: number }) {
             <th>{L("Lokal", "Local")}</th>
             <th className="num">AS</th>
             <th>{L("Zustand", "State")}</th>
+            {configured && <th>{L("Filter (ein / aus)", "Filters (in / out)")}</th>}
           </tr>
         </thead>
         <tbody>
           {(rows ?? []).map((p) => (
-            <tr key={p.id}>
+            <tr key={p.id} data-peer={p.peer_ip}>
               <td>{where(p)}</td>
               <td className="mono">
                 {p.peer_ip}
@@ -756,10 +763,25 @@ function PeersTab({ tenantId }: { tenantId: number }) {
                   {p.state ?? "?"}
                 </span>
               </td>
+              {configured && (
+                <td>
+                  <FilterCell config={p.attrs?.config} />
+                  {p.attrs?.config && (
+                    <button
+                      className="linkbtn bgp-sollist"
+                      onClick={() => setOpen(p.id)}
+                      title={L("Erwartet, erhalten und angekündigt nach den Filtern", "Expected, received and announced by the filters")}
+                    >
+                      {L("Soll/Ist", "expected/actual")}
+                    </button>
+                  )}
+                </td>
+              )}
             </tr>
           ))}
         </tbody>
       </List>
+      {open != null && <BgpPeerDrawer tenantId={tenantId} peerId={open} onClose={() => setOpen(null)} />}
     </>
   );
 }
@@ -1022,6 +1044,7 @@ function L3OutTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean })
     (o) => `Tenant ${o.aci_tenant}`,
   );
   const rows = f.shown;
+  const [rcOpen, setRcOpen] = useState<number | null>(null); // Route Control Soll/Ist (0.113.0)
   return (
     <>
       <RowFilter
@@ -1051,6 +1074,7 @@ function L3OutTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean })
             <th>{L("Border-Leafs", "Border leafs")}</th>
             <th>Interfaces / SVIs</th>
             <th>{L("BGP-Peers", "BGP peers")}</th>
+            <th>Route Control</th>
             <th>{L("Firewall dahinter", "Firewall behind")}</th>
           </tr>
         </thead>
@@ -1121,6 +1145,12 @@ function L3OutTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean })
                 </div>
               </td>
               <td>
+                <RouteControlCell rc={o.route_control} />
+                <button className="linkbtn rc-sollist" onClick={() => setRcOpen(o.id)}>
+                  {L("Soll/Ist", "expected/actual")}
+                </button>
+              </td>
+              <td>
                 <L3OutFirewall
                   tenantId={tenantId}
                   l3out={o}
@@ -1133,6 +1163,7 @@ function L3OutTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean })
           ))}
         </tbody>
       </List>
+      {rcOpen != null && <RouteControlDrawer tenantId={tenantId} l3outId={rcOpen} onClose={() => setRcOpen(null)} />}
     </>
   );
 }
@@ -1336,6 +1367,7 @@ function ExitForm({
   const [prefixes, setPrefixes] = useState((draft.prefixes ?? []).join("\n"));
   const [checked, setChecked] = useState<PrefixCheck | null>(null); // Liste geprüft (0.111.0)
   const [learned, setLearned] = useState<LearnedPrefixes | null>(null);
+  const [filtered, setFiltered] = useState<FilteredPrefixes | null>(null); // 0.113.0
   const [routes, setRoutes] = useState<{ prefix: string; target: string }[]>(draft.routes ?? []);
   const [description, setDescription] = useState(draft.description ?? "");
   const [detected, setDetected] = useState<ExitSuggestion[] | null>(null);
@@ -1388,11 +1420,17 @@ function ExitForm({
     setError(null);
     fetchLearnedPrefixes(tenantId, sids, hopList, portList).then(setLearned).catch(setError);
   };
+  // Netze der BGP-Filter für diese Router (0.113.0, ADR 0041): was die Eingangsfilter erlauben
+  const fromFilters = () => {
+    setError(null);
+    fetchFilteredPrefixes(tenantId, sids, hopList).then(setFiltered).catch(setError);
+  };
   const addNets = (nets: string[]) => {
     const now = prefixes.split(/\n/).map((x) => x.trim()).filter(Boolean);
     setPrefixes(union(now, nets).join("\n"));
     setChecked(null);
     setLearned(null);
+    setFiltered(null);
   };
   const save = async () => {
     setBusy(true);
@@ -1512,6 +1550,18 @@ function ExitForm({
             >
               {L("aus dem Routing vorschlagen", "suggest from routing")}
             </button>
+            <button
+              className="btn btn-sm"
+              id="ex-nets-filters"
+              onClick={fromFilters}
+              disabled={!hopList.length}
+              title={L(
+                "Netze, die die Eingangsfilter für diese Next-Hops ausdrücklich erlauben (Prefix-Listen, Route-Maps, ACI import-rtctrl)",
+                "Networks the inbound filters for these next-hops explicitly permit (prefix lists, route maps, ACI import-rtctrl)",
+              )}
+            >
+              {L("aus den BGP-Filtern", "from the BGP filters")}
+            </button>
             {checked && (
               <span className="faint" id="ex-nets-summary">
                 {L(`${checked.valid.length} Netze`, `${checked.valid.length} networks`)}
@@ -1532,6 +1582,30 @@ function ExitForm({
               </span>
             )}
           </div>
+          {filtered && (
+            <div className="note" id="ex-nets-filters-list" style={{ marginTop: 6 }}>
+              {filtered.total === 0 ? (
+                L(
+                  "Kein Eingangsfilter für diese Next-Hops erlaubt bestimmte Netze (ohne Filter bzw. nur „alles“).",
+                  "No inbound filter for these next-hops permits specific networks (no filter or only “everything”).",
+                )
+              ) : (
+                <>
+                  {L(
+                    `${filtered.total} Netze aus ${filtered.filters.join(", ")} (zusammengefasst ${filtered.collapsed.length}): `,
+                    `${filtered.total} networks from ${filtered.filters.join(", ")} (summarized ${filtered.collapsed.length}): `,
+                  )}
+                  <span className="mono">{filtered.collapsed.slice(0, 8).join(", ")}{filtered.collapsed.length > 8 ? " …" : ""}</span>{" "}
+                  <button className="btn btn-sm" onClick={() => addNets(filtered.collapsed)}>
+                    {L("zusammengefasst übernehmen", "add summarized")}
+                  </button>{" "}
+                  <button className="btn btn-sm btn-ghost" onClick={() => addNets(filtered.prefixes)}>
+                    {L("einzeln übernehmen", "add one by one")}
+                  </button>
+                </>
+              )}
+            </div>
+          )}
           {learned && (
             <div className="note" id="ex-nets-learned-list" style={{ marginTop: 6 }}>
               {learned.total === 0 ? (

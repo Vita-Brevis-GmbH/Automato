@@ -614,7 +614,112 @@ def _net_wider(subject: str, d: dict) -> tuple[str, str]:
     )
 
 
+def _bgp_where(d: dict) -> str:
+    """Nachbar bzw. L3Out eines BGP-Befunds (0.113.0)."""
+    if d.get("l3out"):
+        return L(f"L3Out {d['l3out']} (VRF {d.get('vrf') or '?'})",
+                 f"L3Out {d['l3out']} (VRF {d.get('vrf') or '?'})")  # fmt: skip
+    asn = f", AS {d['remote_as']}" if d.get("remote_as") else ""
+    return L(f"{d.get('label')} vom Nachbarn {d.get('peer')}{asn}",
+             f"{d.get('label')} from neighbor {d.get('peer')}{asn}")  # fmt: skip
+
+
+def _bgp_missing(subject: str, d: dict) -> tuple[str, str]:
+    """Filter erlaubt Netze, der Nachbar liefert nichts davon (0.113.0, ADR 0041)."""
+    where, nets = _bgp_where(d), _list(d.get("entries") or [], 5)
+    total = d.get("total") or len(d.get("entries") or [])
+    de_n, en_n = f"Netz{'e' if total != 1 else ''}", f"network{'s' if total != 1 else ''}"
+    via = _list(d.get("filters") or [], 3)
+    if d.get("l3out"):
+        text = L(
+            f"{where}: Import Route Control erwartet {total} {de_n}, über die Peers kommt nichts "
+            f"davon an ({nets}).",
+            f"{where}: import route control expects {total} {en_n}, none of them arrives via the "
+            f"peers ({nets}).",
+        )
+    else:
+        text = L(
+            f"{where}: der Filter {via} erlaubt {total} {de_n}, angekommen ist nichts davon "
+            f"({nets}).",
+            f"{where}: the filter {via} permits {total} {en_n}, none of them arrived ({nets}).",
+        )
+    return (
+        text,
+        L(
+            "Gegenstelle prüfen (kündigt sie die Netze an, eigener Ausgangsfilter) bzw. den "
+            "Filter bereinigen; Wege über diesen Nachbarn zu diesen Netzen gibt es nicht.",
+            "Check the peer (does it announce the networks, its own outbound filter) or clean up "
+            "the filter; there are no paths to these networks via this neighbor.",
+        ),
+    )
+
+
+def _bgp_outside(subject: str, d: dict) -> tuple[str, str]:
+    """Erhalten, obwohl der Filter sperrt (0.113.0)."""
+    where, nets = _bgp_where(d), _list(d.get("prefixes") or [], 5)
+    total = d.get("total") or 0
+    de_n, en_n = f"Netz{'e' if total != 1 else ''}", f"network{'s' if total != 1 else ''}"
+    via = _list(d.get("filters") or [], 3)
+    return (
+        L(
+            f"{where}: {total} erhaltene {de_n} sperrt der Filter {via} nach der gelesenen "
+            f"Konfiguration ({nets}).",
+            f"{where}: the filter {via} denies {total} received {en_n} according to the "
+            f"configuration read ({nets}).",
+        ),
+        L(
+            "Konfiguration und Routing-Tabelle passen nicht zusammen: Filter seit dem Lauf "
+            "geändert (Soft-Reset ausstehend) bzw. Bedingung, die die Plattform anders liest.",
+            "Configuration and routing table do not match: filter changed since the run (soft "
+            "reset pending) or a condition the platform reads differently.",
+        ),
+    )
+
+
+def _bgp_open(subject: str, d: dict) -> tuple[str, str]:
+    """eBGP-Nachbar ohne Eingangsfilter (0.113.0)."""
+    where, n = _bgp_where(d), d.get("received") or 0
+    de_n, en_n = f"Netz{'e' if n != 1 else ''}", f"network{'s' if n != 1 else ''}"
+    return (
+        L(
+            f"{where}: eBGP ohne Eingangsfilter – die Firewall übernimmt alles, was der Nachbar "
+            f"ankündigt ({n} {de_n}).",
+            f"{where}: eBGP without inbound filter – the firewall accepts everything the neighbor "
+            f"announces ({n} {en_n}).",
+        ),
+        L(
+            "Prefix-Liste bzw. Route-Map für die erwarteten Netze setzen; ohne Filter entstehen "
+            "Wege, die niemand geplant hat.",
+            "Set a prefix list or route map for the expected networks; without a filter, paths "
+            "nobody planned come about.",
+        ),
+    )
+
+
+def _aci_import(subject: str, d: dict) -> tuple[str, str]:
+    """import-rtctrl ohne enforce import (0.113.0)."""
+    where, nets = _bgp_where(d), _list(d.get("entries") or [], 5)
+    return (
+        L(
+            f"{where}: Subnetze mit Import Route Control ({nets}), am L3Out ist Import aber nicht "
+            "erzwungen – sie wirken nicht, der L3Out übernimmt alle Routen.",
+            f"{where}: subnets with import route control ({nets}), but import is not enforced on "
+            "the L3Out – they have no effect, the L3Out accepts all routes.",
+        ),
+        L(
+            "Am L3Out „Route Control Enforcement: Import“ setzen bzw. die import-rtctrl-Subnetze "
+            "entfernen, wenn alles übernommen werden soll.",
+            "Set “Route Control Enforcement: Import” on the L3Out or remove the import-rtctrl "
+            "subnets if everything is to be accepted.",
+        ),
+    )
+
+
 _TOPO_TEXT = {
+    "bgp_expected_missing": _bgp_missing,
+    "bgp_outside_filter": _bgp_outside,
+    "bgp_no_inbound_filter": _bgp_open,
+    "aci_import_not_enforced": _aci_import,
     "net_wider_than_routes": _net_wider,
     "topo_duplicate_ip": _dup_ip,
     "topo_mask_mismatch": _mask,

@@ -49,7 +49,11 @@ wirksame Routing-Tabelle, alle BGP-Pfade und -Nachbarn, statische Routen, Policy
 SD-WAN-Regeln sowie global HA und Session-Sync; ein APIC-Lauf die L3Outs und je Border-Leaf
 und VRF dessen Routing-Tabelle und BGP-Nachbarn. Das Read-only-Profil der FortiGate braucht
 Lesezugriff auf Router und System (inkl. Monitor), der APIC-Benutzer auf die Fabric-Knoten.
-Passwörter und Schlüssel (HA, FGSP, BGP-Peers) werden nie gelesen.
+Passwörter und Schlüssel (HA, FGSP, BGP-Peers) werden nie gelesen. Seit 0.113.0 (ADR 0041)
+dazu die BGP-Konfiguration je VDOM (`router bgp`: Filter je Nachbar, network, aggregate,
+redistribute) mit Prefix-Listen, Route-Maps und Access-Listen sowie die Route Control der
+L3Outs – dafür braucht das Profil Lesezugriff auf die Router-Konfiguration, nicht nur den
+Monitor; fehlt er, steht „BGP-Konfiguration“ als nicht lesbar in der Lauf-Meldung.
 
 **Zeitgesteuert:** Mit einem Zeitplan am Quellsystem legt der Orchestrator zum Termin selbst
 einen Lauf an (`AUTOMATO_SCHEDULER_ENABLED=true`, in docker-compose Standard). Wie „Jetzt
@@ -577,11 +581,18 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
         - Central-NAT ist bewusst nicht abgebildet (Entscheid des Anwenders).
   - **Routen:** wirksam (RIB), BGP-Pfade (bester bzw. Backup) und statische Routen (aktiv bzw.
     inaktiv); Suche, „enthält IP“ (längstes Präfix zuerst), Filter Tabelle und Kontext.
-  - **BGP-Nachbarn** (mit Name aus dem IPAM und, falls gelesen, dem Knoten dahinter), **HA &
+  - **BGP-Nachbarn** (mit Name aus dem IPAM und, falls gelesen, dem Knoten dahinter; seit
+    0.113.0 mit **Filter (ein / aus)** und **Soll/Ist**: erwartet = was die Eingangsfilter
+    ausdrücklich erlauben, mit „nichts angekommen“; erhalten = BGP-Pfade vom Nachbarn mit
+    „erlaubt/gesperrt/unbekannt“ nach dem Filter; angekündigt = berechnet aus besten Pfaden,
+    network, aggregate und redistribute durch die Ausgangsfilter – die FortiGate meldet es nicht.
+    Darüber aufklappbar die gelesene BGP-Konfiguration je Firewall mit konfigurierten Nachbarn
+    ohne Sitzung. Abweichungen stehen unter Findings → BGP-Filter), **HA &
     Session-Sync** (Modus, Gruppe, Mitglieder mit Rolle, FGSP-Peers), **Policy-Routen &
     SD-WAN** (Bedingung, Weg, Mitglieder nach Vorrang), **L3Outs (ACI)** (VRF, Border-Leafs mit
     Namen, Router-ID und statischen Routen, Interfaces/SVIs mit VLAN und Adressen, BGP-Peers
-    mit Namen).
+    mit Namen; seit 0.113.0 **Route Control**: erzwungen (export, import), Anzahl Subnetze
+    mit import-/export-rtctrl, „Soll/Ist“ mit Import erwartet/erhalten und Export).
     - **Firewall dahinter (0.97.0, ADR 0034):** Spalte „Firewall dahinter“ je L3Out – die
       Firewall (VDOM, Interface, Zone) mit Herkunft abgeleitet / bestätigt / von Hand / keine;
       abgeleitet aus dem Transfernetz (SVI im Netz eines Firewall-Interfaces) bzw. BGP-Peer oder
@@ -631,6 +642,10 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
         Anbindung gelernt sind (ohne Default-Route), zum Übernehmen. Die grossen Netze (z. B.
         10.0.0.0/8 hinter dem MPLS) bleiben von Hand einzutragen – sie entscheiden, wohin ein
         grosses Netz einer Regel gehört (unten).
+      - „Aus den BGP-Filtern“ (0.113.0, ADR 0041) schlägt die Netze vor, die die
+        Eingangsfilter für diese Next-Hops ausdrücklich erlauben (Prefix-Listen und Route-Maps
+        der FortiGate, import-rtctrl der L3Outs mit diesem Peer) – ohne „alles“-Regeln und
+        Default-Route; oft genau die grossen Netze dahinter.
       - Speichern mit ungültigen Einträgen nennt sie und speichert nicht.
     - **Grosse Netze der Regeln** (0.111.0, ADR 0040): routet eine Firewall ein Netz einer Regel
       (z. B. 10.0.0.0/8) nicht als Ganzes – Teile laufen über genauere Routen, oder es bleibt nur

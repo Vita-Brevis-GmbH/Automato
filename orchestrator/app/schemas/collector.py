@@ -360,6 +360,9 @@ class NormalizedL3Out(BaseModel):
     paths: list[dict[str, Any]] = Field(default_factory=list)  # path, nodes, kind, encap, ips
     peers: list[dict[str, Any]] = Field(default_factory=list)  # ip, asn, path
     ext_epgs: list[str] = Field(default_factory=list)
+    # Route Control (0.113.0, ADR 0041): enforce (export/import) und die Subnetze der externen
+    # EPGs mit `export-rtctrl` (angekuendigt) bzw. `import-rtctrl` (erwartet)
+    route_control: dict[str, Any] = Field(default_factory=dict)
 
 
 class NormalizedRoutingContext(BaseModel):
@@ -371,6 +374,19 @@ class NormalizedRoutingContext(BaseModel):
     missing: list[str] = Field(default_factory=list)
 
 
+class NormalizedBgpObject(BaseModel):
+    """BGP-Konfiguration eines Routing-Kontexts (0.113.0, ADR 0041), nur lesend: `bgp` = der
+    BGP-Prozess (AS, Router-ID, network, aggregate, redistribute), `prefix_list`, `route_map`
+    und `access_list` = die Filter mit ihren Regeln in der Reihenfolge des Geraets."""
+
+    node: str
+    context: str
+    kind: Literal["bgp", "prefix_list", "route_map", "access_list"]
+    name: str
+    family: int | None = None  # 4 | 6 bei Prefix- und Access-Listen
+    data: dict[str, Any] = Field(default_factory=dict)
+
+
 class RoutingInventory(BaseModel):
     """Routing, BGP, HA und L3Out eines Laufs (ADR 0019 Stufe 2) - je Quellsystem ersetzt."""
 
@@ -380,6 +396,7 @@ class RoutingInventory(BaseModel):
     ha: list[NormalizedHa] = Field(default_factory=list)
     policy_routes: list[NormalizedPolicyRoute] = Field(default_factory=list)
     l3outs: list[NormalizedL3Out] = Field(default_factory=list)
+    bgp: list[NormalizedBgpObject] = Field(default_factory=list)  # BGP-Filter (0.113.0)
 
 
 class CollectorResult(BaseModel):

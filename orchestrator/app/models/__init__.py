@@ -93,6 +93,7 @@ from app.models.tenant_module import TenantModule
 from app.models.topology import (
     TOPOLOGY_MODELS,
     L3OutFirewall,
+    TopoBgpObject,
     TopoChange,
     TopoContext,
     TopoExit,
@@ -186,6 +187,7 @@ __all__ = [
     "NetAssignment",
     "NET_ASSIGN_KINDS",
     "TenantModule",
+    "TopoBgpObject",
     "TopoChange",
     "TopoContext",
     "TopoExit",

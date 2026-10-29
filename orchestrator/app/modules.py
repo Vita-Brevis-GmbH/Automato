@@ -172,8 +172,9 @@ MODULES: tuple[Module, ...] = (
             "Routing, Verkabelung, Abgleich IPAM, Topologie, Datenqualität",
             "Routing, cabling, IPAM reconciliation, topology, data quality",
         ),
-        api=("routing", "cabling", "reconcile", "topology", "data_quality"),
+        api=("routing", "bgp", "cabling", "reconcile", "topology", "data_quality"),
         store=(
+            "bgp_filters",  # BGP-Filter Soll/Ist (0.113.0, ADR 0041)
             "boundary",
             "cabling",
             "data_quality",

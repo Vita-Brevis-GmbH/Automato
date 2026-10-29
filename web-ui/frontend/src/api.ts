@@ -2578,6 +2578,7 @@ export interface TopoPeer extends Labeled {
   state: string | null;
   peer?: Resolved;
   peer_node?: string | null; // gelesener Knoten hinter der Adresse
+  attrs?: { config?: BgpNeighborConfig } | null; // BGP-Konfiguration (0.113.0, ADR 0041)
 }
 export interface TopoHa {
   id: number;
@@ -2633,6 +2634,106 @@ export interface TopoL3Out {
   ext_epgs: string[] | null;
   source_system_id: number;
   behind?: L3OutBehind | null; // Firewall dahinter (ADR 0034)
+  route_control?: RouteControl | null; // 0.113.0 (ADR 0041)
+}
+
+// BGP-Filter und Route Control (0.113.0, ADR 0041): nur gelesen, Soll/Ist je Nachbar bzw. L3Out
+export type BgpFilterKind = "route_map" | "prefix_list" | "distribute_list" | "filter_list";
+export interface BgpNeighborConfig {
+  filters?: Record<string, Partial<Record<BgpFilterKind, string>>>; // in | out | in6 | out6
+  remote_as?: string;
+  group?: string;
+  description?: string;
+  shutdown?: boolean;
+}
+export interface RouteControlSubnet {
+  prefix: string;
+  epg?: string;
+  aggregate?: boolean;
+}
+export interface RouteControl {
+  enforce?: string[];
+  export?: RouteControlSubnet[];
+  import?: RouteControlSubnet[];
+}
+export type BgpVerdict = "permit" | "deny" | null;
+export interface BgpEntry {
+  filter: string;
+  kind: "prefix_list" | "access_list";
+  id?: number;
+  prefix: string;
+  ge?: number;
+  le?: number;
+  exact?: boolean;
+  all?: boolean; // erlaubt alles (any, 0/0 le 32)
+  received?: number;
+  missing?: boolean;
+}
+export interface BgpSide {
+  filters: Record<string, string>;
+  open: boolean; // ohne Filter
+  entries: BgpEntry[];
+  counts: Record<string, number>;
+  received: { prefix: string; best: boolean; verdict: BgpVerdict }[];
+  received_total?: number;
+  announced: { prefix: string; origin: string; verdict: BgpVerdict }[];
+  announced_total?: number;
+}
+export interface BgpPeerReport extends Resolved {
+  id: number;
+  label: string;
+  peer_ip: string;
+  state: string | null;
+  configured: boolean;
+  remote_as?: number | null;
+  local_as?: number | null;
+  ebgp?: boolean | null;
+  established?: boolean;
+  group?: string | null;
+  description?: string | null;
+  in?: BgpSide;
+  out?: BgpSide;
+}
+export interface BgpProcess {
+  source_system_id: number;
+  source: string | null;
+  node: string;
+  context: string;
+  label: string;
+  as?: string;
+  router_id?: string;
+  networks?: { prefix: string; route_map?: string }[];
+  aggregates?: { prefix: string; summary_only?: boolean }[];
+  redistribute?: { name: string; route_map?: string }[];
+  ranges?: { prefix: string; group: string }[];
+  groups: string[];
+  neighbors: number;
+  objects: Record<string, number>;
+  configured_only: ({ peer_ip: string; config: BgpNeighborConfig } & Resolved)[];
+}
+export interface L3OutRouteControl {
+  id: number;
+  l3out: string;
+  aci_tenant: string;
+  vrf: string | null;
+  source: string | null;
+  enforce: string[];
+  import_enforced: boolean;
+  peers: string[];
+  import: {
+    entries: (RouteControlSubnet & { received: number; missing: boolean; all: boolean })[];
+    received: { prefix: string; verdict: BgpVerdict }[];
+    received_total: number;
+    counts: Record<string, number>;
+  };
+  export: { entries: RouteControlSubnet[] };
+}
+export interface FilteredPrefixes {
+  prefixes: string[];
+  collapsed: string[];
+  total: number;
+  cut: boolean;
+  filters: string[];
 }
 
 // Firewall hinter einem L3Out (ADR 0034): abgeleitet aus dem Topologie-Modell bzw. von Hand
@@ -2769,6 +2870,12 @@ export const fetchHa = (tenantId: number) => getJSON<TopoHa[]>(`/api/routing/ha$
 export const fetchPolicyRoutes = (tenantId: number) =>
   getJSON<TopoPolicyRoute[]>(`/api/routing/policy-routes${cq({ tenant_id: tenantId })}`);
 export const fetchL3Outs = (tenantId: number) => getJSON<TopoL3Out[]>(`/api/routing/l3outs${cq({ tenant_id: tenantId })}`);
+export const fetchBgpConfig = (tenantId: number) =>
+  getJSON<BgpProcess[]>(`/api/routing/bgp/config${cq({ tenant_id: tenantId })}`);
+export const fetchBgpPeer = (tenantId: number, peerId: number) =>
+  getJSON<BgpPeerReport>(`/api/routing/bgp/peers/${peerId}${cq({ tenant_id: tenantId })}`);
+export const fetchL3OutRouteControl = (tenantId: number, l3outId: number) =>
+  getJSON<L3OutRouteControl>(`/api/routing/bgp/l3outs/${l3outId}${cq({ tenant_id: tenantId })}`);
 export const fetchFirewallChoices = (tenantId: number) =>
   getJSON<FirewallChoice[]>(`/api/routing/l3outs/firewall-choices${qs({ tenant_id: tenantId })}`);
 export const setL3OutFirewall = (body: L3OutFirewallIn) =>
@@ -2929,6 +3036,13 @@ export const fetchLearnedPrefixes = (tenantId: number, sids: number[], hops: str
   hops.forEach((x) => q.append("next_hops", x));
   ifaces.forEach((x) => q.append("interfaces", x));
   return getJSON<LearnedPrefixes>(`/api/routing/exits/learned?${q}`);
+};
+// Netze der Eingangsfilter für die Router einer Anbindung (0.113.0): Vorschlag für „Netze dahinter“
+export const fetchFilteredPrefixes = (tenantId: number, sids: number[], hops: string[]) => {
+  const q = new URLSearchParams({ tenant_id: String(tenantId) });
+  sids.forEach((x) => q.append("source_system_ids", String(x)));
+  hops.forEach((x) => q.append("next_hops", x));
+  return getJSON<FilteredPrefixes>(`/api/routing/bgp/filtered?${q}`);
 };
 export const createExit = (body: TopoExitIn) => sendJSON<TopoExit>("/api/routing/exits", "POST", body);
 export const updateExit = (id: number, body: TopoExitIn) => sendJSON<TopoExit>(`/api/routing/exits/${id}`, "PUT", body);

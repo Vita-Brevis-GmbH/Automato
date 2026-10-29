@@ -69,6 +69,8 @@ Positivliste (Passwörter, Pre-Shared-Keys und Schlüssel kommen nie mit):
 | `system/sdwan` | `service[]` (`id`, `name`, `mode`, `dst`, `src`, `priority-members`), `members[]` (`interface`, `gateway`, `zone`) | `topo_policy_route` `sdwan` (Mitglieder nach Vorrang) |
 | `system/ha` (global), Monitor `system/ha-peer` | `mode`, `group-name`, `group-id`, `session-pickup*`, `priority`, `override`; Mitglieder `hostname`, `serial_no`, `priority`, Rolle | `topo_ha` – **ohne** `password` |
 | `system/standalone-cluster` (ab 7.2) bzw. `system/cluster-sync` | `cluster-peer[]`: `sync-id`, `peervd`, `peerip`, `syncvd`; Gruppe/Mitglied | `topo_ha.sync_peers` (FGSP) – **ohne** `psksecret` |
+| `router/bgp` (0.113.0, ADR 0041) | `as`, `router-id`; `neighbor[]`, `neighbor-group[]`: `ip`/`name`, `remote-as`, `interface`, `update-source`, `shutdown`, `next-hop-self`, `ebgp-enforce-multihop`, Filter `route-map-in`/`-out`, `prefix-list-in`/`-out`, `distribute-list-in`/`-out`, `filter-list-in`/`-out` (je auch `…6`); `neighbor-range[]` (`prefix`, `neighbor-group`); `network[]`, `aggregate-address[]`, `redistribute` (nur eingeschaltete) | `topo_bgp_object` `bgp`; je Nachbar `topo_peer.attrs.config` – **ohne** `password`, `auth-options`, `keychain` |
+| `router/prefix-list`, `prefix-list6`, `route-map`, `access-list`, `access-list6` | `name`; `rule[]`: `id`, `action`, `prefix`/`prefix6`, `ge`, `le`, `exact-match`, `wildcard`; Route-Map `match-ip-address`, `match-ip6-address`, `match-as-path`, `match-community`, `match-interface`, `set-local-preference`, `set-metric`, `set-weight`, `set-aspath`, `set-community` | `topo_bgp_object` `prefix_list`, `access_list`, `route_map` |
 
 Monitor-Listen liest der Collector seitenweise (`start`/`count`), wenn die FortiGate kürzt;
 mehr als 50 000 Einträge je Tabelle werden nicht übernommen (Meldung „zu gross“). Fehlt das
@@ -76,8 +78,8 @@ Leserecht (401/403), steht die Tabelle in der Lauf-Meldung („Routing nicht les
 Kontext als nicht lesbar; fehlt die Tabelle (Version, Funktion aus), bleibt sie leer. Das
 Read-only-Profil braucht Lesezugriff auf **Router** und **System** (inkl. Monitor).
 
-**Nicht gelesen:** `vpn ipsec …` (`psksecret`!), die BGP-Konfiguration `router bgp` (Passwörter
-der Nachbarn) – BGP kommt nur aus dem Monitor-API.
+**Nicht gelesen:** `vpn ipsec …` (`psksecret`!). Aus `router bgp` (seit 0.113.0) nur die
+Felder der Positivliste oben – Passwörter und Schlüssel der Nachbarn kommen nie mit.
 
 **Beobachtete Zusatz-Prefixe** (→ Wörterbuch/Kaskade): `N-EXT_` (externes Netz),
 `T_` (Transfernetz), bare-name `geography` (`type geography`, `country` → `not_applicable`),
@@ -160,7 +162,10 @@ Regeln tragen `kind` (`contract` | `taboo` | `preferred_group`) im Rohdatensatz.
 `rtrId`; statische Routen `ipRouteP`/`ipNexthopP`), Interfaces bzw. SVIs
 (`l3extRsPathL3OutAtt`: `tDn`, `ifInstT`, `encap`, `addr`, `mtu`; vPC-Seiten `l3extMember`,
 weitere Adressen `l3extIp`), BGP-Peers (`bgpPeerP` `addr` mit `bgpAsP` `asn` – **ohne**
-`password`) und externe EPGs → `topo_l3out`. Dazu je Border-Leaf und VRF (nur lesend):
+`password`) und externe EPGs → `topo_l3out`; Route Control (0.113.0): `l3extOut.enforceRtctrl`
+(fehlt = `export`) und je `l3extSubnet` mit `export-rtctrl` bzw. `import-rtctrl` im `scope`
+(`aggregate` = alle Längen darin) → `topo_l3out.route_control`. Dazu je Border-Leaf und VRF (nur
+lesend):
 
 - `GET /api/node/mo/topology/pod-<p>/node-<n>/sys/uribv4/dom-<Tenant>:<VRF>.json` mit
   `query-target=subtree&target-subtree-class=uribv4Route,uribv4Nexthop` (IPv6: `uribv6…`) →

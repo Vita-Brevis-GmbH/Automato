@@ -7,6 +7,42 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.113.0 – 2026-10-29
+
+Roadmap Version 1 Nr. 3, Stufe 1 (Anwender 2026-10-29: „go 113“, gewählt „Filter lesen +
+Soll/Ist“) – Grund: Backup-Wege, die die Filter der Firewalls davor nie zulassen (Rückmeldung zu
+0.110). Abnahme bis 0.112.0. ADR 0041, Migration 0070.
+
+- **BGP-Konfiguration der FortiGate lesen, strikt nur lesend:** je VDOM `router bgp` (AS,
+  Router-ID, network, aggregate, redistribute, je Nachbar bzw. Nachbar-Gruppe die Filter ein/aus
+  – Route-Map, Prefix-Liste, Distribute-Liste, Filter-Liste, je auch IPv6 – und dynamische
+  Nachbarn über Nachbar-Bereiche) sowie Prefix-Listen, Route-Maps und Access-Listen mit ihren
+  Regeln. Passwörter und Schlüssel der Nachbarn kommen nie mit (Positivliste).
+- **ACI Route Control lesen:** je L3Out `enforceRtctrl` (export, import) und die Subnetze der
+  externen EPGs mit `import-rtctrl` bzw. `export-rtctrl` (mit `aggregate`).
+- **Soll/Ist je BGP-Nachbar** (Routing → BGP-Nachbarn, neue Spalte „Filter (ein / aus)“ und
+  „Soll/Ist“): **erwartet** = was die Eingangsfilter ausdrücklich erlauben, **erhalten** = die
+  BGP-Pfade vom Nachbarn mit dem Urteil des Filters, **angekündigt** (berechnet) = beste Pfade,
+  network, aggregate und redistribute durch die Ausgangsfilter. Ausgewertet wie die FortiGate
+  (erste passende Regel, ge/le, Route-Map mit `match ip-address`); AS-Path, Community und Wildcards
+  ergeben „unbekannt“. Darüber die gelesene BGP-Konfiguration je Firewall, mit konfigurierten
+  Nachbarn ohne Sitzung.
+- **L3Outs:** Spalte „Route Control“ (erzwungen, Anzahl Subnetze) und „Soll/Ist“ – Import
+  erwartet, erhalten über die Peers des L3Outs, Export.
+- **Befunde** (neue Prüfung „BGP-Filter Soll/Ist“, Gruppe „BGP-Filter“): erwartetes Netz kommt
+  nicht an (FortiGate-Filter bzw. ACI-Import erzwungen), erhalten obwohl der Filter sperrt,
+  eBGP-Nachbar ohne Eingangsfilter (Info), ACI Import Route Control nicht erzwungen (Info).
+- **Anbindungen:** Knopf „aus den BGP-Filtern“ bei „Netze dahinter“ – die Netze, die die
+  Eingangsfilter für die Next-Hops erlauben (ohne „alles“ und Default-Route), zusammengefasst
+  oder einzeln übernehmen.
+- API (viewer, Kunden-Ausschnitt): `GET /routing/bgp/config`, `/routing/bgp/peers/{id}`,
+  `/routing/bgp/l3outs/{id}`, `/routing/bgp/filtered`.
+- Das Read-only-Profil der FortiGate braucht Lesezugriff auf die Router-Konfiguration; fehlt er,
+  steht „BGP-Konfiguration“ als nicht lesbar in der Lauf-Meldung.
+- Tests: `collectors/tests/test_routing.py` (BGP-Konfiguration, Filter, Route Control),
+  `orchestrator/tests/test_bgp_filters.py` (Auswertung, Soll/Ist, Befunde, Vorschlag, Mandant);
+  UI-Tests in `e2e/bgp_filters.spec.ts`.
+
 ## 0.112.0 – 2026-10-29
 
 Fehler und Wunsch des Anwenders zu 0.110 (2026-10-29), in einer Version. Abnahme bis 0.111.0.

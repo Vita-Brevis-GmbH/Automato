@@ -426,8 +426,9 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.110.0** | Findings als steckbare Prüfungen: je Prüfung eine Datei im Paket ihres Moduls (`app/checks/<modul>/`), vom Abgleich selbst gefunden, je Mandant schaltbar (Admin, Audit), Reiter „Prüfungen“ mit Dauer und Anzahl; Oberfläche je Modul (`src/modules/<modul>/`, Navigation aus dem Verzeichnis) (ADR 0039) |
 | **0.111.0** | Fehler und Funde zu 0.109: Export Route Control keine Gegenstelle der externen EPG; „Contract öffnet tcp/xy nicht (offen: …)“ statt „kein Contract“; Transfernetz zum eigenen L3Out; grosse Netzlisten bei Anbindungen (einfügen, prüfen, zusammenfassen, aus dem Routing); grosse Netze der Regeln zuordnen (von Hand, Zone, Anbindung, Teile nach dem Routing, Befund „Netz der Regel grösser als die Routen“) (ADR 0040) |
 | **0.112.0** | Fehler zu 0.110: „abhängig“ mit Grund je Firewall bzw. Weg, Geo/Internet Service trifft keine private Adresse, Eingang am Start nach der Route zur Quelle; Backup-Wege nur, was das Gerät gelernt hat (keine Default-Route für private Ziele, kein BGP-Bestpfad, keine Route auf ein Adressobjekt); „↔ auch vom Provider aus: …“ statt „beide Richtungen“; Knopf „Weg-Suche“ bei Regeln, Applikation und Doku nach Kategorie |
+| **0.113.0** | BGP-Filter lesen (Stufe 1): FortiGate `router bgp` mit Prefix-Listen, Route-Maps, Access-Listen (ohne Passwörter), ACI Route Control; je BGP-Nachbar bzw. L3Out Soll/Ist (erwartet, erhalten, angekündigt), Befunde bei Abweichungen, „Netze dahinter“ aus den BGP-Filtern (ADR 0041) |
 
-### Nächste Arbeiten (Stand 0.112.0)
+### Nächste Arbeiten (Stand 0.113.0)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
 **0.68.0** (2026-10-26), bis **0.102.0** (2026-10-28: „ich teste nach dem Freigeben der Version
@@ -437,7 +438,8 @@ Testbefunde zu 0.106.0 in 0.107.0), bis **0.107.0** (2026-10-28, „108 go“ oh
 **0.108.0** (2026-10-29, Rückmeldung ohne Einwand), bis **0.109.0** (2026-10-29, Fehlerliste ohne
 Einwand zu 0.109.0), bis **0.109.1** (2026-10-29, „go 110“ ohne Einwand), bis **0.110.0**
 (2026-10-29, Fehlerliste zu 0.109 ohne Einwand zu 0.110.0), bis **0.111.0** (2026-10-29,
-Fehlerliste zu 0.110 ohne Einwand zu 0.111.0). Zur Abnahme steht 0.112.0. Seit 0.104.0 gilt eine
+Fehlerliste zu 0.110 ohne Einwand zu 0.111.0), bis **0.112.0** (2026-10-29, „go 113“ ohne
+Einwand). Zur Abnahme steht 0.113.0. Seit 0.104.0 gilt eine
 Version als abgenommen,
 sobald die nächste Rückmeldung des Anwenders keinen Einwand dazu enthält (`CLAUDE.md`, Ablauf).
 
@@ -451,7 +453,7 @@ Produktivschaltung weiter 0.1xx; **1.0.0 = produktiv**, danach 2.x mit neuem Nam
 |---|---|---|
 | 1 | Module in eigene Pakete, Findings als steckbare Prüfungen, Oberfläche je Modul (ADR 0036, weitere Stufen) | **Stufe 1 in 0.110.0** (ADR 0039: Prüfungen je Modul steckbar und je Mandant schaltbar, Reiter „Prüfungen“, Ansichten je Modul aus dem Verzeichnis); die übrigen Dateien ziehen schrittweise in die Pakete ihres Moduls |
 | 2 | Prüfung, ob der Fingerabdruck der Doku jede Änderung bemerkt, im nächtlichen Lauf | **erledigt in 0.109.1** (CI-Schritt nachts bzw. von Hand, `AUTOMATO_TEST_DOC_SNAPSHOTS=1`) |
-| 3 | BGP in der Dokumentation; BGP-Filter je Zone aus Netzen und Ausschlüssen ableiten – als Vorschlag/Export, kein Schreibweg | offen |
+| 3 | BGP in der Dokumentation; BGP-Filter je Zone aus Netzen und Ausschlüssen ableiten – als Vorschlag/Export, kein Schreibweg | **Stufe 1 in 0.113.0** (ADR 0041: Filter und Route Control lesen, Soll/Ist je Nachbar, Befunde, Netze der Filter für die Anbindungen); Stufe 2: je Zone ableiten, Backup-Wege gegen die Filter prüfen |
 | 4 | Tests des Anwenders abschliessen; Juniper-Router einbinden und testen (Routing-Tabelle des MX für die Wege, seit 0.68.0 offen); Wege sauber und intensiv testen | offen |
 | 5 | Schreibpfad mit Nachkontrolle: nach „Übernehmen“ über den Lesepfad zurücklesen und vergleichen, Abweichungen als Befund | offen (Entscheid 2026-10-29: in Version 1) |
 | 6 | R14 vor dem Produktivbetrieb: OTP für alle, Oberfläche nur aus Management-Netz/VPN, Verschlüsselung des Datenträgers – umsetzen bzw. bestätigen, was ausserhalb von Automato erledigt ist | offen (Entscheid 2026-10-29: in Version 1) |

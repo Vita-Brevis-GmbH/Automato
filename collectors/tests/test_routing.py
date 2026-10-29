@@ -17,6 +17,7 @@ from collectors.fortigate import routing as fgt
 from collectors.fortigate.client import FortiGateClient
 
 SECRET = "ENC geheimes-ha-passwort"
+BGP_SECRET = "ENC geheimes-bgp-passwort"
 
 MONITOR = {
     "router/ipv4": [
@@ -151,6 +152,84 @@ def test_fortigate_routing_ha_und_keine_secrets():
     assert "psksecret" not in json.dumps(inv.model_dump())
 
 
+BGP_CFG = {
+    "router/bgp": {
+        "as": "65001", "router-id": "10.0.0.1",
+        "neighbor": [
+            {"ip": "198.51.100.1", "remote-as": "64500", "password": BGP_SECRET,
+             "route-map-in": "RM_ISP_IN", "prefix-list-out": "PL_DC", "description": "ISP A"},
+            {"ip": "198.51.100.13", "remote-as": "64502", "shutdown": "enable"},
+        ],
+        "neighbor-group": [{"name": "G_SITES", "remote-as": "65100", "prefix-list-in": "PL_SITES"}],
+        "neighbor-range": [{"id": 1, "prefix": "10.60.0.0 255.255.0.0",
+                            "neighbor-group": "G_SITES"}],
+        "network": [{"id": 1, "prefix": "10.20.0.0 255.255.0.0", "route-map": ""}],
+        "aggregate-address": [{"id": 1, "prefix": "10.20.0.0 255.255.0.0",
+                               "summary-only": "enable"}],
+        "redistribute": [{"name": "connected", "status": "enable", "route-map": "RM_CONN"},
+                         {"name": "ospf", "status": "disable"}],
+    },
+    "router/prefix-list": [
+        {"name": "PL_DC", "rule": [{"id": 1, "action": "permit",
+                                    "prefix": "10.20.0.0 255.255.0.0", "ge": 0, "le": 24}]},
+        {"name": "PL_SITES", "rule": [{"id": 2, "action": "deny", "prefix": "any"},
+                                      {"id": 1, "action": "permit",
+                                       "prefix": "10.60.0.0 255.255.0.0", "ge": 0, "le": 0}]},
+    ],
+    "router/prefix-list6": [{"name": "PL6", "rule": [{"id": 1, "action": "permit",
+                                                      "prefix6": "2001:db8::/32", "le": 48}]}],
+    "router/route-map": [
+        {"name": "RM_ISP_IN", "rule": [
+            {"id": 1, "action": "deny", "match-ip-address": "ACL_BOGONS"},
+            {"id": 2, "action": "permit", "match-community": "", "set-local-preference": 200,
+             "set-community": [{"community": "65001:100"}]},
+        ]},
+    ],
+    "router/access-list": [{"name": "ACL_BOGONS", "rule": [
+        {"id": 1, "action": "permit", "prefix": "10.0.0.0 255.0.0.0", "exact-match": "disable"},
+    ]}],
+}  # fmt: skip
+
+
+def test_fortigate_bgp_filter_und_nachbar_konfiguration(monkeypatch):
+    """0.113.0 (ADR 0041): BGP-Prozess, Filter je Nachbar (auch ueber Nachbar-Gruppe und
+    -Bereich), Prefix-/Access-Listen und Route-Maps - nur lesend, ohne Passwort."""
+    for key, value in BGP_CFG.items():
+        monkeypatch.setitem(CMDB, key, value)
+    site = {"neighbor_ip": "10.60.1.1", "remote_as": 65100, "state": "Established"}
+    monitor = [*MONITOR["router/bgp/neighbors"], site]
+    monkeypatch.setitem(MONITOR, "router/bgp/neighbors", monitor)
+    d = _fgt().gather()
+    inv = fgt.normalize(d["vdoms"], d["ha"], "fw-a")
+    assert inv.contexts[0].missing == []
+    peers = {p.peer_ip: p for p in inv.peers}
+    isp = peers["198.51.100.1"].attrs["config"]
+    assert isp["filters"] == {"in": {"route_map": "RM_ISP_IN"}, "out": {"prefix_list": "PL_DC"}}
+    assert (isp["remote_as"], isp["description"]) == ("64500", "ISP A")
+    site = peers["10.60.1.1"].attrs["config"]  # dynamischer Nachbar: Filter der Gruppe
+    assert (site["group"], site["filters"]) == ("G_SITES", {"in": {"prefix_list": "PL_SITES"}})
+    by = {(b.kind, b.name): b for b in inv.bgp}
+    process = by[("bgp", "bgp")].data
+    # konfiguriert, nicht im Monitor: nur im BGP-Prozess, kein Nachbar ohne Zustand
+    assert "198.51.100.13" not in peers and process["neighbors"]["198.51.100.13"]["shutdown"]
+    assert (process["as"], process["router_id"]) == ("65001", "10.0.0.1")
+    assert process["networks"] == [{"prefix": "10.20.0.0/16"}]
+    assert process["aggregates"] == [{"prefix": "10.20.0.0/16", "summary_only": True}]
+    assert process["redistribute"] == [{"name": "connected", "route_map": "RM_CONN"}]
+    sites = by[("prefix_list", "PL_SITES")]
+    assert sites.family == 4 and [(r["id"], r["action"], r["prefix"], r["ge"], r["le"])
+                                  for r in sites.data["rules"]] == [
+        (1, "permit", "10.60.0.0/16", None, None), (2, "deny", "any", None, None)]  # fmt: skip
+    assert by[("prefix_list", "PL_DC")].data["rules"][0]["le"] == 24
+    assert by[("prefix_list", "PL6")].family == 6
+    rm = by[("route_map", "RM_ISP_IN")].data["rules"]
+    assert rm[0]["match"] == {"ip-address": "ACL_BOGONS"} and rm[1]["match"] == {}
+    assert rm[1]["set"] == {"local-preference": 200, "community": ["65001:100"]}
+    acl = by[("access_list", "ACL_BOGONS")].data["rules"][0]
+    assert (acl["prefix"], acl["exact"]) == ("10.0.0.0/8", False)
+    assert BGP_SECRET not in json.dumps(inv.model_dump())  # Passwort des Nachbarn nie
+
+
 def test_fortigate_routing_ohne_recht_steht_in_der_meldung():
     import collectors.fortigate.tasks as t
 
@@ -206,9 +285,14 @@ EXPORT = {
     "imdata": [
         _mo("fvTenant", name="TE", children=[
             _mo("fvCtx", name="VRF1"),
-            _mo("l3extOut", name="L3O_inet", children=[
+            _mo("l3extOut", name="L3O_inet", enforceRtctrl="export,import", children=[
                 _mo("l3extRsEctx", tnFvCtxName="VRF1"),
-                _mo("l3extInstP", name="EN_inet"),
+                _mo("l3extInstP", name="EN_inet", children=[
+                    _mo("l3extSubnet", ip="0.0.0.0/0", scope="import-rtctrl,import-security",
+                        aggregate="import-rtctrl"),
+                    _mo("l3extSubnet", ip="10.20.0.0/16", scope="export-rtctrl"),
+                    _mo("l3extSubnet", ip="10.99.0.0/16", scope="import-security"),
+                ]),
                 _mo("l3extLNodeP", name="NP_border", children=[
                     _mo("l3extRsNodeL3OutAtt", tDn="topology/pod-1/node-101", rtrId="10.255.255.1",
                         children=[_mo("ipRouteP", ip="0.0.0.0/0", pref="1", children=[
@@ -286,6 +370,13 @@ def test_aci_l3out_border_leafs_und_routen():
     ]
     assert out.peers == [{"ip": "10.255.0.1", "asn": 65010, "path": path["path"]}]
     assert l3["L3O_shared"].vrf == "common:VRF_s"  # VRF nicht im eigenen Tenant
+    # Route Control (0.113.0): erzwungen je Richtung, Subnetze mit export-/import-rtctrl
+    assert out.route_control == {
+        "enforce": ["export", "import"],
+        "export": [{"prefix": "10.20.0.0/16", "epg": "EN_inet"}],
+        "import": [{"prefix": "0.0.0.0/0", "epg": "EN_inet", "aggregate": True}],
+    }
+    assert l3["L3O_shared"].route_control == {"enforce": ["export"]}  # Vorgabe des APIC
     assert BGP_PW not in json.dumps(inv.model_dump())
 
     assert aci.border_contexts(inv.l3outs) == [("1", "101", "TE:VRF1"), ("1", "102", "TE:VRF1")]

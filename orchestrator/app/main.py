@@ -12,6 +12,7 @@ from app.api import (
     agents,
     applications,
     auth_config,
+    bgp,
     cabling,
     checks,
     customer_users,
@@ -128,6 +129,7 @@ def create_app() -> FastAPI:
     app.include_router(system.router)
     # vor dem Routing: /routing/net-assignments gehoert zum Wegsucher (0.111.0)
     app.include_router(net_assign.router, dependencies=[Depends(modules.guard("wege"))])
+    app.include_router(bgp.router, dependencies=[Depends(modules.guard("analyse"))])  # 0.113.0
     app.include_router(routing.router, dependencies=[Depends(modules.guard(None))])
     app.include_router(topology.router, dependencies=[Depends(modules.guard("analyse"))])
     app.include_router(customers.router)

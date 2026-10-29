@@ -11,7 +11,8 @@ dann „unbekannt“).
   Suche nach dem laengsten Praefix.
 - `topo_peer`: BGP-Nachbarn mit Zustand; `topo_ha`: HA-Cluster und Session-Sync (FGSP);
   `topo_policy_route`: Policy-Routen und SD-WAN-Regeln; `topo_l3out`: ACI-L3Outs mit
-  Border-Leafs, Interfaces/SVIs, Peers und statischen Routen.
+  Border-Leafs, Interfaces/SVIs, Peers, statischen Routen und Route Control (0.113.0);
+  `topo_bgp_object` (0.113.0): BGP-Konfiguration der FortiGate mit Prefix-Listen und Route-Maps.
 
 Von Hand gepflegt (0.18.0, nicht je Lauf ersetzt): `topo_exit` - Anbindungen nach aussen
 (Internet, MPLS, WAN, Partner), an denen ein Weg endet bzw. weitergeht; `topo_exit_dismissal`
@@ -129,9 +130,28 @@ class TopoL3Out(_TopoRow, Base):
     paths: Mapped[list | None] = mapped_column(JSON, nullable=True)
     peers: Mapped[list | None] = mapped_column(JSON, nullable=True)
     ext_epgs: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # 0.113.0 (ADR 0041): {enforce: [export, import], export: [{prefix, epg, aggregate}], import}
+    route_control: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
-TOPOLOGY_MODELS = (TopoContext, TopoRoute, TopoPeer, TopoHa, TopoPolicyRoute, TopoL3Out)
+class TopoBgpObject(_TopoRow, Base):
+    """BGP-Konfiguration einer FortiGate je VDOM (0.113.0, ADR 0041, nur gelesen): der Prozess
+    (`bgp`: AS, network, aggregate, redistribute, Nachbarn mit Filtern) und die Filter, auf die
+    Nachbarn verweisen (`prefix_list`, `route_map`, `access_list` mit ihren Regeln)."""
+
+    __tablename__ = "topo_bgp_object"
+
+    node: Mapped[str] = mapped_column(String(200))
+    context: Mapped[str] = mapped_column(String(200))
+    kind: Mapped[str] = mapped_column(String(16))  # bgp | prefix_list | route_map | access_list
+    name: Mapped[str] = mapped_column(String(200))
+    family: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)  # 4 | 6 (Listen)
+    data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+TOPOLOGY_MODELS = (
+    TopoContext, TopoRoute, TopoPeer, TopoHa, TopoPolicyRoute, TopoL3Out, TopoBgpObject,
+)  # fmt: skip
 
 
 class TopoChange(Base):

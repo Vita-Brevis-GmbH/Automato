@@ -42,8 +42,8 @@ test("VIP-Detail zeigt DNS-Namen beider Seiten und den Server", async ({ page })
 
 test("Findings: Übersicht, Satz mit Befund, Link auf die Regel", async ({ page }) => {
   await page.goto("/#findings");
-  // ADR 0029: dazu „Datenqualität“ (fw-05 nur teilweise gelesen)
-  await expect(page.locator(".fgroup")).toHaveCount(10);
+  // ADR 0029: dazu „Datenqualität“ (fw-05 nur teilweise gelesen); 0.113.0: „BGP-Filter“ (fw-05)
+  await expect(page.locator(".fgroup")).toHaveCount(11);
   // seit 0.72.0: Policy-Route im Verbund „Süd“ je Firewall mit anderem Gateway
   await expect(page.locator(".fgroup", { hasText: "Parallele Firewalls" })).toContainText(
     "Parallele Policy-Route abweichend",

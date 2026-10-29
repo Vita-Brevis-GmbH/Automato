@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.models import (
     TOPOLOGY_MODELS,
     InvInterface,
+    TopoBgpObject,
     TopoContext,
     TopoHa,
     TopoL3Out,
@@ -202,9 +203,11 @@ def _rows(run, inv: RoutingInventory) -> dict:
             "paths": o.paths or None,
             "peers": o.peers or None,
             "ext_epgs": o.ext_epgs or None,
+            "route_control": o.route_control or None,
         }
         for o in inv.l3outs
     ]
+    bgp = [{**base, **b.model_dump(exclude={"data"}), "data": b.data or None} for b in inv.bgp]
     return {
         TopoContext: contexts,
         TopoRoute: routes,
@@ -212,6 +215,7 @@ def _rows(run, inv: RoutingInventory) -> dict:
         TopoHa: ha,
         TopoPolicyRoute: policy,
         TopoL3Out: l3outs,
+        TopoBgpObject: bgp,
     }
 
 
