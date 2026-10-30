@@ -609,12 +609,20 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     zusätzlich **„Soll aus den Zonen dahinter“**: Zone am Nachbarn und alle Zonen, die über ihn
     erreicht werden (Netzwerkdesign → Zonen mit Geräten), ihre Netze und Ausschlüsse als
     Prefix-Liste, „fehlt im Filter“ / „zu offen“ und ein FortiOS-CLI-Vorschlag zum Kopieren – nur
-    Text, eingespielt wird auf der Firewall von Hand), **HA &
+    Text, eingespielt wird auf der Firewall von Hand; seit 0.116.0 mit Umschalter **Eingang /
+    Ausgang**: Ausgang = Netze der Zonen diesseits (Zone der Firewall und alles, was der Nachbar
+    über sie erreicht), an einen Nachbarn in einer Zone der Art `external` nur öffentliche Netze;
+    dazu „n Routen ausserhalb der Zonen angekündigt“ und der Vorschlag `PL_<Zone>_OUT` mit
+    `prefix-list-out`), **HA &
     Session-Sync** (Modus, Gruppe, Mitglieder mit Rolle, FGSP-Peers), **Policy-Routen &
     SD-WAN** (Bedingung, Weg, Mitglieder nach Vorrang), **L3Outs (ACI)** (VRF, Border-Leafs mit
     Namen, Router-ID und statischen Routen, Interfaces/SVIs mit VLAN und Adressen, BGP-Peers
     mit Namen; seit 0.113.0 **Route Control**: erzwungen (export, import), Anzahl Subnetze
-    mit import-/export-rtctrl, „Soll/Ist“ mit Import erwartet/erhalten und Export).
+    mit import-/export-rtctrl, „Soll/Ist“ mit Import erwartet/erhalten und Export; seit 0.116.0
+    darunter **„Soll aus den Zonen dahinter (Import)“**: Zone der VRF, Zone am Peer, je Netz der
+    Zonen das Urteil der Route Control, Abweichungen (Import nicht erzwungen, ohne
+    `import-rtctrl`, importiert ausserhalb der Zonen, Ausschluss importiert) und die Subnetze der
+    externen EPG als Vorschlag zum Kopieren – nur Text, eingespielt wird im APIC von Hand).
     - **Firewall dahinter (0.97.0, ADR 0034):** Spalte „Firewall dahinter“ je L3Out – die
       Firewall (VDOM, Interface, Zone) mit Herkunft abgeleitet / bestätigt / von Hand / keine;
       abgeleitet aus dem Transfernetz (SVI im Netz eines Firewall-Interfaces) bzw. BGP-Peer oder
@@ -1980,8 +1988,20 @@ an (`deploy/agent-gateway`, Port 8443).
   Wiederherstellung laufen weiter als `automato`.
 - **AuthN/RBAC** über Keycloak (OIDC, `AUTOMATO_AUTH_MODE=oidc`, ADR 0007); im
   `dev`-Modus laufen alle Anfragen als Standard-Admin — nur im Lab verwenden.
-- Ausserhalb `AUTOMATO_ENVIRONMENT=dev` verweigert der Orchestrator ohne RBAC den Start,
-  solange `AUTOMATO_ALLOW_UNAUTHENTICATED_READ_API` nicht bewusst gesetzt ist (ADR 0005).
+- Ausserhalb `AUTOMATO_ENVIRONMENT=dev` verweigert der Orchestrator im Modus
+  `AUTOMATO_AUTH_MODE=dev` (ohne Anmeldung) den Start, solange
+  `AUTOMATO_ALLOW_UNAUTHENTICATED_READ_API` nicht bewusst gesetzt ist (ADR 0005); mit `oidc`
+  ist sie seit 0.116.0 nicht nötig und bleibt `false`.
+- **Produktiv installieren** (0.116.0, R14): `docs/INSTALLATION-PROD.md` – VM mit LUKS
+  (automatisch entsperrt über Clevis + Tang oder vTPM), gehärtetes Ubuntu und Docker, Automato
+  mit Anmeldung, Agent-Gateway, Sicherung und Abnahme-Liste.
+- **Oberfläche nur aus erlaubten Netzen** (0.116.0, R14): `AUTOMATO_UI_ALLOW` in `.env`
+  (Netze mit Leerzeichen getrennt, z. B. `"10.0.10.0/24 10.8.0.0/16"`; Vorgabe alles) – der
+  Proxy antwortet anderen Quellen mit 403. Docker muss dafür die Quell-IP erhalten
+  (`"userland-proxy": false`). Orchestrator (8000) und Web-UI (5173) mit
+  `AUTOMATO_API_BIND=127.0.0.1` bzw. `AUTOMATO_UI_DEV_BIND=127.0.0.1` nur lokal; von aussen dann
+  nur Proxy (443) und Agent-Gateway (8443). Docker veröffentlicht an ufw vorbei – Einschränkung
+  in der Kette `DOCKER-USER` (Installationsanleitung, Schritt 4.3).
 - Agent-Tokens werden nur gehasht gespeichert und einmalig angezeigt. Produktiv sprechen
   Agenten nur über das **mTLS-Agent-Gateway** (`deploy/agent-gateway`, Modus `bind`:
   Zertifikat und Token gehören zum selben Agenten); Port 8000 nicht in Agent-Netze freigeben.

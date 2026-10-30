@@ -66,6 +66,8 @@ export const FINDING_LABEL: Record<string, string> = {
   bgp_no_inbound_filter: L("BGP: eBGP ohne Eingangsfilter", "BGP: eBGP without inbound filter"),
   aci_import_not_enforced: L("ACI: Import Route Control nicht erzwungen", "ACI: import route control not enforced"),
   bgp_zone_mismatch: L("BGP: Eingangsfilter passt nicht zu den Zonen", "BGP: inbound filter does not match the zones"),
+  bgp_zone_out_mismatch: L("BGP: Ausgangsfilter passt nicht zu den Zonen", "BGP: outbound filter does not match the zones"),
+  aci_import_zone_mismatch: L("ACI: Import Route Control passt nicht zu den Zonen", "ACI: import route control does not match the zones"),
   netbox_sync_mismatch: L("NetBox-Sync: geschrieben ≠ gelesen", "NetBox sync: written ≠ read"),
   link_speed_mismatch: L("Kabel: Speed abweichend", "Link: speed differs"),
   link_duplex_mismatch: L("Kabel: Duplex abweichend", "Link: duplex differs"),
@@ -208,6 +210,14 @@ export const FINDING_HINT: Record<string, string> = {
     "Subnetze mit import-rtctrl an einem L3Out, der Import nicht erzwingt – sie wirken nicht",
     "Subnets with import-rtctrl on an L3Out that does not enforce import – they have no effect",
   ),
+  bgp_zone_out_mismatch: L(
+    "Was eine Firewall einem BGP-Nachbarn ankündigt bzw. ihr Ausgangsfilter erlaubt, passt nicht zu den Netzen der Zonen, die der Nachbar über sie erreicht – Vorschlag als Prefix-Liste (Richtung Ausgang)",
+    "What a firewall announces to a BGP neighbor or its outbound filter permits does not match the networks of the zones the neighbor reaches through it – proposal as prefix list (outbound)",
+  ),
+  aci_import_zone_mismatch: L(
+    "Die Import Route Control eines L3Outs passt nicht zu den Netzen der Zonen dahinter (nicht erzwungen, fehlt, zu offen) – Vorschlag der Subnetze im L3Out",
+    "The import route control of an L3Out does not match the networks of the zones behind (not enforced, missing, too open) – proposal of the subnets on the L3Out",
+  ),
   netbox_sync_mismatch: L(
     "Nachkontrolle nach dem Übernehmen: ein geschriebenes Objekt fehlt in NetBox, hat dort andere Werte oder ist nicht gelöscht",
     "Verification after applying: a written object is missing in NetBox, has other values there or is not deleted",
@@ -349,7 +359,15 @@ export const FINDING_GROUPS: { key: string; label: string; help: string; types: 
       "Soll/Ist je BGP-Nachbar: erwartete Netze kommen nicht an, erhalten trotz Filter, eBGP ohne Filter, ACI Import Route Control nicht erzwungen",
       "Expected/actual per BGP neighbor: expected networks do not arrive, received despite the filter, eBGP without filter, ACI import route control not enforced",
     ),
-    types: ["bgp_expected_missing", "bgp_outside_filter", "bgp_no_inbound_filter", "aci_import_not_enforced", "bgp_zone_mismatch"],
+    types: [
+      "bgp_expected_missing",
+      "bgp_outside_filter",
+      "bgp_no_inbound_filter",
+      "aci_import_not_enforced",
+      "bgp_zone_mismatch",
+      "bgp_zone_out_mismatch",
+      "aci_import_zone_mismatch",
+    ],
   },
   {
     key: "netbox_sync",

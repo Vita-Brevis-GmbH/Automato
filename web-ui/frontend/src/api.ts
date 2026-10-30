@@ -2955,6 +2955,9 @@ export interface BgpZoneList {
   missing_total: number;
   too_open: { prefix: string; filter: string; all?: boolean }[];
   excluded_allowed: string[];
+  // Ausgang (0.116.0): heute angekündigte Routen ausserhalb der Zonen diesseits
+  announced_outside?: string[];
+  announced_outside_total?: number;
   cli: string;
 }
 export interface BgpZoneSoll {
@@ -2966,9 +2969,31 @@ export interface BgpZoneSoll {
   neighbor_zone?: BgpZoneRef;
   zones?: BgpZoneRef[];
   lists?: BgpZoneList[];
+  way?: "in" | "out"; // 0.116.0: Eingang (Zonen dahinter) bzw. Ausgang (Zonen diesseits)
+  public_only?: boolean; // Nachbar in einer Zone ausserhalb: nur öffentliche Netze
 }
-export const fetchBgpPeerZones = (tenantId: number, peerId: number) =>
-  getJSON<BgpZoneSoll>(`/api/routing/bgp/peers/${peerId}/zones${cq({ tenant_id: tenantId })}`);
+export const fetchBgpPeerZones = (tenantId: number, peerId: number, way: "in" | "out" = "in") =>
+  getJSON<BgpZoneSoll>(`/api/routing/bgp/peers/${peerId}/zones${cq({ tenant_id: tenantId, way })}`);
+// Import Route Control eines L3Outs gegen die Zonen dahinter (0.116.0, ADR 0041 Stufe 3)
+export interface L3OutZoneSoll {
+  id: number;
+  l3out: string;
+  state: "ok" | "differs" | "no_zones" | "no_zone" | "no_neighbor_zone" | "no_nets";
+  text: string;
+  home?: BgpZoneRef;
+  neighbor_zone?: BgpZoneRef;
+  zones?: BgpZoneRef[];
+  import_enforced?: boolean;
+  entries?: { prefix: string; zones: string[]; aggregate: boolean; verdict: BgpVerdict }[];
+  missing?: string[];
+  missing_total?: number;
+  too_open?: { prefix: string; epg?: string | null; all?: boolean }[];
+  excluded_allowed?: string[];
+  excluded?: { prefix: string; zones: string[] }[];
+  proposal?: string;
+}
+export const fetchL3OutZones = (tenantId: number, l3outId: number) =>
+  getJSON<L3OutZoneSoll>(`/api/routing/bgp/l3outs/${l3outId}/zones${cq({ tenant_id: tenantId })}`);
 export const fetchL3OutRouteControl = (tenantId: number, l3outId: number) =>
   getJSON<L3OutRouteControl>(`/api/routing/bgp/l3outs/${l3outId}${cq({ tenant_id: tenantId })}`);
 export const fetchFirewallChoices = (tenantId: number) =>

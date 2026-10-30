@@ -118,6 +118,15 @@ services:
       # orchestrator-data (beim ersten Start erzeugt, mitsichern!); produktiv besser als
       # Secret-Referenz, z. B. openbao:automato/credentials#key (deploy/secrets/README.md).
       AUTOMATO_CREDENTIALS_KEY: ${AUTOMATO_CREDENTIALS_KEY:-}
+      # Produktiv (0.116.0, docs/INSTALLATION-PROD.md): Audit verschluesseln, Secret-Quellen
+      # (file:/openbao:) und die Freigabe der Read-API ohne Anmeldung (nur auth_mode dev)
+      AUTOMATO_AUDIT_ENCRYPTION_KEY: ${AUTOMATO_AUDIT_ENCRYPTION_KEY:-}
+      AUTOMATO_SECRETS_FILE_DIR: ${AUTOMATO_SECRETS_FILE_DIR:-/run/secrets}
+      AUTOMATO_OPENBAO_ADDR: ${AUTOMATO_OPENBAO_ADDR:-}
+      AUTOMATO_OPENBAO_TOKEN: ${AUTOMATO_OPENBAO_TOKEN:-}
+      AUTOMATO_OPENBAO_KV_MOUNT: ${AUTOMATO_OPENBAO_KV_MOUNT:-secret}
+      AUTOMATO_OPENBAO_PATH: ${AUTOMATO_OPENBAO_PATH:-automato}
+      AUTOMATO_ALLOW_UNAUTHENTICATED_READ_API: ${AUTOMATO_ALLOW_UNAUTHENTICATED_READ_API:-false}
       # Zeitgesteuerte Laeufe (Zeitplan am Quellsystem); ein Termin wird auch bei mehreren
       # Orchestrator-Prozessen nur einmal ausgeloest.
       AUTOMATO_SCHEDULER_ENABLED: ${AUTOMATO_SCHEDULER_ENABLED:-true}
@@ -146,8 +155,9 @@ services:
       - ./deploy/tls/pki/orchestrator:/etc/automato/tls:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # produktiv nur lokal (AUTOMATO_API_BIND=127.0.0.1): Zugang ueber Proxy bzw. Agent-Gateway
     ports:
-      - "8000:8000"
+      - "${AUTOMATO_API_BIND:-0.0.0.0}:8000:8000"
     healthcheck:
       test: ["CMD", "python", "-m", "app.serve", "--check"]
       interval: 10s
@@ -196,8 +206,9 @@ services:
       AUTOMATO_INTERNAL_TLS: ${AUTOMATO_INTERNAL_TLS:-off}
     volumes:
       - ./deploy/tls/pki/web-ui:/etc/automato/tls:ro
+    # produktiv nur lokal (AUTOMATO_UI_DEV_BIND=127.0.0.1): die Oberflaeche nur ueber den Proxy
     ports:
-      - "5173:5173"
+      - "${AUTOMATO_UI_DEV_BIND:-0.0.0.0}:5173:5173"
     depends_on:
       - orchestrator
 
@@ -212,6 +223,8 @@ services:
     environment:
       AUTOMATO_UI_HOST: ${AUTOMATO_UI_HOST:-localhost}
       AUTOMATO_UI_TLS: ${AUTOMATO_UI_TLS:-internal}
+      # Oberflaeche nur aus diesen Netzen (0.116.0, R14), z. B. "10.0.10.0/24 10.8.0.0/16"
+      AUTOMATO_UI_ALLOW: ${AUTOMATO_UI_ALLOW:-0.0.0.0/0 ::/0}
       AUTOMATO_INTERNAL_TLS: ${AUTOMATO_INTERNAL_TLS:-off}
     ports:
       - "443:443"

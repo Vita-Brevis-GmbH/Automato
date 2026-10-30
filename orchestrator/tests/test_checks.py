@@ -32,7 +32,9 @@ def test_verzeichnis_der_pruefungen():
     assert {t for t in covered if covered.count(t) > 1} == {FindingType.INVALID_NAME}
     assert checks.types_of("zonen") == {FindingType.ZONE_POLICY_VIOLATION, FindingType.ZONE_OVERLAP,
                                         FindingType.ZONE_OUTSIDE_SCHEMA, FindingType.ZONE_NET_EXIT,
-                                        FindingType.BGP_ZONE_MISMATCH}  # fmt: skip
+                                        FindingType.BGP_ZONE_MISMATCH,
+                                        FindingType.BGP_ZONE_OUT_MISMATCH,
+                                        FindingType.ACI_IMPORT_ZONE_MISMATCH}  # fmt: skip
 
 
 def test_datei_im_paket_des_moduls():

@@ -432,8 +432,9 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.114.0** | BGP-Filter Stufe 2: Backup-Wege, die ein BGP-Filter sperrt, verworfen (mit Grund); Soll je BGP-Nachbar aus allen Zonen dahinter (Netze und Ausschlüsse als Prefix-Liste), Abweichungen zum Eingangsfilter, FortiOS-CLI-Vorschlag zum Kopieren, Befund „Eingangsfilter passt nicht zu den Zonen“ (ADR 0041) |
 | **0.114.1** | Fehler zu 0.113: Weg-Suche nennt alle Ziel-Server einer VIP bzw. eines Pools mit Name, Port, Zustand, Gewicht, Health-Check, Objekt und VM; Freigaben ins Internet (Ziel all, Ausgang Internet, auch SD-WAN-Zone) nicht mehr als Zugriff in der Applikations-Doku; BGP „angekündigt“ mit default-originate und ohne Routen zurück ins AS des Nachbarn |
 | **0.115.0** | Nachkontrolle des NetBox-Syncs (Roadmap V1 Nr. 5): nach „Übernehmen“ NetBox rein lesend neu lesen und je geschriebenem Objekt vergleichen (fehlt, andere Werte, nicht gelöscht); Ergebnis am Plan, Befund „NetBox-Sync: geschrieben ≠ gelesen“ (ADR 0042) |
+| **0.116.0** | BGP-Filter Stufe 3 (Roadmap V1 Nr. 3 abgeschlossen): Ausgangsfilter je Nachbar aus den Zonen diesseits (nach aussen nur öffentliche Netze), ACI Import Route Control je L3Out aus den Zonen dahinter, Befunde und Vorschläge (ADR 0041); Installationsanleitung Produktion mit Disk-Verschlüsselung und Hardening (`docs/INSTALLATION-PROD.md`), Oberfläche nur aus erlaubten Netzen, Ports nur lokal (Nr. 6) |
 
-### Nächste Arbeiten (Stand 0.115.0)
+### Nächste Arbeiten (Stand 0.116.0)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
 **0.68.0** (2026-10-26), bis **0.102.0** (2026-10-28: „ich teste nach dem Freigeben der Version
@@ -447,8 +448,8 @@ Fehlerliste zu 0.110 ohne Einwand zu 0.111.0), bis **0.112.0** (2026-10-29, „g
 Einwand), bis **0.113.0** (2026-10-29, Fehlerliste zu 0.112 ohne Einwand zu 0.113.0), bis
 **0.113.1** (2026-10-29, Fehlerliste zu 0.113 ohne Einwand zu 0.113.1), bis **0.113.2**
 (2026-10-29, „go 114“ ohne Einwand), bis **0.114.0** (2026-10-30, Fehlerliste zu 0.113 ohne
-Einwand zu 0.114.0), bis **0.114.1** (2026-10-30, „go 115“ ohne Einwand). Zur Abnahme steht
-0.115.0. Seit 0.104.0 gilt eine
+Einwand zu 0.114.0), bis **0.114.1** (2026-10-30, „go 115“ ohne Einwand), bis **0.115.0**
+(2026-10-30, „go 116“ ohne Einwand). Zur Abnahme steht 0.116.0. Seit 0.104.0 gilt eine
 Version als abgenommen,
 sobald die nächste Rückmeldung des Anwenders keinen Einwand dazu enthält (`CLAUDE.md`, Ablauf).
 
@@ -462,10 +463,10 @@ Produktivschaltung weiter 0.1xx; **1.0.0 = produktiv**, danach 2.x mit neuem Nam
 |---|---|---|
 | 1 | Module in eigene Pakete, Findings als steckbare Prüfungen, Oberfläche je Modul (ADR 0036, weitere Stufen) | **Stufe 1 in 0.110.0** (ADR 0039: Prüfungen je Modul steckbar und je Mandant schaltbar, Reiter „Prüfungen“, Ansichten je Modul aus dem Verzeichnis); die übrigen Dateien ziehen schrittweise in die Pakete ihres Moduls |
 | 2 | Prüfung, ob der Fingerabdruck der Doku jede Änderung bemerkt, im nächtlichen Lauf | **erledigt in 0.109.1** (CI-Schritt nachts bzw. von Hand, `AUTOMATO_TEST_DOC_SNAPSHOTS=1`) |
-| 3 | BGP in der Dokumentation; BGP-Filter je Zone aus Netzen und Ausschlüssen ableiten – als Vorschlag/Export, kein Schreibweg | **Stufe 1 in 0.113.0** (ADR 0041: Filter und Route Control lesen, Soll/Ist je Nachbar, Befunde, Netze der Filter für die Anbindungen); **Stufe 2 in 0.114.0** (Backup-Wege gegen die Filter, Soll je Nachbar aus den Zonen dahinter mit CLI-Vorschlag); offen: Ausgangsfilter je Zone, ACI import-rtctrl aus den Zonen |
-| 4 | Tests des Anwenders abschliessen; Juniper-Router einbinden und testen (Routing-Tabelle des MX für die Wege, seit 0.68.0 offen); Wege sauber und intensiv testen | offen |
+| 3 | BGP in der Dokumentation; BGP-Filter je Zone aus Netzen und Ausschlüssen ableiten – als Vorschlag/Export, kein Schreibweg | **Stufe 1 in 0.113.0** (ADR 0041: Filter und Route Control lesen, Soll/Ist je Nachbar, Befunde, Netze der Filter für die Anbindungen); **Stufe 2 in 0.114.0** (Backup-Wege gegen die Filter, Soll je Nachbar aus den Zonen dahinter mit CLI-Vorschlag); **Stufe 3 in 0.116.0** (Ausgangsfilter aus den Zonen diesseits, ACI Import Route Control aus den Zonen dahinter) – **erledigt** |
+| 4 | Tests des Anwenders abschliessen; Juniper-Router einbinden und testen (Routing-Tabelle des MX für die Wege: gelesen seit 0.99.0 über `show route`/`show bgp neighbor` als JSON, am echten MX noch nicht getestet); Wege sauber und intensiv testen | offen (Tests des Anwenders) |
 | 5 | Schreibpfad mit Nachkontrolle: nach „Übernehmen“ über den Lesepfad zurücklesen und vergleichen, Abweichungen als Befund | **erledigt in 0.115.0** (ADR 0042: rein lesender Zugang, Vergleich je geschriebenem Objekt, Ergebnis am Plan, Befund `netbox_sync_mismatch`) |
-| 6 | R14 vor dem Produktivbetrieb: OTP für alle, Oberfläche nur aus Management-Netz/VPN, Verschlüsselung des Datenträgers – umsetzen bzw. bestätigen, was ausserhalb von Automato erledigt ist | offen (Entscheid 2026-10-29: in Version 1) |
+| 6 | R14 vor dem Produktivbetrieb: OTP für alle, Oberfläche nur aus Management-Netz/VPN, Verschlüsselung des Datenträgers – umsetzen bzw. bestätigen, was ausserhalb von Automato erledigt ist | **Teil 1 in 0.116.0** (`docs/INSTALLATION-PROD.md`: LUKS mit Tang/vTPM, VM-, OS- und Docker-Hardening, Abnahme-Liste; Oberfläche nur aus `AUTOMATO_UI_ALLOW`, Orchestrator/Web-UI nur auf `127.0.0.1`; OTP-Schritt beschrieben); offen: auf der Prod-VM umsetzen und bestätigen, Produktions-Build der Oberfläche, Container-Härtung je Dienst |
 | 7 | Fehler bereinigen: HTTP 500 beim Laden der Doku (Referenz im Protokoll nötig) | offen |
 | 8 | Produktiv gehen, wenn die meisten Fehler raus sind (DC, ADR 0013) = **1.0.0** | danach |
 

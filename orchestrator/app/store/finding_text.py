@@ -752,6 +752,87 @@ def _bgp_zones(subject: str, d: dict) -> tuple[str, str]:
     )
 
 
+def _bgp_zones_out(subject: str, d: dict) -> tuple[str, str]:
+    """Ausgangsfilter passt nicht zu den Zonen diesseits (0.116.0, ADR 0041 Stufe 3)."""
+    where = L(f"{d.get('label')} zum Nachbarn {d.get('peer')}",
+              f"{d.get('label')} to neighbor {d.get('peer')}")  # fmt: skip
+    zones = _list(d.get("zones") or [], 4)
+    parts_de, parts_en = [], []
+    if d.get("open"):
+        parts_de.append("kein Ausgangsfilter")
+        parts_en.append("no outbound filter")
+    if d.get("missing"):
+        nets = _list(d["missing"], 4)
+        parts_de.append(f"gesperrt: {nets}")
+        parts_en.append(f"denied: {nets}")
+    if d.get("announced_outside"):
+        nets = _list(d["announced_outside"], 4)
+        n = d.get("announced_outside_total") or len(d["announced_outside"])
+        parts_de.append(f"{n} Routen ausserhalb der Zonen angekündigt: {nets}")
+        parts_en.append(f"{n} routes announced outside the zones: {nets}")
+    if d.get("too_open"):
+        nets = _list(d["too_open"], 4)
+        parts_de.append(f"Filter erlaubt ausserhalb der Zonen: {nets}")
+        parts_en.append(f"filter permits outside the zones: {nets}")
+    if d.get("excluded_allowed"):
+        nets = _list(d["excluded_allowed"], 4)
+        parts_de.append(f"Ausschluss erlaubt: {nets}")
+        parts_en.append(f"exclusion permitted: {nets}")
+    public = ""
+    if d.get("public_only"):
+        public = L(" (nur öffentliche Netze, Nachbar ausserhalb)",
+                   " (public networks only, neighbor outside)")  # fmt: skip
+    return (
+        L(
+            f"{where}: der Ausgangsfilter passt nicht zu den Zonen diesseits ({zones}){public} – "
+            f"{'; '.join(parts_de)}.",
+            f"{where}: the outbound filter does not match the zones on this side ({zones}){public}"
+            f" – {'; '.join(parts_en)}.",
+        ),
+        L(
+            "BGP-Nachbarn öffnen → „Soll aus den Zonen“, Richtung Ausgang: Prefix-Liste als "
+            "Vorschlag (FortiOS-CLI) übernehmen bzw. die Zonen im Netzwerkdesign anpassen.",
+            "Open the BGP neighbor → “Target from the zones”, direction outbound: apply the prefix "
+            "list proposal (FortiOS CLI) or adjust the zones in the network design.",
+        ),
+    )
+
+
+def _aci_import_zones(subject: str, d: dict) -> tuple[str, str]:
+    """ACI Import Route Control passt nicht zu den Zonen dahinter (0.116.0)."""
+    where, zones = _bgp_where(d), _list(d.get("zones") or [], 4)
+    parts_de, parts_en = [], []
+    if d.get("not_enforced"):
+        parts_de.append("Import nicht erzwungen (der L3Out übernimmt alle Routen)")
+        parts_en.append("import not enforced (the L3Out accepts all routes)")
+    if d.get("missing"):
+        nets = _list(d["missing"], 4)
+        parts_de.append(f"ohne Import Route Control: {nets}")
+        parts_en.append(f"without import route control: {nets}")
+    if d.get("too_open"):
+        nets = _list(d["too_open"], 4)
+        parts_de.append(f"importiert ausserhalb der Zonen: {nets}")
+        parts_en.append(f"imported outside the zones: {nets}")
+    if d.get("excluded_allowed"):
+        nets = _list(d["excluded_allowed"], 4)
+        parts_de.append(f"Ausschluss importiert: {nets}")
+        parts_en.append(f"exclusion imported: {nets}")
+    return (
+        L(
+            f"{where}: Import Route Control passt nicht zu den Zonen dahinter ({zones}) – "
+            f"{'; '.join(parts_de)}.",
+            f"{where}: import route control does not match the zones behind ({zones}) – "
+            f"{'; '.join(parts_en)}.",
+        ),
+        L(
+            "L3Out öffnen (Routing → L3Outs) → „Soll aus den Zonen“: Subnetze mit „Import Route "
+            "Control Subnet“ an der externen EPG als Vorschlag, Enforcement „Import“ setzen.",
+            "Open the L3Out (routing → L3Outs) → “Target from the zones”: subnets with “Import "
+            "Route Control Subnet” on the external EPG as proposal, set enforcement “import”.",
+        ),
+    )
+
+
 def _netbox_sync(subject: str, d: dict) -> tuple[str, str]:
     """Nachkontrolle des NetBox-Syncs (0.115.0, ADR 0042): geschrieben != gelesen."""
     nb = d.get("netbox") or "NetBox"
@@ -787,6 +868,8 @@ def _netbox_sync(subject: str, d: dict) -> tuple[str, str]:
 
 _TOPO_TEXT = {
     "netbox_sync_mismatch": _netbox_sync,
+    "bgp_zone_out_mismatch": _bgp_zones_out,
+    "aci_import_zone_mismatch": _aci_import_zones,
     "bgp_zone_mismatch": _bgp_zones,
     "bgp_expected_missing": _bgp_missing,
     "bgp_outside_filter": _bgp_outside,

@@ -187,12 +187,19 @@ def check_security_config(settings: "Settings") -> None:
             f"'{settings.environment}'-Umgebung. Bitte ein echtes Token setzen "
             "(z. B. openssl rand -hex 32)."
         )
-    if settings.environment != "dev" and not settings.allow_unauthenticated_read_api:
+    # ohne Anmeldung (auth_mode dev) nur mit bewusster Freigabe; mit OIDC prueft RBAC jeden
+    # Zugriff (ADR 0007) - seit 0.116.0 startet eine Produktiv-Umgebung damit ohne Freigabe
+    if (
+        settings.environment != "dev"
+        and settings.auth_mode == "dev"
+        and not settings.allow_unauthenticated_read_api
+    ):
         raise RuntimeError(
             "Die oeffentliche Read-API ist ohne AuthN/RBAC in einer "
-            f"'{settings.environment}'-Umgebung nicht freigegeben (ADR 0005). Entweder RBAC "
-            "umsetzen oder bewusst AUTOMATO_ALLOW_UNAUTHENTICATED_READ_API=true setzen "
-            "(nur mit Netzsegmentierung/Reverse-Proxy-Auth davor)."
+            f"'{settings.environment}'-Umgebung nicht freigegeben (ADR 0005). Entweder "
+            "AUTOMATO_AUTH_MODE=oidc (Keycloak, RBAC) setzen oder bewusst "
+            "AUTOMATO_ALLOW_UNAUTHENTICATED_READ_API=true (nur mit Netzsegmentierung/"
+            "Reverse-Proxy-Auth davor)."
         )
 
 

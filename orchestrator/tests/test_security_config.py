@@ -31,3 +31,10 @@ def test_prod_ohne_readapi_optin_wird_abgelehnt():
         check_security_config(
             Settings(environment="prod", internal_api_token="s3cr3t-random")  # noqa: S106
         )
+
+
+def test_prod_mit_oidc_braucht_keine_readapi_freigabe():
+    """0.116.0: mit Anmeldung (OIDC, RBAC) startet Prod ohne die Freigabe der Read-API."""
+    check_security_config(
+        Settings(environment="prod", internal_api_token="s3cr3t-random", auth_mode="oidc")  # noqa: S106
+    )

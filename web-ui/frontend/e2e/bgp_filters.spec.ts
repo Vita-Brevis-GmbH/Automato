@@ -27,6 +27,10 @@ test("BGP-Nachbar: Filter, Soll/Ist, BGP-Konfiguration und Befund (0.113.0)", as
   // Soll aus den Zonen (0.114.0): fw-05 liegt in keiner Zone - Grund statt Vorschlag
   await expect(drawer.locator("#bgp-zones-state")).toHaveAttribute("data-state", "no_zone");
   await expect(drawer.locator("#bgp-zones-state")).toContainText("gehört zu keiner Zone");
+  // Ausgang (0.116.0): Umschalter, gleiche Begründung
+  await drawer.locator("#bgp-zones-way button", { hasText: "Ausgang" }).click();
+  await expect(drawer.locator("#bgp-zones")).toHaveAttribute("data-way", "out");
+  await expect(drawer.locator("#bgp-zones-state")).toHaveAttribute("data-state", "no_zone");
   await page.keyboard.press("Escape");
   await expect(drawer).toHaveCount(0);
 
@@ -52,6 +56,8 @@ test("L3Out: Route Control Soll/Ist (0.113.0)", async ({ page, problems }) => {
   await expect(drawer.locator("#rc-import tr[data-prefix='0.0.0.0/0']")).toContainText("1 Route");
   await expect(drawer.locator("#rc-received tr[data-prefix='0.0.0.0/0']")).toContainText("erlaubt");
   await expect(drawer.locator("#rc-export")).toContainText("10.20.0.0/24");
+  // Soll aus den Zonen (0.116.0): Zustand mit Begründung
+  await expect(drawer.locator("#l3out-zones-state")).toHaveAttribute("data-state", /^(no_zones|no_zone|no_neighbor_zone|no_nets|ok|differs)$/);
   expect(problems).toEqual([]);
 });
 

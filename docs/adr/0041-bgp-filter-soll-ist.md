@@ -2,8 +2,8 @@
 
 ## Status
 
-**Angenommen** (2026-10-29): Stufe 1 in 0.113.0 (abgenommen mit 0.113.1), Stufe 2 in 0.114.0 –
-zur Abnahme durch den Anwender.
+**Angenommen** (2026-10-29): Stufe 1 in 0.113.0 (abgenommen mit 0.113.1), Stufe 2 in 0.114.0
+(abgenommen mit 0.114.1), Stufe 3 in 0.116.0 – zur Abnahme durch den Anwender.
 
 Rückmeldung des Anwenders zu 0.110 (2026-10-29): „Ich habe in der Wegsuche Backup Wege erhalten,
 welche nicht funktionieren würden. Die Firewalls dahinter lernen zwar das Netzwerk auch, aber die
@@ -105,5 +105,37 @@ Anwender 2026-10-29 („go 114“, gewählt: Backup-Wege prüfen und das Soll au
     mit `set prefix-list-in`) zum Kopieren im Soll/Ist des Nachbarn – nur Text, Automato schreibt
     nichts auf die Firewall. API `GET /routing/bgp/peers/{id}/zones`.
 
-Offen: Ausgangsfilter je Zone (was eine Firewall wem ankündigen soll – zum Provider meist nicht die
-internen Netze), ACI import-rtctrl aus den Zonen und der Vergleich im Verlauf des Routings.
+Offen nach Stufe 2: Ausgangsfilter je Zone, ACI import-rtctrl aus den Zonen (beides Stufe 3) und
+der Vergleich im Verlauf des Routings.
+
+## Stufe 3 (0.116.0)
+
+Anwender 2026-10-30 („go 116“, Roadmap Version 1 Nr. 3 Rest):
+
+11. **Ausgangsfilter je Nachbar aus den Zonen diesseits** (`ZoneSoll.for_peer(p, "out")`, API
+    `…/peers/{id}/zones?way=out`): was die Firewall dem Nachbarn ankündigen soll = die Netze der
+    Zonen, die der Nachbar über sie erreicht – die Zone der Firewall und alle Zonen, deren
+    kürzester Weg von der Zone am Nachbarn über sie führt (`behind(Nachbar, Firewall)`, gleiche
+    Regel wie Stufe 2 in die andere Richtung). Ausschlüsse `deny … le 32` davor, Prefix-Liste
+    `PL_<Zone am Nachbarn>_OUT`, am Nachbarn `set prefix-list-out`.
+12. **Nach aussen nur öffentliche Netze:** liegt die Zone am Nachbarn in einer Zone der Art
+    `external`, enthält das Soll nur Netze ausserhalb der internen Bereiche (RFC 1918, CGNAT
+    100.64/10, Link-Local, Loopback, ULA fc00::/7, fe80::/10) – feste Liste statt `is_global`,
+    damit Dokumentations- und andere reservierte Bereiche im Lab wie öffentliche zählen.
+13. **Vergleich** mit dem Ausgangsfilter wie in Stufe 2 (gesperrt, zu offen, Ausschluss erlaubt,
+    ohne Filter) und zusätzlich mit der **heutigen Ankündigung** (`Filters.report`, angekündigt
+    nach Filter): Routen ausserhalb der Zonen (gekürzt, mit Gesamtzahl); default-originate ist
+    gewollt und zählt nicht. Befund `bgp_zone_out_mismatch` (Info, Prüfung
+    `app/checks/analyse/bgp_zonen_aus.py`, Teil-Durchgang „Zonen“).
+14. **ACI Import Route Control je L3Out** (`ZoneSoll.for_l3out`, API `…/l3outs/{id}/zones`): Zone
+    der VRF des L3Outs (Selektor `aci_vrf`), Zone am Peer (Adressen der L3Out-Nachbarn), Zonen
+    dahinter wie in Stufe 2. Je Netz der Zonen das Urteil der heutigen Route Control
+    (`import-rtctrl`, aggregate); Abweichungen: Import nicht erzwungen (`enforceRtctrl` ohne
+    import – der L3Out übernimmt alles), Netz ohne Import-Subnetz, Import-Subnetz ausserhalb der
+    Zonen bzw. 0.0.0.0/0 aggregate, Ausschluss importiert. Befund `aci_import_zone_mismatch`
+    (Info, `app/checks/analyse/aci_import_zonen.py`). Vorschlag als Text: Subnetze der externen
+    EPG mit „Import Route Control Subnet“ (und aggregate, wo zusammengefasst) – Automato schreibt
+    nichts ins ACI (ADR 0010).
+
+Offen: Vergleich im Verlauf des Routings (Änderungen der Filter über die Zeit), Export-Route-Control
+gegen die Zonen diesseits (heute nur gelesen und gezeigt).

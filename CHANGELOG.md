@@ -7,6 +7,51 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.116.0 – 2026-10-30
+
+Roadmap Version 1 Nr. 3 (Rest) und Nr. 6 (Teil 1); Anwender 2026-10-30: „go 116 und bitte eine
+Installationsanleitung für Prod erstellen mit Disk Verschlüsselung und Hardening der VM“. Abnahme
+bis 0.115.0.
+
+- **BGP-Ausgangsfilter aus den Zonen** (ADR 0041 Stufe 3): im Soll/Ist des BGP-Nachbarn
+  Umschalter **Eingang / Ausgang**. Ausgang = was die Firewall dem Nachbarn ankündigen soll: die
+  Netze der Zonen, die er über sie erreicht (ihre eigene Zone und alles dahinter), ohne
+  Ausschlüsse; liegt der Nachbar in einer Zone der Art `external`, nur öffentliche Netze (keine
+  RFC 1918, CGNAT, Link-Local, ULA). Verglichen werden der Ausgangsfilter (gesperrt, zu offen,
+  Ausschluss erlaubt) und die heutige Ankündigung („n Routen ausserhalb der Zonen angekündigt“;
+  default-originate zählt nicht). Vorschlag als FortiOS-CLI (`PL_<Nachbar>_OUT`,
+  `prefix-list-out`) zum Kopieren.
+- **ACI: Import Route Control aus den Zonen:** im Route-Control-Fenster des L3Outs „Soll aus den
+  Zonen dahinter (Import)“ – Zone der VRF, Zone am Peer, Netze der Zonen dahinter je mit dem
+  Urteil der Route Control heute; Abweichungen: Import nicht erzwungen, Netz ohne
+  `import-rtctrl`, Subnetz ausserhalb der Zonen (auch 0.0.0.0/0 aggregate), Ausschluss
+  importiert. Vorschlag: Subnetze der externen EPG mit „Import Route Control Subnet“ (nur Text –
+  Automato schreibt nichts ins ACI).
+- **Befunde** „BGP: Ausgangsfilter passt nicht zu den Zonen“ (`bgp_zone_out_mismatch`) und „ACI:
+  Import Route Control passt nicht zu den Zonen“ (`aci_import_zone_mismatch`), Hinweis, Gruppe
+  BGP-Filter; Prüfungen im Modul Analyse, Teil-Durchgang „Zonen“. API
+  `GET /routing/bgp/peers/{id}/zones?way=out` und `GET /routing/bgp/l3outs/{id}/zones`.
+- **Installationsanleitung Produktion** (`docs/INSTALLATION-PROD.md`): VM im vCenter (EFI, Secure
+  Boot, Geräte, erweiterte Parameter, Snapshots ohne Arbeitsspeicher), Ubuntu mit **LUKS2** über
+  LVM, eigene Volumes für Docker und Sicherungen, Header-Kopie und Notfall-Passphrase;
+  automatisches Entsperren mit **Clevis + Tang** (empfohlen) oder vTPM; Härtung (Updates, SSH nur
+  mit Schlüssel, ufw und `DOCKER-USER`, sysctl, `/tmp`, auditd, chrony, Lynis); Docker
+  (`daemon.json` mit Log-Rotation, live-restore, no-new-privileges, ohne userland-proxy);
+  Automato mit `.env` für Produktion, Zertifikaten, DB-Rollen, TLS intern, Keycloak mit OTP,
+  Sicherung inklusive `.env`/Zertifikate, Abnahme-Liste.
+- **Oberfläche nur aus erlaubten Netzen:** `AUTOMATO_UI_ALLOW` (Proxy, z. B. Management-Netz und
+  VPN; andere Quellen HTTP 403; Vorgabe alles). Orchestrator und Web-UI lassen sich mit
+  `AUTOMATO_API_BIND` / `AUTOMATO_UI_DEV_BIND=127.0.0.1` nur lokal veröffentlichen. Compose reicht
+  `AUTOMATO_AUDIT_ENCRYPTION_KEY`, `AUTOMATO_SECRETS_FILE_DIR`, `AUTOMATO_OPENBAO_*` und
+  `AUTOMATO_ALLOW_UNAUTHENTICATED_READ_API` an den Orchestrator durch.
+- **Startprüfung:** die Freigabe der Read-API ohne Anmeldung
+  (`AUTOMATO_ALLOW_UNAUTHENTICATED_READ_API`) verlangt der Orchestrator ausserhalb `dev` nur noch
+  im Modus `AUTOMATO_AUTH_MODE=dev`; mit `oidc` ist jede Anfrage angemeldet und die Freigabe
+  bleibt `false`.
+- Tests: `test_bgp_zones.py` (Ausgangsfilter, nach aussen nur öffentliche Netze, ACI Import aus
+  den Zonen), `test_checks.py`, `test_security_config.py`; UI `bgp_filters.spec.ts`
+  (Umschalter Ausgang, Zonen am L3Out).
+
 ## 0.115.0 – 2026-10-30
 
 Roadmap Version 1 Nr. 5 (ADR 0042; Anwender 2026-10-30: „go 115“, gewählt die Nachkontrolle des

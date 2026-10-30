@@ -13,7 +13,7 @@
                                        Vorschlag fuer „Netze dahinter“
 """
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
@@ -117,10 +117,12 @@ def peer_zones(
     peer_id: int,
     tenant_id: int | None = None,
     customer_id: int | None = None,
+    way: Literal["in", "out"] = "in",
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> dict:
-    """Soll des Nachbarn aus den Zonen dahinter (ADR 0041 Stufe 2) - Vorschlag, kein Schreibweg."""
+    """Soll des Nachbarn aus den Zonen (ADR 0041): `in` = Zonen dahinter (Stufe 2), `out` = Zonen
+    diesseits fuer den Ausgangsfilter (Stufe 3) - Vorschlag, kein Schreibweg."""
     tid = _tenant(session, principal, tenant_id)
     p = session.get(TopoPeer, peer_id)
     if (
@@ -129,7 +131,7 @@ def peer_zones(
         or not _visible(session, principal, tid, customer_id, p.source_system_id, p.context)
     ):
         raise HTTPException(status_code=404, detail="peer not found")  # fmt: skip
-    return {"id": p.id, "peer_ip": p.peer_ip, **bgp_zones.for_peer(session, tid, p)}
+    return {"id": p.id, "peer_ip": p.peer_ip, **bgp_zones.for_peer(session, tid, p, way=way)}
 
 
 @router.get("/l3outs/{l3out_id}")
@@ -150,6 +152,27 @@ def l3out(
         raise HTTPException(status_code=404, detail="l3out not found")  # fmt: skip
     return {**bgp_filters.l3out_report(session, o), "source": _names(session, tid).get(
         o.source_system_id)}  # fmt: skip
+
+
+@router.get("/l3outs/{l3out_id}/zones")
+def l3out_zones(
+    l3out_id: int,
+    tenant_id: int | None = None,
+    customer_id: int | None = None,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Import Route Control eines L3Outs gegen die Zonen dahinter (ADR 0041 Stufe 3, 0.116.0) -
+    Vorschlag, kein Schreibweg."""
+    tid = _tenant(session, principal, tenant_id)
+    o = session.get(TopoL3Out, l3out_id)
+    if (
+        o is None
+        or o.tenant_id != tid
+        or not _visible(session, principal, tid, customer_id, o.source_system_id, o.vrf)
+    ):
+        raise HTTPException(status_code=404, detail="l3out not found")  # fmt: skip
+    return {"id": o.id, "l3out": o.name, **bgp_zones.for_l3out(session, tid, o)}
 
 
 @router.get("/filtered")

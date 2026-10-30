@@ -13,7 +13,9 @@ import {
   fetchBgpPeer,
   fetchBgpPeerZones,
   fetchL3OutRouteControl,
+  fetchL3OutZones,
   L3OutRouteControl,
+  L3OutZoneSoll,
   RouteControl,
 } from "../../api";
 import { L } from "../../i18n";
@@ -273,21 +275,48 @@ export function BgpPeerDrawer({ tenantId, peerId, onClose }: { tenantId: number;
   );
 }
 
-// Soll aus den Zonen dahinter (0.114.0, ADR 0041 Stufe 2): Prefix-Liste aus Netzen und Ausschlüssen
-// der Zonen, Vergleich mit dem Eingangsfilter und CLI-Vorschlag zum Kopieren (kein Schreibweg)
+// Soll aus den Zonen (0.114.0, ADR 0041 Stufe 2/3): Prefix-Liste aus Netzen und Ausschlüssen der
+// Zonen, Vergleich mit dem Filter der Richtung und CLI-Vorschlag zum Kopieren (kein Schreibweg).
+// Eingang = Zonen dahinter, Ausgang (0.116.0) = Zonen diesseits mit dem, was heute angekündigt wird
 function ZoneSoll({ tenantId, peerId }: { tenantId: number; peerId: number }) {
+  const [way, setWay] = useState<"in" | "out">("in");
   const [z, setZ] = useState<BgpZoneSoll | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [copied, setCopied] = useState<number | null>(null);
   useEffect(() => {
-    fetchBgpPeerZones(tenantId, peerId).then(setZ).catch(setError);
-  }, [tenantId, peerId]);
+    setZ(null);
+    setError(null);
+    setCopied(null);
+    fetchBgpPeerZones(tenantId, peerId, way).then(setZ).catch(setError);
+  }, [tenantId, peerId, way]);
   const copy = (family: number, text: string) => {
     void navigator.clipboard?.writeText(text).then(() => setCopied(family));
   };
+  const out = way === "out";
   return (
-    <div id="bgp-zones">
-      <h3>{L("Soll aus den Zonen dahinter", "Target from the zones behind")}</h3>
+    <div id="bgp-zones" data-way={way}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <h3 style={{ margin: 0 }}>{L("Soll aus den Zonen", "Target from the zones")}</h3>
+        <div className="seg" id="bgp-zones-way">
+          <button className={out ? "" : "on"} onClick={() => setWay("in")}>
+            {L("Eingang", "Inbound")}
+          </button>
+          <button className={out ? "on" : ""} onClick={() => setWay("out")}>
+            {L("Ausgang", "Outbound")}
+          </button>
+        </div>
+      </div>
+      <div className="faint" style={{ margin: "4px 0" }}>
+        {out
+          ? L(
+              "Was die Firewall dem Nachbarn ankündigen soll: die Netze der Zonen, die er über sie erreicht.",
+              "What the firewall should announce to the neighbor: the networks of the zones it reaches through it.",
+            )
+          : L(
+              "Was die Firewall vom Nachbarn übernehmen soll: die Netze der Zonen dahinter.",
+              "What the firewall should accept from the neighbor: the networks of the zones behind.",
+            )}
+      </div>
       <ErrorBox error={error} />
       {!z && !error && <Loading />}
       {z && (
@@ -298,14 +327,22 @@ function ZoneSoll({ tenantId, peerId }: { tenantId: number; peerId: number }) {
           {z.neighbor_zone && (
             <div className="faint" style={{ margin: "4px 0" }}>
               {L("Zone der Firewall", "Zone of the firewall")}: <b>{z.home?.name}</b> · {L("Zone am Nachbarn", "Zone at the neighbor")}:{" "}
-              <b>{z.neighbor_zone.name}</b> · {L("Zonen dahinter", "Zones behind")}: {(z.zones ?? []).map((x) => x.name).join(", ")}
+              <b>{z.neighbor_zone.name}</b> · {out ? L("Zonen diesseits", "Zones on this side") : L("Zonen dahinter", "Zones behind")}:{" "}
+              {(z.zones ?? []).map((x) => x.name).join(", ")}
+              {z.public_only && (
+                <span className="chip info" style={{ marginLeft: 6 }}>
+                  {L("nur öffentliche Netze (Nachbar ausserhalb)", "public networks only (neighbor outside)")}
+                </span>
+              )}
             </div>
           )}
           {(z.lists ?? []).map((x) => (
             <div key={x.family} className="bgp-zone-list" data-family={x.family}>
               <div className="faint" style={{ margin: "6px 0 4px" }}>
                 {x.open
-                  ? L("Heute ohne Eingangsfilter – erlaubt alles.", "No inbound filter today – permits everything.")
+                  ? out
+                    ? L("Heute ohne Ausgangsfilter – kündigt alles an.", "No outbound filter today – announces everything.")
+                    : L("Heute ohne Eingangsfilter – erlaubt alles.", "No inbound filter today – permits everything.")
                   : `${L("Heute", "Today")}: ${Object.entries(x.filters).map(([k, v]) => `${kindOf(k)} ${v}`).join(" · ")}`}
               </div>
               <table className="compact">
@@ -347,6 +384,15 @@ function ZoneSoll({ tenantId, peerId }: { tenantId: number; peerId: number }) {
                 <div style={{ marginTop: 4 }}>
                   <span className="chip warn">{L("Ausschluss erlaubt", "exclusion permitted")}</span>{" "}
                   <span className="mono">{x.excluded_allowed.join(", ")}</span>
+                </div>
+              )}
+              {(x.announced_outside ?? []).length > 0 && (
+                <div className="bgp-zone-outside" style={{ marginTop: 4 }}>
+                  <span className="chip warn">{L("angekündigt ausserhalb der Zonen", "announced outside the zones")}</span>{" "}
+                  <span className="mono">{(x.announced_outside ?? []).join(", ")}</span>
+                  {(x.announced_outside_total ?? 0) > (x.announced_outside ?? []).length && (
+                    <span className="faint"> +{(x.announced_outside_total ?? 0) - (x.announced_outside ?? []).length}</span>
+                  )}
                 </div>
               )}
               <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "8px 0 4px" }}>
@@ -547,9 +593,106 @@ export function RouteControlDrawer({ tenantId, l3outId, onClose }: { tenantId: n
                 {r.export.entries.map((e) => `${e.prefix}${e.aggregate ? " aggregate" : ""}`).join(", ")}
               </div>
             )}
+            <L3OutZones tenantId={tenantId} l3outId={l3outId} />
           </>
         )}
       </div>
     </Drawer>
+  );
+}
+
+// Import Route Control gegen die Zonen hinter dem L3Out (0.116.0, ADR 0041 Stufe 3): Netze der
+// Zonen, Urteil der Route Control heute, Abweichungen und Subnetze als Vorschlag (nur Text)
+function L3OutZones({ tenantId, l3outId }: { tenantId: number; l3outId: number }) {
+  const [z, setZ] = useState<L3OutZoneSoll | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    fetchL3OutZones(tenantId, l3outId).then(setZ).catch(setError);
+  }, [tenantId, l3outId]);
+  return (
+    <div id="l3out-zones">
+      <h3>{L("Soll aus den Zonen dahinter (Import)", "Target from the zones behind (import)")}</h3>
+      <ErrorBox error={error} />
+      {!z && !error && <Loading />}
+      {z && (
+        <>
+          <div className={`note ${z.state === "differs" ? "warn" : ""}`} id="l3out-zones-state" data-state={z.state}>
+            {z.text}
+          </div>
+          {z.neighbor_zone && (
+            <div className="faint" style={{ margin: "4px 0" }}>
+              {L("Zone der VRF", "Zone of the VRF")}: <b>{z.home?.name}</b> · {L("Zone am Peer", "Zone at the peer")}:{" "}
+              <b>{z.neighbor_zone.name}</b> · {L("Zonen dahinter", "Zones behind")}: {(z.zones ?? []).map((x) => x.name).join(", ")}
+            </div>
+          )}
+          {z.import_enforced === false && (
+            <div className="note warn">
+              {L(
+                "Import ist am L3Out nicht erzwungen – er übernimmt alle Routen, nicht nur die der Zonen.",
+                "Import is not enforced on the L3Out – it accepts all routes, not only those of the zones.",
+              )}
+            </div>
+          )}
+          {(z.entries ?? []).length > 0 && (
+            <table className="compact" id="l3out-zones-table">
+              <thead>
+                <tr>
+                  <th>{L("Netz", "Network")}</th>
+                  <th>{L("Zone", "Zone")}</th>
+                  <th>{L("Route Control heute", "Route control today")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(z.entries ?? []).map((e) => (
+                  <tr key={e.prefix} data-prefix={e.prefix}>
+                    <td className="mono">{e.prefix}</td>
+                    <td>{e.zones.join(", ")}</td>
+                    <td>
+                      <Verdict v={e.verdict} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {(z.missing ?? []).length > 0 && (
+            <div style={{ marginTop: 4 }}>
+              <span className="chip warn">{L("ohne Import Route Control", "without import route control")}</span>{" "}
+              <span className="mono">{(z.missing ?? []).join(", ")}</span>
+            </div>
+          )}
+          {(z.too_open ?? []).length > 0 && (
+            <div style={{ marginTop: 4 }}>
+              <span className="chip warn">{L("importiert ausserhalb der Zonen", "imported outside the zones")}</span>{" "}
+              <span className="mono">{(z.too_open ?? []).map((t) => t.prefix).join(", ")}</span>
+            </div>
+          )}
+          {(z.excluded_allowed ?? []).length > 0 && (
+            <div style={{ marginTop: 4 }}>
+              <span className="chip warn">{L("Ausschluss importiert", "exclusion imported")}</span>{" "}
+              <span className="mono">{(z.excluded_allowed ?? []).join(", ")}</span>
+            </div>
+          )}
+          {z.proposal && (
+            <>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "8px 0 4px" }}>
+                <b>{L("Vorschlag Subnetze der externen EPG", "Proposal subnets of the external EPG")}</b>
+                <button
+                  className="btn btn-sm"
+                  onClick={() => void navigator.clipboard?.writeText(z.proposal ?? "").then(() => setCopied(true))}
+                >
+                  {copied ? L("kopiert", "copied") : L("Kopieren", "Copy")}
+                </button>
+                <span className="faint">{L("nur Text – Automato schreibt nichts ins ACI", "text only – Automato writes nothing to the ACI")}</span>
+              </div>
+              <pre className="block bgp-cli" id="l3out-zones-proposal">
+                {z.proposal}
+              </pre>
+            </>
+          )}
+        </>
+      )}
+    </div>
   );
 }

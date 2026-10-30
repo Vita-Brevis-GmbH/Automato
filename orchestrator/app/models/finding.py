@@ -120,6 +120,11 @@ class FindingType(enum.StrEnum):
     # Stufe 2 (0.114.0): Eingangsfilter passt nicht zu den Zonen hinter dem Nachbarn (Netz der
     # Zonen gesperrt, Ausschluss erlaubt, Regel ausserhalb der Zonen bzw. ohne Filter)
     BGP_ZONE_MISMATCH = "bgp_zone_mismatch"
+    # Stufe 3 (0.116.0): Ausgangsfilter passt nicht zu den Zonen diesseits (Netz gesperrt,
+    # angekuendigt ausserhalb der Zonen, zu offen); ACI Import Route Control eines L3Outs passt
+    # nicht zu den Zonen dahinter (nicht erzwungen, fehlt, zu offen)
+    BGP_ZONE_OUT_MISMATCH = "bgp_zone_out_mismatch"
+    ACI_IMPORT_ZONE_MISMATCH = "aci_import_zone_mismatch"
     # Nachkontrolle des NetBox-Syncs (0.115.0, ADR 0042): nach dem Uebernehmen steht ein
     # geschriebenes Objekt nicht so in NetBox (fehlt, Felder anders, nicht geloescht)
     NETBOX_SYNC_MISMATCH = "netbox_sync_mismatch"
