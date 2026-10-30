@@ -1803,8 +1803,16 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   erstellen** liest NetBox nur und zeigt je Art: anlegen / ändern / unverändert / Konflikt
   (von Hand gepflegtes Objekt weicht ab – bleibt unverändert) / löschen / veraltet, mit
   Aktionsliste. **Übernehmen** (Bestätigung) berechnet neu, schreibt nur bei unveränderter
-  Lage, auditiert und liest NetBox danach neu ein. Geändert/gelöscht werden nur Objekte mit
-  Tag `automato`. Geräte ohne Standort werden übersprungen (Hinweis) – Standort am
+  Lage, auditiert und liest NetBox danach neu ein. Seit 0.115.0 (ADR 0042) folgt dem Schreiben
+  die **Nachkontrolle**: Automato liest NetBox über einen eigenen, rein lesenden Zugang (Lese-Token,
+  sonst Schreib-Token – Schreib-Methoden blockiert) neu und vergleicht jedes geschriebene Objekt.
+  Am Plan steht „Nachkontrolle: geschrieben = gelesen (n)“ bzw. „n Abweichungen von m“ mit Tabelle
+  (Art, Objekt, geschrieben, nach dem Lesen: fehlt in NetBox / andere Werte mit Feld alt → neu /
+  noch in NetBox); je Abweichung ein Befund unter Findings → NetBox-Sync. Ursache meist ein
+  Validator, eine Event Rule bzw. ein Skript in NetBox oder ein fehlendes Recht des Tokens; nach
+  dem Beheben neue Vorschau und erneut übernehmen. Ist NetBox beim Zurücklesen nicht erreichbar,
+  bleibt die Übernahme gültig („Nachkontrolle nicht möglich: …“). Geändert/gelöscht werden nur
+  Objekte mit Tag `automato`. Geräte ohne Standort werden übersprungen (Hinweis) – Standort am
   Quellsystem setzen (bei genau einem Standort des Mandanten wird dieser genutzt).
 
 ## 4. API

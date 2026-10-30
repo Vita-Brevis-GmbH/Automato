@@ -431,8 +431,9 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.113.2** | Fehler zu 0.113: unspezifische Firewall-Regeln in der Applikations-Doku nur von Firewalls auf dem Weg zur Gegenstelle; Findings-Detail ohne überlaufende Texte (BGP-Netze als Liste, Spalten umbrechen); Referenzquelle (NetBox/DDI) nur einmal zugleich lesen, ohne Ziel kein Lesen, Abbruchgrund bleibt stehen |
 | **0.114.0** | BGP-Filter Stufe 2: Backup-Wege, die ein BGP-Filter sperrt, verworfen (mit Grund); Soll je BGP-Nachbar aus allen Zonen dahinter (Netze und Ausschlüsse als Prefix-Liste), Abweichungen zum Eingangsfilter, FortiOS-CLI-Vorschlag zum Kopieren, Befund „Eingangsfilter passt nicht zu den Zonen“ (ADR 0041) |
 | **0.114.1** | Fehler zu 0.113: Weg-Suche nennt alle Ziel-Server einer VIP bzw. eines Pools mit Name, Port, Zustand, Gewicht, Health-Check, Objekt und VM; Freigaben ins Internet (Ziel all, Ausgang Internet, auch SD-WAN-Zone) nicht mehr als Zugriff in der Applikations-Doku; BGP „angekündigt“ mit default-originate und ohne Routen zurück ins AS des Nachbarn |
+| **0.115.0** | Nachkontrolle des NetBox-Syncs (Roadmap V1 Nr. 5): nach „Übernehmen“ NetBox rein lesend neu lesen und je geschriebenem Objekt vergleichen (fehlt, andere Werte, nicht gelöscht); Ergebnis am Plan, Befund „NetBox-Sync: geschrieben ≠ gelesen“ (ADR 0042) |
 
-### Nächste Arbeiten (Stand 0.114.1)
+### Nächste Arbeiten (Stand 0.115.0)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
 **0.68.0** (2026-10-26), bis **0.102.0** (2026-10-28: „ich teste nach dem Freigeben der Version
@@ -446,7 +447,8 @@ Fehlerliste zu 0.110 ohne Einwand zu 0.111.0), bis **0.112.0** (2026-10-29, „g
 Einwand), bis **0.113.0** (2026-10-29, Fehlerliste zu 0.112 ohne Einwand zu 0.113.0), bis
 **0.113.1** (2026-10-29, Fehlerliste zu 0.113 ohne Einwand zu 0.113.1), bis **0.113.2**
 (2026-10-29, „go 114“ ohne Einwand), bis **0.114.0** (2026-10-30, Fehlerliste zu 0.113 ohne
-Einwand zu 0.114.0). Zur Abnahme steht 0.114.1. Seit 0.104.0 gilt eine
+Einwand zu 0.114.0), bis **0.114.1** (2026-10-30, „go 115“ ohne Einwand). Zur Abnahme steht
+0.115.0. Seit 0.104.0 gilt eine
 Version als abgenommen,
 sobald die nächste Rückmeldung des Anwenders keinen Einwand dazu enthält (`CLAUDE.md`, Ablauf).
 
@@ -462,7 +464,7 @@ Produktivschaltung weiter 0.1xx; **1.0.0 = produktiv**, danach 2.x mit neuem Nam
 | 2 | Prüfung, ob der Fingerabdruck der Doku jede Änderung bemerkt, im nächtlichen Lauf | **erledigt in 0.109.1** (CI-Schritt nachts bzw. von Hand, `AUTOMATO_TEST_DOC_SNAPSHOTS=1`) |
 | 3 | BGP in der Dokumentation; BGP-Filter je Zone aus Netzen und Ausschlüssen ableiten – als Vorschlag/Export, kein Schreibweg | **Stufe 1 in 0.113.0** (ADR 0041: Filter und Route Control lesen, Soll/Ist je Nachbar, Befunde, Netze der Filter für die Anbindungen); **Stufe 2 in 0.114.0** (Backup-Wege gegen die Filter, Soll je Nachbar aus den Zonen dahinter mit CLI-Vorschlag); offen: Ausgangsfilter je Zone, ACI import-rtctrl aus den Zonen |
 | 4 | Tests des Anwenders abschliessen; Juniper-Router einbinden und testen (Routing-Tabelle des MX für die Wege, seit 0.68.0 offen); Wege sauber und intensiv testen | offen |
-| 5 | Schreibpfad mit Nachkontrolle: nach „Übernehmen“ über den Lesepfad zurücklesen und vergleichen, Abweichungen als Befund | offen (Entscheid 2026-10-29: in Version 1) |
+| 5 | Schreibpfad mit Nachkontrolle: nach „Übernehmen“ über den Lesepfad zurücklesen und vergleichen, Abweichungen als Befund | **erledigt in 0.115.0** (ADR 0042: rein lesender Zugang, Vergleich je geschriebenem Objekt, Ergebnis am Plan, Befund `netbox_sync_mismatch`) |
 | 6 | R14 vor dem Produktivbetrieb: OTP für alle, Oberfläche nur aus Management-Netz/VPN, Verschlüsselung des Datenträgers – umsetzen bzw. bestätigen, was ausserhalb von Automato erledigt ist | offen (Entscheid 2026-10-29: in Version 1) |
 | 7 | Fehler bereinigen: HTTP 500 beim Laden der Doku (Referenz im Protokoll nötig) | offen |
 | 8 | Produktiv gehen, wenn die meisten Fehler raus sind (DC, ADR 0013) = **1.0.0** | danach |
@@ -523,7 +525,7 @@ den gelesenen Stand; Entscheid 2026-10-29). Jeder neue Schreibweg mit eigener AD
 | Stufe | Inhalt |
 |---|---|
 | 0.108 | **erledigt in 0.108.0** (ADR 0037): Doku und Verbindungen als Stand mit Fingerabdruck, sofort der letzte Stand, neu im Hintergrund, Vorrechnen; Befunde der Zonen beim Speichern im Hintergrund. |
-| 0.110 | **Schreibpfad mit Nachkontrolle:** nach „Übernehmen“ den Stand über den Lesepfad (Gateway) neu lesen und Zeile für Zeile mit dem Auftrag vergleichen („geschrieben = gelesen?“), Abweichungen als Befund. |
+| 0.110 | **Schreibpfad mit Nachkontrolle:** **erledigt in 0.115.0** (ADR 0042) – nach „Übernehmen“ rein lesend zurücklesen und je Objekt vergleichen, Abweichungen als Befund. |
 | 0.111 | **Prüfen vor dem Ändern:** ein geplantes Routing bzw. eine geplante Regel als Überlagerung über den gelesenen Stand legen; Wegsucher und Findings warnen, was sich dadurch ändert (gesperrt, andere Zone, Regel nie gebraucht). |
 | danach | Dateien je Modul in eigene Pakete verschieben, wo es eine Änderung erleichtert; Findings als steckbare Prüfungen; Oberfläche je Modul aufteilen; Cockpit (Mehrmandanten, eigene ADR) mit den Basis-Settings je Mandant. |
 

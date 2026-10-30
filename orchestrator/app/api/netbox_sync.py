@@ -8,8 +8,9 @@
 - `GET  /netbox-sync/plans`             letzte Vorschauen des Mandanten
 - `GET  /netbox-sync/plans/{id}`        Status, Kennzahlen, Hinweise, Ergebnis
 - `GET  /netbox-sync/plans/{id}/items`  Aktionen (Filter Art/Aktion/Suche, blaetterbar)
-- `POST /netbox-sync/plans/{id}/apply`  Uebernehmen, im Hintergrund; danach liest Automato
-                                        NetBox neu ein
+- `POST /netbox-sync/plans/{id}/apply`  Uebernehmen, im Hintergrund; danach Nachkontrolle
+                                        (0.115.0, ADR 0042: NetBox rein lesend neu lesen und
+                                        je geschriebenem Objekt vergleichen) und Neu-Einlesen
 - `POST /netbox-sync/plans/{id}/cancel` laufende Vorschau/Uebernahme beenden
 
 Vorschau und Uebernahme laufen als Hintergrundaufgabe im Orchestrator-Prozess. Startet er neu
@@ -31,7 +32,9 @@ from datetime import UTC, datetime, timedelta
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
+from sot_gateway.adapters.netbox import auth_header
 from sot_gateway.adapters.netbox_writer import NetBoxWriteError, NetBoxWriter, WriteNotAllowed
+from sot_gateway.readonly import enforce_read_only
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -60,6 +63,20 @@ def make_writer(target: SourceSystem) -> NetBoxWriter:
     if not token:
         raise HTTPException(status_code=422, detail="netbox source has no write token")
     return NetBoxWriter(target.base_url, token, verify_tls=target.verify_tls)
+
+
+def make_reader(target: SourceSystem, client: httpx.Client | None = None) -> netbox_sync.Reader:
+    """Lesepfad der Nachkontrolle (0.115.0, ADR 0042): eigener Client, der jede Schreib-Methode
+    vor dem Senden blockiert (`sot_gateway.readonly`), mit dem Lese-Token der NetBox - ohne
+    Lese-Token mit dem Schreib-Token, auch dann nur lesend."""
+    secrets = credentials.decrypt(target.credentials) if target.credentials else {}
+    token = secrets.get("token") or secrets.get("write_token")
+    if not token:
+        raise HTTPException(status_code=422, detail="netbox source has no token")
+    client = enforce_read_only(client or httpx.Client(
+        headers={**auth_header(token), "Accept": "application/json"},
+        verify=target.verify_tls, timeout=httpx.Timeout(60.0, connect=10.0)))  # fmt: skip
+    return netbox_sync.Reader(NetBoxWriter(target.base_url, token, client=client))
 
 
 class TargetOut(BaseModel):
@@ -91,6 +108,7 @@ class PlanOut(BaseModel):
     warnings: list[str]
     message: str | None
     result: dict | None
+    verification: dict | None = None  # Nachkontrolle (0.115.0, ADR 0042)
     created_by: str
     created_at: datetime
     applied_by: str | None
@@ -133,6 +151,7 @@ def _out(plan: SyncPlan, target: SourceSystem) -> PlanOut:
         warnings=[netbox_sync.show_warning(w) for w in plan.warnings or []],
         message=show_message(plan.message),
         result=plan.result,
+        verification=_verification(plan.verification),
         created_by=plan.created_by,
         created_at=plan.created_at,
         applied_by=plan.applied_by,
@@ -183,6 +202,16 @@ MESSAGES_EN = (
     ("Vorschau fehlgeschlagen: {error}", "Preview failed: {error}"),
     ("Übernahme abgebrochen: {error}", "Apply aborted: {error}"),
     ("schreibt: {kind}", "writing: {kind}"),
+    ("kontrolliert: liest NetBox neu", "verifying: reading NetBox again"),
+    ("Übernommen und nachkontrolliert: geschrieben = gelesen ({n} Objekte) – NetBox wird neu"
+     " eingelesen.",
+     "Applied and verified: written = read ({n} objects) – NetBox is being collected again."),
+    ("Übernommen – Nachkontrolle: {n} Abweichungen von {checked} Objekten (Findings → NetBox-Sync)"
+     " – NetBox wird neu eingelesen.",
+     "Applied – verification: {n} deviations of {checked} objects (Findings → NetBox sync) –"
+     " NetBox is being collected again."),
+    ("Übernommen – Nachkontrolle nicht möglich: {error} – NetBox wird neu eingelesen.",
+     "Applied – verification not possible: {error} – NetBox is being collected again."),
 )  # fmt: skip
 ERRORS_EN = (
     ("NetBox nicht erreichbar", "NetBox not reachable"),
@@ -564,13 +593,18 @@ def apply_job(factory: sessionmaker, plan_id: int) -> None:
         session.refresh(plan)
         if plan.status != SyncStatus.APPLYING.value:
             return  # inzwischen abgebrochen bzw. beendet - Meldung steht am Plan
+        # geschrieben ist alles: ein Abbruch waehrend der Nachkontrolle aendert daran nichts
+        check = _verify(factory, session, plan, target, tenant, fresh.items)
+        session.refresh(plan)
         plan.status = SyncStatus.APPLIED.value
         plan.result = done
+        plan.verification = check
         plan.applied_at = datetime.now(UTC)
-        plan.message = "Übernommen – NetBox wird neu eingelesen."
+        plan.message = _applied_message(check)
         _audit_applied(session, plan, done, "applied")
         _queue_reread(session, target)
         session.commit()
+        _refresh_findings(factory, plan.tenant_id)
     except _Cancelled:
         session.rollback()
         log.info("NetBox-Sync-Uebernahme %s abgebrochen", plan_id)
@@ -588,6 +622,64 @@ def apply_job(factory: sessionmaker, plan_id: int) -> None:
         _fail(factory, plan_id, f"Übernahme abgebrochen: {_error_text(exc)}", applying=True)
     finally:
         session.close()
+
+
+def _verify(factory: sessionmaker, session: Session, plan: SyncPlan, target: SourceSystem,
+            tenant: Tenant, written: list[dict]) -> dict:  # fmt: skip
+    """Nachkontrolle (0.115.0, ADR 0042): NetBox ueber den Lesepfad neu lesen und je
+    geschriebenem Objekt vergleichen. Scheitert das Lesen, bleibt die Uebernahme gueltig - der
+    Grund steht am Plan."""
+    _beat(factory, plan.id, "kontrolliert: liest NetBox neu")
+    reader = None
+    try:
+        reader = make_reader(target)
+        out = netbox_sync.verify(session, reader, tenant, target,
+                                 plan.options.get("sections", []),
+                                 bool(plan.options.get("allow_delete")), written)  # fmt: skip
+    except Exception as exc:  # noqa: BLE001 - Nachkontrolle bricht die Uebernahme nicht ab
+        log.warning("Nachkontrolle NetBox-Sync %s: %s", plan.id, _error_text(exc))
+        out = {"error": _error_text(exc)}
+    finally:
+        if reader is not None:
+            reader.close()
+    out["at"] = datetime.now(UTC).isoformat()
+    return out
+
+
+def _beat(factory: sessionmaker, plan_id: int, message: str) -> None:
+    s = factory()
+    try:
+        plan = s.get(SyncPlan, plan_id)
+        if plan is not None and plan.status == SyncStatus.APPLYING.value:
+            plan.heartbeat_at = datetime.now(UTC)
+            plan.message = message
+            s.commit()
+    finally:
+        s.close()
+
+
+def _applied_message(check: dict) -> str:
+    if check.get("error"):
+        return (
+            f"Übernommen – Nachkontrolle nicht möglich: {check['error']} – NetBox wird neu"
+            " eingelesen."
+        )
+    if check.get("deviation_count"):
+        return (f"Übernommen – Nachkontrolle: {check['deviation_count']} Abweichungen von"
+                f" {check['checked']} Objekten (Findings → NetBox-Sync) – NetBox wird neu"
+                " eingelesen.")  # fmt: skip
+    return (
+        f"Übernommen und nachkontrolliert: geschrieben = gelesen ({check.get('checked', 0)}"
+        " Objekte) – NetBox wird neu eingelesen."
+    )
+
+
+def _verification(check: dict | None) -> dict | None:
+    """Nachkontrolle in der Sprache der Anfrage: Bezeichnungen der Abweichungen."""
+    if not check:
+        return check
+    rows = [{**d, "label": netbox_sync.show_label(d["label"])} for d in check.get("deviations", [])]
+    return {**check, "deviations": rows}
 
 
 class _Changed(Exception):
@@ -651,8 +743,34 @@ def _audit_applied(session: Session, plan: SyncPlan, done: dict | None, status: 
             "status": status,
             "sections": list((plan.options or {}).get("sections") or []),
             **totals,
+            **_verified(plan.verification),
         },
     )
+
+
+def _verified(check: dict | None) -> dict:
+    """Nachkontrolle kurz fuer das Audit (0.115.0)."""
+    if not check:
+        return {}
+    if check.get("error"):
+        return {"verified": "error"}
+    return {"verified": check.get("checked", 0), "deviations": check.get("deviation_count", 0)}
+
+
+def _refresh_findings(factory: sessionmaker, tenant_id: int) -> None:
+    """Befunde der Nachkontrolle sofort (Teil-Durchgang „Quellen“), nicht erst nach dem
+    Neu-Einlesen; ein Fehler hier aendert an der Uebernahme nichts."""
+    from app.store import reconcile
+
+    session = factory()
+    try:
+        reconcile.refresh_source_findings(session, tenant_id, get_settings())
+        session.commit()
+    except Exception:  # noqa: BLE001
+        session.rollback()
+        log.exception("Befunde nach dem NetBox-Sync fuer Mandant %s", tenant_id)
+    finally:
+        session.close()
 
 
 def _queue_reread(session: Session, target: SourceSystem) -> None:

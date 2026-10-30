@@ -7,6 +7,29 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.115.0 – 2026-10-30
+
+Roadmap Version 1 Nr. 5 (ADR 0042; Anwender 2026-10-30: „go 115“, gewählt die Nachkontrolle des
+Schreibpfads). Abnahme bis 0.114.1.
+
+- **Nachkontrolle des NetBox-Syncs:** nach „Übernehmen“ liest Automato die Ziel-NetBox über einen
+  eigenen, rein lesenden Zugang neu (Lese-Token, sonst Schreib-Token; POST/PUT/PATCH/DELETE werden
+  vor dem Senden blockiert) und vergleicht jedes geschriebene Objekt mit dem Auftrag:
+  - angelegt bzw. geändert, aber **fehlt in NetBox** bzw. **andere Werte** (Feld alt → neu);
+  - gelöscht, aber **noch in NetBox**;
+  - inzwischen in Automato anders: nicht prüfbar, keine Abweichung.
+- **Ergebnis am Plan** (NetBox-Sync): „Nachkontrolle: geschrieben = gelesen (n)“ bzw. „n
+  Abweichungen von m“ mit Tabelle; Meldung „Übernommen und nachkontrolliert …“; im Audit
+  `verified`/`deviations`. Scheitert das Zurücklesen, bleibt die Übernahme gültig („Nachkontrolle
+  nicht möglich: …“).
+- **Befund „NetBox-Sync: geschrieben ≠ gelesen“** (`netbox_sync_mismatch`, Warnung, neue Gruppe
+  „NetBox-Sync“) je Abweichung der letzten Übernahme je NetBox; Prüfung „Nachkontrolle des
+  NetBox-Syncs“ im Modul Schreibpfad – sofort nach der Übernahme und nach jedem Lauf.
+- Migration 0071 (`sync_plan.verification`), API `verification` am Plan. Kein neuer Schreibweg.
+- Tests: `test_netbox_sync_verify.py` (neu: in Ordnung, Validator/verworfen/nicht gelöscht,
+  Befund Deutsch/Englisch, Lesepfad kann nicht schreiben, Zurücklesen scheitert),
+  `test_netbox_sync.py`, `test_netbox_sync_cabling_apps.py`.
+
 ## 0.114.1 – 2026-10-30
 
 Fehler und Wünsche des Anwenders zu 0.113 (2026-10-30). Abnahme bis 0.114.0.

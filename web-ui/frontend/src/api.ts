@@ -1091,6 +1091,26 @@ export interface SyncItem {
   changes?: SyncChange[];
   fields?: Record<string, unknown>;
 }
+// Nachkontrolle des NetBox-Syncs (0.115.0, ADR 0042): NetBox nach dem Schreiben rein lesend neu
+// gelesen, je geschriebenem Objekt verglichen
+export interface SyncDeviation {
+  kind: string;
+  key: string;
+  label: string;
+  action: string; // create | update | delete
+  problem: "missing" | "differs" | "still_there";
+  changes?: { field: string; old: unknown; new: unknown }[];
+}
+export interface SyncVerification {
+  checked?: number;
+  ok?: number;
+  unchecked?: number;
+  deviation_count?: number;
+  by_kind?: Record<string, number>;
+  deviations?: SyncDeviation[];
+  error?: string;
+  at?: string;
+}
 export interface SyncPlan {
   id: number;
   tenant_id: number;
@@ -1104,6 +1124,7 @@ export interface SyncPlan {
   warnings: string[];
   message: string | null;
   result: Record<string, Record<string, number>> | null;
+  verification?: SyncVerification | null; // Nachkontrolle nach dem Übernehmen (0.115.0)
   created_by: string;
   created_at: string;
   applied_by: string | null;

@@ -19,7 +19,7 @@ from app.api import netbox_sync as api
 from app.models import AuditLog, InvInterface
 from app.store import netbox_sync
 from sot_gateway.adapters.netbox_writer import NetBoxWriter
-from tests.test_netbox_sync import FakeNetBox, _apply, _tagged
+from tests.test_netbox_sync import FakeNetBox, _apply, _reader, _tagged
 from tests.test_vmware import BACKUP, DB, WEB
 from tests.test_vmware import _seed as seed_vmware
 
@@ -99,6 +99,7 @@ def netbox(monkeypatch) -> CableNetBox:
         return NetBoxWriter(target.base_url, token, client=client)
 
     monkeypatch.setattr(api, "make_writer", make_writer)
+    _reader(monkeypatch, fake)
     return fake
 
 

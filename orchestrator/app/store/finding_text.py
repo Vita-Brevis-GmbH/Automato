@@ -752,7 +752,41 @@ def _bgp_zones(subject: str, d: dict) -> tuple[str, str]:
     )
 
 
+def _netbox_sync(subject: str, d: dict) -> tuple[str, str]:
+    """Nachkontrolle des NetBox-Syncs (0.115.0, ADR 0042): geschrieben != gelesen."""
+    nb = d.get("netbox") or "NetBox"
+    what = L(d.get("label") or subject, d.get("label_en") or d.get("label") or subject)
+    problem = d.get("problem")
+    if problem == "missing":
+        text = L(
+            f"{nb}: {what} angelegt, steht nach dem Schreiben aber nicht in NetBox.",
+            f"{nb}: {what} created, but not in NetBox after writing.",
+        )
+    elif problem == "still_there":
+        text = L(
+            f"{nb}: {what} gelöscht, steht nach dem Schreiben aber noch in NetBox.",
+            f"{nb}: {what} deleted, but still in NetBox after writing.",
+        )
+    else:
+        changes = d.get("changes") or []
+        fields = _list([f"{c.get('field')}: {c.get('old')} → {c.get('new')}" for c in changes], 3)
+        text = L(
+            f"{nb}: {what} geschrieben, NetBox zeigt danach andere Werte ({fields}).",
+            f"{nb}: {what} written, NetBox shows other values afterwards ({fields}).",
+        )
+    hint = L(
+        "Neue Vorschau erstellen und erneut übernehmen. Bleibt die Abweichung, ändert in NetBox "
+        "etwas den Wert nach dem Schreiben (Custom Validator, Event Rule, Skript) oder ein Recht "
+        "des Tokens fehlt.",
+        "Create a new preview and apply again. If the deviation remains, something in NetBox "
+        "changes the value after writing (custom validator, event rule, script) or the token "
+        "lacks a permission.",
+    )
+    return text, hint
+
+
 _TOPO_TEXT = {
+    "netbox_sync_mismatch": _netbox_sync,
     "bgp_zone_mismatch": _bgp_zones,
     "bgp_expected_missing": _bgp_missing,
     "bgp_outside_filter": _bgp_outside,

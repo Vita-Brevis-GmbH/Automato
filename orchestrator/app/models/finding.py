@@ -120,6 +120,9 @@ class FindingType(enum.StrEnum):
     # Stufe 2 (0.114.0): Eingangsfilter passt nicht zu den Zonen hinter dem Nachbarn (Netz der
     # Zonen gesperrt, Ausschluss erlaubt, Regel ausserhalb der Zonen bzw. ohne Filter)
     BGP_ZONE_MISMATCH = "bgp_zone_mismatch"
+    # Nachkontrolle des NetBox-Syncs (0.115.0, ADR 0042): nach dem Uebernehmen steht ein
+    # geschriebenes Objekt nicht so in NetBox (fehlt, Felder anders, nicht geloescht)
+    NETBOX_SYNC_MISMATCH = "netbox_sync_mismatch"
 
 
 class Severity(enum.StrEnum):
@@ -150,6 +153,7 @@ class SubjectKind(enum.StrEnum):
     ZONE = "zone"  # logische Zone (Name, 0.78.0)
     SOURCE = "source"  # Quellsystem (Name; Datenqualitaet, ADR 0029)
     PATH = "path"  # Weg `<Quelle> → <Ziel>` (von Hand erfasst, 0.109.0)
+    NETBOX = "netbox"  # Objekt in der Ziel-NetBox (`<NetBox>|<Art>|<Schluessel>`, 0.115.0)
 
 
 class Finding(Base):

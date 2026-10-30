@@ -16,6 +16,7 @@ import {
   SyncPlan,
   SyncSection,
   SyncTarget,
+  SyncVerification,
 } from "./api";
 import type { View } from "./App";
 import { L } from "./i18n";
@@ -531,6 +532,7 @@ function PlanView({ plan, onApply, onCancel }: { plan: SyncPlan; onApply: () => 
     !!plan.message ||
     plan.warnings.length > 0 ||
     !!plan.result ||
+    !!plan.verification ||
     (plan.status === "ready" && !plan.can_apply);
   return (
     <div className="card">
@@ -602,6 +604,7 @@ function PlanView({ plan, onApply, onCancel }: { plan: SyncPlan; onApply: () => 
               ))}
             </div>
           )}
+          {plan.verification && <Verification v={plan.verification} />}
         </div>
       )}
       {kinds.length > 0 && (
@@ -633,6 +636,92 @@ function PlanView({ plan, onApply, onCancel }: { plan: SyncPlan; onApply: () => 
         </div>
       )}
       {!running && plan.summary && <Items plan={plan} kinds={kinds} />}
+    </div>
+  );
+}
+
+const PROBLEM: Record<string, string> = {
+  missing: L("fehlt in NetBox", "missing in NetBox"),
+  differs: L("andere Werte", "other values"),
+  still_there: L("noch in NetBox", "still in NetBox"),
+};
+
+const shown = (v: unknown) => (v === null || v === undefined || v === "" ? "–" : typeof v === "object" ? JSON.stringify(v) : String(v));
+
+// Nachkontrolle (0.115.0, ADR 0042): nach dem Schreiben liest Automato NetBox rein lesend neu und
+// vergleicht je geschriebenem Objekt – „geschrieben = gelesen“ bzw. die Abweichungen
+function Verification({ v }: { v: SyncVerification }) {
+  if (v.error)
+    return (
+      <div id="sync-verification">
+        <span className="chip warn">{L("Nachkontrolle nicht möglich", "Verification not possible")}</span>
+      </div>
+    );
+  const n = v.deviation_count ?? 0;
+  return (
+    <div id="sync-verification">
+      <span
+        className={`chip ${n ? "warn" : "ok"}`}
+        title={L(
+          "Nach dem Schreiben NetBox über einen rein lesenden Zugang neu gelesen und jedes geschriebene Objekt verglichen",
+          "After writing, NetBox was read again through a read-only access and every written object compared",
+        )}
+      >
+        {n
+          ? L(`Nachkontrolle: ${n} Abweichungen von ${v.checked ?? 0}`, `Verification: ${n} deviations of ${v.checked ?? 0}`)
+          : L(`Nachkontrolle: geschrieben = gelesen (${v.checked ?? 0})`, `Verification: written = read (${v.checked ?? 0})`)}
+      </span>
+      {v.unchecked ? (
+        <span
+          className="faint"
+          style={{ marginLeft: 8, fontSize: 12 }}
+          title={L(
+            "Automato will diese Objekte inzwischen anders – sie zählen nicht als Abweichung",
+            "Automato now wants these objects differently – they do not count as deviations",
+          )}
+        >
+          {L(`${v.unchecked} nicht prüfbar`, `${v.unchecked} not checkable`)}
+        </span>
+      ) : null}
+      {n > 0 && (
+        <>
+          <table className="tight" style={{ marginTop: 8 }}>
+            <thead>
+              <tr>
+                <th>{L("Art", "Type")}</th>
+                <th>{L("Objekt", "Object")}</th>
+                <th>{L("Geschrieben", "Written")}</th>
+                <th>{L("Nach dem Lesen", "After reading")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(v.deviations ?? []).map((d) => (
+                <tr key={`${d.kind}|${d.key}`}>
+                  <td className="nowrap">{KIND_LABEL[d.kind] ?? d.kind}</td>
+                  <td className="mono">{d.label}</td>
+                  <td>{ACTION[d.action]?.[1] ?? d.action}</td>
+                  <td>
+                    {PROBLEM[d.problem] ?? d.problem}
+                    {(d.changes ?? []).map((c) => (
+                      <div key={c.field} className="faint mono" style={{ fontSize: 12 }}>
+                        {c.field}: {shown(c.old)} → {shown(c.new)}
+                      </div>
+                    ))}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {n > (v.deviations?.length ?? 0) && (
+            <div className="faint" style={{ fontSize: 12 }}>
+              {L(`… ${n - (v.deviations?.length ?? 0)} weitere`, `… ${n - (v.deviations?.length ?? 0)} more`)}
+            </div>
+          )}
+          <a href="#findings?type=netbox_sync_mismatch" style={{ fontSize: 12 }}>
+            {L("Befunde unter Findings →", "Findings →")}
+          </a>
+        </>
+      )}
     </div>
   );
 }

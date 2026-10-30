@@ -2142,6 +2142,82 @@ def _tag_patch(plan: Plan, kind: str, item: dict, ids: dict, mine: set[str]) -> 
     return {"id": tid, "tags": [{"slug": s} for s in sorted(keep | desired)]}
 
 
+# -- Nachkontrolle (0.115.0, ADR 0042) -----------------------------------------------------
+
+MAX_DEVIATIONS = 200  # Abweichungen am Plan (gezaehlt werden alle)
+MAX_CHANGES = 10  # Felder je Abweichung
+
+
+class Reader:
+    """Nur `read` eines NetBox-Clients: die Nachkontrolle liest - schreiben kann sie nicht (der
+    Client blockiert dazu jede Schreib-Methode vor dem Senden, `sot_gateway.readonly`)."""
+
+    def __init__(self, client) -> None:
+        self._client = client
+
+    def read(self, endpoint: str, params: dict | None = None) -> list[dict]:
+        return self._client.read(endpoint, params)
+
+    def close(self) -> None:
+        self._client.close()
+
+
+def verify(
+    session: Session,
+    reader: Reader,
+    tenant: Tenant,
+    target: SourceSystem,
+    sections: list[str],
+    allow_delete: bool,
+    written: list[dict],
+) -> dict:
+    """Nachkontrolle: NetBox nach dem Schreiben neu lesen (nur GET) und je geschriebenem Objekt
+    pruefen, ob es so dort steht - „geschrieben = gelesen“. `written` = Aktionen des
+    uebernommenen Plans. Ein Objekt, das Automato inzwischen nicht mehr will, ist nicht
+    pruefbar (`unchecked`), keine Abweichung."""
+    again = compute(session, reader, tenant, target, sections, allow_delete)
+    now = {(i["kind"], i["key"]): i for i in again.items}
+    deviations: list[dict] = []
+    checked = unchecked = 0
+    for item in written:
+        if item["action"] not in WRITE_ACTIONS:
+            continue
+        cur = now.get((item["kind"], item["key"]))
+        if item["action"] == "delete":
+            problem = (
+                "still_there"
+                if cur is not None and cur["action"] in ("delete", "obsolete")
+                else None
+            )
+        elif cur is None:
+            unchecked += 1
+            continue
+        elif cur["action"] == "create":
+            problem = "missing"
+        elif cur["action"] == "unchanged":
+            problem = None
+        else:
+            problem = "differs"
+        checked += 1
+        if problem:
+            deviations.append({
+                "kind": item["kind"], "key": item["key"], "label": item["label"],
+                "action": item["action"], "problem": problem,
+                "changes": (cur or {}).get("changes", [])[:MAX_CHANGES],
+            })  # fmt: skip
+    by_kind: dict[str, int] = defaultdict(int)
+    for d in deviations:
+        by_kind[d["kind"]] += 1
+    return {
+        "checked": checked,
+        "ok": checked - len(deviations),
+        "unchecked": unchecked,
+        "deviation_count": len(deviations),
+        "by_kind": dict(by_kind),
+        "deviations": deviations[:MAX_DEVIATIONS],
+    }
+
+
 # -- Anzeige in der Sprache der Anfrage (ADR 0028) -----------------------------------------
 # Gespeichert (am Plan) und nach NetBox geschrieben wird deutsch; uebersetzt wird nur die Anzeige.
 

@@ -66,6 +66,7 @@ export const FINDING_LABEL: Record<string, string> = {
   bgp_no_inbound_filter: L("BGP: eBGP ohne Eingangsfilter", "BGP: eBGP without inbound filter"),
   aci_import_not_enforced: L("ACI: Import Route Control nicht erzwungen", "ACI: import route control not enforced"),
   bgp_zone_mismatch: L("BGP: Eingangsfilter passt nicht zu den Zonen", "BGP: inbound filter does not match the zones"),
+  netbox_sync_mismatch: L("NetBox-Sync: geschrieben ≠ gelesen", "NetBox sync: written ≠ read"),
   link_speed_mismatch: L("Kabel: Speed abweichend", "Link: speed differs"),
   link_duplex_mismatch: L("Kabel: Duplex abweichend", "Link: duplex differs"),
   link_vlan_mismatch: L("Kabel: VLANs abweichend", "Link: VLANs differ"),
@@ -207,6 +208,10 @@ export const FINDING_HINT: Record<string, string> = {
     "Subnetze mit import-rtctrl an einem L3Out, der Import nicht erzwingt – sie wirken nicht",
     "Subnets with import-rtctrl on an L3Out that does not enforce import – they have no effect",
   ),
+  netbox_sync_mismatch: L(
+    "Nachkontrolle nach dem Übernehmen: ein geschriebenes Objekt fehlt in NetBox, hat dort andere Werte oder ist nicht gelöscht",
+    "Verification after applying: a written object is missing in NetBox, has other values there or is not deleted",
+  ),
   bgp_zone_mismatch: L(
     "Der Eingangsfilter eines BGP-Nachbarn passt nicht zu den Netzen der Zonen dahinter (Netzwerkdesign) – Vorschlag als Prefix-Liste im Soll/Ist des Nachbarn",
     "The inbound filter of a BGP neighbor does not match the networks of the zones behind (network design) – proposal as prefix list in the neighbor's expected/actual",
@@ -345,6 +350,15 @@ export const FINDING_GROUPS: { key: string; label: string; help: string; types: 
       "Expected/actual per BGP neighbor: expected networks do not arrive, received despite the filter, eBGP without filter, ACI import route control not enforced",
     ),
     types: ["bgp_expected_missing", "bgp_outside_filter", "bgp_no_inbound_filter", "aci_import_not_enforced", "bgp_zone_mismatch"],
+  },
+  {
+    key: "netbox_sync",
+    label: L("NetBox-Sync", "NetBox sync"),
+    help: L(
+      "Nachkontrolle nach dem Übernehmen: was Automato nach NetBox geschrieben hat, steht beim Zurücklesen anders da",
+      "Verification after applying: what Automato wrote to NetBox reads back differently",
+    ),
+    types: ["netbox_sync_mismatch"],
   },
   {
     key: "cabling",

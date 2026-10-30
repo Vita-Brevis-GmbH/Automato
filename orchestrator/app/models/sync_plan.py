@@ -40,6 +40,8 @@ class SyncPlan(Base):
     warnings: Mapped[list | None] = mapped_column(JSON, nullable=True)
     fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
     result: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # Uebernahme: Anzahlen
+    # Nachkontrolle (0.115.0, ADR 0042): NetBox nach dem Schreiben neu gelesen und verglichen
+    verification: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_by: Mapped[str] = mapped_column(String(200))
     applied_by: Mapped[str | None] = mapped_column(String(200), nullable=True)
