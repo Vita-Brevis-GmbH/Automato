@@ -242,6 +242,9 @@ def test_nat_auf_dem_weg(client):
         "to": ["10.40.0.80"],
         "type": None,
         "ports": ["443", "8443"],
+        # 0.114.1: Ziel-Server mit Port, Eingang der VIP
+        "servers": [{"ip": "10.40.0.80", "port": "8443"}],
+        "extintf": "wan",
     }
     assert "dst" not in edge and inner["dst"] == "10.40.0.80"
     assert path["end"]["kind"] == "connected"

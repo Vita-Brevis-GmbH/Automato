@@ -157,7 +157,8 @@ BGP_CFG = {
         "as": "65001", "router-id": "10.0.0.1",
         "neighbor": [
             {"ip": "198.51.100.1", "remote-as": "64500", "password": BGP_SECRET,
-             "route-map-in": "RM_ISP_IN", "prefix-list-out": "PL_DC", "description": "ISP A"},
+             "route-map-in": "RM_ISP_IN", "prefix-list-out": "PL_DC", "description": "ISP A",
+             "capability-default-originate": "enable"},
             {"ip": "198.51.100.13", "remote-as": "64502", "shutdown": "enable"},
         ],
         "neighbor-group": [{"name": "G_SITES", "remote-as": "65100", "prefix-list-in": "PL_SITES"}],
@@ -206,6 +207,7 @@ def test_fortigate_bgp_filter_und_nachbar_konfiguration(monkeypatch):
     isp = peers["198.51.100.1"].attrs["config"]
     assert isp["filters"] == {"in": {"route_map": "RM_ISP_IN"}, "out": {"prefix_list": "PL_DC"}}
     assert (isp["remote_as"], isp["description"]) == ("64500", "ISP A")
+    assert isp["capability-default-originate"] == "enable"  # 0.114.1
     site = peers["10.60.1.1"].attrs["config"]  # dynamischer Nachbar: Filter der Gruppe
     assert (site["group"], site["filters"]) == ("G_SITES", {"in": {"prefix_list": "PL_SITES"}})
     by = {(b.kind, b.name): b for b in inv.bgp}

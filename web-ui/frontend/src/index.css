@@ -569,6 +569,10 @@ pre.block { background: var(--surface-2); border: 1px solid var(--border); borde
 /* 0.113.2: lange Beschriftungen bzw. Werte ohne Leerzeichen brechen um statt in die Nachbarspalte zu laufen */
 .kv dt { min-width: 0; overflow-wrap: anywhere; } .kv dd { overflow-wrap: anywhere; }
 .kv-list { font-size: 12px; overflow-wrap: anywhere; }
+/* Ziel-Server einer VIP bzw. eines Pools in der Weg-Suche (0.114.1) */
+.vip-servers { list-style: none; margin: 4px 0 0; padding: 0 0 0 10px; border-left: 2px solid var(--border); font-size: 12px; }
+.vip-servers li { padding: 1px 0; overflow-wrap: anywhere; }
+.vip-servers .chip { margin-left: 6px; font-size: 10.5px; padding: 0 7px; }
 /* Findings (0.113.2): Befund bekommt Platz, Typ und Objekt brechen um */
 td.finding-text { min-width: 280px; max-width: 520px; }
 td.finding-type { min-width: 120px; max-width: 200px; }

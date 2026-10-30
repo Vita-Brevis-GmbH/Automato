@@ -38,6 +38,7 @@ from app.models import (
     RuleDomain,
     RuleEndpoint,
     RuleIpRange,
+    TopoPolicyRoute,
     TopoRoute,
     Zone,
 )
@@ -148,7 +149,8 @@ class Relevance:
         return self._known[sid]
 
     def members(self, sid: int, name: str) -> list[str]:
-        """Interfaces eines Namens der Regel: das Interface selbst bzw. die einer Zone."""
+        """Interfaces eines Namens der Regel: das Interface selbst bzw. die einer Zone - auch
+        einer SD-WAN-Zone (Mitglieder aus `system/sdwan`, 0.114.1)."""
         if sid not in self._zones:
             zones: dict[str, list[str]] = {}
             for iface, zone in self.session.execute(
@@ -159,6 +161,15 @@ class Relevance:
                 zones.setdefault(iface, [iface])
                 if zone:
                     zones.setdefault(zone, []).append(iface)
+            for attrs in self.session.scalars(
+                select(TopoPolicyRoute.attrs).where(
+                    TopoPolicyRoute.source_system_id == sid, TopoPolicyRoute.kind == "sdwan"
+                )
+            ):
+                for m in (attrs or {}).get("members") or []:
+                    zone, iface = m.get("zone"), m.get("interface")
+                    if zone and iface and iface not in zones.setdefault(str(zone), []):
+                        zones[str(zone)].append(str(iface))
             self._zones[sid] = zones
         return self._zones[sid].get(name, [])
 

@@ -253,3 +253,37 @@ def test_backup_weg_den_ein_filter_sperrt_wird_verworfen(client):
         "verworfen: Eingangsfilter RM_ISP_IN vom Nachbarn 198.51.100.1 sperrt 10.5.0.0/16" in notes
     )
     assert f"über {PARTNER} verworfen" not in notes  # ohne Filter: nur wie bisher (ohne Ziel)
+
+
+def test_default_originate_und_keine_routen_zurueck_ins_selbe_as(client, session_factory):
+    """0.114.1 (Anwender zu 0.113: „alle Routen, auch wenn die Firewall lediglich Default Origin
+    sendet“): mit capability-default-originate geht die Default-Route immer an den Nachbarn;
+    Pfade mit dem AS des Nachbarn im AS-Pfad (die Routen des anderen Border-Leafs desselben AS)
+    kuendigt die Firewall ihm nicht an - er wuerde sie verwerfen."""
+    import copy
+
+    fw = copy.deepcopy(FW)
+    leaf_a, leaf_b = "10.255.0.2", "10.255.0.3"
+    fw["routing"]["routes"].append(
+        {**_bgp("10.50.0.0/16", leaf_b), "attrs": {"learned_from": leaf_b, "as_path": "65010"}}
+    )
+    fw["routing"]["peers"].append({
+        "node": "fw-01", "context": "root", "peer_ip": leaf_a, "remote_as": 65010,
+        "state": "Established",
+        "attrs": {"config": {**_neighbor({}, 65010), "capability-default-originate": "enable"}},
+    })  # fmt: skip
+    tid = client.post("/tenants", json={"name": "Kunde A"}, headers=ADMIN).json()["id"]
+    body = {"tenant_id": tid, "name": "fw-01", "platform": "fortigate", "base_url": "https://x"}
+    sid = client.post("/systems", json=body, headers=ADMIN).json()["id"]
+    _deliver(client, tid, sid, "fortigate", fw)
+    from app.models import TopoPeer
+
+    s = session_factory()
+    pid = s.query(TopoPeer).filter_by(peer_ip=leaf_a).one().id
+    s.close()
+    r = client.get(f"/routing/bgp/peers/{pid}", params={"tenant_id": tid}).json()
+    assert r["default_originate"] is True
+    out = {a["prefix"]: a for a in r["out"]["announced"]}
+    assert out["0.0.0.0/0"]["origin"] == "default-originate"
+    assert "10.50.0.0/16" not in out  # AS 65010 im AS-Pfad
+    assert r["out"]["counts"]["loop"] == 1

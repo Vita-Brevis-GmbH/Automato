@@ -96,6 +96,7 @@ MAX_PATHS = 16  # aktive Wege
 MAX_BACKUP = 16  # Backup-Wege (vor dem Filter nach Laenge)
 INNER = 5  # genauere Routen innerhalb eines Netzes je Hop (Anzeige)
 REACHED = ("connected", "fabric", "exit", "external")  # Ende = Ziel erreicht bzw. nach aussen
+MAX_SERVERS = 20  # Ziel-Server einer VIP bzw. eines Pools im Hop (0.114.1)
 _CONNECTED = ("connected", "local")
 _OBJECT_ROUTE = ("dstaddr",)  # FortiGate: statische Route auf ein Adressobjekt (0.112.0)
 _RIB_AFTER = 16  # Abfragen je Kontext, ab denen die RIB als Index im Speicher liegt
@@ -732,6 +733,7 @@ class Graph:
             extintf = str((n.raw or {}).get("extintf") or "any")
             if extintf != "any" and ports and extintf not in ports:
                 continue
+            raw, attrs = n.raw or {}, n.attrs or {}
             out = {
                 "name": n.name,
                 "id": n.id,
@@ -739,7 +741,17 @@ class Graph:
                 "to": to,
                 "type": n.vip_type,
                 "ports": [n.ext_port, n.mapped_port] if n.portforward else None,
+                # Ziel-Server mit Namen und Zustand (0.114.1, Anwender: „nur einer und nur die
+                # IP, mehr Infos wäre super“): alle Real Server bzw. die zugeordnete(n) IP(s)
+                "servers": self.vip_servers(n, to, key),
+                "mapped": n.mapped_ip if n.mapped_ip and "-" in n.mapped_ip else None,
+                "method": attrs.get("ldb-method"),
+                "health": [m.get("name") for m in attrs.get("monitor") or [] if m.get("name")],
+                "extintf": raw.get("extintf") if raw.get("extintf") not in (None, "any") else None,
+                "comment": raw.get("comment") or None,
             }
+            extra = ("servers", "mapped", "method", "health", "extintf", "comment")
+            out = {k: v for k, v in out.items() if k not in extra or v not in (None, [], "")}
             # Ziel der VIP ist ein Virtual Service des NSX ALB (0.79.0): im Hop nennen
             port = n.mapped_port if n.portforward else None
             try:
@@ -750,6 +762,53 @@ class Graph:
                 out["balancer"] = lb["name"]
             return out
         return None
+
+    def vip_servers(self, n: NatRule, to: list[str], key: Key) -> list[dict]:
+        """Ziel-Server einer VIP: Real Server (Port, Zustand, Gewicht, Health-Check) bzw. die
+        zugeordneten IPs - je mit Namen aus IPAM, Firewall-Objekt und VM."""
+        if n.targets:
+            rows = [
+                {
+                    "ip": t.get("ip") or t.get("address"),
+                    "port": t.get("port"),
+                    "status": t.get("status"),
+                    "weight": t.get("weight"),
+                    "health": t.get("monitor") or None,
+                }
+                for t in n.targets
+                if isinstance(t, dict) and (t.get("ip") or t.get("address"))
+            ]
+        else:
+            port = n.mapped_port if n.portforward else None
+            rows = [{"ip": ip, "port": port} for ip in to]
+        return self.describe_servers(rows[:MAX_SERVERS], key[0], key[1])
+
+    def describe_servers(self, rows: list[dict], sid: int | None = None,
+                         vdom: str | None = None) -> list[dict]:  # fmt: skip
+        """Namen je Server-IP: DNS/IPAM, Adressobjekt der Firewall, VM (vCenter) mit EPG."""
+        from app.store import nat as nat_store_
+        from app.store import virtual  # spaet: nur fuer VIP-Ziele
+
+        ips = {str(r["ip"]) for r in rows if r.get("ip")}
+        objects = nat_store_.servers_by_ip(self.session, self.tenant_id, ips)
+        vms = virtual.Lookup(self.session, self.tenant_id, ips) if ips else None
+        out = []
+        for r in rows:
+            ip = str(r.get("ip") or "")
+            vm = vms.info(ip) if vms is not None else None
+            found = objects.get(ip, [])
+            entry = {
+                **{k: v for k, v in r.items() if v not in (None, "", [])},
+                "names": self.names(ip),
+                "object": nat_store_.server_names(found, sid, vdom)
+                if sid is not None
+                else [o[2] for o in found],
+                "vm": {k: vm[k] for k in ("name", "id", "power_state", "epg") if vm.get(k)}
+                if vm
+                else None,
+            }
+            out.append({k: v for k, v in entry.items() if v not in (None, [], {})})
+        return out
 
     def balancer(self, ip, service: tuple[str, int | None] | None) -> dict | None:
         """Virtual Service eines Load Balancers (NSX ALB, ADR 0027) mit dieser VIP: Port des
@@ -790,6 +849,23 @@ class Graph:
                 "to": [t["ip"] for t in ready],
                 "server_port": ready[0].get("port") if ready else None,
                 "servers": len(servers),
+                # alle Server des Pools mit Namen und Zustand (0.114.1)
+                "members": self.describe_servers(
+                    [
+                        {
+                            "ip": t["ip"],
+                            "port": t.get("port"),
+                            "status": t.get("status"),
+                            "weight": t.get("ratio") or t.get("weight"),
+                            "hostname": t.get("hostname"),
+                            "pool": t.get("pool"),
+                        }
+                        for t in servers[:MAX_SERVERS]
+                    ]
+                ),  # fmt: skip
+                "method": attrs.get("lb_algorithm"),
+                "health": attrs.get("health_monitors") or None,
+                "fqdn": attrs.get("fqdn"),
                 "pool": attrs.get("pool") or attrs.get("pool_group"),
                 "tenant": attrs.get("tenant"),
                 # Quelle danach: Service Engine (SNAT) bzw. der Client (preserve_client_ip)

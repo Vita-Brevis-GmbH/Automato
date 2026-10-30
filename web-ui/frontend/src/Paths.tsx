@@ -40,6 +40,7 @@ import {
   traceRoute,
   TraceZone,
   TraceZoneStep,
+  VipServer,
 } from "./api";
 import type { View, ViewParams } from "./App";
 import { NatDrawer } from "./Nat";
@@ -692,6 +693,87 @@ function portText(p?: TracePort | null): string {
   return parts.join(" · ") || "–";
 }
 
+const SERVER_STATE: Record<string, [string, string]> = {
+  active: ["ok", L("aktiv", "active")],
+  standby: ["info", "Standby"],
+  disable: ["na", L("deaktiviert", "disabled")],
+};
+
+// Ziel-Server einer VIP bzw. eines Pools (0.114.1, Anwender: „nur einer und nur die IP“): je
+// Server Name (VM, IPAM, Hostname), IP:Port, Zustand, Gewicht, Health-Check, Objekt der Firewall
+// und EPG der VM; der Weg geht über den markierten Server
+function VipServers({ servers, via, total, sid }: { servers?: VipServer[]; via?: string; total?: number; sid?: number }) {
+  if (!servers?.length) return null;
+  // ein Server nur mit IP (und Port) steht schon in der Zeile darüber
+  if (servers.length === 1 && !total && Object.keys(servers[0]).every((k) => k === "ip" || k === "port")) return null;
+  return (
+    <ul className="vip-servers">
+      {servers.map((s, k) => {
+        const names = [...new Set([s.vm?.name, ...(s.names ?? []), s.hostname].filter((x): x is string => !!x))];
+        const state = s.status ? (SERVER_STATE[s.status] ?? ["warn", s.status]) : null;
+        const meta = [
+          s.weight != null && `${L("Gewicht", "Weight")} ${s.weight}`,
+          s.health?.length && `Health-Check ${s.health.join(", ")}`,
+          s.vm?.epg && `EPG ${s.vm.epg.split("/").pop()}`,
+          s.vm?.power_state === "poweredOff" && L("VM ausgeschaltet", "VM powered off"),
+          s.pool && `Pool ${s.pool}`,
+        ].filter(Boolean);
+        return (
+          <li key={k} className="vip-server">
+            <span className="mono">
+              {s.ip}
+              {s.port ? `:${s.port}` : ""}
+            </span>
+            {names.length > 0 && (
+              <>
+                {" "}
+                <b>{names[0]}</b>
+                {names.length > 1 && <span className="faint"> ({names.slice(1).join(", ")})</span>}
+              </>
+            )}
+            {state && <span className={`chip ${state[0]}`}>{state[1]}</span>}
+            {via && s.ip === via && (
+              <span className="chip info" title={L("Der gezeigte Weg führt zu diesem Server", "The path shown leads to this server")}>
+                {L("Weg", "Path")}
+              </span>
+            )}
+            {(s.object ?? []).map((o) => (
+              <Fragment key={o}>
+                {" "}
+                {sid != null ? (
+                  <Opener href={objectHref(o)} detail={{ kind: "object", name: o, sid }} className="mono faint">
+                    {o}
+                  </Opener>
+                ) : (
+                  <span className="mono faint">{o}</span>
+                )}
+              </Fragment>
+            ))}
+            {meta.length > 0 && <span className="faint"> · {meta.join(" · ")}</span>}
+          </li>
+        );
+      })}
+      {total != null && total > servers.length && (
+        <li className="faint">{L(`+${total - servers.length} weitere`, `+${total - servers.length} more`)}</li>
+      )}
+    </ul>
+  );
+}
+
+// Methode, Health-Check, Bereich und Kommentar einer VIP bzw. eines Virtual Service
+function vipMeta(x: { method?: string; health?: string[]; mapped?: string; extintf?: string; comment?: string; fqdn?: string[] }): string {
+  return [
+    x.method && `${L("Methode", "Method")} ${x.method}`,
+    x.health?.length && `Health-Check ${x.health.join(", ")}`,
+    x.mapped && `${L("Bereich", "Range")} ${x.mapped}`,
+    x.extintf && `${L("Eingang", "Ingress")} ${x.extintf}`,
+    x.fqdn?.length && `FQDN ${x.fqdn.join(", ")}`,
+    x.comment && `„${x.comment}“`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
 // Entscheidende Regel mit Interfaces, Quelle, Ziel und Dienst; Objekte im Seitenpanel
 function RuleFacts({ p, r, sid }: { p: HopRule; r: HopRules; sid: number }) {
   const side = (via: string | null) => {
@@ -825,6 +907,8 @@ function HopFacts({ h, zone, title }: { h: TraceHop; zone?: TraceZone | null; ti
                 {h.nat.ext} → {h.nat.to.join(", ")}
               </span>
               {h.nat.ports && <span className="faint"> · Port {h.nat.ports.join(" → ")}</span>}
+              {vipMeta(h.nat) && <div className="faint">{vipMeta(h.nat)}</div>}
+              <VipServers servers={h.nat.servers} via={h.nat.to.length > 1 ? h.nat.to[0] : undefined} sid={h.source_system_id} />
             </dd>
           </>
         )}
@@ -847,6 +931,12 @@ function HopFacts({ h, zone, title }: { h: TraceHop; zone?: TraceZone | null; ti
                 {h.lb.ext}
                 {h.lb.port ? `:${h.lb.port}` : ""} → {(h.lb.to ?? []).slice(0, 3).join(", ")}
               </span>
+              {vipMeta(h.lb) && <div className="faint">{vipMeta(h.lb)}</div>}
+              <VipServers
+                servers={h.lb.members}
+                via={(h.lb.to?.length ?? 0) > 1 ? h.lb.to?.[0] : undefined}
+                total={h.lb.servers}
+              />
             </dd>
           </>
         )}
@@ -1542,8 +1632,13 @@ function TraceCard({
                               · NSX ALB {h.nat.balancer}
                             </span>
                           )}
-                          {h.nat.to.length > 1 && (
-                            <div className="faint">{L("Weg über den ersten Real Server", "Path via the first real server")}</div>
+                          {vipMeta(h.nat) && <div className="faint">{vipMeta(h.nat)}</div>}
+                          {h.nat.servers?.length ? (
+                            <VipServers servers={h.nat.servers} via={h.nat.to.length > 1 ? h.nat.to[0] : undefined} sid={h.source_system_id} />
+                          ) : (
+                            h.nat.to.length > 1 && (
+                              <div className="faint">{L("Weg über den ersten Real Server", "Path via the first real server")}</div>
+                            )
                           )}
                         </div>
                       )}
@@ -1575,11 +1670,19 @@ function TraceCard({
                               h.lb.snat === "client"
                                 ? L("Quelle zum Server: Client-IP", "Source to the server: client IP")
                                 : L("Quelle zum Server: Service Engine (SNAT)", "Source to the server: Service Engine (SNAT)"),
-                              (h.lb.to?.length ?? 0) > 1 && L("Weg über den ersten aktiven Server", "Path via the first active server"),
+                              !h.lb.members?.length &&
+                                (h.lb.to?.length ?? 0) > 1 &&
+                                L("Weg über den ersten aktiven Server", "Path via the first active server"),
+                              vipMeta(h.lb),
                             ]
                               .filter(Boolean)
                               .join(" · ")}
                           </div>
+                          <VipServers
+                            servers={h.lb.members}
+                            via={(h.lb.to?.length ?? 0) > 1 ? h.lb.to?.[0] : undefined}
+                            total={h.lb.servers}
+                          />
                         </div>
                       )}
                       {h.backup ? (

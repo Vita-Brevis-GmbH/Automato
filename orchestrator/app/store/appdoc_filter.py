@@ -7,7 +7,8 @@ Anwender („nur Zugriffe auf die Applikation“, „breite Quelle ausgehend nic
 drei Stellen nachgezogen werden. Die Merkmale setzt weiter `appdoc.mark_categories`; hier steht
 nur, was sie bedeuten:
 
-- `DROPPED`: ausgehende Firewall-Regel mit breiter Quelle (`OUT_BROAD`, 0.103.0) - kein Zugriff
+- `DROPPED`: ausgehende Firewall-Regel mit breiter Quelle (`OUT_BROAD`, 0.103.0) bzw. Freigabe
+  ins Internet, die das System nur ueber „all“ erfasst (`TO_INTERNET`, 0.114.1) - kein Zugriff
   der Applikation, nirgends in der Doku, nur gezaehlt; direkt zugeordnete Regeln bleiben.
 - `IMPOSSIBLE`: routingtechnisch nicht moeglich (ADR 0019) - nicht in den Kategorien, nur
   gezaehlt (Applikation) bzw. mit Begruendung gelistet (Doku je System).
@@ -27,7 +28,9 @@ TABLE, HIT, IMPOSSIBLE, DROPPED = "table", "hit", "impossible", "dropped"
 def place(row: dict, assigned: Collection[int] = ()) -> str:
     """Ort einer Zeile (`TABLE`, `HIT`, `IMPOSSIBLE`, `DROPPED`); `assigned` = Regeln, die der
     Applikation direkt zugeordnet sind (0.60.0)."""
-    if row.get(appdoc.OUT_BROAD) and row.get(appdoc.RULE) not in assigned:
+    if (row.get(appdoc.OUT_BROAD) or row.get(appdoc.TO_INTERNET)) and row.get(
+        appdoc.RULE
+    ) not in assigned:
         return DROPPED
     if row.get(appdoc.REL) == relevance.IMPOSSIBLE:
         return IMPOSSIBLE

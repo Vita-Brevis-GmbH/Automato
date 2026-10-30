@@ -868,6 +868,7 @@ export interface ApplicationDoc {
     hidden?: number; // in den Kategorien ausgeblendete Zeilen (0.69.0)
     helpers?: number; // Hilfs-Contracts über L3Outs, an den Firewall-Regeln (ADR 0034)
     outbound_broad?: number; // 0.103.0: ausgehende Firewall-Regeln mit breiter Quelle, nicht in der Doku
+    to_internet?: number; // 0.114.1: Freigaben ins Internet, die das System nur über „all“ erfassen
   };
   systems: AppDocSystem2[];
   epgs: AppDocEpg[];
@@ -2350,6 +2351,19 @@ export interface TracePort extends Resolved {
   next_hop?: string | null;
   exit?: { id: number; name: string; kind: string }; // Anbindung nach aussen (0.18.0)
 }
+// Ziel-Server einer VIP bzw. eines Pools in der Weg-Suche (0.114.1)
+export interface VipServer {
+  ip: string;
+  port?: number | string;
+  status?: string;
+  weight?: number | string;
+  health?: string[];
+  names?: string[];
+  object?: string[];
+  hostname?: string; // NSX ALB: Hostname des Servers im Pool
+  pool?: string;
+  vm?: { name: string; id?: number; power_state?: string; epg?: string };
+}
 export interface TraceHop extends RoutingNode {
   via: string; // wie der Weg hierher kam (Quelle angeschlossen, Adresse des Nachbarn, …)
   vrf?: number | string; // VRF des Eingangs, wenn nicht die Standard-VRF ("mgmt" = Management)
@@ -2372,7 +2386,22 @@ export interface TraceHop extends RoutingNode {
   dst?: string; // Ziel an diesem Hop nach NAT auf einem Hop davor (0.23.0)
   // VIP (DNAT) an diesem Hop: ab hier zur internen IP (Virtual Server: alle Real Server)
   // balancer (0.79.0): Ziel der VIP ist dieser Virtual Service des NSX ALB
-  nat?: { name: string; id: number; ext: string | null; to: string[]; type: string | null; ports: (string | null)[] | null; balancer?: string };
+  nat?: {
+    name: string;
+    id: number;
+    ext: string | null;
+    to: string[];
+    type: string | null;
+    ports: (string | null)[] | null;
+    balancer?: string;
+    // 0.114.1: alle Ziel-Server mit Namen und Zustand, Methode, Health-Check, Bereich, Kommentar
+    servers?: VipServer[];
+    mapped?: string;
+    method?: string;
+    health?: string[];
+    extintf?: string;
+    comment?: string;
+  };
   // NSX ALB (0.77.0, ADR 0027): VIP hier angeschlossen, der Weg geht vom Load Balancer zum Server
   lb?: {
     name: string;
@@ -2387,6 +2416,10 @@ export interface TraceHop extends RoutingNode {
     tenant?: string;
     snat?: string; // service_engine | client
     down?: boolean;
+    members?: VipServer[]; // 0.114.1: alle Server des Pools mit Namen und Zustand
+    method?: string;
+    health?: string[];
+    fqdn?: string[];
   };
   // SNAT der erlaubenden Policy (0.47.0: VIP mit nat-source-vip, Pool mit Typ und Bereich)
   snat?: {
@@ -2699,6 +2732,7 @@ export interface BgpPeerReport extends Resolved {
   established?: boolean;
   group?: string | null;
   description?: string | null;
+  default_originate?: boolean; // 0.114.1: capability-default-originate
   in?: BgpSide;
   out?: BgpSide;
 }

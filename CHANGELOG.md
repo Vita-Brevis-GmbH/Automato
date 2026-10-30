@@ -7,6 +7,33 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.114.1 – 2026-10-30
+
+Fehler und Wünsche des Anwenders zu 0.113 (2026-10-30). Abnahme bis 0.114.0.
+
+- **Weg-Suche: alle Ziel-Server einer VIP mit Details** (Anwender: „bei den VIPs den Zielserver,
+  aber nur einer und nur die IP“): im Hop und im Seitenpanel je Server IP:Port, Name (VM, IPAM,
+  Hostname), Zustand (aktiv, Standby, deaktiviert), Gewicht, Health-Check, Adressobjekt der
+  Firewall (öffnet das Objekt) und EPG der VM; der Server, über den der gezeigte Weg führt, ist
+  markiert. Dazu Methode, Health-Check, Bereich, Eingang und Kommentar der VIP; beim Load
+  Balancer (NSX ALB) alle Server des Pools (auch deaktivierte), Methode, Health-Monitore, FQDN.
+  Höchstens 20 Server je Hop; ein einzelner Server nur mit IP steht wie bisher in der Zeile.
+- **Applikations-Doku: Freigaben ins Internet nicht als Zugriff auf die Applikation**
+  (Anwender: „irrelevant, wenn das ganze Internet zugreifen kann“): Regeln einer Firewall mit Ziel
+  `all` zum Internet (Ausgang mit Default-Route bzw. Anbindung Internet, oder Zone vom Typ
+  Internet) stehen nicht mehr als unspezifischer Zugriff in der Doku, sondern werden oben gezählt
+  („n Freigaben ins Internet ausgelassen“). Ursache des erneuten Auftretens: SD-WAN-Zonen als
+  Ausgang wurden nicht in ihre Interfaces aufgelöst – die Relevanz blieb „unbekannt“; jetzt
+  zählen die Mitglieder der SD-WAN-Zone.
+- **BGP-Filter: default-originate, nichts zurück ins selbe AS** (Anwender: „alle Routen, auch
+  wenn die Firewall lediglich Default Origin sendet“): der Collector liest
+  `capability-default-originate`; „angekündigt“ zeigt dann 0.0.0.0/0 (Chip „default-originate“).
+  Routen, deren AS-Pfad das AS des eBGP-Nachbarn schon enthält, kündigt die Firewall ihm nicht an
+  (BGP-Schleifenschutz) – sie fehlen jetzt in „angekündigt“ und werden gezählt.
+- Tests: `test_vip_balancer.py` (alle Server mit Details, Pool), `test_appdoc_internet.py` (neu),
+  `test_relevance.py`, `test_bgp_filters.py` (default-originate, AS-Schleife),
+  `collectors/tests/test_routing.py`, UI-Test in `e2e/flows.spec.ts`.
+
 ## 0.114.0 – 2026-10-29
 
 Roadmap Version 1 Nr. 3, Stufe 2 (ADR 0041; Anwender 2026-10-29: „go 114“, gewählt Backup-Wege

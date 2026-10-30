@@ -22,12 +22,11 @@ def test_regeln_nur_wo_der_verkehr_durchkommt(client):
     shown = {(row["_rule"], row["_side"]) for t in doc["tables"] for row in t["rows"]}
     gone = {(x["description"], x["side"]): x for x in doc["impossible"]}
     # ausgehend mit breiter Quelle (lan-to-dmz-deny, lan-to-inet-users vom Server aus) stehen
-    # seit 0.103.0 gar nicht in der Doku des Servers - auch nicht als „nicht möglich“
-    assert set(gone) == {
-        ("lan-to-inet-users", "dst"),
-        ("lan-to-dmz-falsch", "dst"),  # DMZ-Netz am Ausgang internet
-    }
-    inet = gone[("lan-to-inet-users", "dst")]
+    # seit 0.103.0 gar nicht in der Doku des Servers - auch nicht als „nicht möglich“; die
+    # Freigabe ins Internet (lan-to-inet-users: Ziel all, Ausgang mit Default-Route) seit 0.114.1
+    # ebenso nicht (Anwender: „irrelevant, wenn das ganze Internet zugreifen kann“)
+    assert set(gone) == {("lan-to-dmz-falsch", "dst")}  # DMZ-Netz am Ausgang internet
+    inet = gone[("lan-to-dmz-falsch", "dst")]
     assert inet["text"] == (
         "fw-r leitet 10.30.0.10 über dmz (Zone dmz) – die Regel gilt nur für den Ausgang internet"
     )
@@ -48,7 +47,9 @@ def test_regeln_nur_wo_der_verkehr_durchkommt(client):
     assert all(h["relevance"] != "impossible" for h in out["hits"])
     assert gone["rule_id"] not in {h["rule_id"] for h in out["hits"]}
     assert gone["rule_id"] not in {r["id"] for r in out["rules"]}
-    assert out["summary"]["impossible"] == 2  # lan-to-inet-users, lan-to-dmz-falsch
+    assert out["summary"]["impossible"] == 1  # lan-to-dmz-falsch
+    # lan-to-inet-users (Quelle und Ziel all): als „ausgehend mit breiter Quelle“ gezählt
+    assert out["summary"]["outbound_broad"] >= 1 and out["summary"]["to_internet"] == 0
     assert out["summary"]["rules"] == len({h["rule_id"] for h in out["hits"]})
     exported = {r.get("_rule") for t in out["tables"] for r in t["rows"]}
     assert gone["rule_id"] not in exported

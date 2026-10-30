@@ -840,6 +840,8 @@ test("Weg-Suche: Regeln auf dem Weg je Firewall", async ({ page }) => {
   await page.click("button:has-text('Weg suchen')");
   await expect(card).toContainText("DNAT VIP_web");
   await expect(card).toContainText("203.0.113.1 → 10.1.0.10");
+  // 0.114.1: Ziel-Server als Liste (Name, IP:Port, Zustand, Objekt) - ein Server nur mit IP nicht doppelt
+  await expect(card.locator(".vip-servers")).toHaveCount(0);
   // seit der ADR-0019-Ergänzung im Seitenpanel – die Weg-Suche bleibt (neuer Tab: „↗“ bzw. Ctrl-Klick)
   await card.locator("a", { hasText: "Policy 1" }).click();
   await expect(page).toHaveURL(/#wege\?dst=203\.0\.113\.1&service=tcp%2F443&start=/);

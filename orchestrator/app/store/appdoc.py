@@ -109,6 +109,13 @@ UNSPECIFIC = ("subnet", "any", "vzany", "pref_group")
 # die das System konkret nennen (Host, Gruppe mit dem Host), bleiben.
 OUT_BROAD = "_out_broad"
 BROAD = ("subnet", "any")
+# Freigabe ins Internet (0.114.1, Anwender: „Zugriffe von intern ins Internet über die
+# Internetfirewall … irrelevant, wenn das ganze Internet zugreifen kann“): das System steht nur
+# über „all“ im Ziel einer Firewall-Regel, deren Ausgang ins Internet führt (Anbindung Internet
+# bzw. Default-Route über den Ausgang, auch eine SD-WAN-Zone) - kein Zugriff auf die Applikation,
+# nicht in der Doku, nur gezählt; direkt zugeordnete Regeln bleiben.
+TO_INTERNET = "_to_internet"
+INTERNET_EXITS = ("internet", "default")
 # L3Outs: die Firewall entscheidet (ADR 0034, Anwender 2026-10-27). Ein Contract zu externen EPGs
 # mit einer Firewall hinter dem L3Out ist nur ein Hilfs-Contract (`HELPER`: L3Outs und die
 # Firewall-Regeln, an denen er steht) - keine eigene Zeile, an der Firewall-Regel vermerkt
@@ -858,6 +865,8 @@ def mark_categories(data: TenantData, items: list[tuple[int, dict]],
             row[CAT_HIDDEN] = True
         if outbound_broad(data, row):
             row[OUT_BROAD] = True
+        if to_internet(data, row):
+            row[TO_INTERNET] = True
     if not data.has_firewall:
         return items
     _mark_l3outs(data, items, vrfs)
@@ -905,6 +914,23 @@ def outbound_broad(data: TenantData, row: dict) -> bool:
         return False
     rule = data.rule(row.get(RULE))
     return rule is not None and rule.domain is RuleDomain.FIREWALL
+
+
+def to_internet(data: TenantData, row: dict) -> bool:
+    """Eingehende Firewall-Regel, die das System nur über „all“ im Ziel erfasst und deren
+    Ausgang ins Internet führt (0.114.1) - eine Freigabe ins Internet."""
+    if row.get(DIRECTION) != "in" or row.get(SCOPE) != "any":
+        return False
+    rule = data.rule(row.get(RULE))
+    if rule is None or rule.domain is not RuleDomain.FIREWALL:
+        return False
+    zone = data.zones.get(rule.dst_zone_id)
+    behind = data.relevance.behind(rule, "dst", zone)
+    if behind is not None and behind["kind"] in INTERNET_EXITS:
+        return True
+    zm = data.zone_map  # Firewall-Zone mit dem Zonentyp des Internets (Grundschema)
+    internet = zm.name_type("internet")
+    return bool(zone and internet and zm.name_type(zone) == internet)
 
 
 def _missing_text(missing: list[str]) -> str:

@@ -157,6 +157,18 @@ export function BgpPeerDrawer({ tenantId, peerId, onClose }: { tenantId: number;
               {r.ebgp != null && <span className="chip info">{r.ebgp ? "eBGP" : "iBGP"}</span>}
               <span className={`chip ${r.established ? "ok" : "warn"}`}>{r.state ?? "?"}</span>
               {r.group && <span className="chip">{L(`Gruppe ${r.group}`, `group ${r.group}`)}</span>}
+              {r.default_originate && (
+                <span
+                  className="chip info"
+                  id="bgp-default-originate"
+                  title={L(
+                    "capability-default-originate: die Firewall sendet dem Nachbarn immer die Default-Route",
+                    "capability-default-originate: the firewall always sends the default route to the neighbor",
+                  )}
+                >
+                  default-originate
+                </span>
+              )}
               {r.description && <span className="faint">{r.description}</span>}
             </div>
             <h3>{L("Eingang – erwartet (was die Filter erlauben)", "Inbound – expected (what the filters permit)")}</h3>
@@ -216,6 +228,12 @@ export function BgpPeerDrawer({ tenantId, peerId, onClose }: { tenantId: number;
                 "Best BGP paths (not from the neighbor itself), network, aggregate and redistribute through the filters – the FortiGate does not report what it announces.",
               )}
               {r.out.counts.deny ? L(` ${r.out.counts.deny} gesperrt.`, ` ${r.out.counts.deny} denied.`) : ""}
+              {r.out.counts.loop
+                ? L(
+                    ` ${r.out.counts.loop} nicht angekündigt: AS des Nachbarn im AS-Pfad (er würde sie verwerfen).`,
+                    ` ${r.out.counts.loop} not announced: the neighbor's AS is in the AS path (it would discard them).`,
+                  )
+                : ""}
             </div>
             {r.out.announced.length === 0 ? (
               <div className="faint">{L("Nichts.", "Nothing.")}</div>

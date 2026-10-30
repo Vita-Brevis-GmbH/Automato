@@ -170,3 +170,56 @@ def test_verbindung_ende_zu_ende_ueber_vip_und_load_balancer(client):
     assert any("se-to-web" in line for line in lbn["rule_lines"])
     fw = next(n for n in plan["nodes"] if n["kind"] == "firewall")
     assert f"VIP V-EXT_shop → {VIP}" in fw["lines"]
+
+
+def test_weg_nennt_alle_server_mit_details(client):
+    """0.114.1 (Anwender: „bei den VIPs den Zielserver, aber nur einer und nur die IP“): der Hop
+    nennt alle Ziel-Server - je mit Port, Zustand, Gewicht, Health-Check und Objekt der Firewall -
+    sowie Methode und Health-Check der VIP bzw. des Pools."""
+    tid = client.post("/tenants", json={"name": "Kunde A"}, headers=ADMIN).json()["id"]
+    fw = _fw()
+    fw["objects"] += [
+        {"name": "H_web01", "category": "address", "values": ["10.10.0.20"], "vdom": "root"},
+        {"name": "H_web02", "category": "address", "values": ["10.10.0.21"], "vdom": "root"},
+    ]  # fmt: skip
+    fw["nat_rules"] = [
+        {"source_platform": "fortigate", "external_id": "V-EXT_shop", "name": "V-EXT_shop",
+         "ext_ip": PUBLIC, "ext_port": "443", "mapped_ip": "10.10.0.20", "mapped_port": "8080",
+         "portforward": True, "vip_type": "server-load-balance", "vdom": "root",
+         "targets": [{"id": 1, "ip": "10.10.0.20", "port": 8080, "status": "active", "weight": 1},
+                     {"id": 2, "ip": "10.10.0.21", "port": 8080, "status": "standby",
+                      "weight": 2, "monitor": ["HC_tcp"]}],
+         "attrs": {"ldb-method": "round-robin", "monitor": [{"name": "HC_https"}]},
+         "raw": {"extintf": "wan", "comment": "Shop extern"}},
+    ]  # fmt: skip
+    body = {"tenant_id": tid, "name": "fw-r", "platform": "fortigate", "base_url": "https://x"}
+    sid = client.post("/systems", json=body, headers=ADMIN).json()["id"]
+    _deliver(client, tid, sid, "fortigate", fw)
+
+    params = {"tenant_id": tid, "src": "198.51.100.1", "dst": PUBLIC, "service": "tcp/443"}
+    r = client.get("/routing/trace", params=params)
+    assert r.status_code == 200, r.text
+    nat = r.json()["paths"][0]["hops"][0]["nat"]
+    assert nat["to"] == ["10.10.0.20", "10.10.0.21"]
+    assert nat["method"] == "round-robin" and nat["health"] == ["HC_https"]
+    assert nat["extintf"] == "wan" and nat["comment"] == "Shop extern"
+    first, second = nat["servers"]
+    assert first == {"ip": "10.10.0.20", "port": 8080, "status": "active", "weight": 1,
+                     "object": ["H_web01"]}  # fmt: skip
+    assert second["status"] == "standby" and second["weight"] == 2
+    assert second["health"] == ["HC_tcp"] and second["object"] == ["H_web02"]
+
+
+def test_load_balancer_mit_allen_servern_des_pools(client):
+    """0.114.1: der Load Balancer im Hop nennt alle Server des Pools (auch deaktivierte) und die
+    Methode."""
+    tid = _seed(client)
+    params = {"tenant_id": tid, "src": "198.51.100.1", "dst": PUBLIC, "service": "tcp/443"}
+    front = client.get("/routing/trace", params=params).json()["paths"][0]["hops"][0]
+    lb = front["lb"]
+    assert lb["method"] == "LB_ALGORITHM_ROUND_ROBIN" and lb["servers"] == 2
+    assert [(m["ip"], m["port"], m["status"]) for m in lb["members"]] == [
+        ("10.10.0.20", 8080, "active"),
+        ("10.10.0.21", 8080, "disable"),
+    ]
+    assert all(m["pool"] == "pool-web" for m in lb["members"])

@@ -225,6 +225,7 @@ class Filters:
                 family = None if o.kind == "route_map" else o.family
                 cfg.objects[(o.kind, family, o.name)] = o.data or {}
         self._paths: dict[Key, list[tuple[str, bool, str]]] = defaultdict(list)
+        self._as_paths: dict[tuple[Key, str], set[int]] = {}  # AS-Pfad des besten Pfads
         self._rib: dict[Key, list[tuple[str, str | None]]] = defaultdict(list)
         self._loaded = False
         self._remote: dict[Key, dict[str, int | None]] | None = None
@@ -305,6 +306,8 @@ class Filters:
                 self._paths[key].append(
                     (prefix, bool(best), _bare((attrs or {}).get("learned_from")))
                 )
+                if best:
+                    self._as_paths[(key, prefix)] = _as_numbers((attrs or {}).get("as_path"))
             elif best:
                 self._rib[key].append((prefix, protocol))
 
@@ -371,9 +374,28 @@ class Filters:
                                            "missing": missing})  # fmt: skip
                 if missing:
                     inbound["counts"]["missing"] += 1
+            default = "0.0.0.0/0" if family == 4 else "::/0"
+            originate = conf.get(f"capability-default-originate{'6' if family == 6 else ''}")
+            if originate == "enable":
+                # default-originate (0.114.1): die Default-Route geht immer an den Nachbarn,
+                # unabhaengig vom Ausgangsfilter (bzw. bedingt ueber default-originate-routemap)
+                outbound["default_originate"] = True
+                outbound["counts"]["permit"] += 1
+                outbound["announced"].append({
+                    "prefix": default, "origin": "default-originate", "verdict": PERMIT,
+                    **({"route_map": conf["default-originate-routemap"]}
+                       if conf.get("default-originate-routemap") else {})})  # fmt: skip
             for prefix, origin, frm in self.candidates(key):
                 net = _net(prefix)
                 if net is None or net.version != family or frm == p.peer_ip:
+                    continue
+                if originate == "enable" and net.prefixlen == 0:
+                    continue  # schon als default-originate
+                if ebgp and remote_as is not None and origin == "bgp" \
+                        and remote_as in self._as_paths.get((key, prefix), set()):  # fmt: skip
+                    # AS des Nachbarn im AS-Pfad: er verwirft den Pfad (Schleifenschutz) - die
+                    # Routen, die er selbst geliefert hat (z. B. andere Border-Leafs desselben AS)
+                    outbound["counts"]["loop"] += 1
                     continue
                 if frm and ebgp is False and not conf.get("route-reflector-client") == "enable":
                     other = self.remote_as(key, frm)
@@ -403,9 +425,21 @@ class Filters:
             "established": established,
             "group": conf.get("group"),
             "description": conf.get("description"),
+            "default_originate": bool(outbound.get("default_originate")),
             "in": inbound,
             "out": outbound,
         }
+
+
+def _as_numbers(value) -> set[int]:
+    """AS-Pfad der FortiGate („65010 65020“, Liste bzw. {as: …}) -> AS-Nummern."""
+    items = value if isinstance(value, list) else str(value or "").replace(",", " ").split()
+    out: set[int] = set()
+    for item in items:
+        n = _int(item.get("as") if isinstance(item, dict) else str(item).strip("{}()[]"))
+        if n is not None:
+            out.add(n)
+    return out
 
 
 def _families(ip: str, conf: dict, received: list[tuple[str, bool]]) -> list[int]:

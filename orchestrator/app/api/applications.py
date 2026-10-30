@@ -247,6 +247,7 @@ class DocSummaryOut(BaseModel):
     findings: int = 0
     impossible: int = 0  # Regeln nur mit routingtechnisch unmoeglichen Treffern
     outbound_broad: int = 0  # 0.103.0: ausgehende Firewall-Regeln mit breiter Quelle, nicht da
+    to_internet: int = 0  # 0.114.1: Freigaben ins Internet, die das System nur über all erfassen
     assigned: int = 0  # direkt zugeordnete Regeln (0.60.0)
     excluded: int = 0  # ausgeschlossene Regeln (0.60.0)
     hidden: int = 0  # in den Kategorien ausgeblendete Zeilen (0.69.0)

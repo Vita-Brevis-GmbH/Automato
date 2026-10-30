@@ -457,6 +457,7 @@ _NEIGHBOR_KEEP = (
     "description", "update-source", "interface", "ebgp-enforce-multihop", "next-hop-self",
     "soft-reconfiguration", "remove-private-as", "allowas-in-enable", "activate", "activate6",
     "route-reflector-client", "default-originate-routemap",
+    "capability-default-originate", "capability-default-originate6",  # 0.114.1
 )  # fmt: skip
 # Bedingungen und Aenderungen einer Route-Map-Regel (Positivliste)
 _MATCH = ("match-ip-address", "match-ip6-address", "match-ip-nexthop", "match-ip6-nexthop",

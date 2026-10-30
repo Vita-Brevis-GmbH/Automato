@@ -430,8 +430,9 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.113.1** | Fehler zu 0.112: „Als Paar bestätigen“ wartet nicht mehr still auf die Sperre des Mandanten (gespeichert, Markierung im Hintergrund, Hinweis); Weg-Suche aus einer Regel mit Quelle any über die Anbindung bzw. den Start mit dem Eingang der Regel bis zum Ziel (auch durch DNAT); ohne Quelle Hinweis statt Routenliste; draw.io mit geraden Linien und mehr Abstand |
 | **0.113.2** | Fehler zu 0.113: unspezifische Firewall-Regeln in der Applikations-Doku nur von Firewalls auf dem Weg zur Gegenstelle; Findings-Detail ohne überlaufende Texte (BGP-Netze als Liste, Spalten umbrechen); Referenzquelle (NetBox/DDI) nur einmal zugleich lesen, ohne Ziel kein Lesen, Abbruchgrund bleibt stehen |
 | **0.114.0** | BGP-Filter Stufe 2: Backup-Wege, die ein BGP-Filter sperrt, verworfen (mit Grund); Soll je BGP-Nachbar aus allen Zonen dahinter (Netze und Ausschlüsse als Prefix-Liste), Abweichungen zum Eingangsfilter, FortiOS-CLI-Vorschlag zum Kopieren, Befund „Eingangsfilter passt nicht zu den Zonen“ (ADR 0041) |
+| **0.114.1** | Fehler zu 0.113: Weg-Suche nennt alle Ziel-Server einer VIP bzw. eines Pools mit Name, Port, Zustand, Gewicht, Health-Check, Objekt und VM; Freigaben ins Internet (Ziel all, Ausgang Internet, auch SD-WAN-Zone) nicht mehr als Zugriff in der Applikations-Doku; BGP „angekündigt“ mit default-originate und ohne Routen zurück ins AS des Nachbarn |
 
-### Nächste Arbeiten (Stand 0.114.0)
+### Nächste Arbeiten (Stand 0.114.1)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
 **0.68.0** (2026-10-26), bis **0.102.0** (2026-10-28: „ich teste nach dem Freigeben der Version
@@ -444,7 +445,8 @@ Einwand zu 0.109.0), bis **0.109.1** (2026-10-29, „go 110“ ohne Einwand), bi
 Fehlerliste zu 0.110 ohne Einwand zu 0.111.0), bis **0.112.0** (2026-10-29, „go 113“ ohne
 Einwand), bis **0.113.0** (2026-10-29, Fehlerliste zu 0.112 ohne Einwand zu 0.113.0), bis
 **0.113.1** (2026-10-29, Fehlerliste zu 0.113 ohne Einwand zu 0.113.1), bis **0.113.2**
-(2026-10-29, „go 114“ ohne Einwand). Zur Abnahme steht 0.114.0. Seit 0.104.0 gilt eine
+(2026-10-29, „go 114“ ohne Einwand), bis **0.114.0** (2026-10-30, Fehlerliste zu 0.113 ohne
+Einwand zu 0.114.0). Zur Abnahme steht 0.114.1. Seit 0.104.0 gilt eine
 Version als abgenommen,
 sobald die nächste Rückmeldung des Anwenders keinen Einwand dazu enthält (`CLAUDE.md`, Ablauf).
 

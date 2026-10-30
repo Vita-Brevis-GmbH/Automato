@@ -381,6 +381,11 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
       auf – je Firewall eines Verbunds. Die Suche steht in der Adresse (`#wege?src=…&dst=…&
       service=…`): Zurück aus einer anderen Ansicht, Neuladen oder ein weitergegebener Link
       zeigen sie wieder (neu berechnet).
+    - **Ziel-Server einer VIP (0.114.1):** beim DNAT bzw. Load Balancer stehen alle Ziel-Server
+      (höchstens 20) mit IP:Port, Name (VM, IPAM, Hostname), Zustand, Gewicht, Health-Check,
+      Adressobjekt der Firewall (Klick öffnet es) und EPG der VM; „Weg“ markiert den Server, über
+      den der gezeigte Weg führt. Dazu Methode, Health-Check, Bereich, Eingang und Kommentar der
+      VIP bzw. Methode, Health-Monitore und FQDN des Virtual Service.
     - **Anbindung als Quelle bzw. Ziel (0.98.0):** im Feld z. B. „Internet“, „Anbindung“, den
       Namen eines Interfaces bzw. einer Firewall tippen und den Treffer unter „Anbindungen“
       wählen (von Hand erfasste immer, erkannte bei Art, Firewall, Interface bzw. Zone; mit Kunde
@@ -596,7 +601,9 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     0.113.0 mit **Filter (ein / aus)** und **Soll/Ist**: erwartet = was die Eingangsfilter
     ausdrücklich erlauben, mit „nichts angekommen“; erhalten = BGP-Pfade vom Nachbarn mit
     „erlaubt/gesperrt/unbekannt“ nach dem Filter; angekündigt = berechnet aus besten Pfaden,
-    network, aggregate und redistribute durch die Ausgangsfilter – die FortiGate meldet es nicht.
+    network, aggregate und redistribute durch die Ausgangsfilter – die FortiGate meldet es nicht;
+    seit 0.114.1 mit `default-originate` (0.0.0.0/0, Chip) und ohne Routen, deren AS-Pfad das AS
+    des eBGP-Nachbarn schon enthält (Schleifenschutz, gezählt).
     Darüber aufklappbar die gelesene BGP-Konfiguration je Firewall mit konfigurierten Nachbarn
     ohne Sitzung. Abweichungen stehen unter Findings → BGP-Filter. Seit 0.114.0 im Soll/Ist
     zusätzlich **„Soll aus den Zonen dahinter“**: Zone am Nachbarn und alle Zonen, die über ihn
@@ -1267,6 +1274,11 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     ausgelassen“. Eingehende Regeln über grosse Bereiche (Zugriffe auf die Systeme) und Regeln,
     die den Server konkret nennen, bleiben. Gehört eine solche Regel doch zur Applikation: im
     Regel-Detail „der Applikation zuordnen“.
+  - **Freigaben ins Internet (0.114.1):** eine Firewall-Regel, die die Systeme nur über `all` im
+    Ziel erfasst und deren Ausgang ins Internet führt (Default-Route bzw. Anbindung Internet
+    hinter dem Ziel-Interface, auch einer SD-WAN-Zone, oder Zone vom Typ Internet), ist kein
+    Zugriff auf die Applikation – sie fehlt in der Doku, oben steht „n Freigaben ins Internet
+    ausgelassen“. Direkt zugeordnete Regeln bleiben.
   - **ACI im Weg (0.103.0):** leitet die Firewall hinter dem L3Out eine IP zurück ins ACI, ordnet
     die Prüfung im Fabric sie trotzdem der externen EPG mit dem längsten Subnetz zu („… –
     Zuordnung im ACI“), ein Contract erlaubt dann. Ordnet keine externe EPG zu, steht der Grund in

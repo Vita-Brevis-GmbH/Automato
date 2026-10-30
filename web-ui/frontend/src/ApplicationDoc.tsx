@@ -595,6 +595,19 @@ export default function ApplicationDocView({
               )}
             </span>
           ) : null}
+          {s.to_internet ? (
+            <span
+              className="faint"
+              id="app-to-internet"
+              style={{ fontSize: 12 }}
+              title={L(
+                "Freigaben ins Internet (Ziel „all“, Ausgang Internet bzw. Default-Route), die die Systeme nur über „all“ erfassen – kein Zugriff auf diese Applikation. Direkt zugeordnete Regeln bleiben.",
+                "Internet access rules (destination “all”, outgoing interface internet or default route) that only cover the systems via “all” – no access to this application. Rules assigned directly remain.",
+              )}
+            >
+              {L(`${s.to_internet} Freigaben ins Internet ausgelassen`, `${s.to_internet} internet access rules omitted`)}
+            </span>
+          ) : null}
           {s.helpers ? (
             <span
               className="faint"
