@@ -7,6 +7,40 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.117.0 – 2026-10-30
+
+Rückmeldung des Anwenders 2026-10-30 (vier Punkte; für die Übersicht gewählt: Findings & Läufe
+grafisch, Schnellansichten, Routing-Änderungen, Applikationen & Regeln, Diagramm mit
+Objekttypen). Abnahme bis 0.116.0.
+
+- **Findings: mehrere auf einmal** (Anwender: „Multi-Checkbox für das Ignorieren der Findings“):
+  Kästchen je Befund und „alle auf der Seite“, Leiste „n ausgewählt“ mit Status (Vorgabe
+  ignoriert) und Notiz für alle. `POST /findings/triage` – jedes Finding wie einzeln geprüft
+  (Mandant, Kunde, Kunden-Rolle triage), ganz oder gar nicht, je Finding ein Audit-Eintrag
+  (`bulk`).
+- **Übersicht mit wählbaren Bereichen** (Anwender: „Dashboard erweitern mit Schnellansichten,
+  Grafen, Auswahl an Content“): „Ansicht anpassen“ – Bereiche an- und abwählen, verschieben,
+  Vorgabe; die Auswahl merkt sich der Browser. Neu: Schnellansichten (Ansichten mit Filter),
+  offene Findings je Gruppe, Läufe der letzten 14 Tage (erfolgreich/Fehler/offen), Routing-
+  Änderungen der letzten 7 Tage je Art, Applikationen, Regeln je Firewall und Aktion, Objekte
+  nach Kategorie und Präfix der Namenskonvention – Klick öffnet die gefilterte Ansicht. Bereiche
+  abgeschalteter Module bzw. des Betriebs (Kunden-Benutzer) fehlen. API `GET /jobs/daily`,
+  `GET /routing/changes/summary`, `GET /objects/summary`, `by_source` in `/rules/summary`.
+- **Weg-Suche: Ziel hinter VIP bzw. Load Balancer** (Anwender: „wenn ich ein V-EXT_ auflöse,
+  nimmt er als Ziel nicht die VMs hinter dem Loadbalancer, sondern das Subnetz“): das Ziel sind
+  die Server am Ende des Wegs mit ihrer **EPG** (Karte „Ziel“: EPG, Anzahl Server, VIP bzw. Load
+  Balancer); Zielzone und Absicht kommen von diesen Servern. Die EPG nach der Reihenfolge der
+  Zuordnung (statischer Endpunkt, Portgruppe der VM, gelernt, Subnetz; `epg_locate.server_epgs`).
+  Die Namenssuche findet auch VIPs (`V-EXT_…` mit der externen IP) und nennt die Kette
+  „→ VIP-Ziel · Load Balancer → EPG (n Server)“.
+- **Objekte nach Präfix der Namenskonvention** (Anwender: „filtern nach Typ gemäss
+  Namenskonvention (V-EXT, CVS usw.)“): Filter „Präfix“ aus dem Namensprofil des Mandanten (auch
+  eigene Präfixe), mit Anzahl und „ohne Präfix“; längstes Präfix gewinnt, `_` ist kein Platzhalter.
+- **Version 2:** Reservierungen (VLAN, BGP-AS) mit Befund bei Überschneidung und AS-Nummern im
+  Routing als Eintrag in der Roadmap.
+- Tests: `test_findings_triage.py`, `test_objects_prefix.py` (neu), `test_overview_stats.py`
+  (neu), `test_vip_balancer.py`; UI `e2e/release_0117.spec.ts` (neu).
+
 ## 0.116.0 – 2026-10-30
 
 Roadmap Version 1 Nr. 3 (Rest) und Nr. 6 (Teil 1); Anwender 2026-10-30: „go 116 und bitte eine

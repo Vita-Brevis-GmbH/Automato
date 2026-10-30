@@ -131,6 +131,7 @@ export interface RuleSummary {
   by_src_zone?: [string, number][];
   by_action?: Record<string, number>;
   by_vdom?: [string, number][]; // FortiGate-VDOMs mit Anzahl Regeln
+  by_source?: [number, number][]; // 0.117.0: Quellsystem -> Anzahl Regeln
 }
 
 export interface Endpoint {
@@ -925,6 +926,7 @@ export interface DeviceObject {
 export interface ObjectPage extends Paged<DeviceObject> {
   types?: Record<string, number>; // obj_type -> Anzahl ("" = ohne Typ)
   predefined?: number;
+  prefixes?: Record<string, number>; // 0.117.0: Anzahl je Präfix der Namenskonvention ("" = ohne)
 }
 
 // Objekt-Detail (wie NAT): Attribute, Mitglieder und die Regeln, die es nutzen
@@ -1767,6 +1769,9 @@ export const fetchFindingSummary = (tenantId?: number | null, type?: string, q?:
   getJSON<FindingSummary>(`/api/findings/summary${cq({ tenant_id: tenantId, type, q: q?.trim() })}`);
 export const patchFinding = (id: number, body: { status?: string; note?: string }) =>
   sendJSON<Finding>(`/api/findings/${id}`, "PATCH", body);
+// Mehrere Findings auf einmal triagieren (0.117.0): ganz oder gar nicht, je Finding ein Audit-Eintrag
+export const triageFindings = (body: { ids: number[]; status: string; note?: string }) =>
+  sendJSON<{ updated: number; status: string }>(`/api/findings/triage`, "POST", body);
 // Finding von Hand (0.109.0), z. B. aus „Warum dieser Weg?“; bleibt nach dem Abgleich bestehen
 export interface ManualFindingInput {
   tenant_id: number;
@@ -1783,6 +1788,23 @@ export interface ManualFindingInput {
 export const createFinding = (body: ManualFindingInput) => sendJSON<Finding>("/api/findings", "POST", body);
 
 // Applikationen
+// Übersicht (0.117.0): Läufe je Tag und Änderungen des Routings je Art
+export interface RunsDay {
+  day: string; // JJJJ-MM-TT in der Zeitzone des Zeitplans
+  ok: number;
+  failed: number;
+  open: number;
+}
+export const fetchRunsDaily = (tenantId: number | null, days = 14) =>
+  getJSON<RunsDay[]>(`/api/jobs/daily${cq({ tenant_id: tenantId ?? undefined, days })}`);
+export interface RoutingChangeSummary {
+  days: number;
+  since: string;
+  total: number;
+  by_kind: Record<string, Record<string, number>>; // Art -> added|removed|changed -> Anzahl
+}
+export const fetchRoutingChangeSummary = (tenantId: number, days = 7) =>
+  getJSON<RoutingChangeSummary>(`/api/routing/changes/summary${cq({ tenant_id: tenantId, days })}`);
 export const fetchApps = (tenantId: number) =>
   getJSON<Application[]>(`/api/applications${cq({ tenant_id: tenantId })}`);
 export const fetchApp = (id: number) => getJSON<ApplicationDetail>(`/api/applications/${id}`);
@@ -2137,6 +2159,7 @@ export const fetchObjects = (
     q?: string;
     issues_only?: boolean;
     obj_type?: string; // kommagetrennt; "-" = ohne Typ
+    prefix?: string; // 0.117.0: Präfix der Namenskonvention, kommagetrennt; "-" = ohne Präfix
     predefined?: "include" | "exclude" | "only";
     object_id?: number | null; // nur dieses Objekt („Objekt öffnen“)
     limit?: number;
@@ -2152,6 +2175,16 @@ export const fetchObjects = (
     })}`,
   );
 export const fetchObjectDetail = (id: number) => getJSON<ObjectDetail>(`/api/objects/${id}`);
+// Übersicht (0.117.0): Anzahl Objekte je Kategorie, Typ und Präfix der Namenskonvention
+export interface ObjectSummary {
+  total: number;
+  by_category: Record<string, number>;
+  by_type: Record<string, number>;
+  by_prefix: Record<string, number>;
+  prefixes: Record<string, string>; // Präfix -> Bedeutung aus dem Namensprofil
+}
+export const fetchObjectSummary = (tenantId: number, customerId?: number | null) =>
+  getJSON<ObjectSummary>(`/api/objects/summary${cq({ tenant_id: tenantId, customer_id: customerId ?? undefined })}`);
 export const fetchInventory = <K extends keyof Inventory>(
   kind: K,
   tenantId: number,
@@ -2598,6 +2631,15 @@ export interface TraceResult {
   zones?: { src: TraceZone[]; dst: TraceZone[]; intents: TraceZoneIntent[] } | null;
   l2?: { src?: L2Location[]; dst?: L2Location[] }; // Anschluss von Quelle/Ziel (0.64.0)
   exits?: { src?: TraceExitEnd; dst?: TraceExitEnd }; // Anbindung als Quelle bzw. Ziel
+  target?: TraceTarget; // 0.117.0: Ziel hinter VIP bzw. Load Balancer (Server und ihre EPG)
+}
+// Ziel hinter VIP bzw. Load Balancer (0.117.0): die Server am Ende des Wegs mit ihrer EPG – davon kommt auch die Zielzone
+export interface TraceTarget {
+  vip?: string;
+  balancer?: string;
+  servers: { ip: string; name?: string; epg?: string; status?: string }[];
+  ips: string[];
+  epgs?: { epg: string; servers: number }[];
 }
 
 // Name bzw. FQDN -> IP für die Weg-Suche (0.35.0): IPAM, Objekte der Firewalls, VMs; seit

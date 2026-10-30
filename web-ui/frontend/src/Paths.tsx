@@ -37,6 +37,7 @@ import {
   TracePath,
   TracePort,
   TraceResult,
+  TraceTarget,
   traceRoute,
   TraceZone,
   TraceZoneStep,
@@ -385,6 +386,42 @@ const INTENT_LABEL: Record<string, string> = {
   limited: L("eingeschränkt", "limited"),
   deny: L("gesperrt", "deny"),
 };
+
+// Ziel hinter VIP bzw. Load Balancer (0.117.0, Anwender: „nimmt er als Ziel nicht die VMs hinter dem Loadbalancer, sondern
+// das Subnetz … Es sollte dann die EG wählen und diese darstellen“): EPG(s) der Server am Ende des Wegs – davon die Zielzone
+function TargetCard({ target }: { target: TraceTarget }) {
+  const via = [target.vip && `VIP ${target.vip}`, target.balancer && `Load Balancer ${target.balancer}`].filter(Boolean).join(" → ");
+  return (
+    <div className="card" id="path-target" style={{ marginBottom: 10 }}>
+      <div className="card-body">
+        <b>{L("Ziel", "Destination")}:</b>{" "}
+        {(target.epgs ?? []).length > 0 ? (
+          (target.epgs ?? []).map((e, i) => (
+            <span key={e.epg}>
+              {i > 0 && ", "}
+              <span className="chip info mono" data-epg={e.epg}>
+                EPG {e.epg}
+              </span>{" "}
+              <span className="faint">{L(`${e.servers} Server`, `${e.servers} server${e.servers === 1 ? "" : "s"}`)}</span>
+            </span>
+          ))
+        ) : (
+          <span className="faint">{L("Server ohne bekannte EPG", "servers without a known EPG")}</span>
+        )}
+        {via && <span className="faint"> · {L(`hinter ${via}`, `behind ${via}`)}</span>}
+        <div className="faint mono" style={{ fontSize: 12, marginTop: 4 }}>
+          {target.servers.map((x) => `${x.ip}${x.name ? ` (${x.name})` : ""}${x.status && x.status !== "active" ? ` · ${x.status}` : ""}`).join(" · ")}
+        </div>
+        <div className="faint" style={{ fontSize: 12 }}>
+          {L(
+            "Zielzone und Absicht gelten für diese Server – der Weg führt über die VIP bzw. den Load Balancer.",
+            "Destination zone and intent apply to these servers – the path leads via the VIP or the load balancer.",
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // Quell- und Zielzone mit der Absicht zwischen ihnen (je Dienst) und dem Urteil gegenüber dem Weg
 function ZoneIntentCard({ trace }: { trace: TraceResult }) {
@@ -2497,6 +2534,7 @@ function PathSearch({
               <>
                 {trace.exits?.src && <ExitEndCard side="src" end={trace.exits.src} onPick={pickExit("src")} />}
                 {trace.exits?.dst && <ExitEndCard side="dst" end={trace.exits.dst} onPick={pickExit("dst")} />}
+                {trace.target && <TargetCard target={trace.target} />}
                 <ZoneIntentCard trace={trace} />
                 <L2Ends trace={trace} />
                 {shown.length > 1 && <PathOverview trace={{ ...trace, paths: shown }} />}

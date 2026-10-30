@@ -23,7 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.i18n import L
-from app.models import Epg, EpgEndpoint, EpgSubnet, Vm, VmNic
+from app.models import Epg, EpgEndpoint, EpgSubnet, InvSubnet, Vm, VmNic
 from app.store import epgs as epg_store
 
 STATIC, VM, LEARNED, SUBNET = "static", "vm", "learned", "subnet"
@@ -196,3 +196,53 @@ def _unique(items: list[tuple[Epg, str]]) -> list[tuple[Epg, str]]:
     for e, why in items:
         seen.setdefault(e.id, (e, why))
     return list(seen.values())
+
+
+def server_epgs(session: Session, tenant_id: int, ips: list[str]) -> dict[str, str]:
+    """EPG je Server-IP (0.117.0, Ziel hinter VIP bzw. Load Balancer): ueber alle VRFs nach der
+    Reihenfolge oben (eindeutige Zuordnung), sonst die EPG der VM (Portgruppe) - als
+    `Tenant|AP|EPG`. IPs ohne EPG fehlen."""
+    from app.store import virtual  # spaet: nur fuer Ziele hinter VIP/Load Balancer
+
+    wanted = [ip for ip in dict.fromkeys(ips) if ip]
+    if not wanted:
+        return {}
+    out: dict[str, str] = {}
+    has_epgs = session.scalar(select(Epg.id).where(Epg.tenant_id == tenant_id).limit(1))
+    if has_epgs is not None:
+        loc = Locator(session, tenant_id)
+        vrfs = sorted(loc.vrfs(), key=str)
+        for ip in wanted:
+            for sid, vrf in vrfs:
+                found, _how = loc.locate(ip, sid, vrf)
+                if len(found) == 1:
+                    e = found[0]
+                    out[ip] = "|".join(x for x in (e.aci_tenant, e.ap, e.name) if x)
+                    break
+    rest = [ip for ip in wanted if ip not in out]
+    if rest:
+        lookup = virtual.Lookup(session, tenant_id, set(rest))
+        for ip in rest:
+            label = (lookup.info(ip) or {}).get("epg")
+            if label:  # Inventar schreibt Tenant/AP/EPG
+                out[ip] = label.replace("/", "|")
+    rest = [ip for ip in wanted if ip not in out]
+    if rest:  # EPG-Subnetz des Netzinventars (laengstes Praefix)
+        subnets = []
+        for s in session.scalars(
+            select(InvSubnet).where(InvSubnet.tenant_id == tenant_id, InvSubnet.context == "epg")
+        ):
+            try:
+                subnets.append((ipaddress.ip_network(s.prefix, strict=False), s))
+            except ValueError:
+                continue
+        for ip in rest:
+            try:
+                addr = ipaddress.ip_address(ip.split("-")[0].split("/")[0])
+            except ValueError:
+                continue
+            inside = [(n, s) for n, s in subnets if n.version == addr.version and addr in n]
+            if inside:
+                s = max(inside, key=lambda x: x[0].prefixlen)[1]
+                out[ip] = "|".join(x for x in (s.aci_tenant, s.ap, s.epg) if x)
+    return out

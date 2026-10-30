@@ -1,7 +1,16 @@
 // Findings (ADR 0004/0010): Übersicht nach Kategorien, je Befund ein Satz "was genau nicht
 // stimmt" + Hinweis, aufklappbar mit allen Angaben und Links auf die betroffenen Regeln.
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { fetchFindings, fetchFindingSummary, fetchSystems, Finding, FindingSummary, patchFinding, System } from "./api";
+import {
+  fetchFindings,
+  fetchFindingSummary,
+  fetchSystems,
+  Finding,
+  FindingSummary,
+  patchFinding,
+  System,
+  triageFindings,
+} from "./api";
 import type { View, ViewParams } from "./App";
 import { customerCan, type Me } from "./auth";
 import FindingDialog from "./FindingDialog";
@@ -308,6 +317,11 @@ export default function Findings({
   const [adding, setAdding] = useState(false); // Finding von Hand (0.109.0)
   const [assigning, setAssigning] = useState<string | null>(null); // grosses Netz zuordnen (0.111.0)
   const [tab, setTab] = useState(initialTab);
+  // Mehrfachauswahl (0.117.0, Anwender: „Multi-Checkbox für das Ignorieren der Findings“)
+  const [picked, setPicked] = useState<Set<number>>(new Set());
+  const [bulkStatus, setBulkStatus] = useState("ignored");
+  const [bulkNote, setBulkNote] = useState("");
+  const [bulkBusy, setBulkBusy] = useState(false);
   const choose = (t: "befunde" | "pruefungen") => {
     setTab(t);
     window.history.replaceState(null, "", t === "befunde" ? "#findings" : "#findings?tab=pruefungen");
@@ -339,6 +353,7 @@ export default function Findings({
   }, [query, tenantId, type, q]);
   useEffect(() => {
     setFindings(null);
+    setPicked(new Set()); // andere Filter: Auswahl neu
     const timer = setTimeout(reload, 250);
     return () => clearTimeout(timer);
   }, [reload]);
@@ -374,6 +389,31 @@ export default function Findings({
 
   // Nach einer Triage kann ein Eintrag den Statusfilter verlassen - bis zum Neuladen ausblenden
   const shown = (findings ?? []).filter((f) => !status || f.status === status);
+  const canTriage = me.isCustomer ? customerCan(me, "findings.triage") : me.isOperator;
+  const allPicked = shown.length > 0 && shown.every((f) => picked.has(f.id));
+  const pick = (id: number, on: boolean) =>
+    setPicked((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  const pickAll = (on: boolean) => setPicked(on ? new Set(shown.map((f) => f.id)) : new Set());
+  const applyBulk = async () => {
+    setError(null);
+    setBulkBusy(true);
+    try {
+      await triageFindings({ ids: [...picked], status: bulkStatus, ...(bulkNote.trim() ? { note: bulkNote.trim() } : {}) });
+      setPicked(new Set());
+      setBulkNote("");
+      await reload();
+      onChanged();
+    } catch (e) {
+      setError(e);
+    } finally {
+      setBulkBusy(false);
+    }
+  };
   const counts = summary?.by_status ?? {};
   const types = [...new Set([...Object.keys(summary?.by_type ?? {}), ...(type ? [type] : [])])].sort((a, b) =>
     findingLabel(a).localeCompare(findingLabel(b)),
@@ -531,6 +571,33 @@ export default function Findings({
               }}
             />
           )}
+          {canTriage && picked.size > 0 && (
+            <div className="card bulkbar" id="findings-bulk">
+              <b>{L(`${picked.size} ausgewählt`, `${picked.size} selected`)}</b>
+              <span className="faint">{L("Status setzen:", "Set status:")}</span>
+              <select className="sel" id="findings-bulk-status" value={bulkStatus} onChange={(e) => setBulkStatus(e.target.value)}>
+                {Object.entries(STATUS_LABEL).map(([k, v]) => (
+                  <option key={k} value={k}>
+                    {v}
+                  </option>
+                ))}
+              </select>
+              <input
+                className="input"
+                id="findings-bulk-note"
+                style={{ flex: 1, minWidth: 160, width: "auto" }}
+                placeholder={L("Notiz (optional, für alle)", "Note (optional, for all)")}
+                value={bulkNote}
+                onChange={(e) => setBulkNote(e.target.value)}
+              />
+              <button className="btn btn-primary btn-sm" id="findings-bulk-apply" disabled={bulkBusy} onClick={applyBulk}>
+                {bulkBusy ? L("Speichere…", "Saving…") : L("Übernehmen", "Apply")}
+              </button>
+              <button className="btn btn-ghost btn-sm" onClick={() => setPicked(new Set())}>
+                {L("Auswahl aufheben", "Clear selection")}
+              </button>
+            </div>
+          )}
           <div className="card">
             <div className="card-body scroll">
               {findings === null ? (
@@ -552,6 +619,17 @@ export default function Findings({
                 <table>
                   <thead>
                     <tr>
+                      {canTriage && (
+                        <th className="pick">
+                          <input
+                            type="checkbox"
+                            id="findings-pick-all"
+                            checked={allPicked}
+                            title={L("alle auf der Seite wählen", "select all on the page")}
+                            onChange={(e) => pickAll(e.target.checked)}
+                          />
+                        </th>
+                      )}
                       <th>{L("Schwere", "Severity")}</th>
                       <th>{L("Typ", "Type")}</th>
                       <th>{L("Objekt", "Object")}</th>
@@ -568,7 +646,16 @@ export default function Findings({
                       const sources = Array.isArray(f.detail?.sources) ? (f.detail!.sources as string[]).join(", ") : null;
                       return (
                         <Fragment key={f.id}>
-                          <tr className="clickable" onClick={() => setOpen(open === f.id ? null : f.id)}>
+                          <tr
+                            className={`clickable${picked.has(f.id) ? " picked" : ""}`}
+                            data-finding={f.id}
+                            onClick={() => setOpen(open === f.id ? null : f.id)}
+                          >
+                            {canTriage && (
+                              <td className="pick" onClick={(e) => e.stopPropagation()}>
+                                <input type="checkbox" checked={picked.has(f.id)} onChange={(e) => pick(f.id, e.target.checked)} />
+                              </td>
+                            )}
                             <td>
                               <SeverityBadge severity={f.severity} />
                             </td>
@@ -586,7 +673,7 @@ export default function Findings({
                             <td className="mono">{fmtTime(f.last_seen)}</td>
                             <td onClick={(e) => e.stopPropagation()}>
                               {/* Triage: Operator bzw. Kunden-Benutzer mit der Kunden-Rolle triage (feinere Rollen) */}
-                              {(me.isCustomer ? customerCan(me, "findings.triage") : me.isOperator) ? (
+                              {canTriage ? (
                                 <select className="sel" value={f.status} onChange={(e) => triage(f.id, e.target.value)}>
                                   {Object.entries(STATUS_LABEL).map(([k, v]) => (
                                     <option key={k} value={k}>
@@ -601,7 +688,7 @@ export default function Findings({
                           </tr>
                           {open === f.id && (
                             <tr className="subrow">
-                              <td colSpan={7}>
+                              <td colSpan={canTriage ? 8 : 7}>
                                 <dl className="kv tight">
                                   {Object.entries(f.detail ?? {})
                                     .filter(([k, v]) => DETAIL_LABEL[k] !== null && v !== null && v !== "")

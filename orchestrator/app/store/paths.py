@@ -1216,6 +1216,55 @@ def trace(
     }
 
 
+def target_of(g: Graph, result: dict) -> dict | None:
+    """Ziel hinter einer VIP bzw. einem Load Balancer (0.117.0, Anwender: „wenn ich ein V-EXT_
+    auflöse, nimmt er als Ziel nicht die VMs hinter dem Loadbalancer, sondern das Subnetz“): die
+    Server am Ende des Wegs (aktive Wege zuerst) mit ihrer EPG - fuer die Anzeige, die Zielzone
+    und die Absicht. Der Weg selbst bleibt (VIP, Load Balancer, Regeln je Hop). None ohne VIP
+    bzw. Load Balancer auf dem Weg."""
+    found = None
+    for p in sorted(result.get("paths") or [], key=lambda p: p.get("kind") != "active"):
+        hops = p.get("hops") or []
+        lb = next((h["lb"] for h in reversed(hops) if h.get("lb")), None)
+        nat = next((h["nat"] for h in hops if h.get("nat")), None)
+        if lb is not None or nat is not None:
+            found = (lb, nat)
+            break
+    if found is None:
+        return None
+    lb, nat = found
+    if lb is not None:
+        rows = lb.get("members") or [{"ip": ip} for ip in lb.get("to") or []]
+    else:
+        rows = nat.get("servers") or [{"ip": ip} for ip in nat.get("to") or []]
+    from app.store import epg_locate  # spaet: nur mit VIP bzw. Load Balancer auf dem Weg
+
+    servers: list[dict] = []
+    epgs: dict[str, int] = {}
+    located = epg_locate.server_epgs(g.session, g.tenant_id,
+                                     [str(r.get("ip") or "") for r in rows])  # fmt: skip
+    for r in rows:
+        ip = str(r.get("ip") or "")
+        if not ip:
+            continue
+        vm = r.get("vm") or {}
+        epg = located.get(ip)
+        names = r.get("names") or []
+        entry = {"ip": ip, "name": vm.get("name") or (names[0] if names else None),
+                 "epg": epg, "status": r.get("status")}  # fmt: skip
+        servers.append({k: v for k, v in entry.items() if v})
+        if epg:
+            epgs[epg] = epgs.get(epg, 0) + 1
+    out = {
+        "vip": nat.get("name") if nat else None,
+        "balancer": lb.get("name") if lb else None,
+        "servers": servers,
+        "ips": [x["ip"] for x in servers],
+        "epgs": [{"epg": e, "servers": n} for e, n in sorted(epgs.items(), key=lambda x: -x[1])],
+    }
+    return {k: v for k, v in out.items() if v not in (None, [])} if servers else None
+
+
 def _inner_notes(paths: list[dict], dst) -> list[str]:
     """Netz als Ziel (0.39.0): je Knoten ein Hinweis, wenn Teile davon anders geroutet werden."""
     out: dict[str, str] = {}

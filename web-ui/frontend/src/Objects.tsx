@@ -90,6 +90,9 @@ export default function Objects({
   const [issuesOnly, setIssuesOnly] = useState(false);
   const [objType, setObjType] = useState(""); // Typ (obj_type), z. B. dynamic = SDN/FortiManager
   const [types, setTypes] = useState<Record<string, number>>({});
+  // Präfix der Namenskonvention (0.117.0, Anwender: „filtern nach Typ gemäss Namenskonvention (V-EXT, CVS …)“)
+  const [prefix, setPrefix] = useState(params.prefix ?? "");
+  const [prefixes, setPrefixes] = useState<Record<string, number>>({});
   const [hidePredefined, setHidePredefined] = useState(false); // Standardobjekte ausblenden
   const [linked, setLinked] = useState<number | null>(params.object_id ? Number(params.object_id) : null);
   const [pinned, setPinned] = useState<{ id: number; name: string } | null>(null);
@@ -105,6 +108,7 @@ export default function Objects({
         if (key && tabs.some((t) => t.key === key)) setTab(key);
         setQ("");
         setObjType("");
+        setPrefix("");
         setPinned({ id, name: o.name });
       })
       .catch(() => undefined);
@@ -117,6 +121,7 @@ export default function Objects({
     if (t === tab) return;
     setObjType("");
     setTypes({});
+    setPrefixes({});
     setTab(t);
   };
   useEffect(() => setObjType(""), [tab]);
@@ -229,6 +234,27 @@ export default function Objects({
               ))}
           </select>
         )}
+        {current.category && (Object.keys(prefixes).length > 1 || prefix) && (
+          <select
+            className="sel"
+            id="objects-prefix"
+            value={prefix}
+            onChange={(e) => setPrefix(e.target.value)}
+            title={L(
+              "Präfix des Namens nach der Namenskonvention (Namensprofil des Mandanten), z. B. V-EXT_, H_, N_",
+              "Name prefix per naming convention (naming profile of the tenant), e.g. V-EXT_, H_, N_",
+            )}
+          >
+            <option value="">{L("Präfix: alle", "Prefix: all")}</option>
+            {Object.entries(prefixes)
+              .sort(([a], [b]) => (a === "" ? 1 : b === "" ? -1 : a.localeCompare(b)))
+              .map(([p, n]) => (
+                <option key={p || "-"} value={p || "-"}>
+                  {p || L("ohne Präfix", "no prefix")} ({n})
+                </option>
+              ))}
+          </select>
+        )}
         {canFilterIssues && (
           <button className={`toggle ${issuesOnly ? "on" : ""}`} onClick={() => setIssuesOnly((v) => !v)}>
             <span className="dot y" />
@@ -264,9 +290,11 @@ export default function Objects({
           q={q}
           issuesOnly={issuesOnly}
           objType={objType}
+          prefix={prefix}
           hidePredefined={hidePredefined}
           objectId={pinned?.id ?? null}
           onTypes={setTypes}
+          onPrefixes={setPrefixes}
           onGo={onGo}
         />
       ) : (
@@ -364,9 +392,11 @@ function ObjectTable({
   q,
   issuesOnly,
   objType,
+  prefix,
   hidePredefined,
   objectId,
   onTypes,
+  onPrefixes,
   onGo,
 }: {
   tenantId: number;
@@ -377,9 +407,11 @@ function ObjectTable({
   q: string;
   issuesOnly: boolean;
   objType: string;
+  prefix: string;
   hidePredefined: boolean;
   objectId: number | null;
   onTypes: (t: Record<string, number>) => void;
+  onPrefixes: (p: Record<string, number>) => void;
   onGo?: Go;
 }) {
   const [data, setData] = useState<ObjectPage | null>(null);
@@ -388,7 +420,7 @@ function ObjectTable({
   const [selected, setSelected] = useState<number | null>(null);
   const query = useDebounced(q);
 
-  useEffect(() => setOffset(0), [query, sourceId, issuesOnly, objType, hidePredefined, objectId]);
+  useEffect(() => setOffset(0), [query, sourceId, issuesOnly, objType, prefix, hidePredefined, objectId]);
   useEffect(() => {
     let current = true; // ältere Antworten verwerfen (schnelles Umschalten)
     setData(null);
@@ -399,6 +431,7 @@ function ObjectTable({
       q: query,
       issues_only: issuesOnly,
       obj_type: objType || undefined,
+      prefix: prefix || undefined,
       predefined: hidePredefined ? "exclude" : undefined,
       object_id: objectId,
       limit: PAGE,
@@ -408,6 +441,7 @@ function ObjectTable({
         if (!current) return;
         setData(d);
         if (d.types) onTypes(d.types);
+        if (d.prefixes) onPrefixes(d.prefixes);
       })
       .catch((e) => {
         if (!current) return;
@@ -418,7 +452,7 @@ function ObjectTable({
       current = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tenantId, category, sourceId, query, issuesOnly, objType, hidePredefined, objectId, offset]);
+  }, [tenantId, category, sourceId, query, issuesOnly, objType, prefix, hidePredefined, objectId, offset]);
   // VDOM „root“ nur bei Firewalls mit weiteren VDOMs (nur root = die Firewall, 0.17.0)
   const vdomShown = useVdomShown();
 

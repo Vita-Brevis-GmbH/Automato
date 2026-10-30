@@ -433,8 +433,9 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.114.1** | Fehler zu 0.113: Weg-Suche nennt alle Ziel-Server einer VIP bzw. eines Pools mit Name, Port, Zustand, Gewicht, Health-Check, Objekt und VM; Freigaben ins Internet (Ziel all, Ausgang Internet, auch SD-WAN-Zone) nicht mehr als Zugriff in der Applikations-Doku; BGP „angekündigt“ mit default-originate und ohne Routen zurück ins AS des Nachbarn |
 | **0.115.0** | Nachkontrolle des NetBox-Syncs (Roadmap V1 Nr. 5): nach „Übernehmen“ NetBox rein lesend neu lesen und je geschriebenem Objekt vergleichen (fehlt, andere Werte, nicht gelöscht); Ergebnis am Plan, Befund „NetBox-Sync: geschrieben ≠ gelesen“ (ADR 0042) |
 | **0.116.0** | BGP-Filter Stufe 3 (Roadmap V1 Nr. 3 abgeschlossen): Ausgangsfilter je Nachbar aus den Zonen diesseits (nach aussen nur öffentliche Netze), ACI Import Route Control je L3Out aus den Zonen dahinter, Befunde und Vorschläge (ADR 0041); Installationsanleitung Produktion mit Disk-Verschlüsselung und Hardening (`docs/INSTALLATION-PROD.md`), Oberfläche nur aus erlaubten Netzen, Ports nur lokal (Nr. 6) |
+| **0.117.0** | Rückmeldung 2026-10-30: Findings mehrere auf einmal ignorieren (Mehrfachauswahl); Übersicht mit wählbaren und verschiebbaren Bereichen (Grafiken Findings/Läufe, Schnellansichten, Routing-Änderungen, Applikationen, Regeln, Objekte nach Typ); Weg-Suche: Ziel hinter VIP/Load Balancer = EPG der Server; Objekte nach Präfix der Namenskonvention |
 
-### Nächste Arbeiten (Stand 0.116.0)
+### Nächste Arbeiten (Stand 0.117.0)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
 **0.68.0** (2026-10-26), bis **0.102.0** (2026-10-28: „ich teste nach dem Freigeben der Version
@@ -449,7 +450,8 @@ Einwand), bis **0.113.0** (2026-10-29, Fehlerliste zu 0.112 ohne Einwand zu 0.11
 **0.113.1** (2026-10-29, Fehlerliste zu 0.113 ohne Einwand zu 0.113.1), bis **0.113.2**
 (2026-10-29, „go 114“ ohne Einwand), bis **0.114.0** (2026-10-30, Fehlerliste zu 0.113 ohne
 Einwand zu 0.114.0), bis **0.114.1** (2026-10-30, „go 115“ ohne Einwand), bis **0.115.0**
-(2026-10-30, „go 116“ ohne Einwand). Zur Abnahme steht 0.116.0. Seit 0.104.0 gilt eine
+(2026-10-30, „go 116“ ohne Einwand), bis **0.116.0** (2026-10-30, Rückmeldung ohne Einwand
+zu 0.116.0). Zur Abnahme steht 0.117.0. Seit 0.104.0 gilt eine
 Version als abgenommen,
 sobald die nächste Rückmeldung des Anwenders keinen Einwand dazu enthält (`CLAUDE.md`, Ablauf).
 
@@ -483,6 +485,7 @@ Produktivschaltung weiter 0.1xx; **1.0.0 = produktiv**, danach 2.x mit neuem Nam
 | 7 | Spanning-Tree-Topologien lernen und auslesen, Fehler erkennen |
 | 8 | Export automatisch in Wikis (Confluence und Open-Source-Wikis, z. B. BookStack v25.07.1) |
 | 9 | NSX ALB: Adressen der Service Engines, Content Switching, GSLB (Entscheid 2026-10-29) |
+| 10 | Reservierungen in der Doku (Anwender 2026-10-30): Elemente festlegen und reservieren – erst VLANs und BGP-AS-Nummern –, Befund bei Überschneidung (reserviert gegen gelesen bzw. doppelt); AS-Nummern im Routing einzeln darstellen (je AS die Nachbarn, Firewalls und Router) |
 
 *Version 3 – Automatisierung (3.x):* „Wiedergeburt“ von Automato mit Automatisierungen für
 Netzwerk und VMs (Proxmox, VMware usw.), in Zusammenarbeit mit Magister und dem

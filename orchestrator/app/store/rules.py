@@ -159,6 +159,15 @@ def summary(session: Session, tenant_id: int | None = None, only=None) -> dict:
         )
     }
     systems = sorted(s for (s,) in session.execute(mine(select(Rule.source_system_id).distinct())))
+    # je Quellsystem (Uebersicht, 0.117.0)
+    by_source = {
+        sid: n
+        for sid, n in session.execute(
+            mine(select(Rule.source_system_id, func.count(Rule.id)))
+            .where(not_twin())
+            .group_by(Rule.source_system_id)
+        )
+    }
     endpoints = session.scalar(
         select(func.count(RuleEndpoint.id)).where(RuleEndpoint.rule_id.in_(select(scoped.c.id)))
     )
@@ -207,6 +216,7 @@ def summary(session: Session, tenant_id: int | None = None, only=None) -> dict:
         "total": sum(by_domain.values()),
         "by_domain": by_domain,
         "source_system_ids": systems,
+        "by_source": [[sid, n] for sid, n in sorted(by_source.items(), key=lambda x: -x[1])],
         "endpoints": endpoints or 0,
         "unmatched": unmatched or 0,
         "by_dst_zone": [(names.get(z, "–") if z else "–", n) for z, n in zone_counts],

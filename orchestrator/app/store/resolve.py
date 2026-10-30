@@ -8,7 +8,9 @@ wird in dem, was gelesen ist - nur lesend, je Mandant:
 2. **IPAM** (DDI bzw. NetBox, aktueller Referenzstand): DNS-Name bzw. Name einer IP, eines
    Host- oder A-Records,
 3. **Objekte der Firewalls** (Adressobjekte mit einer IP, auch ohne Konventions-Praefix:
-   `web01` findet `H_web01`), FQDN-Objekte ueber ihren FQDN im IPAM,
+   `web01` findet `H_web01`), FQDN-Objekte ueber ihren FQDN im IPAM; seit 0.117.0 auch VIPs
+   (`V-EXT_…` mit der externen IP) - VIP und VIP-Ziel nennen die Kette dahinter (Load Balancer,
+   EPG der Server),
 4. **VMs** (vCenter) ueber Namen bzw. Hostname mit ihren IPs.
 
 **Netze** (0.38.0, Dev-Befund 0.37.0)
@@ -46,6 +48,8 @@ from app.i18n import L
 from app.models import (
     DeviceObject,
     InvSubnet,
+    NatRule,
+    Platform,
     ReferenceRecordRow,
     SourceSystem,
     TopoExit,
@@ -235,7 +239,9 @@ def _hosts(session, tenant_id, runs, names, q, found: _Found) -> None:
             select(DeviceObject)
             .where(
                 DeviceObject.tenant_id == tenant_id,
-                DeviceObject.category.in_((ObjectCategory.ADDRESS, ObjectCategory.VIP_TARGET)),
+                DeviceObject.category.in_(
+                    (ObjectCategory.ADDRESS, ObjectCategory.VIP_TARGET, ObjectCategory.VIP)
+                ),
                 or_(
                     func.lower(DeviceObject.name).like(like),
                     func.lower(DeviceObject.fqdn).like(like),
@@ -245,12 +251,17 @@ def _hosts(session, tenant_id, runs, names, q, found: _Found) -> None:
             .limit(CAP)
         )
     ):
-        ips = [ip for ip in (_ip(v) for v in o.values or []) if ip]
-        nets = [n for n in (_net(v) for v in o.values or []) if n]
+        values = o.values or []
+        if o.category is ObjectCategory.VIP:  # VIP: die externe IP (die Ziele haben eigene)
+            values = values[:1]
+        ips = [ip for ip in (_ip(v) for v in values) if ip]
+        nets = [n for n in (_net(v) for v in values) if n]
         if not ips and not nets and o.fqdn:
             fqdn_objects.append(o)
         source = names.get(o.source_system_id)
         detail = _join(o.obj_type, f"VDOM {o.vdom}" if o.vdom else None)
+        if o.category in (ObjectCategory.VIP, ObjectCategory.VIP_TARGET):
+            detail = _join(detail, chain(session, tenant_id, o))
         rank = _rank(o.name, q) if q in o.name.lower() else 1
         for ip in ips:
             if not by_value or q in o.name.lower() or ip.startswith(q):
@@ -280,6 +291,62 @@ def _hosts(session, tenant_id, runs, names, q, found: _Found) -> None:
             source = names.get(vm.source_system_id)
             rank = _rank(vm.name, q) if q in vm.name.lower() else 1
             found.add(rank, 2, _hit(addr, vm.name, "vm", source, vm.hostname))
+
+
+def chain(session: Session, tenant_id: int, o: DeviceObject) -> str | None:
+    """Was hinter einer VIP bzw. einem VIP-Ziel liegt (0.117.0): „→ 10.30.0.50 · Load Balancer
+    vs-shop → EPG T|AP|web (3 Server)“ - damit klar ist, wohin der Weg fuehrt."""
+    targets = (o.values or [])[1:] if o.category is ObjectCategory.VIP else (o.values or [])[:1]
+    if o.category is ObjectCategory.VIP and not targets:  # Ziele aus der VIP (NAT) selbst
+        nat = session.scalar(
+            select(NatRule).where(NatRule.source_system_id == o.source_system_id,
+                                  NatRule.nat_type == "dnat_vip", NatRule.name == o.name)
+            .limit(1)
+        )  # fmt: skip
+        if nat is not None:
+            targets = [t["ip"] for t in nat.targets or [] if t.get("ip")] or (
+                [nat.mapped_ip] if nat.mapped_ip else []
+            )
+    parts = []
+    for t in targets[:3]:
+        ip = _ip(str(t).split("-")[0])
+        if ip is None:
+            continue
+        text = f"→ {t}"
+        servers, lb = [ip], _balancer(session, tenant_id, ip)
+        if lb is not None:
+            servers = [x["ip"] for x in lb.targets or [] if x.get("ip")]
+            text += f" · Load Balancer {lb.name}"
+        epgs = _epgs(session, tenant_id, servers)
+        if epgs:
+            many = L(f" ({len(servers)} Server)", f" ({len(servers)} servers)") if lb else ""
+            text += f" → EPG {', '.join(epgs)}{many}"
+        parts.append(text)
+    return "; ".join(parts) or None
+
+
+def _balancer(session: Session, tenant_id: int, ip: str):
+    """Virtual Service eines Load Balancers (NSX ALB) mit dieser VIP."""
+    return session.scalar(
+        select(NatRule)
+        .join(SourceSystem, SourceSystem.id == NatRule.source_system_id)
+        .where(
+            NatRule.tenant_id == tenant_id,
+            NatRule.nat_type == "dnat_vip",
+            NatRule.ext_ip == ip,
+            SourceSystem.platform == Platform.AVI,
+        )  # fmt: skip
+        .order_by(NatRule.name, NatRule.id)
+        .limit(1)
+    )
+
+
+def _epgs(session: Session, tenant_id: int, ips: list[str]) -> list[str]:
+    """EPGs der Server (`epg_locate.server_epgs`), je einmal."""
+    from app.store import epg_locate  # spaet: nur fuer VIP-Treffer
+
+    located = epg_locate.server_epgs(session, tenant_id, ips)
+    return list(dict.fromkeys(located[ip] for ip in ips if ip in located))
 
 
 def _prefix_hit(r: ReferenceRecordRow, net, source: str | None) -> dict:

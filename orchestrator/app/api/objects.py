@@ -6,7 +6,10 @@
                               Quellsystem/Kategorie/Suche/„nur Abweichungen", Typ (`obj_type`,
                               z. B. dynamische SDN-Objekte) und Standardobjekte des Herstellers
                               (`predefined=include|exclude|only`, 0.36.0: zuunterst); `types` =
-                              Anzahl je Typ fuer den Filter.
+                              Anzahl je Typ fuer den Filter; seit 0.117.0 Praefix der
+                              Namenskonvention (`prefix`, `-` = ohne) mit `prefixes` = Anzahl je
+                              Praefix des Namensprofils.
+- `GET /objects/summary`      Anzahl je Kategorie, Typ und Praefix (Uebersicht, 0.117.0).
 - `GET /inventory/{art}`      Netzinventar: devices | interfaces | vlans | subnets | vrfs;
                               Subnetze mit Abgleich gegen das fuehrende IPAM und die Anreicherung.
 Lesen = `viewer`, mandantsgescoped. Rein lesend.
@@ -16,7 +19,7 @@ from collections import defaultdict
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy import and_, case, func, literal, or_, select
 from sqlalchemy.orm import Session
 
 from app import naming
@@ -36,6 +39,7 @@ from app.models import (
     InvVrf,
     SourceSystem,
 )
+from app.naming_defaults import DEFAULT_DICTIONARY
 from app.store import customer_infra, references, rule_index, sites
 from app.store import naming_profiles as profile_store
 from app.store import objects as objects_store
@@ -70,6 +74,29 @@ def _predefined():
     )
 
 
+def name_prefixes(session: Session, tid: int) -> dict[str, str]:
+    """Praefixe der Objektnamen aus dem Namensprofil des Mandanten (Woerterbuch `object_prefix`,
+    auch eigene wie `CVS_`) -> Bedeutung; ohne gepflegte Eintraege die Vorgabe der Plattform."""
+    entries = profile_store.entries_for_tenant(session, tid, "object_prefix")
+    return entries or dict(DEFAULT_DICTIONARY["object_prefix"])
+
+
+def _prefix_of(prefixes: list[str]):
+    """SQL: das Praefix des Namens (laengstes zuerst, wie `naming.parse_object_name`), sonst ''."""
+    ordered = sorted(prefixes, key=len, reverse=True)
+    if not ordered:
+        return literal("")
+    return case(*[(DeviceObject.name.startswith(p, autoescape=True), p) for p in ordered], else_="")
+
+
+def _prefix_counts(session: Session, stmt, prefixes: list[str]) -> dict[str, int]:
+    sub = stmt.add_columns(_prefix_of(prefixes).label("prefix")).subquery()
+    return {
+        p or "": n
+        for p, n in session.execute(select(sub.c.prefix, func.count()).group_by(sub.c.prefix))
+    }
+
+
 def _source_names(session: Session, tid: int) -> dict[int, str]:
     return dict(
         session.execute(
@@ -86,6 +113,9 @@ def list_objects(
     q: str | None = None,
     issues_only: bool = False,
     obj_type: str | None = Query(None, description="Typ(en), kommagetrennt; `-` = ohne Typ"),
+    prefix: str | None = Query(
+        None, max_length=500, description="Praefix(e) der Konvention, kommagetrennt; `-` = ohne"
+    ),
     predefined: Literal["include", "exclude", "only"] = "include",
     object_id: int | None = Query(None, description="nur dieses Objekt (Link „Objekt öffnen“)"),
     customer_id: int | None = None,
@@ -119,6 +149,13 @@ def list_objects(
                 *([DeviceObject.obj_type.is_(None)] if "-" in wanted else []),
             )
         )
+    # Praefix der Namenskonvention (0.117.0, Anwender: „filtern nach Typ gemäss Namenskonvention
+    # (V-EXT, CVS …)“): Anzahl je Praefix vor dem Praefix-Filter
+    known = list(name_prefixes(session, tid))
+    prefix_counts = _prefix_counts(session, stmt, known)
+    if prefix:
+        wanted = [p.strip() for p in prefix.split(",") if p.strip()]
+        stmt = stmt.where(_prefix_of(known).in_([("" if p == "-" else p) for p in wanted]))
     pre = _predefined()
     if predefined == "exclude":
         stmt = stmt.where(~pre)
@@ -130,7 +167,7 @@ def list_objects(
     # Standardobjekte des Herstellers zuunterst (Dev-Befund 0.35.0: nicht verwenden)
     stmt = stmt.order_by(case((pre, 1), else_=0), DeviceObject.name, DeviceObject.family,
                          DeviceObject.id)  # fmt: skip
-    extra = {"types": types, "predefined": predefined_count}
+    extra = {"types": types, "predefined": predefined_count, "prefixes": prefix_counts}
     if not q and not issues_only:  # seitenweise per SQL (grosse Objekt-Bestaende)
         total = session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
         page = list(session.scalars(stmt.offset(offset).limit(min(limit, 2000))))
@@ -158,6 +195,37 @@ def list_objects(
         objects = [o for o in objects if issues.get(o.id)]
     page = objects[offset : offset + min(limit, 2000)]
     return {"total": len(objects), "rows": _object_rows(session, tid, page, own), **extra}
+
+
+@router.get("/objects/summary")
+def objects_summary(
+    tenant_id: int | None = None,
+    customer_id: int | None = None,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Anzahl Objekte je Kategorie, Typ und Praefix der Namenskonvention (Uebersicht, 0.117.0);
+    mit Kunde nur seine Objekte."""
+    tid = _tenant(principal, tenant_id)
+    stmt = select(DeviceObject).where(DeviceObject.tenant_id == tid)
+    view = customer_view(session, principal, tid, customer_id)
+    if view is not None:
+        stmt = stmt.where(DeviceObject.id.in_(view.device_objects()))
+    sub = stmt.subquery()
+    by_category = {
+        c.value if hasattr(c, "value") else str(c): n
+        for c, n in session.execute(
+            select(sub.c.category, func.count()).group_by(sub.c.category)
+        )
+    }  # fmt: skip
+    prefixes = name_prefixes(session, tid)
+    return {
+        "total": sum(by_category.values()),
+        "by_category": by_category,
+        "by_type": _types(session, stmt),
+        "by_prefix": _prefix_counts(session, stmt, list(prefixes)),
+        "prefixes": prefixes,
+    }
 
 
 def _types(session: Session, stmt) -> dict[str, int]:

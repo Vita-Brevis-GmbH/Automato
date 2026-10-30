@@ -46,6 +46,7 @@ class RuleSummaryOut(BaseModel):
     by_src_zone: list[tuple[str, int]] = []
     by_action: dict[str, int] = {}
     by_vdom: list[tuple[str, int]] = []  # FortiGate-VDOMs mit Anzahl Regeln (ADR 0019)
+    by_source: list[tuple[int, int]] = []  # Quellsystem -> Anzahl Regeln (0.117.0)
 
 
 class RuleOut(BaseModel):

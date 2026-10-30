@@ -1,11 +1,15 @@
 """Job-Endpunkte: Collector-Laeufe anstossen und ihren Status abfragen."""
 
+from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.auth.deps import require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
+from app.config import get_settings
 from app.db import get_session
 from app.i18n import L
 from app.jobs import celery_app
@@ -196,6 +200,40 @@ def list_runs(
 
 
 _STATES = {s.value for s in RunStatus}
+
+
+@router.get("/daily")
+def runs_daily(
+    tenant_id: int | None = None,
+    days: int = Query(14, ge=1, le=90),
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> list[dict]:
+    """Laeufe je Tag (Uebersicht, 0.117.0): erfolgreich, Fehler, offen - die letzten `days`
+    Tage in der Zeitzone des Zeitplans, aelteste zuerst; Tage ohne Lauf mit 0."""
+    conds = [CollectorRun.queued_at >= datetime.now(UTC) - timedelta(days=days + 1)]
+    if tenant_id is not None:
+        tenant_scope(principal, tenant_id)
+        conds.append(CollectorRun.tenant_id == tenant_id)
+    elif not principal.is_admin and principal.tenant_ids is not None:
+        conds.append(CollectorRun.tenant_id.in_(principal.tenant_ids))
+    try:
+        zone = ZoneInfo(get_settings().scheduler_timezone)
+    except (KeyError, ValueError):
+        zone = UTC
+    today = datetime.now(zone).date()
+    out = {(today - timedelta(days=i)).isoformat(): {"ok": 0, "failed": 0, "open": 0}
+           for i in range(days - 1, -1, -1)}  # fmt: skip
+    for at, status in session.execute(select(CollectorRun.queued_at, CollectorRun.status)
+                                      .where(*conds)):  # fmt: skip
+        if at is None:
+            continue
+        day = (at if at.tzinfo else at.replace(tzinfo=UTC)).astimezone(zone).date().isoformat()
+        if day not in out:
+            continue
+        key = {RunStatus.COMPLETED: "ok", RunStatus.FAILED: "failed"}.get(status, "open")
+        out[day][key] += 1
+    return [{"day": d, **c} for d, c in out.items()]
 
 
 @router.get("/{run_id}", response_model=CollectorRunOut)

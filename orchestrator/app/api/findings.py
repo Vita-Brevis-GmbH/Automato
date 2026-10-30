@@ -185,13 +185,17 @@ def create_finding(
     return _finding_out(f, principal)
 
 
-@router.patch("/{finding_id}", response_model=FindingOut)
-def triage_finding(
-    finding_id: int,
-    body: FindingPatch,
-    principal: Principal = Depends(require_operator),
-    session: Session = Depends(get_session, scope="function"),
-):
+class FindingBulkTriage(BaseModel):
+    """Mehrere Findings auf einmal triagieren (0.117.0, Anwender: „Multi-Checkbox für das
+    Ignorieren“): Status (Vorgabe ignoriert) und optional eine Notiz fuer alle."""
+
+    ids: list[int] = Field(min_length=1, max_length=5000)
+    status: str = "ignored"
+    note: str | None = Field(default=None, max_length=4000)
+
+
+def _triageable(session: Session, principal: Principal, finding_id: int):
+    """Finding, das dieser Benutzer triagieren darf - sonst 404/403 (wie bisher je Finding)."""
     f = findings_store.get_finding(session, finding_id)
     if f is None:
         raise HTTPException(status_code=404, detail="finding not found")
@@ -201,20 +205,58 @@ def triage_finding(
         view = capability_view(session, principal, f.tenant_id, caps.TRIAGE)
         if view is None or not view.contains(session, "finding", f.id):
             raise HTTPException(status_code=403, detail="insufficient role")
+    return f
 
-    data = body.model_dump(exclude_unset=True)
-    if "status" in data and data["status"] is not None:
-        try:
-            f.status = FindingStatus(data["status"])
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail="invalid status") from exc
-    if "note" in data:
-        f.note = data["note"]
+
+def _status(value: str) -> FindingStatus:
+    try:
+        return FindingStatus(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="invalid status") from exc
+
+
+def _triaged(session: Session, principal: Principal, f, bulk: bool = False) -> None:
+    extra = {"bulk": True} if bulk else {}
     audit.record(
         session,
         actor=f"user:{principal.subject}",
         action="finding.triaged",
         subject=str(f.id),
-        detail={"finding_id": f.id, "status": f.status.value, **actor(principal)},
+        detail={"finding_id": f.id, "status": f.status.value, **extra, **actor(principal)},
     )
+
+
+@router.post("/triage")
+def triage_findings(
+    body: FindingBulkTriage,
+    principal: Principal = Depends(require_operator),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Status (und Notiz) fuer mehrere Findings - ganz oder gar nicht: jedes wird wie einzeln
+    geprueft (Mandant, Kunde, Kunden-Rolle triage), sonst aendert sich keins; je Finding ein
+    Audit-Eintrag."""
+    status = _status(body.status)
+    found = [_triageable(session, principal, i) for i in dict.fromkeys(body.ids)]
+    for f in found:
+        f.status = status
+        if body.note is not None:
+            f.note = body.note.strip() or None
+        _triaged(session, principal, f, bulk=True)
+    return {"updated": len(found), "status": status.value}
+
+
+@router.patch("/{finding_id}", response_model=FindingOut)
+def triage_finding(
+    finding_id: int,
+    body: FindingPatch,
+    principal: Principal = Depends(require_operator),
+    session: Session = Depends(get_session, scope="function"),
+):
+    f = _triageable(session, principal, finding_id)
+    data = body.model_dump(exclude_unset=True)
+    if "status" in data and data["status"] is not None:
+        f.status = _status(data["status"])
+    if "note" in data:
+        f.note = data["note"]
+    _triaged(session, principal, f)
     return _finding_out(f, principal)

@@ -561,6 +561,35 @@ def _change_mark(infra: customer_infra.Infra, c: TopoChange) -> str | None:
     return infra.context_mark(c.source_system_id, c.context)
 
 
+@router.get("/changes/summary")
+def changes_summary(
+    tenant_id: int | None = None,
+    days: int = Query(7, ge=1, le=90),
+    customer_id: int | None = None,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Aenderungen des Routings der letzten `days` Tage je Art und Aenderung (Uebersicht,
+    0.117.0) - ohne Vermerke (Ausgangsstand, nicht lesbar, Obergrenze)."""
+    tid = _tenant(session, principal, tenant_id)
+    infra = _infra(session, principal, tid, customer_id)
+    since = datetime.now(UTC) - timedelta(days=days)
+    stmt = select(TopoChange.kind, TopoChange.change, func.count(TopoChange.id)).where(
+        TopoChange.tenant_id == tid,
+        TopoChange.at >= since,
+        TopoChange.change.not_in(topo_changes.NOTES),
+    )
+    if infra is not None:
+        stmt = stmt.where(_change_filter(infra))
+    by_kind: dict[str, dict[str, int]] = defaultdict(dict)
+    for kind, change, n in session.execute(
+        stmt.group_by(TopoChange.kind, TopoChange.change)
+    ):  # fmt: skip
+        by_kind[kind][change] = n
+    total = sum(n for c in by_kind.values() for n in c.values())
+    return {"days": days, "since": since.isoformat(), "total": total, "by_kind": by_kind}
+
+
 @router.get("/lookup")
 def lookup(
     ip: str,
@@ -640,6 +669,9 @@ def _traced(session: Session, tid: int, dst: str | None, src: str | None, start:
         entries = [(chosen, start_port, graph.zone(chosen[0], start_port) or start_port, how)]
     result = paths.trace(session, tid, dst, src, start, slack, wanted, graph=graph,
                          entries=entries)  # fmt: skip
+    # Ziel hinter VIP bzw. Load Balancer: Server und ihre EPG (0.117.0)
+    if (target := paths.target_of(graph, result)) is not None:
+        result["target"] = target
     if note:
         result["notes"].insert(0, note)
     if ends:

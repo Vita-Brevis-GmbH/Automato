@@ -223,3 +223,50 @@ def test_load_balancer_mit_allen_servern_des_pools(client):
         ("10.10.0.21", 8080, "disable"),
     ]
     assert all(m["pool"] == "pool-web" for m in lb["members"])
+
+
+def test_ziel_hinter_vip_und_load_balancer_ist_die_epg_der_server(client, session_factory):
+    """0.117.0 (Anwender: „wenn ich ein V-EXT_ auflöse, nimmt er als Ziel nicht die VMs hinter dem
+    Loadbalancer, sondern das Subnetz … Es sollte dann die EG wählen und diese darstellen“): Ziel
+    und Zielzone kommen von den Servern am Ende des Wegs, nicht von der VIP bzw. dem Netz des
+    Load Balancers; die Namenssuche nennt die Kette."""
+    from app.models import InvSubnet, SourceSystem
+
+    tid = _seed(client)
+    s = session_factory()
+    fw = s.query(SourceSystem).filter_by(tenant_id=tid, name="fw-r").one()
+    s.add(InvSubnet(tenant_id=tid, source_system_id=fw.id, prefix="10.10.0.0/24",
+                    context="epg", context_name="EG_web", aci_tenant="TE", ap="AP_shop",
+                    epg="EG_web"))  # fmt: skip
+    s.commit()
+    s.close()
+
+    def zone(name, net):
+        body = {"tenant_id": tid, "name": name, "selectors": [{"kind": "prefix", "value": net}]}
+        r = client.post("/zones", json=body, headers=OP)
+        assert r.status_code == 201, r.text
+
+    zone("Shop", "10.10.0.0/24")
+    zone("DMZ", "10.30.0.0/24")  # Netz der VIP des Load Balancers
+    # VIP des Load Balancers als Ziel (Treffer „V-EXT_shop → 10.30.0.50“)
+    params = {"tenant_id": tid, "src": "10.30.0.10", "dst": VIP, "service": "tcp/443"}
+    got = client.get("/routing/trace", params=params).json()
+    target = got["target"]
+    assert target["balancer"] == "vs-web" and target["ips"] == ["10.10.0.20", "10.10.0.21"]
+    assert target["epgs"] == [{"epg": "TE|AP_shop|EG_web", "servers": 2}]
+    assert [z["name"] for z in got["zones"]["dst"]] == ["Shop"]  # nicht DMZ
+    # von aussen über die VIP der FortiGate: dieselbe EPG, mit der VIP
+    params = {"tenant_id": tid, "src": "198.51.100.1", "dst": PUBLIC, "service": "tcp/443"}
+    target = client.get("/routing/trace", params=params).json()["target"]
+    assert target["vip"] == "V-EXT_shop" and target["balancer"] == "vs-web"
+    assert target["epgs"][0]["epg"] == "TE|AP_shop|EG_web"
+    # ohne VIP bzw. Load Balancer auf dem Weg: kein Ziel dahinter
+    params = {"tenant_id": tid, "src": "198.51.100.1", "dst": "10.10.0.20"}
+    assert "target" not in client.get("/routing/trace", params=params).json()
+
+    # Namenssuche: die VIP selbst (externe IP) mit der Kette dahinter
+    hits = client.get("/routing/resolve", params={"tenant_id": tid, "q": "V-EXT_shop"}).json()
+    vip = next(h for h in hits["hits"] if h["ip"] == PUBLIC)
+    assert vip["name"] == "V-EXT_shop"
+    assert vip["detail"].endswith(f"→ {VIP} · Load Balancer vs-web → EPG TE|AP_shop|EG_web "
+                                  "(2 Server)")  # fmt: skip

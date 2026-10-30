@@ -33,10 +33,12 @@ CUSTOMER_ROUTE_CAPABILITIES: dict[tuple[str, str], str] = {
     ("GET", "/findings"): READ,
     ("GET", "/findings/summary"): READ,
     ("PATCH", "/findings/{finding_id}"): TRIAGE,
+    ("POST", "/findings/triage"): TRIAGE,  # 0.117.0: mehrere auf einmal, jedes wie einzeln
     ("GET", "/nat"): READ,
     ("GET", "/nat/{nat_id}"): READ,
     ("GET", "/objects"): READ,
     ("GET", "/objects/{object_id}"): READ,
+    ("GET", "/objects/summary"): READ,  # 0.117.0: Übersicht, nur ihre Objekte
     ("GET", "/vms"): READ,
     ("GET", "/portgroups"): READ,
     ("GET", "/portgroups/{pg_id}"): READ,

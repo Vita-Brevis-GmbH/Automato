@@ -140,7 +140,16 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   Adresse); die Seite nennt ihre Grösse.
 
 **Dokumentation**
-- **Übersicht:** KPIs (Regeln, NAT/VIPs, offene Findings, Abdeckung gegen die SoT),
+- **Übersicht:** seit 0.117.0 aus **Bereichen**, die sich über **Ansicht anpassen** an- und
+  abwählen und verschieben lassen („Vorgabe“ stellt alles wieder her; die Auswahl merkt sich der
+  Browser): Betriebszustand, Kennzahlen, **Schnellansichten** (Ansichten mit fertigem Filter, z. B.
+  offene Findings, Regel nie auf dem Weg, Applikationen mit Abweichung, VIPs `V-EXT_`, Weg-Suche,
+  Routing-Verlauf), **offene Findings je Gruppe** und **Läufe der letzten 14 Tage** als Grafik,
+  letzte Läufe, Regeln je Zone, **Routing-Änderungen der letzten 7 Tage**, **Applikationen**,
+  **Regeln je Firewall und Aktion**, **Objekte nach Kategorie und Präfix der Namenskonvention**;
+  ein Klick auf einen Balken öffnet die Ansicht mit diesem Filter. Bereiche eines abgeschalteten
+  Moduls bzw. des Betriebs (für Kunden-Benutzer) fehlen.
+  KPIs (Regeln, NAT/VIPs, offene Findings, Abdeckung gegen die SoT),
   **Letzte Läufe** und **Jetzt einlesen** (Operator): Mandant + Quellsystem wählen,
   Ausführung *Extern (Agent)* oder *Zentral (Worker)*. **Alle einlesen** legt für jedes aktive
   Quellsystem des Mandanten einen Lauf an (IPAM-Quellen zuerst; läuft/wartet schon einer oder
@@ -241,6 +250,9 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   bei NAT: Attribute, Werte, Mitglieder, Befunde und die Firewall-Regeln, die es nutzen (auch
   über Gruppen), mit „In Regeln anzeigen“. „Objekt öffnen“ (z. B. aus NAT / VIPs) filtert
   seit 0.36.0 auch die Liste dahinter auf genau dieses Objekt („nur „…“ ✕“ hebt es auf).
+  **Präfix der Namenskonvention** (0.117.0): Filter nach dem Präfix des Namens aus dem
+  Namensprofil des Mandanten (`V-EXT_`, `H_`, `N_` … und eigene wie `CVS_`), mit Anzahl je
+  Präfix und „ohne Präfix“ – zusätzlich zum Typ wie auf dem Gerät (IP, FQDN, Geo …).
   Dazu das Netzinventar aus FortiGate/APIC:
   **Subnetze** (mit Abgleich gegen führendes IPAM und Anreicherung, VLAN-Abweichung
   markiert), **VLANs** (inkl. EPGs), **Ports** (Modus, untagged/tagged VLANs, LAG/Parent,
@@ -373,6 +385,11 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     VDOM, ACI-VRF), dazu das **Ziel** – für Fehlersuche und die Kontrolle von Arbeiten.
     - **⇄ Richtung tauschen** (0.65.1): Quelle und Ziel tauschen (der Start ergibt sich wieder aus
       der neuen Quelle); war schon gesucht, zeigt die Weg-Suche gleich den Rückweg.
+    - **Ziel hinter VIP bzw. Load Balancer** (0.117.0): führt der Weg über eine VIP der Firewall
+      bzw. einen Virtual Service des NSX ALB, zeigt die Karte „Ziel“ die **EPG der Server**
+      dahinter (mit Anzahl und den Servern); Zielzone und Absicht gelten für diese Server, nicht
+      für das Netz der VIP. Die Namenssuche findet auch die VIP selbst (`V-EXT_…`, externe IP) und
+      nennt die Kette („→ 10.30.0.50 · Load Balancer vs-shop → EPG T|AP|web (3 Server)“).
     - **Details am Weg (0.98.0):** ein Klick auf Policy, Contract, Route, Knoten, Interface, VIP
       bzw. Virtual Service oder Objekt am Weg öffnet das Detail rechts im Seitenpanel, die
       Weg-Suche bleibt stehen; „↗“ bzw. Ctrl-/Mittelklick öffnet die Ansicht in einem neuen Tab.
@@ -1312,7 +1329,9 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   IPAM unter 10.30.0.9. Firewall-Objekt H_db01 …, verwendet in 1 Regel“. Aufklappen zeigt alle
   Angaben und Links auf die betroffenen Regeln. Filter Status/Typ, Suche; Status setzen
   (Triage) als Operator – bleibt über spätere Läufe erhalten (Findings werden nach jedem Lauf
-  neu berechnet). Der Abgleich berücksichtigt, dass das IPAM den Server **ohne Präfix**
+  neu berechnet). **Mehrere auf einmal** (0.117.0): Kästchen je Befund bzw. „alle auf der
+  Seite“, dann in der Leiste Status (Vorgabe „ignoriert“) und optional eine Notiz für alle →
+  „Übernehmen“ – ganz oder gar nicht, je Befund ein Audit-Eintrag. Der Abgleich berücksichtigt, dass das IPAM den Server **ohne Präfix**
   führt: `H_web01` passt zu `web01` bzw. `web01.example.ch` (Kurzname nur, wenn eindeutig).
   **Externe Adressen** (seit 0.76.1): öffentliche Hosts und Netze, die in keinem Netz der
   gelesenen Geräte liegen (Interface-Netze der Firewalls inkl. WAN, ACI-BD/-EPG-Subnetze),

@@ -35,7 +35,8 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     ),
     "dictionary_entry.upserted": frozenset({"profile_id", "kind", "key"}),
     "dictionary_entry.deleted": frozenset({"entry_id"}),
-    "finding.triaged": frozenset({"finding_id", "status", "customer_roles"}),
+    # bulk (0.117.0): Teil einer Mehrfach-Triage
+    "finding.triaged": frozenset({"finding_id", "status", "customer_roles", "bulk"}),
     # von Hand erfasst (0.109.0): ohne Titel und Text (frei eingegeben)
     "finding.created": frozenset(
         {"finding_id", "tenant_id", "type", "severity", "source_system_id"}
