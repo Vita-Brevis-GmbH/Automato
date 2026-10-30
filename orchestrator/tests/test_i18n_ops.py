@@ -219,7 +219,12 @@ def test_netbox_sync_plan_deutsch_gespeichert_anzeige_englisch(
     assert r.status_code == 202, r.text
     done = client.get(f"/netbox-sync/plans/{plan['id']}", headers=ADMIN_EN).json()
     assert done["status"] == "applied", done
-    assert done["message"] == "Applied – NetBox is being collected again."
+    # 0.115.0: mit Nachkontrolle (ADR 0042) - gespeichert deutsch, angezeigt englisch
+    assert done["message"].startswith("Applied and verified: written = read (")
+    assert done["message"].endswith(" objects) – NetBox is being collected again.")
+    s = session_factory()
+    assert s.get(SyncPlan, plan["id"]).message.startswith("Übernommen und nachkontrolliert")
+    s.close()
     tag = nb.find("extras/tags", slug="automato")
     assert tag["description"] == "Von Automato verwaltet (ADR 0010) - nicht von Hand ändern"
 
