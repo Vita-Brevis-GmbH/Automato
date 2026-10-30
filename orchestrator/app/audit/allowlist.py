@@ -26,6 +26,9 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "zone_schema.saved": frozenset({"profile_id", "zones", "links"}),
     "appdoc_catalog.saved": frozenset({"profile_id", "categories", "stored"}),
     "appdoc_catalog.reset": frozenset({"profile_id"}),
+    "appdoc_ruleset.activated": frozenset({"profile_id", "key"}),
+    "appdoc_ruleset.saved": frozenset({"profile_id", "key"}),
+    "appdoc_ruleset.deleted": frozenset({"profile_id", "key"}),
     "zone_schema.deleted": frozenset({"profile_id"}),
     "zone_schema.edited": frozenset(
         {"profile_id", "zones", "links", "added", "removed", "changed", "links_changed"}

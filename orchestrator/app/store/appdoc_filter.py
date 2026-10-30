@@ -1,43 +1,64 @@
-"""Wohin eine Zeile der Applikations-Doku gehoert - an einer Stelle (0.104.0, Modularisierung).
+"""Wohin eine Zeile der Applikations-Doku gehoert - an einer Stelle (0.104.0, Modularisierung),
+seit 0.118.0 nach dem **Regelwerk** des Mandanten (`appdoc_ruleset`, ADR 0043).
 
-Bisher entschieden `appdoc._envelope` (Doku je System), `applications.build_doc` und
-`applications._hits_and_tables` (Applikations-Doku) je fuer sich, welche Zeilen in den
-Kategorien stehen, welche nur Treffer sind und welche ganz wegfallen - jede neue Regel der
-Anwender („nur Zugriffe auf die Applikation“, „breite Quelle ausgehend nicht“) musste an allen
-drei Stellen nachgezogen werden. Die Merkmale setzt weiter `appdoc.mark_categories`; hier steht
-nur, was sie bedeuten:
-
-- `DROPPED`: ausgehende Firewall-Regel mit breiter Quelle (`OUT_BROAD`, 0.103.0) bzw. Freigabe
-  ins Internet, die das System nur ueber „all“ erfasst (`TO_INTERNET`, 0.114.1) - kein Zugriff
-  der Applikation, nirgends in der Doku, nur gezaehlt; direkt zugeordnete Regeln bleiben.
-- `IMPOSSIBLE`: routingtechnisch nicht moeglich (ADR 0019) - nicht in den Kategorien, nur
-  gezaehlt (Applikation) bzw. mit Begruendung gelistet (Doku je System).
-- `HIT`: nicht in den Kategorien (`CAT_HIDDEN`: Hilfs-Contract ueber einen L3Out mit Firewall,
-  Contract nicht enger als die Firewall, unspezifisch ausgehend) - als Treffer in „Regeln &
-  Contracts“ und den Verbindungen bleibt er.
-- `TABLE`: in der Kategorie.
+Die Merkmale setzen `appdoc.mark_categories` und `appdoc._covered_rows` (Relevanz mit Ursache,
+`OUT_BROAD`, `TO_INTERNET`, `HELPER`, `L3OUT_COVERED`, `CAT10_OUT`, `DISABLED`); hier steht,
+welche Bedingung des Regelwerks eine Zeile trifft (`matches`), und `decide` liest das Regelwerk
+von oben nach unten: die erste eingeschaltete Regel, die trifft, entscheidet die Wirkung
+(`appdoc_ruleset.EFFECTS`); eine Ausnahme (direkt zugeordnet) hebt die genannten Regeln darunter
+auf; trifft keine, steht die Zeile in ihrer Kategorie (`TABLE`).
 """
 
 from collections.abc import Collection
 
-from app.store import appdoc, relevance
+from app.i18n import L
+from app.store import appdoc, appdoc_path, appdoc_ruleset, relevance
+from app.store.appdoc_ruleset import EXCEPT, MARK, TABLE
 
-TABLE, HIT, IMPOSSIBLE, DROPPED = "table", "hit", "impossible", "dropped"
-
-
-def place(row: dict, assigned: Collection[int] = ()) -> str:
-    """Ort einer Zeile (`TABLE`, `HIT`, `IMPOSSIBLE`, `DROPPED`); `assigned` = Regeln, die der
-    Applikation direkt zugeordnet sind (0.60.0)."""
-    if (row.get(appdoc.OUT_BROAD) or row.get(appdoc.TO_INTERNET)) and row.get(
-        appdoc.RULE
-    ) not in assigned:
-        return DROPPED
-    if row.get(appdoc.REL) == relevance.IMPOSSIBLE:
-        return IMPOSSIBLE
-    if row.get(appdoc.CAT_HIDDEN):
-        return HIT
-    return TABLE
+# Kurztext an der Zeile bei der Wirkung `mark` (Spalte Aktion)
+_MARKS = {"disabled": ("deaktiviert", "disabled")}
 
 
-def in_categories(row: dict, assigned: Collection[int] = ()) -> bool:
-    return place(row, assigned) == TABLE
+def matches(key: str, row: dict, assigned: Collection[int] = (),
+            excluded: Collection[int] = ()) -> bool:  # fmt: skip
+    """Trifft die Bedingung `key` die Zeile? `assigned`/`excluded` = Regeln, die der
+    Applikation direkt zugeordnet bzw. ausgeschlossen sind (0.60.0)."""
+    rid = row.get(appdoc.RULE)
+    impossible = row.get(appdoc.REL) == relevance.IMPOSSIBLE
+    off = impossible and row.get(appdoc.REL_CAUSE) == appdoc_path.OFF_PATH
+    broad = row.get(appdoc.SCOPE) in appdoc.BROAD
+    found = {
+        "excluded": lambda: rid in excluded,
+        "assigned": lambda: rid in assigned,
+        "impossible": lambda: impossible and not off,
+        "off_path": lambda: off and broad,
+        "off_path_specific": lambda: off and not broad,
+        "to_internet": lambda: bool(row.get(appdoc.TO_INTERNET)),
+        "out_broad": lambda: bool(row.get(appdoc.OUT_BROAD)),
+        "disabled": lambda: bool(row.get(appdoc.DISABLED)),
+        "l3out_helper": lambda: bool(row.get(appdoc.HELPER)),
+        "l3out_covered": lambda: bool(row.get(appdoc.L3OUT_COVERED)),
+        "cat10_out": lambda: bool(row.get(appdoc.CAT10_OUT)),
+    }.get(key)
+    return bool(found and found())
+
+
+def decide(row: dict, profile: appdoc_ruleset.Profile, assigned: Collection[int] = (),
+           excluded: Collection[int] = ()) -> tuple[str, str | None]:  # fmt: skip
+    """Wirkung und entscheidende Bedingung einer Zeile nach dem Regelwerk `profile`."""
+    lifted: set[str] = set()
+    for rule in profile.active():
+        if rule.key in lifted or not matches(rule.key, row, assigned, excluded):
+            continue
+        if rule.effect == EXCEPT:
+            lifted |= set(rule.lifts)
+            continue
+        return rule.effect, rule.key
+    return TABLE, None
+
+
+def mark(row: dict) -> None:
+    """Zeile mit der Wirkung `mark`: Kurztext der Bedingung an der Aktion („deaktiviert“)."""
+    text = _MARKS.get(row.get(appdoc.DECIDED_BY) or "")
+    if row.get(appdoc.DECIDED) == MARK and text:
+        row[appdoc.ACTION] = f"{row.get(appdoc.ACTION) or ''} ({L(*text)})".strip()

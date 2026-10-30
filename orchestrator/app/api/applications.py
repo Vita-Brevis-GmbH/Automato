@@ -234,6 +234,12 @@ class DocHitOut(BaseModel):
     l3out_note: str = ""
 
 
+class DocFilteredOut(BaseModel):
+    key: str  # Bedingung des Regelwerks
+    title: str
+    count: int = 0
+
+
 class DocSummaryOut(BaseModel):
     vms: int = 0
     servers: int = 0  # Server ohne VM
@@ -252,6 +258,9 @@ class DocSummaryOut(BaseModel):
     excluded: int = 0  # ausgeschlossene Regeln (0.60.0)
     hidden: int = 0  # in den Kategorien ausgeblendete Zeilen (0.69.0)
     helpers: int = 0  # Hilfs-Contracts ueber L3Outs, an den Firewall-Regeln (ADR 0034)
+    # Regelwerk (0.118.0, ADR 0043): aktives Profil und je Bedingung die gezaehlten Regeln
+    ruleset: dict[str, str] | None = None
+    filtered: list[DocFilteredOut] = []
 
 
 class DocFindingOut(BaseModel):

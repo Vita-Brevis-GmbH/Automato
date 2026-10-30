@@ -1270,6 +1270,24 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
          Zone);
        - dann die genaueste Richtung: beide genannt vor „*“, bei Gleichstand die kleinere Nummer;
        - sonst unspezifisch.
+    4. **Namensprofile → Regelwerk der Applikations-Doku** (Admin, seit 0.118.0, ADR 0043):
+       welche Firewall-Regeln und Contracts die Doku zeigt.
+       - Das Regelwerk wird **von oben nach unten** gelesen: die erste eingeschaltete Regel, die
+         eine Zeile trifft, entscheidet die **Wirkung** (in der Kategorie markiert, nur als
+         Treffer unter „Regeln & Contracts“, nur als Vermerk in der Spalte L3Out, nicht gezeigt
+         und nur gezählt, nicht gezeigt und nicht gezählt). Trifft keine, steht die Zeile in
+         ihrer Kategorie. „Direkt zugeordnete Regeln“ ist eine Ausnahme: sie hebt die gewählten
+         Regeln darunter auf.
+       - **Profil** wählen und „Aktivieren“: **Regelwerk 1** = Stand bis 0.117.0 (Vorgabe),
+         **Regelwerk 2** = Rückmeldung 2026-10-30 (nicht im Pfad und über das Internet-Gateway
+         hinaus weder gezeigt noch gezählt; ausgehend mit breiter Quelle und deaktivierte Regeln
+         als Vorschlag ausgeschaltet).
+       - Ändern: Schalter „Ein“, Wirkung, Pfeile für die Reihenfolge. Eingebaute Profile bleiben
+         unverändert – „Als neues Profil speichern“. Eigene Profile lassen sich speichern
+         (gleiche Reihenfolge) und löschen; **eine neue Reihenfolge nur als neues Profil**. Ein
+         neues Profil gilt erst nach „Aktivieren“.
+       - Die Doku zeigt im Kopf von „Regeln & Contracts“ die gezählten Regeln je Bedingung und
+         das aktive Regelwerk (Link hierher). Umschalten rechnet den Stand der Doku neu.
 
     **Ohne Netz einer Zone** (any, grosse Bereiche) zählt, was hinter dem Interface der Regel
     liegt: die Anbindung, die Netze, die die Firewall dort routet, bzw. die Default-Route (Zonen

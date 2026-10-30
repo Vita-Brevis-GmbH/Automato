@@ -16,6 +16,10 @@ und wird erweitert. Details: `README.md`, `ARCHITECTURE.md`, `docs/adr/`.
 - **Konfiguration statt Code** für kundenabhängige Fachentscheide (seit 0.104.0): z. B. die
   Kategorien der Applikations-Doku im Namenskonzept (`store/appdoc_catalog.py`); Vorgaben im
   Code, die Plattform läuft ohne Konfiguration.
+- **Regelwerk der Applikations-Doku** (seit 0.118.0, `store/appdoc_ruleset.py`, ADR 0043):
+  welche Regeln die Doku zeigt, entscheidet ein Profil im Namensprofil. Eingebaute Profile nie
+  ändern – eine neue Regel bzw. eine neue Reihenfolge = **neues Profil** (Anwender 2026-10-30);
+  neue Bedingungen kommen in bestehenden Profilen ausgeschaltet dazu.
 
 ## Verbindliche Vorgaben (immer beachten)
 
@@ -41,7 +45,7 @@ und wird erweitert. Details: `README.md`, `ARCHITECTURE.md`, `docs/adr/`.
 
 - **Abnahme:** Der Anwender testet jede freigegebene Version sofort. Eine Version gilt als
   abgenommen, sobald seine nächste Rückmeldung keinen Einwand dazu enthält – in `ROADMAP.md`
-  („Abgenommen“) nachführen. Abgenommen bis **0.116.0** (2026-10-30).
+  („Abgenommen“) nachführen. Abgenommen bis **0.117.0** (2026-10-30).
 - **Klärung vor dem Bauen:** ändert sich Bedienung oder Bedeutung und ist der Wunsch mehrdeutig,
   zuerst 3–5 Zeilen Vorschlag mit einer Rückfrage, dann bauen.
 - **Sammeln:** Anpassungen einer Rückmeldungsrunde in **einer** Version (Patch = Korrektur,
@@ -82,7 +86,7 @@ und wird erweitert. Details: `README.md`, `ARCHITECTURE.md`, `docs/adr/`.
 
 ## Aktueller Stand
 
-0.117.0 – Einzelheiten je Bereich in `docs/STAND.md`, Produktiv-Installation in
+0.118.0 – Einzelheiten je Bereich in `docs/STAND.md`, Produktiv-Installation in
 `docs/INSTALLATION-PROD.md`. Offene Punkte und nächste Arbeiten in `ROADMAP.md` („Roadmap nach
 Versionen“): Version 1 bis zur Produktivschaltung DC = **1.0.0** (R14), Version 2 = neuer Name und
 Cockpit (eigenes Projekt), Version 3 = Automatisierung.

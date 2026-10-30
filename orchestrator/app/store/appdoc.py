@@ -43,6 +43,7 @@ from app.store import (
     appdoc_catalog,
     appdoc_filter,
     appdoc_path,
+    appdoc_ruleset,
     references,
     rule_index,
     rule_view,
@@ -100,6 +101,12 @@ REVERSE = "_reverse"
 # Verbindungen behalten ihn). `CAT_HIDDEN` auch fuer Zugriffe der Applikation auf andere Systeme
 # in Kategorie 10 („Unspezifische Zugriffe auf die Applikation“: nur eingehend)
 L3OUT, NARROW, FW_RULES, CAT_HIDDEN = "_l3out", "_narrow", "_fw_rules", "_cat_hidden"
+# Regelwerk (0.118.0, `appdoc_ruleset`): warum `CAT_HIDDEN` - Contract nicht enger als die
+# Firewall (`L3OUT_COVERED`) bzw. ausgehend in der unspezifischen Kategorie (`CAT10_OUT`); Ursache
+# der Relevanz (`REL_CAUSE`, z. B. `appdoc_path.OFF_PATH`), deaktivierte Policy (`DISABLED`) und
+# was das Regelwerk entschied (`DECIDED` = Wirkung, `DECIDED_BY` = Bedingung)
+L3OUT_COVERED, CAT10_OUT, REL_CAUSE = "_l3out_covered", "_cat10_out", "_rel_cause"
+DISABLED, DECIDED, DECIDED_BY = "_disabled", "_decided", "_decided_by"
 UNSPECIFIC = ("subnet", "any", "vzany", "pref_group")
 # Ausgehende Firewall-Regeln mit breiter Quelle (0.103.0, Anwender: „Firewall-Regeln, welche die
 # Source offen ist (z. B. 10.0.0.0/8), damit der Server irgendwo zugreifen kann, sollen bei dem
@@ -128,7 +135,8 @@ L3OUT_NOTE, L3OUT_ALONE = "_l3out_note", "_l3out_alone"
 # Gegenstellen einer Zeile (0.105.0): Adressen bzw. DNs der EPGs - „innerhalb der Applikation“,
 # wenn alle zur Applikation gehoeren (`applications.build_doc`)
 CP_REFS = "_cp_refs"
-INTERNAL = (PARTIES, HELPER, HELPERS, L3OUT_ALONE, CP_REFS)  # nur intern bzw. fuer die Treffer
+INTERNAL = (PARTIES, HELPER, HELPERS, L3OUT_ALONE, CP_REFS, DECIDED,
+            DECIDED_BY)  # nur intern bzw. fuer die Treffer  # fmt: skip
 
 # Spalten seit 0.84.0 (Anwender: „heute steht alles in Server Name“): Quelle und Ziel in
 # Verkehrsrichtung, je mit Name und IP; die Seite der Applikation (`APP`) bzw. die Gegenstelle
@@ -321,19 +329,21 @@ def _envelope(
     catalog = catalog or appdoc_catalog.for_tenant(session, tenant_id)
     impossible: list[dict] = []
     if not full:
-        for rows in rows_by_table.values():
-            for row in rows:
-                for key in INTERNAL:  # nur fuer die Treffer der Applikations-Doku
-                    row.pop(key, None)
+        ruleset = appdoc_ruleset.for_tenant(session, tenant_id)
         for i in rows_by_table:
             keep = []
             for row in rows_by_table[i]:
-                where = appdoc_filter.place(row)  # 0.104.0: Bedeutung der Merkmale an einer Stelle
-                if where == appdoc_filter.TABLE:
+                # 0.104.0: Bedeutung der Merkmale an einer Stelle, seit 0.118.0 das Regelwerk
+                row[DECIDED], row[DECIDED_BY] = appdoc_filter.decide(row, ruleset)
+                appdoc_filter.mark(row)
+                effect, by = row[DECIDED], row[DECIDED_BY]
+                for key in INTERNAL:  # nur fuer die Treffer der Applikations-Doku
+                    row.pop(key, None)
+                if effect in appdoc_ruleset.SHOWN:
                     keep.append(row)
-                elif where == appdoc_filter.IMPOSSIBLE and not any(
-                    (x["rule_id"], x["side"]) == (row.get(RULE), row.get(SIDE)) for x in impossible
-                ):
+                elif (by in appdoc_ruleset.PATH and effect != appdoc_ruleset.DROP
+                      and not any((x["rule_id"], x["side"]) == (row.get(RULE), row.get(SIDE))
+                                  for x in impossible)):  # fmt: skip
                     impossible.append(
                         {
                             "rule_id": row.get(RULE),
@@ -582,6 +592,11 @@ class TenantData:
     def catalog(self) -> appdoc_catalog.Catalog:
         """Kategorien des Mandanten (0.104.0): Vorgaben, angepasst im Namensprofil."""
         return appdoc_catalog.for_tenant(self.session, self.tenant_id)
+
+    @cached_property
+    def ruleset(self) -> appdoc_ruleset.Profile:
+        """Regelwerk des Mandanten (0.118.0): aktives Profil seines Namensprofils."""
+        return appdoc_ruleset.for_tenant(self.session, self.tenant_id)
 
     @cached_property
     def zone_map(self):
@@ -862,7 +877,7 @@ def mark_categories(data: TenantData, items: list[tuple[int, dict]],
     fallback = data.catalog.fallback
     for idx, row in items:
         if idx == fallback and row.get(DIRECTION) == "out":
-            row[CAT_HIDDEN] = True
+            row[CAT_HIDDEN] = row[CAT10_OUT] = True
         if outbound_broad(data, row):
             row[OUT_BROAD] = True
         if to_internet(data, row):
@@ -898,7 +913,7 @@ def mark_categories(data: TenantData, items: list[tuple[int, dict]],
         missing = list(dict.fromkeys(missing))
         for r in allow:
             if not missing:
-                r[CAT_HIDDEN] = True
+                r[CAT_HIDDEN] = r[L3OUT_COVERED] = True
                 continue
             r[NARROW], r[FW_RULES] = missing, fw_ids
             shown = _missing_text(missing)
@@ -1242,7 +1257,9 @@ def _fw_rows(
         meta = {RULE: rule.id, DIRECTION: direction, SCOPE: scope, SIDE: side}
         rel = (rels or {}).get(side)
         if rel is not None:
-            meta |= {REL: rel["state"], REL_TEXT: rel["text"]}
+            meta |= {REL: rel["state"], REL_TEXT: rel["text"], REL_CAUSE: rel.get("cause")}
+        if str((rule.raw or {}).get("status") or "") == "disable":
+            meta[DISABLED] = True  # FortiGate-Policy deaktiviert (0.118.0, Regelwerk)
         out.append((idx, {**row, VIA: via, **meta, OBJECT: obj, OBJECT_VALUE: value}))
     return out
 
@@ -1398,8 +1415,10 @@ def _covered_rows(
         zones = {"src": data.zones.get(r.src_zone_id), "dst": data.zones.get(r.dst_zone_id)}
         rels = {s: data.relevance.check(r, s, values, zones[s]) for s in sides}
         for s, side in sides.items():
-            # unspezifisch (0.113.2): nur, wenn der Weg zur Gegenstelle ueber diese Firewall geht
-            if side[1] in BROAD and rels[s]["state"] != relevance_store.IMPOSSIBLE:
+            # unspezifisch (0.113.2): nur, wenn der Weg zur Gegenstelle ueber diese Firewall geht;
+            # konkrete Regeln nur, wenn das Regelwerk danach fragt (0.118.0)
+            path = side[1] in BROAD or data.ruleset.uses("off_path_specific")
+            if path and rels[s]["state"] != relevance_store.IMPOSSIBLE:
                 off = data.on_path.check(r, s, values, data.device(r))
                 rels[s] = off or rels[s]
         out += _fw_rows(data, r, sides, system_name, dnat, rels, shown, own)

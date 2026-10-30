@@ -870,6 +870,8 @@ export interface ApplicationDoc {
     helpers?: number; // Hilfs-Contracts über L3Outs, an den Firewall-Regeln (ADR 0034)
     outbound_broad?: number; // 0.103.0: ausgehende Firewall-Regeln mit breiter Quelle, nicht in der Doku
     to_internet?: number; // 0.114.1: Freigaben ins Internet, die das System nur über „all“ erfassen
+    ruleset?: { key: string; title: string } | null; // 0.118.0: aktives Regelwerk
+    filtered?: { key: string; title: string; count: number }[]; // 0.118.0: je Bedingung gezählt
   };
   systems: AppDocSystem2[];
   epgs: AppDocEpg[];
@@ -3471,6 +3473,53 @@ export const saveProfileAppdocCatalog = (profileId: number, body: AppdocCatalogI
   sendJSON<AppdocCatalog>(`/api/naming-profiles/${profileId}/appdoc-catalog`, "PUT", body);
 export const resetProfileAppdocCatalog = (profileId: number) =>
   sendJSON<AppdocCatalog>(`/api/naming-profiles/${profileId}/appdoc-catalog`, "DELETE");
+// Regelwerk der Applikations-Doku (0.118.0, ADR 0043): Bedingungen mit Schalter und Wirkung, von oben nach unten
+export interface RulesetEffect {
+  key: string; // mark | hit | note | counted | drop | except
+  label: string;
+}
+export interface RulesetCondition {
+  key: string;
+  title: string;
+  text: string;
+  since: string;
+  effects: RulesetEffect[];
+}
+export interface RulesetRule extends RulesetCondition {
+  on: boolean;
+  effect: string;
+  effect_label: string;
+  lifts: string[]; // Ausnahme: aufgehobene Regeln darunter
+}
+export interface RulesetProfile {
+  key: string;
+  title: string;
+  title_de: string;
+  title_en: string;
+  builtin: boolean;
+  based_on: string;
+  rules: RulesetRule[];
+}
+export interface AppdocRuleset {
+  profile_id: number | null;
+  active: string;
+  default: string;
+  conditions: RulesetCondition[];
+  profiles: RulesetProfile[];
+  saved?: string; // nach dem Speichern: Schlüssel des Profils
+}
+export interface RulesetIn {
+  title: string;
+  title_en?: string;
+  based_on?: string;
+  rules: Pick<RulesetRule, "key" | "on" | "effect" | "lifts">[];
+}
+const rulesetUrl = (profileId: number, key = "") => `/api/naming-profiles/${profileId}/appdoc-ruleset${key ? `/${encodeURIComponent(key)}` : ""}`;
+export const fetchAppdocRuleset = (profileId: number) => getJSON<AppdocRuleset>(rulesetUrl(profileId));
+export const activateAppdocRuleset = (profileId: number, key: string) => sendJSON<AppdocRuleset>(rulesetUrl(profileId, "active"), "PUT", { key });
+export const createAppdocRuleset = (profileId: number, body: RulesetIn) => sendJSON<AppdocRuleset>(rulesetUrl(profileId), "POST", body);
+export const updateAppdocRuleset = (profileId: number, key: string, body: RulesetIn) => sendJSON<AppdocRuleset>(rulesetUrl(profileId, key), "PUT", body);
+export const deleteAppdocRuleset = (profileId: number, key: string) => sendJSON<AppdocRuleset>(rulesetUrl(profileId, key), "DELETE");
 export interface ZoneIn {
   tenant_id: number;
   name: string;

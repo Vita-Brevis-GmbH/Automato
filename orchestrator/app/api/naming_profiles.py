@@ -10,6 +10,9 @@ Vorlage herunterladen = `viewer`.
 Seit 0.104.0 die **Kategorien der Applikations-Doku** je Profil (`store/appdoc_catalog.py`,
 Konfiguration statt Code; seit 0.106.0 Titel und Richtung Zonentyp → Zonentyp): lesen =
 `viewer`, speichern bzw. auf die Vorgaben zuruecksetzen = `admin`.
+
+Seit 0.118.0 das **Regelwerk der Applikations-Doku** je Profil (`store/appdoc_ruleset.py`,
+ADR 0043): eingebaute und eigene Profile, umschalten, eigene anlegen/aendern/loeschen = `admin`.
 """
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response
@@ -31,7 +34,7 @@ from app.schemas.naming_profile import (
     NamingProfileIn,
     NamingProfileOut,
 )
-from app.store import app_refresh, appdoc_catalog, zone_schema
+from app.store import app_refresh, appdoc_catalog, appdoc_ruleset, zone_schema
 from app.store import naming_profiles as store
 
 router = APIRouter(prefix="/naming-profiles", tags=["naming-profiles"])
@@ -512,3 +515,120 @@ def reset_appdoc_catalog(
                  subject=str(profile_id), detail={"profile_id": profile_id})  # fmt: skip
     _refresh_catalog_tenants(session, background, factory, profile_id)
     return _catalog_out(session, profile_id)
+
+
+# -- Regelwerk der Applikations-Doku (0.118.0, ADR 0043) -------------------------------------
+
+
+class RulesetRuleIn(BaseModel):
+    key: str = Field(min_length=1, max_length=40)
+    on: bool = True
+    effect: str = Field(default="", max_length=20)
+    lifts: list[str] = Field(default_factory=list, max_length=20)
+
+
+class RulesetIn(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    title_en: str = Field(default="", max_length=200)
+    based_on: str = Field(default="", max_length=40)
+    rules: list[RulesetRuleIn] = Field(default_factory=list, max_length=40)
+
+
+class RulesetActiveIn(BaseModel):
+    key: str = Field(min_length=1, max_length=60)
+
+
+def _ruleset_changed(session: Session, background: BackgroundTasks, factory: sessionmaker,
+                     principal: Principal, profile_id: int, action: str,
+                     key: str) -> dict:  # fmt: skip
+    """Audit (aendert den Stand der Doku, ADR 0037) und Befunde der Applikationen nachziehen."""
+    detail = {"profile_id": profile_id, "key": key}
+    audit.record(session, actor=f"user:{principal.subject}", action=action,
+                 subject=str(profile_id), detail=detail)  # fmt: skip
+    _refresh_catalog_tenants(session, background, factory, profile_id)
+    return appdoc_ruleset.out(session, profile_id)
+
+
+def _ruleset_call(fn):
+    try:
+        return fn()
+    except appdoc_ruleset.Invalid as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/{profile_id}/appdoc-ruleset")
+def get_appdoc_ruleset(
+    profile_id: int,
+    _: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Regelwerk der Applikations-Doku: Bedingungen, eingebaute und eigene Profile, das aktive."""
+    _profile(session, profile_id)
+    return appdoc_ruleset.out(session, profile_id)
+
+
+@router.put("/{profile_id}/appdoc-ruleset/active")
+def activate_appdoc_ruleset(
+    profile_id: int,
+    body: RulesetActiveIn,
+    background: BackgroundTasks,
+    principal: Principal = Depends(require_admin),
+    session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
+) -> dict:
+    """Profil des Regelwerks umschalten (Admin)."""
+    _profile(session, profile_id)
+    _ruleset_call(lambda: appdoc_ruleset.set_active(session, profile_id, body.key))
+    return _ruleset_changed(session, background, factory, principal, profile_id,
+                            "appdoc_ruleset.activated", body.key)  # fmt: skip
+
+
+@router.post("/{profile_id}/appdoc-ruleset", status_code=201)
+def create_appdoc_ruleset(
+    profile_id: int,
+    body: RulesetIn,
+    background: BackgroundTasks,
+    principal: Principal = Depends(require_admin),
+    session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
+) -> dict:
+    """Neues eigenes Profil (Admin) - eine neue Reihenfolge immer als neues Profil."""
+    _profile(session, profile_id)
+    saved = _ruleset_call(lambda: appdoc_ruleset.save(session, profile_id, body.model_dump()))
+    out = _ruleset_changed(session, background, factory, principal, profile_id,
+                           "appdoc_ruleset.saved", saved.key)  # fmt: skip
+    return {**out, "saved": saved.key}
+
+
+@router.put("/{profile_id}/appdoc-ruleset/{key}")
+def update_appdoc_ruleset(
+    profile_id: int,
+    key: str,
+    body: RulesetIn,
+    background: BackgroundTasks,
+    principal: Principal = Depends(require_admin),
+    session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
+) -> dict:
+    """Eigenes Profil aendern (Admin): Schalter, Wirkung, Titel - gleiche Reihenfolge."""
+    _profile(session, profile_id)
+    saved = _ruleset_call(lambda: appdoc_ruleset.save(session, profile_id, body.model_dump(), key))
+    out = _ruleset_changed(session, background, factory, principal, profile_id,
+                           "appdoc_ruleset.saved", saved.key)  # fmt: skip
+    return {**out, "saved": saved.key}
+
+
+@router.delete("/{profile_id}/appdoc-ruleset/{key}")
+def delete_appdoc_ruleset(
+    profile_id: int,
+    key: str,
+    background: BackgroundTasks,
+    principal: Principal = Depends(require_admin),
+    session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
+) -> dict:
+    """Eigenes Profil loeschen (Admin); war es aktiv, gilt wieder die Vorgabe."""
+    _profile(session, profile_id)
+    _ruleset_call(lambda: appdoc_ruleset.delete(session, profile_id, key))
+    return _ruleset_changed(session, background, factory, principal, profile_id,
+                            "appdoc_ruleset.deleted", key)  # fmt: skip

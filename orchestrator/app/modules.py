@@ -136,7 +136,7 @@ MODULES: tuple[Module, ...] = (
         ),
         role=BASIS,
         api=("naming_profiles", "modules"),
-        store=("naming_profiles", "appdoc_catalog", "zone_schema"),
+        store=("naming_profiles", "appdoc_catalog", "appdoc_ruleset", "zone_schema"),
         views=("dict",),
     ),  # fmt: skip
     Module(

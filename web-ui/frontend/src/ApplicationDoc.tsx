@@ -187,6 +187,37 @@ const DOC_SECTIONS: [string, string, string][] = [
   ["categories", L("Doku nach Kategorien", "Documentation by category"), L("die 10 Kategorien nach UC1", "the 10 categories according to UC1")],
   ["hidden", L("Ausgeblendete Regeln", "Hidden rules"), L("mit Begründung", "with reason")],
 ];
+// Regelwerk (0.118.0): je Bedingung die gezählten, nicht gezeigten Regeln; ältere Stände nur mit den drei Zahlen
+type Omitted = { key: string; title: string; count: number };
+function omitted(s: ApplicationDoc["summary"]): Omitted[] {
+  if (s.filtered) return s.filtered;
+  const legacy: Omitted[] = [
+    { key: "impossible", title: L("routingtechnisch unmöglich", "impossible by routing"), count: s.impossible ?? 0 },
+    { key: "out_broad", title: L("ausgehend mit breiter Quelle", "outbound with a broad source"), count: s.outbound_broad ?? 0 },
+    { key: "to_internet", title: L("Freigaben ins Internet", "internet access rules"), count: s.to_internet ?? 0 },
+  ];
+  return legacy.filter((x) => x.count > 0);
+}
+const OMIT_ID: Record<string, string> = { out_broad: "app-outbound-broad", to_internet: "app-to-internet" };
+const OMIT_TIP: Record<string, string> = {
+  impossible: L(
+    "Regeln, die die Systeme nach dem Routing ihrer Firewall nicht sehen können (Ein-/Ausgang passt nicht) – sie gehören nicht zur Applikation",
+    "Rules the systems cannot see according to the routing of their firewall (incoming/outgoing interface does not match) – they do not belong to the application",
+  ),
+  off_path: L(
+    "Unspezifische Regeln einer Firewall, über die der Weg zur Gegenstelle nicht führt (0.113.2)",
+    "Unspecific rules of a firewall the path to the counterpart does not pass (0.113.2)",
+  ),
+  out_broad: L(
+    "Ausgehende Firewall-Regeln, die die Systeme nur über eine breite Quelle erfassen (z. B. 10.0.0.0/8 bzw. any) – kein Zugriff dieser Applikation. Direkt zugeordnete Regeln bleiben.",
+    "Outbound firewall rules that only cover the systems via a broad source (e.g. 10.0.0.0/8 or any) – no access of this application. Rules assigned directly remain.",
+  ),
+  to_internet: L(
+    "Freigaben ins Internet (Ziel „all“, Ausgang Internet bzw. Default-Route), die die Systeme nur über „all“ erfassen – kein Zugriff auf diese Applikation. Direkt zugeordnete Regeln bleiben.",
+    "Internet access rules (destination “all”, outgoing interface internet or default route) that only cover the systems via “all” – no access to this application. Rules assigned directly remain.",
+  ),
+};
+
 const INFRA = new Set(["connections", "plan"]); // nicht für Kunden-Benutzer
 const EXPORT_KEY = "automato_app_export"; // gewählte Abschnitte (Browser)
 const FOLD_KEY = "automato_app_folds"; // zugeklappte Bereiche (Browser)
@@ -567,47 +598,16 @@ export default function ApplicationDocView({
             />
           )}
           <div className="spacer" />
-          {s.impossible ? (
-            <span
-              className="faint"
-              style={{ fontSize: 12 }}
-              title={L(
-                "Regeln, die die Systeme nach dem Routing ihrer Firewall nicht sehen können (Ein-/Ausgang passt nicht) bzw. unspezifische Regeln einer Firewall, über die der Weg zur Gegenstelle nicht führt (0.113.2) – sie gehören nicht zur Applikation",
-                "Rules the systems cannot see according to the routing of their firewall (incoming/outgoing interface does not match) or unspecific rules of a firewall the path to the counterpart does not pass (0.113.2) – they do not belong to the application",
-              )}
-            >
-              {L(`${s.impossible} routingtechnisch unmögliche ausgelassen`, `${s.impossible} impossible by routing omitted`)}
+          {omitted(s).map((f) => (
+            <span key={f.key} className="faint" id={OMIT_ID[f.key] ?? `app-filter-${f.key}`} style={{ fontSize: 12 }} title={OMIT_TIP[f.key] ?? f.title}>
+              {L(`${f.count} ausgelassen: ${f.title}`, `${f.count} omitted: ${f.title}`)}
             </span>
-          ) : null}
-          {s.outbound_broad ? (
-            <span
-              className="faint"
-              id="app-outbound-broad"
-              style={{ fontSize: 12 }}
-              title={L(
-                "Ausgehende Firewall-Regeln, die die Systeme nur über eine breite Quelle erfassen (z. B. 10.0.0.0/8 bzw. any) – kein Zugriff dieser Applikation. Direkt zugeordnete Regeln bleiben.",
-                "Outbound firewall rules that only cover the systems via a broad source (e.g. 10.0.0.0/8 or any) – no access of this application. Rules assigned directly remain.",
-              )}
-            >
-              {L(
-                `${s.outbound_broad} ausgehende mit breiter Quelle ausgelassen`,
-                `${s.outbound_broad} outbound with a broad source omitted`,
-              )}
-            </span>
-          ) : null}
-          {s.to_internet ? (
-            <span
-              className="faint"
-              id="app-to-internet"
-              style={{ fontSize: 12 }}
-              title={L(
-                "Freigaben ins Internet (Ziel „all“, Ausgang Internet bzw. Default-Route), die die Systeme nur über „all“ erfassen – kein Zugriff auf diese Applikation. Direkt zugeordnete Regeln bleiben.",
-                "Internet access rules (destination “all”, outgoing interface internet or default route) that only cover the systems via “all” – no access to this application. Rules assigned directly remain.",
-              )}
-            >
-              {L(`${s.to_internet} Freigaben ins Internet ausgelassen`, `${s.to_internet} internet access rules omitted`)}
-            </span>
-          ) : null}
+          ))}
+          {s.ruleset && (
+            <a className="faint" id="app-ruleset" href="#dict" style={{ fontSize: 12 }} title={L("Regelwerk der Applikations-Doku (Namensprofile)", "Ruleset of the application documentation (naming profiles)")}>
+              {L(`Regelwerk: ${s.ruleset.title}`, `Ruleset: ${s.ruleset.title}`)}
+            </a>
+          )}
           {s.helpers ? (
             <span
               className="faint"

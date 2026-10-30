@@ -15,7 +15,6 @@ schon eine Applikation mit diesem Kuerzel, ergaenzt der Vorschlag deren Mitglied
 import ipaddress
 import re
 from collections import defaultdict
-from collections.abc import Collection
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import cached_property
@@ -53,6 +52,7 @@ from app.models import (
 from app.store import (
     appdoc,
     appdoc_filter,
+    appdoc_ruleset,
     appdoc_zones,
     customer_scope,
     finding_text,
@@ -872,7 +872,6 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
         rows = [r for r in rows if r[2].get(appdoc.RULE) in rule_ids]
     # Regeln direkt zugeordnet bzw. ausgeschlossen (0.60.0)
     assigned, excluded = _rule_members(app, res, rule_ids)
-    rows = [r for r in rows if r[2].get(appdoc.RULE) not in excluded]
     # parallele Firewalls (0.18.0): gleiche Policies nur einmal - die der fuehrenden Firewall
     twins = parallel.twin_ids(session, {row.get(appdoc.RULE) for _, _, row in rows})
     rows = [r for r in rows if r[2].get(appdoc.RULE) not in twins]
@@ -881,25 +880,32 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
     mine = {ip for x in systems for ip in x["ips"]} | {e["dn"] for e in epg_out if e["dn"]}
     inside = data.catalog.role("aci_ap")
     rows = [(k, inside if _inside(row, mine) else idx, row) for k, idx, row in rows]
-    # ausgehende Firewall-Regeln mit breiter Quelle (0.103.0, `appdoc_filter.DROPPED`): kein
-    # Zugriff dieser Applikation - nicht in der Doku, nur gezaehlt; direkt zugeordnete bleiben
-    dropped = [r for r in rows if appdoc_filter.place(r[2], assigned) == appdoc_filter.DROPPED]
-    rows = [r for r in rows if appdoc_filter.place(r[2], assigned) != appdoc_filter.DROPPED]
-    kept = {r[2].get(appdoc.RULE) for r in rows}
-    broad = {r[2].get(appdoc.RULE) for r in dropped if r[2].get(appdoc.OUT_BROAD)} - kept
-    internet = {r[2].get(appdoc.RULE) for r in dropped if r[2].get(appdoc.TO_INTERNET)}
-    internet -= kept | broad
+    # Regelwerk des Mandanten (0.118.0, ADR 0043): je Zeile die Wirkung der ersten Regel, die
+    # trifft - z. B. routingtechnisch unmoeglich bzw. ausgehend mit breiter Quelle nicht gezeigt,
+    # nur gezaehlt (0.33.0, 0.103.0), ausgeschlossene Regeln (0.60.0) nicht gezeigt
+    ruleset = data.ruleset
+    counted = appdoc_ruleset.Counted(ruleset)
+    kept_rows = []
+    for item in rows:
+        row = item[2]
+        row[appdoc.DECIDED], row[appdoc.DECIDED_BY] = appdoc_filter.decide(
+            row, ruleset, assigned, excluded
+        )
+        if row[appdoc.DECIDED] in appdoc_ruleset.KEPT:
+            kept_rows.append(item)
+        elif row[appdoc.DECIDED] == appdoc_ruleset.COUNTED:
+            counted.add(row.get(appdoc.RULE), row[appdoc.DECIDED_BY])
+    rows = kept_rows
+    filtered = counted.by_condition({r[2].get(appdoc.RULE) for r in rows})
+    broad = filtered.get("out_broad", set())
+    internet = filtered.get("to_internet", set())
+    impossible = set().union(*(filtered.get(k, set()) for k in appdoc_ruleset.PATH))
     if names and not restricted:  # Namen der Gegenstellen (0.95.0) - nie fuer Kunden-Benutzer
         peer_names.apply(session, tid, [row for _, _, row in rows])
     hits, tables = _hits_and_tables(rows, _pairs(session, {r[2].get(appdoc.RULE) for r in rows}),
-                                    data.catalog, assigned)  # fmt: skip
+                                    data.catalog)  # fmt: skip
     narrower = _narrower(rows, systems, epg_out, data.catalog)  # 0.78.2: enger als die Firewall
-    # Routingtechnisch unmoegliche Treffer gehoeren nicht in die Applikations-Doku (Dev-Befund
-    # 0.33.0, z. B. intern -> Internet ueber any im Ziel: die Antwort braucht keine Regel, ein
-    # Zugriff von dort braeuchte eine eigene) - nicht einblendbar, nur gezaehlt
-    possible = [h for h in hits if h["relevance"] != "impossible"]
-    impossible = {h["rule_id"] for h in hits} - {h["rule_id"] for h in possible}
-    possible += [_assigned_hit(rid, m) for rid, m in assigned.items() if rid not in excluded]
+    possible = hits + [_assigned_hit(rid, m) for rid, m in assigned.items() if rid not in excluded]
     hits = possible
     # L3Outs (ADR 0034): Contracts zu externen EPGs mit Firewall dahinter sind Hilfs-Contracts -
     # an der Firewall-Regel vermerkt, nicht als eigene Regel (Treffer bleiben, `helper`)
@@ -957,6 +963,17 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
             "impossible": len(impossible),
             "outbound_broad": len(broad),  # 0.103.0: ausgehend mit breiter Quelle, nicht da
             "to_internet": len(internet),  # 0.114.1: Freigabe ins Internet (nur über all)
+            # Regelwerk (0.118.0): das aktive Profil und je Bedingung die gezaehlten Regeln
+            "ruleset": {"key": ruleset.key, "title": appdoc_ruleset.title(ruleset)},
+            "filtered": [
+                {
+                    "key": r.key,
+                    "title": appdoc_ruleset.BY_KEY[r.key].out()["title"],
+                    "count": len(filtered[r.key]),
+                }
+                for r in ruleset.rules
+                if filtered.get(r.key)
+            ],
             "specific": sum(1 for v in best.values() if v in ("specific", "assigned")),
             "assigned": sum(1 for v in best.values() if v == "assigned"),
             "excluded": len(excluded),
@@ -1187,7 +1204,6 @@ def _inside(row: dict, mine: set[str]) -> bool:
 
 def _hits_and_tables(
     rows: list[tuple[str, int, dict]], pairs: dict[int, int] | None = None, catalog=None,
-    assigned: Collection[int] = (),
 ) -> tuple[list[dict], list[dict]]:  # fmt: skip
     """Treffer je (Regel, System, Seite) und die Kategorien-Tabellen (Katalog des Mandanten).
 
@@ -1208,10 +1224,12 @@ def _hits_and_tables(
     hits: list[dict] = []
     for key, idx, row in rows:
         rid = row.get(appdoc.RULE)
-        # nur Zeilen der Kategorien (`appdoc_filter`, 0.104.0): Hilfs-Contracts, Contracts nicht
-        # enger als die Firewall, unspezifisch ausgehend und routingtechnisch unmoegliche nicht -
-        # Treffer bleiben (unmoegliche nur gezaehlt)
-        if appdoc_filter.in_categories(row, assigned):
+        # nur Zeilen der Kategorien nach dem Regelwerk (`appdoc_filter.decide`, 0.118.0; ohne
+        # Entscheid: in der Kategorie) - z. B. Hilfs-Contracts, Contracts nicht enger als die
+        # Firewall und unspezifisch ausgehende nur als Treffer
+        decided = row.get(appdoc.DECIDED, appdoc_ruleset.TABLE)
+        if decided in appdoc_ruleset.SHOWN:
+            appdoc_filter.mark(row)
             gkey = (idx, pairs.get(rid, rid), row.get(appdoc.SIDE), row.get(appdoc.OBJECT))
             if rid is None:
                 gkey = (idx, None, len(groups))
@@ -1258,7 +1276,8 @@ def _hits_and_tables(
                 # EPGs mit Firewall dahinter = Hilfs-Contract (keine eigene Regel der Doku), an
                 # der Firewall-Regel seine Hilfs-Contracts; Hinweis ohne Firewall dahinter
                 "l3out": row.get(appdoc.L3OUT_IN),
-                "helper": bool(row.get(appdoc.HELPER)),
+                # Wirkung `note` (Regelwerk): nur als Vermerk an der Firewall-Regel
+                "helper": bool(row.get(appdoc.HELPER)) and decided == appdoc_ruleset.NOTE,
                 "helper_for": list((row.get(appdoc.HELPER) or {}).get("for") or []),
                 "helpers": [
                     {

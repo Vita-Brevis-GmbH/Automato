@@ -7,6 +7,36 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.118.0 – 2026-10-30
+
+Rückmeldung des Anwenders 2026-10-30 („Regeln in die Settings übernehmen … aktivieren oder
+deaktivieren … die Wirkung einstellen … die beiden Regelsets hinterlegen, damit man umschalten
+kann. Wenn es neue Reihenfolgen gibt, immer dort ein neues Profil anlegen“). Abnahme bis 0.117.0.
+
+- **Regelwerk der Applikations-Doku als Einstellung** (ADR 0043, `store/appdoc_ruleset.py`):
+  Namensprofile → „Regelwerk der Applikations-Doku“. Elf Regeln (Bedingungen) mit Schalter und
+  **Wirkung**: in der Kategorie markiert, nur als Treffer, nur als Vermerk in der Spalte L3Out,
+  nicht gezeigt/nur gezählt, nicht gezeigt/nicht gezählt, Ausnahme. Von oben nach unten gelesen:
+  die erste eingeschaltete Regel, die eine Zeile trifft, entscheidet; „direkt zugeordnet“ hebt
+  die gewählten Regeln darunter auf.
+- **Zwei eingebaute Profile zum Umschalten:** **Regelwerk 1** = Stand bis 0.117.0 (Vorgabe, die
+  Doku bleibt gleich); **Regelwerk 2** = Rückmeldung 2026-10-30: (1) nicht im Pfad –
+  routingtechnisch unmöglich bzw. Firewall nicht auf dem Weg, unspezifische **und konkrete**
+  Regeln – nicht gezeigt, nicht gezählt; (2) über das Internet-Gateway hinaus nicht gezeigt,
+  nicht gezählt; (3) direkt zugeordnete heben 1 und 2 auf, ausgeschlossene fallen weg; (4)
+  Hilfs-Contracts nur als Vermerk; (5) L3Out-Contracts ohne bekannte Firewall nur, wenn enger;
+  (6) unspezifische Kategorie nur eingehend. Ausgeschaltet als Vorschlag: „ausgehend mit breiter
+  Quelle“ (0.103.0) und neu „deaktivierte Firewall-Regeln“ (FortiGate-Status disable).
+- **Eigene Profile:** eingebaute bleiben unverändert; Änderungen „Als neues Profil speichern“,
+  eigene ändern (Schalter, Wirkung) und löschen; **eine neue Reihenfolge nur als neues Profil**.
+  Umschalten, speichern, löschen = Admin, mit Audit (der Stand der Doku rechnet neu).
+- **Doku:** im Kopf von „Regeln & Contracts“ je Bedingung die gezählten Regeln und das aktive
+  Regelwerk (Link zu den Namensprofilen). Neue Merkmale: Ursache „nicht auf dem Weg“ getrennt
+  von „Routing der Firewall“, konkrete Regeln nur geprüft, wenn das Regelwerk danach fragt.
+- API: `GET/POST /naming-profiles/{id}/appdoc-ruleset`, `PUT …/active`, `PUT/DELETE …/{key}`;
+  `summary.ruleset` und `summary.filtered` in der Applikations-Doku.
+- Tests: `test_appdoc_ruleset.py` (neu); UI `e2e/release_0118.spec.ts` (neu).
+
 ## 0.117.0 – 2026-10-30
 
 Rückmeldung des Anwenders 2026-10-30 (vier Punkte; für die Übersicht gewählt: Findings & Läufe

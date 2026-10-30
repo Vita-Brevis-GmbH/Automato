@@ -434,8 +434,9 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.115.0** | Nachkontrolle des NetBox-Syncs (Roadmap V1 Nr. 5): nach „Übernehmen“ NetBox rein lesend neu lesen und je geschriebenem Objekt vergleichen (fehlt, andere Werte, nicht gelöscht); Ergebnis am Plan, Befund „NetBox-Sync: geschrieben ≠ gelesen“ (ADR 0042) |
 | **0.116.0** | BGP-Filter Stufe 3 (Roadmap V1 Nr. 3 abgeschlossen): Ausgangsfilter je Nachbar aus den Zonen diesseits (nach aussen nur öffentliche Netze), ACI Import Route Control je L3Out aus den Zonen dahinter, Befunde und Vorschläge (ADR 0041); Installationsanleitung Produktion mit Disk-Verschlüsselung und Hardening (`docs/INSTALLATION-PROD.md`), Oberfläche nur aus erlaubten Netzen, Ports nur lokal (Nr. 6) |
 | **0.117.0** | Rückmeldung 2026-10-30: Findings mehrere auf einmal ignorieren (Mehrfachauswahl); Übersicht mit wählbaren und verschiebbaren Bereichen (Grafiken Findings/Läufe, Schnellansichten, Routing-Änderungen, Applikationen, Regeln, Objekte nach Typ); Weg-Suche: Ziel hinter VIP/Load Balancer = EPG der Server; Objekte nach Präfix der Namenskonvention |
+| **0.118.0** | Rückmeldung 2026-10-30: Regelwerk der Applikations-Doku in den Einstellungen (Namensprofil) – Regeln an/aus, Wirkung, Reihenfolge; eingebaut Regelwerk 1 (Stand 0.117.0) und Regelwerk 2 (nicht im Pfad und über das Internet-Gateway hinaus weder gezeigt noch gezählt), eigene Profile, neue Reihenfolge nur als neues Profil (ADR 0043) |
 
-### Nächste Arbeiten (Stand 0.117.0)
+### Nächste Arbeiten (Stand 0.118.0)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
 **0.68.0** (2026-10-26), bis **0.102.0** (2026-10-28: „ich teste nach dem Freigeben der Version
@@ -451,7 +452,8 @@ Einwand), bis **0.113.0** (2026-10-29, Fehlerliste zu 0.112 ohne Einwand zu 0.11
 (2026-10-29, „go 114“ ohne Einwand), bis **0.114.0** (2026-10-30, Fehlerliste zu 0.113 ohne
 Einwand zu 0.114.0), bis **0.114.1** (2026-10-30, „go 115“ ohne Einwand), bis **0.115.0**
 (2026-10-30, „go 116“ ohne Einwand), bis **0.116.0** (2026-10-30, Rückmeldung ohne Einwand
-zu 0.116.0). Zur Abnahme steht 0.117.0. Seit 0.104.0 gilt eine
+zu 0.116.0), bis **0.117.0** (2026-10-30, Rückmeldung zum Regelwerk ohne Einwand zu 0.117.0). Zur
+Abnahme steht 0.118.0. Seit 0.104.0 gilt eine
 Version als abgenommen,
 sobald die nächste Rückmeldung des Anwenders keinen Einwand dazu enthält (`CLAUDE.md`, Ablauf).
 
