@@ -604,7 +604,7 @@ export default function ApplicationDocView({
             </span>
           ))}
           {s.ruleset && (
-            <a className="faint" id="app-ruleset" href="#dict" style={{ fontSize: 12 }} title={L("Regelwerk der Applikations-Doku (Namensprofile)", "Ruleset of the application documentation (naming profiles)")}>
+            <a className="faint" id="app-ruleset" href="#dict" style={{ fontSize: 12 }} title={s.ruleset.description || L("Regelwerk der Applikations-Doku (Namensprofile)", "Ruleset of the application documentation (naming profiles)")}>
               {L(`Regelwerk: ${s.ruleset.title}`, `Ruleset: ${s.ruleset.title}`)}
             </a>
           )}

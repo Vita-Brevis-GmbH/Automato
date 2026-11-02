@@ -97,7 +97,8 @@ def test_umschalten_und_eigene_profile(client, session_factory):
 
     d1 = doc()  # Vorgabe Regelwerk 1: unmoeglich und ausgehend breit gezaehlt
     s1 = d1["summary"]
-    assert s1["ruleset"] == {"key": "v1", "title": "Regelwerk 1 – Stand bis 0.117.0"}
+    assert s1["ruleset"]["key"] == "v1"
+    assert s1["ruleset"]["title"] == "Regelwerk 1 – Stand bis 0.117.0"
     assert s1["impossible"] == 1 and s1["outbound_broad"] >= 1
     assert {"impossible", "out_broad"} <= {f["key"] for f in s1["filtered"]}
     assert "lan-to-dmz-falsch" not in names(d1)
@@ -129,7 +130,7 @@ def test_umschalten_und_eigene_profile(client, session_factory):
     v2 = next(p for p in out["profiles"] if p["key"] == "v2")
     # eingebaute bleiben unveraendert
     assert client.put(f"{url}/v2", json=_body(v2), headers=ADMIN).status_code == 422
-    assert client.delete(f"{url}/v1", headers=ADMIN).status_code == 422
+    assert client.delete(f"{url}/v2", headers=ADMIN).status_code == 422  # aktiv (0.119.0)
     # eigenes Profil: Regelwerk 2 mit „ausgehend breit“ gezaehlt und deaktivierte weg
     own = _body(v2, out_broad={"on": True}, disabled={"on": True, "effect": "drop"})
     assert client.post(url, json=own, headers=OP).status_code == 403
@@ -139,7 +140,7 @@ def test_umschalten_und_eigene_profile(client, session_factory):
     assert key.startswith("p-") and r.json()["active"] == "v2"
     client.put(f"{url}/active", json={"key": key}, headers=ADMIN)
     d3 = doc()
-    assert d3["summary"]["ruleset"] == {"key": key, "title": "Test A"}
+    assert d3["summary"]["ruleset"] == {"key": key, "title": "Test A", "description": ""}
     assert d3["summary"]["outbound_broad"] >= 1 and "block-all" not in names(d3)
     # gleiche Reihenfolge aendern geht; eine neue Reihenfolge nur als neues Profil
     mine = next(p for p in client.get(url, headers=VIEW).json()["profiles"] if p["key"] == key)
@@ -158,9 +159,13 @@ def test_umschalten_und_eigene_profile(client, session_factory):
     actions = {row["Description"]: row["Aktion"] for t in d4["tables"] for row in t["rows"]}
     assert actions["block-all"].endswith("(deaktiviert)")
 
-    # loeschen: war es aktiv, gilt wieder die Vorgabe
+    # loeschen (0.119.0): das aktive nicht - zuerst ein anderes aktivieren
+    r = client.delete(f"{url}/{first}", headers=ADMIN)
+    assert r.status_code == 422 and "activate another" in r.text
+    client.put(f"{url}/active", json={"key": "v1"}, headers=ADMIN)
     assert client.delete(f"{url}/{first}", headers=ADMIN).status_code == 200
-    assert client.get(url, headers=VIEW).json()["active"] == "v1"
+    out = client.get(url, headers=VIEW).json()
+    assert out["active"] == "v1" and first not in [p["key"] for p in out["profiles"]]
     assert doc()["summary"]["ruleset"]["key"] == "v1"
 
     s = session_factory()
@@ -170,3 +175,62 @@ def test_umschalten_und_eigene_profile(client, session_factory):
     assert [a for a, _d in acts][:3] == ["appdoc_ruleset.activated", "appdoc_ruleset.saved",
                                          "appdoc_ruleset.activated"]  # fmt: skip
     assert acts[0][1] == {"profile_id": pid, "key": "v2"}
+
+
+def test_namen_beschreibung_und_ausblenden(client, session_factory):
+    """0.119.0 (Anwender: „richtige Namen und eine Beschreibung, auch den Bestehenden … löschen
+    sollte ich auch können, sonst haben wir einen Friedhof an Test-Regelwerken“)."""
+    pid = _default_profile(session_factory)
+    url = f"/naming-profiles/{pid}/appdoc-ruleset"
+    out = client.get(url, headers=VIEW).json()
+    v1 = out["profiles"][0]
+    assert v1["description"].startswith("Wie die Doku bis 0.117.0") and out["hidden"] == []
+
+    # eingebautes umbenennen: Name und Beschreibung im Namensprofil, die Regeln bleiben
+    label = {"title": "Standard DC", "title_en": "Standard DC",
+             "description": "Für die Rechenzentren",
+             "description_en": "For the data centers"}  # fmt: skip
+    assert client.patch(f"{url}/v1", json=label, headers=OP).status_code == 403
+    r = client.patch(f"{url}/v1", json=label, headers=ADMIN)
+    assert r.status_code == 200, r.text
+    v1 = next(p for p in r.json()["profiles"] if p["key"] == "v1")
+    assert v1["title"] == "Standard DC" and v1["builtin"]
+    assert v1["description"] == "Für die Rechenzentren"
+    assert [x["key"] for x in v1["rules"]] == [x.key for x in rs.V1.rules]
+    en = client.get(url, headers={**VIEW, "Accept-Language": "en"}).json()
+    assert en["profiles"][0]["description"] == "For the data centers"
+    # leer = wieder die Vorgabe
+    r = client.patch(f"{url}/v1", json={}, headers=ADMIN)
+    assert r.json()["profiles"][0]["title"] == "Regelwerk 1 – Stand bis 0.117.0"
+    assert client.patch(f"{url}/gibt-es-nicht", json=label, headers=ADMIN).status_code == 422
+
+    # eigenes Profil mit Beschreibung, umbenennen (ohne Titel nicht)
+    body = _body(next(p for p in out["profiles"] if p["key"] == "v2"))
+    body |= {"title": "Test X", "description": "nur zum Probieren"}
+    key = client.post(url, json=body, headers=ADMIN).json()["saved"]
+    mine = next(p for p in client.get(url, headers=VIEW).json()["profiles"] if p["key"] == key)
+    assert mine["description"] == "nur zum Probieren"
+    assert client.patch(f"{url}/{key}", json={"title": " "}, headers=ADMIN).status_code == 422
+    r = client.patch(f"{url}/{key}", json={"title": "Test Y", "description": "neu"}, headers=ADMIN)
+    mine = next(p for p in r.json()["profiles"] if p["key"] == key)
+    assert (mine["title"], mine["description"], len(mine["rules"])) == ("Test Y", "neu", 11)
+
+    # loeschen: eingebaute ausgeblendet und wiederherstellbar, das aktive nicht
+    assert client.delete(f"{url}/v1", headers=ADMIN).status_code == 422  # aktiv (Vorgabe)
+    client.put(f"{url}/active", json={"key": key}, headers=ADMIN)
+    r = client.delete(f"{url}/v1", headers=ADMIN)
+    assert r.status_code == 200, r.text
+    assert [p["key"] for p in r.json()["profiles"]] == ["v2", key]
+    assert r.json()["hidden"] == [{"key": "v1", "title": "Regelwerk 1 – Stand bis 0.117.0"}]
+    assert client.put(f"{url}/active", json={"key": "v1"}, headers=ADMIN).status_code == 422
+    r = client.post(f"{url}/v1/restore", headers=ADMIN)
+    assert r.status_code == 200 and r.json()["hidden"] == []
+    assert client.post(f"{url}/{key}/restore", headers=ADMIN).status_code == 422
+    client.put(f"{url}/active", json={"key": "v1"}, headers=ADMIN)
+    assert client.delete(f"{url}/{key}", headers=ADMIN).status_code == 200
+
+    s = session_factory()
+    acts = [a.action for a in s.query(AuditLog) if a.action.startswith("appdoc_ruleset.")]
+    s.close()
+    want = {"appdoc_ruleset.renamed", "appdoc_ruleset.restored", "appdoc_ruleset.deleted"}
+    assert want <= set(acts)

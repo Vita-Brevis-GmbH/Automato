@@ -964,7 +964,11 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
             "outbound_broad": len(broad),  # 0.103.0: ausgehend mit breiter Quelle, nicht da
             "to_internet": len(internet),  # 0.114.1: Freigabe ins Internet (nur über all)
             # Regelwerk (0.118.0): das aktive Profil und je Bedingung die gezaehlten Regeln
-            "ruleset": {"key": ruleset.key, "title": appdoc_ruleset.title(ruleset)},
+            "ruleset": {
+                "key": ruleset.key,
+                "title": appdoc_ruleset.title(ruleset),
+                "description": appdoc_ruleset.description(ruleset),
+            },
             "filtered": [
                 {
                     "key": r.key,

@@ -1286,6 +1286,12 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
          unverändert – „Als neues Profil speichern“. Eigene Profile lassen sich speichern
          (gleiche Reihenfolge) und löschen; **eine neue Reihenfolge nur als neues Profil**. Ein
          neues Profil gilt erst nach „Aktivieren“.
+       - **Name & Beschreibung** (seit 0.119.0): Titel, Titel englisch, Beschreibung – auch für
+         die eingebauten Regelwerke (die Regeln bleiben; „Vorgabe“ setzt Name und Beschreibung
+         zurück). Die Beschreibung steht unter der Auswahl.
+       - **Löschen** (seit 0.119.0): eigene ganz, eingebaute werden ausgeblendet und lassen sich
+         unter „Gelöschte eingebaute Profile“ wiederherstellen. Das aktive Profil lässt sich
+         nicht löschen – zuerst ein anderes aktivieren.
        - Die Doku zeigt im Kopf von „Regeln & Contracts“ die gezählten Regeln je Bedingung und
          das aktive Regelwerk (Link hierher). Umschalten rechnet den Stand der Doku neu.
 

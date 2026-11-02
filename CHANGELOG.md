@@ -7,6 +7,25 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.119.0 – 2026-11-02
+
+Rückmeldung des Anwenders 2026-11-02 („Kann ich noch den Profilen der Regelwerke richtige Namen
+geben und eine Beschreibung? Auch den Bestehenden? Und löschen sollte ich auch können, da wir
+sonst einen Friedhof haben an Test-Regelwerken“). Abnahme bis 0.118.0.
+
+- **Name und Beschreibung je Profil** (Namensprofile → Regelwerk → „Name & Beschreibung“): Titel,
+  Titel englisch, Beschreibung, Beschreibung englisch – auch für die eingebauten Regelwerke 1 und
+  2 (gespeichert im Namensprofil, die Regeln bleiben; „Vorgabe“ stellt Name und Beschreibung
+  wieder her). Die Beschreibung steht unter der Auswahl und als Hinweis am Regelwerk in der Doku;
+  neue Profile lassen sich gleich mit Beschreibung anlegen.
+- **Löschen für alle Profile:** eigene ganz, eingebaute werden ausgeblendet und lassen sich unter
+  „Gelöschte eingebaute Profile“ wiederherstellen. Das **aktive** Profil lässt sich nicht löschen
+  (zuerst ein anderes aktivieren) – bisher fiel die Doku dann still auf Regelwerk 1 zurück.
+- API: `PATCH /naming-profiles/{id}/appdoc-ruleset/{key}` (Name, Beschreibung),
+  `POST …/{key}/restore`, `DELETE` auch für eingebaute; `hidden` in der Pflege, Audit
+  `appdoc_ruleset.renamed`/`restored`.
+- Tests: `test_appdoc_ruleset.py`; UI `e2e/release_0119.spec.ts` (neu).
+
 ## 0.118.0 – 2026-10-30
 
 Rückmeldung des Anwenders 2026-10-30 („Regeln in die Settings übernehmen … aktivieren oder

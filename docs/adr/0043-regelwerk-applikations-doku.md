@@ -49,6 +49,19 @@ Schreibweg zu Geräten.
    (`appdoc_ruleset.*`) – der Fingerabdruck ändert sich, die Doku rechnet neu; Befunde der
    Applikationen des Profils laufen nach.
 
+## Ergänzung 0.119.0 (Anwender 2026-11-02)
+
+„Kann ich noch den Profilen der Regelwerke richtige Namen geben und eine Beschreibung? Auch den
+Bestehenden? Und löschen sollte ich auch können, da wir sonst einen Friedhof haben an
+Test-Regelwerken.“
+
+- Jedes Profil hat Titel, Titel englisch, Beschreibung und Beschreibung englisch. Für eingebaute
+  liegen sie im Namensprofil (Wörterbuch-Art `appdoc_ruleset_label`, Schlüssel = Profil) – die
+  Regeln und ihre Reihenfolge bleiben im Code; leer = Vorgabe.
+- Löschen: eigene Profile ganz, eingebaute **ausgeblendet** (`hidden` im selben Eintrag,
+  wiederherstellbar, nicht aktivierbar). Das aktive Profil lässt sich nicht löschen – die Doku
+  fällt nie still auf ein anderes Regelwerk zurück.
+
 ## Folgen
 
 - Fachentscheide zur Doku sind je Kunde einstellbar; neue Regeln aus Rückmeldungen kommen als

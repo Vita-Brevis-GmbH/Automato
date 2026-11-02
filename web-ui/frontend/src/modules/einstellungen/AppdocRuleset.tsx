@@ -3,7 +3,9 @@
 // umschalten kann. Wenn es neue Reihenfolgen gibt, immer dort ein neues Profil anlegen“). Die Bedingungen stehen im
 // Orchestrator (`store/appdoc_ruleset.py`); je Profil Schalter, Wirkung und Reihenfolge. Eingebaute Profile bleiben
 // unverändert – Änderungen als neues Profil, eine neue Reihenfolge immer als neues Profil. Umschalten, speichern und
-// löschen = Admin; gilt für die Mandanten mit diesem Namensprofil.
+// löschen = Admin; gilt für die Mandanten mit diesem Namensprofil. Seit 0.119.0 (Anwender: „richtige Namen und eine
+// Beschreibung, auch den Bestehenden … löschen, sonst haben wir einen Friedhof an Test-Regelwerken“) je Profil Name
+// und Beschreibung, löschen auch eingebaute (ausgeblendet, wiederherstellbar), nie das aktive.
 import { useEffect, useMemo, useState } from "react";
 import {
   activateAppdocRuleset,
@@ -11,7 +13,11 @@ import {
   createAppdocRuleset,
   deleteAppdocRuleset,
   fetchAppdocRuleset,
+  renameAppdocRuleset,
+  restoreAppdocRuleset,
   RulesetIn,
+  RulesetLabelIn,
+  RulesetProfile,
   RulesetRule,
   updateAppdocRuleset,
 } from "../../api";
@@ -19,6 +25,8 @@ import { ErrorBox, Loading } from "../../ui";
 import { L } from "../../i18n";
 
 type Draft = Pick<RulesetRule, "key" | "on" | "effect" | "lifts">;
+const NO_LABEL: RulesetLabelIn = { title: "", title_en: "", description: "", description_en: "" };
+const labelOf = (p: RulesetProfile): RulesetLabelIn => ({ title: p.title_de, title_en: p.title_en, description: p.description_de, description_en: p.description_en });
 
 const toDraft = (rules: RulesetRule[]): Draft[] => rules.map((r) => ({ key: r.key, on: r.on, effect: r.effect, lifts: [...r.lifts] }));
 
@@ -35,7 +43,9 @@ export default function AppdocRulesetCard({ profileId, editable }: { profileId: 
   const [sel, setSel] = useState("");
   const [draft, setDraft] = useState<Draft[]>([]);
   const [title, setTitle] = useState("");
+  const [desc, setDesc] = useState("");
   const [naming, setNaming] = useState(false);
+  const [label, setLabel] = useState<RulesetLabelIn | null>(null); // Name & Beschreibung bearbeiten
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<unknown>(null);
   const [note, setNote] = useState("");
@@ -70,11 +80,17 @@ export default function AppdocRulesetCard({ profileId, editable }: { profileId: 
         show(d, key(d));
         setNote(done);
         setNaming(false);
+        setLabel(null);
       })
       .catch(setErr)
       .finally(() => setBusy(false));
   };
-  const body = (t: string): RulesetIn => ({ title: t.trim(), based_on: profile.key, rules: clean(draft) });
+  // gleiches Profil speichern: Name und Beschreibung bleiben; neues Profil: Titel und Beschreibung aus dem Formular
+  const body = (t: string, d?: string): RulesetIn =>
+    d === undefined
+      ? { ...labelOf(profile), title: t.trim(), based_on: profile.key, rules: clean(draft) }
+      : { title: t.trim(), description: d.trim(), based_on: profile.key, rules: clean(draft) };
+  const isActive = sel === data.active;
   const patch = (i: number, p: Partial<Draft>) => {
     setNote("");
     setDraft(draft.map((r, j) => (j === i ? { ...r, ...p } : r)));
@@ -155,19 +171,38 @@ export default function AppdocRulesetCard({ profileId, editable }: { profileId: 
               disabled={busy}
               onClick={() => {
                 setTitle(dirty ? "" : L(`Kopie von ${profile.title}`, `Copy of ${profile.title}`));
+                setDesc("");
+                setLabel(null);
                 setNaming(true);
               }}
             >
               {L("Als neues Profil speichern", "Save as new profile")}
             </button>
           )}
-          {editable && own && (
+          {editable && (
+            <button
+              className="btn btn-ghost btn-sm"
+              id="ruleset-rename"
+              disabled={busy}
+              onClick={() => {
+                setNaming(false);
+                setLabel(labelOf(profile));
+              }}
+            >
+              {L("Name & Beschreibung", "Name & description")}
+            </button>
+          )}
+          {editable && (
             <button
               className="btn btn-ghost btn-sm"
               id="ruleset-delete"
-              disabled={busy}
+              disabled={busy || isActive}
+              title={isActive ? L("Aktives Profil – zuerst ein anderes aktivieren", "Active profile – activate another one first") : undefined}
               onClick={() => {
-                if (!window.confirm(L(`Profil „${profile.title}“ löschen?`, `Delete profile “${profile.title}”?`))) return;
+                const ask = profile.builtin
+                  ? L(`Eingebautes Profil „${profile.title}“ löschen? Es lässt sich wiederherstellen.`, `Delete built-in profile “${profile.title}”? It can be restored.`)
+                  : L(`Profil „${profile.title}“ löschen?`, `Delete profile “${profile.title}”?`);
+                if (!window.confirm(ask)) return;
                 run(() => deleteAppdocRuleset(profileId, sel), (d) => d.active, L("Gelöscht.", "Deleted."));
               }}
             >
@@ -175,6 +210,43 @@ export default function AppdocRulesetCard({ profileId, editable }: { profileId: 
             </button>
           )}
         </div>
+        <div className="faint" id="ruleset-description" style={{ fontSize: 12, marginBottom: 8, whiteSpace: "pre-wrap" }}>
+          <span className="chip" style={{ marginRight: 6 }}>
+            {profile.builtin ? L("eingebaut", "built-in") : L("eigen", "own")}
+          </span>
+          {profile.description || L("Keine Beschreibung.", "No description.")}
+        </div>
+        {label && (
+          <div className="stack" id="ruleset-label" style={{ marginBottom: 10, maxWidth: 640, gap: 6 }}>
+            <input className="input" id="ruleset-label-title" placeholder={profile.builtin ? L(`Titel (Vorgabe: leer)`, `Title (default: empty)`) : L("Titel", "Title")} value={label.title} onChange={(e) => setLabel({ ...label, title: e.target.value })} />
+            <input className="input" id="ruleset-label-title-en" placeholder={L("Titel englisch (optional)", "English title (optional)")} value={label.title_en} onChange={(e) => setLabel({ ...label, title_en: e.target.value })} />
+            <textarea className="input" id="ruleset-label-description" rows={2} placeholder={L("Beschreibung", "Description")} value={label.description} onChange={(e) => setLabel({ ...label, description: e.target.value })} />
+            <textarea className="input" id="ruleset-label-description-en" rows={2} placeholder={L("Beschreibung englisch (optional)", "English description (optional)")} value={label.description_en} onChange={(e) => setLabel({ ...label, description_en: e.target.value })} />
+            <div className="filterbar">
+              <button
+                className="btn btn-primary btn-sm"
+                id="ruleset-label-save"
+                disabled={busy || (!profile.builtin && !label.title.trim())}
+                onClick={() => run(() => renameAppdocRuleset(profileId, sel, label), () => sel, L("Name und Beschreibung gespeichert.", "Name and description saved."))}
+              >
+                {L("Speichern", "Save")}
+              </button>
+              {profile.builtin && (
+                <button className="btn btn-ghost btn-sm" id="ruleset-label-reset" disabled={busy} onClick={() => run(() => renameAppdocRuleset(profileId, sel, NO_LABEL), () => sel, L("Vorgabe wiederhergestellt.", "Default restored."))}>
+                  {L("Vorgabe", "Default")}
+                </button>
+              )}
+              <button className="btn btn-ghost btn-sm" onClick={() => setLabel(null)}>
+                {L("Abbrechen", "Cancel")}
+              </button>
+              {profile.builtin && (
+                <span className="faint" style={{ fontSize: 12 }}>
+                  {L("Die Regeln eines eingebauten Profils bleiben; Name und Beschreibung gelten für dieses Namensprofil.", "The rules of a built-in profile stay; name and description apply to this naming profile.")}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
         {naming && (
           <div className="filterbar" id="ruleset-new" style={{ marginBottom: 8 }}>
             <input
@@ -186,17 +258,40 @@ export default function AppdocRulesetCard({ profileId, editable }: { profileId: 
               value={title}
               onChange={(e) => setTitle(e.target.value)}
             />
+            <input
+              className="input"
+              id="ruleset-new-description"
+              style={{ maxWidth: 420 }}
+              placeholder={L("Beschreibung (optional)", "Description (optional)")}
+              value={desc}
+              onChange={(e) => setDesc(e.target.value)}
+            />
             <button
               className="btn btn-primary btn-sm"
               id="ruleset-create"
               disabled={busy || !title.trim()}
-              onClick={() => run(() => createAppdocRuleset(profileId, body(title)), (d) => d.saved ?? sel, L("Als neues Profil gespeichert – zum Verwenden aktivieren.", "Saved as a new profile – activate it to use it."))}
+              onClick={() => run(() => createAppdocRuleset(profileId, body(title, desc)), (d) => d.saved ?? sel, L("Als neues Profil gespeichert – zum Verwenden aktivieren.", "Saved as a new profile – activate it to use it."))}
             >
               {L("Anlegen", "Create")}
             </button>
             <button className="btn btn-ghost btn-sm" onClick={() => setNaming(false)}>
               {L("Abbrechen", "Cancel")}
             </button>
+          </div>
+        )}
+        {data.hidden.length > 0 && (
+          <div className="faint" id="ruleset-hidden" style={{ fontSize: 12, marginBottom: 6 }}>
+            {L("Gelöschte eingebaute Profile: ", "Deleted built-in profiles: ")}
+            {data.hidden.map((h) => (
+              <span key={h.key} style={{ marginRight: 10 }}>
+                {h.title}
+                {editable && (
+                  <button className="btn btn-ghost btn-sm" data-restore={h.key} disabled={busy} onClick={() => run(() => restoreAppdocRuleset(profileId, h.key), () => h.key, L("Wiederhergestellt.", "Restored."))}>
+                    {L("Wiederherstellen", "Restore")}
+                  </button>
+                )}
+              </span>
+            ))}
           </div>
         )}
         {note && !dirty && (

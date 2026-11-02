@@ -12,7 +12,8 @@ Konfiguration statt Code; seit 0.106.0 Titel und Richtung Zonentyp → Zonentyp)
 `viewer`, speichern bzw. auf die Vorgaben zuruecksetzen = `admin`.
 
 Seit 0.118.0 das **Regelwerk der Applikations-Doku** je Profil (`store/appdoc_ruleset.py`,
-ADR 0043): eingebaute und eigene Profile, umschalten, eigene anlegen/aendern/loeschen = `admin`.
+ADR 0043): eingebaute und eigene Profile, umschalten, eigene anlegen/aendern/loeschen = `admin`;
+seit 0.119.0 Name und Beschreibung je Profil, eingebaute ausblenden/wiederherstellen.
 """
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response
@@ -530,8 +531,19 @@ class RulesetRuleIn(BaseModel):
 class RulesetIn(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     title_en: str = Field(default="", max_length=200)
+    description: str = Field(default="", max_length=1000)  # 0.119.0
+    description_en: str = Field(default="", max_length=1000)
     based_on: str = Field(default="", max_length=40)
     rules: list[RulesetRuleIn] = Field(default_factory=list, max_length=40)
+
+
+class RulesetLabelIn(BaseModel):
+    """Name und Beschreibung (0.119.0); bei eingebauten leer = Vorgabe."""
+
+    title: str = Field(default="", max_length=200)
+    title_en: str = Field(default="", max_length=200)
+    description: str = Field(default="", max_length=1000)
+    description_en: str = Field(default="", max_length=1000)
 
 
 class RulesetActiveIn(BaseModel):
@@ -618,6 +630,39 @@ def update_appdoc_ruleset(
     return {**out, "saved": saved.key}
 
 
+@router.patch("/{profile_id}/appdoc-ruleset/{key}")
+def rename_appdoc_ruleset(
+    profile_id: int,
+    key: str,
+    body: RulesetLabelIn,
+    background: BackgroundTasks,
+    principal: Principal = Depends(require_admin),
+    session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
+) -> dict:
+    """Name und Beschreibung eines Profils (Admin, 0.119.0) - auch eingebaute; Regeln bleiben."""
+    _profile(session, profile_id)
+    _ruleset_call(lambda: appdoc_ruleset.rename(session, profile_id, key, body.model_dump()))
+    return _ruleset_changed(session, background, factory, principal, profile_id,
+                            "appdoc_ruleset.renamed", key)  # fmt: skip
+
+
+@router.post("/{profile_id}/appdoc-ruleset/{key}/restore")
+def restore_appdoc_ruleset(
+    profile_id: int,
+    key: str,
+    background: BackgroundTasks,
+    principal: Principal = Depends(require_admin),
+    session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
+) -> dict:
+    """Geloeschtes (ausgeblendetes) eingebautes Profil wiederherstellen (Admin, 0.119.0)."""
+    _profile(session, profile_id)
+    _ruleset_call(lambda: appdoc_ruleset.restore(session, profile_id, key))
+    return _ruleset_changed(session, background, factory, principal, profile_id,
+                            "appdoc_ruleset.restored", key)  # fmt: skip
+
+
 @router.delete("/{profile_id}/appdoc-ruleset/{key}")
 def delete_appdoc_ruleset(
     profile_id: int,
@@ -627,7 +672,8 @@ def delete_appdoc_ruleset(
     session: Session = Depends(get_session, scope="function"),
     factory: sessionmaker = Depends(get_session_factory),
 ) -> dict:
-    """Eigenes Profil loeschen (Admin); war es aktiv, gilt wieder die Vorgabe."""
+    """Profil loeschen (Admin): eigene ganz, eingebaute ausgeblendet (wiederherstellbar); das
+    aktive nicht (422)."""
     _profile(session, profile_id)
     _ruleset_call(lambda: appdoc_ruleset.delete(session, profile_id, key))
     return _ruleset_changed(session, background, factory, principal, profile_id,

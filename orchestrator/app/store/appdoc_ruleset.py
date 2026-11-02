@@ -19,6 +19,9 @@ einer Firewall von oben nach unten gelesen:
   Namensprofil des Mandanten (Woerterbuch-Art `appdoc_ruleset`, Schluessel = Profil), das aktive
   in `appdoc_ruleset_active`. Eine neue Reihenfolge = ein neues Profil (Regel des Anwenders);
   neue Bedingungen kommen in alten Profilen ausgeschaltet ans Ende.
+- seit 0.119.0 je Profil **Name und Beschreibung** (eingebaute: `appdoc_ruleset_label` im
+  Namensprofil, die Regeln bleiben); **loeschen** auch eingebaute (ausgeblendet, wieder
+  herstellbar), nie das aktive.
 
 Vorgabe ohne Einstellung: Regelwerk 1 - die Plattform laeuft ohne Konfiguration. Rein
 Konfiguration der Plattform - nichts davon wirkt auf Geraete.
@@ -36,9 +39,11 @@ from app.i18n import L
 from app.models import DictionaryEntry
 
 KIND, KIND_ACTIVE = "appdoc_ruleset", "appdoc_ruleset_active"
-KINDS = (KIND, KIND_ACTIVE)
+# Name, Beschreibung bzw. ausgeblendet je eingebautem Profil (0.119.0, Schluessel = Profil)
+KIND_LABEL = "appdoc_ruleset_label"
+KINDS = (KIND, KIND_ACTIVE, KIND_LABEL)
 ACTIVE_KEY = "active"
-MAX_TEXT, MAX_PROFILES = 200, 30
+MAX_TEXT, MAX_DESCRIPTION, MAX_PROFILES = 200, 1000, 30
 
 # Wirkungen: wo eine Zeile steht
 TABLE = "table"  # keine Regel trifft: in der Kategorie (nur Ergebnis, keine Wirkung einer Regel)
@@ -172,6 +177,9 @@ class Profile:
     rules: tuple[Rule, ...] = ()
     builtin: bool = False
     based_on: str = ""
+    description: str = ""  # 0.119.0: Beschreibung (deutsch, englisch bei der Ausgabe)
+    description_en: str = ""
+    hidden: bool = False  # eingebaut, im Namensprofil ausgeblendet („geloescht“)
 
     def active(self) -> list[Rule]:
         return [r for r in self.rules if r.on]
@@ -185,7 +193,9 @@ class Profile:
 
     def out(self) -> dict:
         return {"key": self.key, "title": title(self), "title_de": self.title,
-                "title_en": self.title_en, "builtin": self.builtin, "based_on": self.based_on,
+                "title_en": self.title_en, "description": description(self),
+                "description_de": self.description, "description_en": self.description_en,
+                "builtin": self.builtin, "hidden": self.hidden, "based_on": self.based_on,
                 "rules": [r.out() for r in self.rules]}  # fmt: skip
 
 
@@ -206,6 +216,12 @@ V1 = Profile(
         _R("cat10_out", effect=HIT),
     ),
     builtin=True,
+    description="Wie die Doku bis 0.117.0: routingtechnisch unmögliche Regeln, ausgehende mit "
+    "breiter Quelle und Freigaben ins Internet nicht gezeigt, nur gezählt; direkt zugeordnete "
+    "bleiben.",
+    description_en="Like the documentation up to 0.117.0: rules impossible by routing, outbound "
+    "rules with a broad source and internet access rules not shown, only counted; rules "
+    "assigned directly stay.",
 )  # fmt: skip
 # Rueckmeldung 2026-10-30: 1 nicht im Pfad (routingtechnisch), 2 ueber das Internet-Gateway
 # hinaus - beide nicht gezeigt, nicht gezaehlt; 3 direkt zugeordnete heben 1 und 2 auf,
@@ -229,6 +245,12 @@ V2 = Profile(
         _R("cat10_out", effect=HIT),
     ),
     builtin=True,
+    description="Rückmeldung 2026-10-30: Regeln nicht im Pfad (Routing der Firewall, Firewall "
+    "nicht auf dem Weg) und über das Internet-Gateway hinaus weder gezeigt noch gezählt; direkt "
+    "zugeordnete heben das auf.",
+    description_en="Feedback 2026-10-30: rules not on the path (firewall routing, firewall not "
+    "on the path) and beyond the internet gateway neither shown nor counted; rules assigned "
+    "directly lift this.",
 )  # fmt: skip
 BUILTIN: tuple[Profile, ...] = (V1, V2)
 DEFAULT = V1
@@ -237,6 +259,11 @@ DEFAULT = V1
 def title(profile: Profile) -> str:
     """Titel in der Sprache der Anfrage."""
     return L(profile.title, profile.title_en or profile.title)
+
+
+def description(profile: Profile) -> str:
+    """Beschreibung in der Sprache der Anfrage."""
+    return L(profile.description, profile.description_en or profile.description)
 
 
 class Invalid(ValueError):
@@ -289,8 +316,29 @@ def _from_entry(e: DictionaryEntry) -> Profile | None:
     except Invalid:
         return None  # gespeichert, aber nicht mehr gueltig: nicht anbieten
     return Profile(key=e.key, title=(e.value or e.key)[:MAX_TEXT],
-                   title_en=str(x.get("title_en") or "")[:MAX_TEXT], rules=rules,
-                   based_on=str(x.get("based_on") or ""))  # fmt: skip
+                   title_en=_text(x.get("title_en")), rules=rules,
+                   based_on=str(x.get("based_on") or ""),
+                   description=_text(x.get("description"), MAX_DESCRIPTION),
+                   description_en=_text(x.get("description_en"), MAX_DESCRIPTION))  # fmt: skip
+
+
+def _text(value, limit: int = MAX_TEXT) -> str:
+    return str(value or "").strip()[:limit]
+
+
+def _labeled(p: Profile, label: DictionaryEntry | None) -> Profile:
+    """Eingebautes Profil mit Name, Beschreibung bzw. ausgeblendet aus dem Namensprofil; ohne
+    eigenen Titel bzw. eigene Beschreibung gelten die Vorgaben (je beide Sprachen)."""
+    p = replace(p, rules=_complete(list(p.rules)))
+    if label is None:
+        return p
+    x = label.extra if isinstance(label.extra, dict) else {}
+    if label.value:
+        p = replace(p, title=label.value[:MAX_TEXT], title_en=_text(x.get("title_en")))
+    if x.get("description"):
+        p = replace(p, description=_text(x.get("description"), MAX_DESCRIPTION),
+                    description_en=_text(x.get("description_en"), MAX_DESCRIPTION))  # fmt: skip
+    return replace(p, hidden=bool(x.get("hidden")))
 
 
 def _entries(session: Session, profile_id: int | None, kind: str) -> list[DictionaryEntry]:
@@ -304,10 +352,13 @@ def _entries(session: Session, profile_id: int | None, kind: str) -> list[Dictio
     return list(session.scalars(stmt))
 
 
-def profiles(session: Session, profile_id: int | None) -> list[Profile]:
-    """Eingebaute und eigene Profile des Namensprofils (eingebaute zuerst)."""
+def profiles(session: Session, profile_id: int | None, hidden: bool = False) -> list[Profile]:
+    """Eingebaute und eigene Profile des Namensprofils (eingebaute zuerst); ausgeblendete
+    eingebaute nur mit `hidden`."""
+    labels = {e.key: e for e in _entries(session, profile_id, KIND_LABEL)}
+    builtin = [_labeled(p, labels.get(p.key)) for p in BUILTIN]
     own = [p for e in _entries(session, profile_id, KIND) if (p := _from_entry(e)) is not None]
-    return [*(replace(p, rules=_complete(list(p.rules))) for p in BUILTIN), *own]
+    return [p for p in (*builtin, *own) if hidden or not p.hidden]
 
 
 def active_key(session: Session, profile_id: int | None) -> str:
@@ -318,7 +369,7 @@ def active_key(session: Session, profile_id: int | None) -> str:
 def for_profile(session: Session, profile_id: int | None) -> Profile:
     """Aktives Profil des Namensprofils; unbekannt bzw. ohne Profil: Vorgabe."""
     key = active_key(session, profile_id)
-    found = {p.key: p for p in profiles(session, profile_id)}
+    found = {p.key: p for p in profiles(session, profile_id, hidden=True)}
     return found.get(key) or found[DEFAULT.key]
 
 
@@ -359,7 +410,7 @@ def save(session: Session, profile_id: int, body: dict, key: str | None = None) 
     if not title:
         raise Invalid("ruleset without title")
     rules = validate_rules(body.get("rules") or [])
-    existing = {p.key: p for p in profiles(session, profile_id)}
+    existing = {p.key: p for p in profiles(session, profile_id, hidden=True)}
     if key is not None:
         old = existing.get(key)
         if old is None or old.builtin:
@@ -369,7 +420,9 @@ def save(session: Session, profile_id: int, body: dict, key: str | None = None) 
     elif sum(1 for p in existing.values() if not p.builtin) >= MAX_PROFILES:
         raise Invalid(f"at most {MAX_PROFILES} own rulesets")
     based_on = str(body.get("based_on") or "")[:40]
-    extra = {"title_en": str(body.get("title_en") or "").strip()[:MAX_TEXT],
+    extra = {"title_en": _text(body.get("title_en")),
+             "description": _text(body.get("description"), MAX_DESCRIPTION),
+             "description_en": _text(body.get("description_en"), MAX_DESCRIPTION),
              "based_on": based_on if based_on in existing else "",
              "rules": [{"key": r.key, "on": r.on, "effect": r.effect, "lifts": list(r.lifts)}
                        for r in rules]}  # fmt: skip
@@ -385,24 +438,73 @@ def save(session: Session, profile_id: int, body: dict, key: str | None = None) 
     return next(p for p in profiles(session, profile_id) if p.key == key)
 
 
+def _label(session: Session, profile_id: int, key: str) -> DictionaryEntry:
+    entry = next((e for e in _entries(session, profile_id, KIND_LABEL) if e.key == key), None)
+    if entry is None:
+        entry = DictionaryEntry(profile_id=profile_id, kind=KIND_LABEL, key=key, value="",
+                                extra={})  # fmt: skip
+        session.add(entry)
+    return entry
+
+
+def rename(session: Session, profile_id: int, key: str, body: dict) -> Profile:
+    """Name und Beschreibung (0.119.0, Anwender: „richtige Namen und eine Beschreibung, auch den
+    bestehenden“): eigene Profile direkt, eingebaute im Namensprofil - die Regeln bleiben. Leerer
+    Titel bzw. leere Beschreibung eines eingebauten = wieder die Vorgabe."""
+    found = {p.key: p for p in profiles(session, profile_id, hidden=True)}
+    if key not in found:
+        raise Invalid(f"unknown ruleset {key!r}")
+    text = {"title_en": _text(body.get("title_en")),
+            "description": _text(body.get("description"), MAX_DESCRIPTION),
+            "description_en": _text(body.get("description_en"), MAX_DESCRIPTION)}  # fmt: skip
+    new_title = _text(body.get("title"))
+    if found[key].builtin:
+        entry = _label(session, profile_id, key)
+        hidden = bool((entry.extra or {}).get("hidden"))
+        entry.value, entry.extra = new_title, {**text, "hidden": hidden}
+    else:
+        if not new_title:
+            raise Invalid("ruleset without title")
+        entry = next(e for e in _entries(session, profile_id, KIND) if e.key == key)
+        entry.value, entry.extra = new_title, {**(entry.extra or {}), **text}
+    session.flush()
+    return next(p for p in profiles(session, profile_id, hidden=True) if p.key == key)
+
+
 def delete(session: Session, profile_id: int, key: str) -> None:
-    """Eigenes Profil loeschen; war es aktiv, gilt wieder die Vorgabe."""
+    """Profil loeschen (0.119.0: auch eingebaute - sie werden im Namensprofil ausgeblendet und
+    lassen sich wiederherstellen). Das aktive nicht: zuerst ein anderes aktivieren."""
+    if active_key(session, profile_id) == key:
+        raise Invalid("active ruleset - activate another ruleset first")
+    if any(p.key == key for p in BUILTIN):
+        entry = _label(session, profile_id, key)
+        entry.extra = {**(entry.extra or {}), "hidden": True}
+        session.flush()
+        return
     entry = next((e for e in _entries(session, profile_id, KIND) if e.key == key), None)
     if entry is None:
         raise Invalid(f"ruleset {key!r} cannot be deleted")
     session.delete(entry)
-    if active_key(session, profile_id) == key:
-        for e in _entries(session, profile_id, KIND_ACTIVE):
-            session.delete(e)
     session.flush()
+
+
+def restore(session: Session, profile_id: int, key: str) -> Profile:
+    """Ausgeblendetes eingebautes Profil wieder anbieten."""
+    if not any(p.key == key for p in BUILTIN):
+        raise Invalid(f"ruleset {key!r} is not built in")
+    entry = _label(session, profile_id, key)
+    entry.extra = {**(entry.extra or {}), "hidden": False}
+    session.flush()
+    return next(p for p in profiles(session, profile_id) if p.key == key)
 
 
 def out(session: Session, profile_id: int | None) -> dict:
     """Pflege: Bedingungen, Profile und das aktive."""
-    found = profiles(session, profile_id)
+    found = profiles(session, profile_id, hidden=True)
     return {"profile_id": profile_id, "active": for_profile(session, profile_id).key,
             "default": DEFAULT.key, "conditions": [c.out() for c in CONDITIONS],
-            "profiles": [p.out() for p in found]}  # fmt: skip
+            "profiles": [p.out() for p in found if not p.hidden],
+            "hidden": [{"key": p.key, "title": title(p)} for p in found if p.hidden]}  # fmt: skip
 
 
 @dataclass

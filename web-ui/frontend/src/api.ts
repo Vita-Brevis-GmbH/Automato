@@ -870,7 +870,7 @@ export interface ApplicationDoc {
     helpers?: number; // Hilfs-Contracts über L3Outs, an den Firewall-Regeln (ADR 0034)
     outbound_broad?: number; // 0.103.0: ausgehende Firewall-Regeln mit breiter Quelle, nicht in der Doku
     to_internet?: number; // 0.114.1: Freigaben ins Internet, die das System nur über „all“ erfassen
-    ruleset?: { key: string; title: string } | null; // 0.118.0: aktives Regelwerk
+    ruleset?: { key: string; title: string; description?: string } | null; // 0.118.0: aktives Regelwerk
     filtered?: { key: string; title: string; count: number }[]; // 0.118.0: je Bedingung gezählt
   };
   systems: AppDocSystem2[];
@@ -3496,7 +3496,11 @@ export interface RulesetProfile {
   title: string;
   title_de: string;
   title_en: string;
+  description: string; // 0.119.0: in der Sprache der Anfrage
+  description_de: string;
+  description_en: string;
   builtin: boolean;
+  hidden: boolean;
   based_on: string;
   rules: RulesetRule[];
 }
@@ -3506,11 +3510,17 @@ export interface AppdocRuleset {
   default: string;
   conditions: RulesetCondition[];
   profiles: RulesetProfile[];
+  hidden: { key: string; title: string }[]; // 0.119.0: gelöschte (ausgeblendete) eingebaute
   saved?: string; // nach dem Speichern: Schlüssel des Profils
 }
-export interface RulesetIn {
+export interface RulesetLabelIn {
   title: string;
-  title_en?: string;
+  title_en: string;
+  description: string;
+  description_en: string;
+}
+export interface RulesetIn extends Partial<RulesetLabelIn> {
+  title: string;
   based_on?: string;
   rules: Pick<RulesetRule, "key" | "on" | "effect" | "lifts">[];
 }
@@ -3520,6 +3530,8 @@ export const activateAppdocRuleset = (profileId: number, key: string) => sendJSO
 export const createAppdocRuleset = (profileId: number, body: RulesetIn) => sendJSON<AppdocRuleset>(rulesetUrl(profileId), "POST", body);
 export const updateAppdocRuleset = (profileId: number, key: string, body: RulesetIn) => sendJSON<AppdocRuleset>(rulesetUrl(profileId, key), "PUT", body);
 export const deleteAppdocRuleset = (profileId: number, key: string) => sendJSON<AppdocRuleset>(rulesetUrl(profileId, key), "DELETE");
+export const renameAppdocRuleset = (profileId: number, key: string, body: RulesetLabelIn) => sendJSON<AppdocRuleset>(rulesetUrl(profileId, key), "PATCH", body);
+export const restoreAppdocRuleset = (profileId: number, key: string) => sendJSON<AppdocRuleset>(`${rulesetUrl(profileId, key)}/restore`, "POST");
 export interface ZoneIn {
   tenant_id: number;
   name: string;
