@@ -7,6 +7,18 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.120.1 – 2026-11-02
+
+Rückmeldung des Anwenders 2026-11-02 beim Aufsetzen des Produktivservers („Unit docker.service not
+found … Es fehlt die Installation von Docker in der Anleitung“). Abnahme bis 0.120.0.
+
+- **`docs/INSTALLATION-PROD.md` Schritt 5.1 Docker installieren:** bisher nur ein Verweis auf
+  `deploy/keycloak/PROD-INSTALL.md`; jetzt die Befehle direkt – Variante A Ubuntu-Pakete
+  (`docker-compose-v2`, empfohlen) bzw. Variante B Docker-Upstream (Repository mit Schlüssel,
+  Fallback `noble` bei fehlendem Codename), nicht mischen; Prüfung `docker compose version`,
+  Voraussetzung `/var/lib/docker` eingehängt, keine Gruppe `docker`. Härten (`daemon.json`) als
+  5.2, `docker info` mit `sudo`.
+
 ## 0.120.0 – 2026-11-02
 
 Rückmeldung des Anwenders 2026-11-02 („bei den Dokus sehe ich nicht wirklich eine Veränderung“ –

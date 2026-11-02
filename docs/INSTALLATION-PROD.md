@@ -408,9 +408,49 @@ festhalten). Wer Ubuntu Pro schon hat, kann zusätzlich das CIS-Profil von USG p
 
 ## 5. Docker installieren und härten
 
-Installation wie in `deploy/keycloak/PROD-INSTALL.md`, Abschnitt 2 (Ubuntu-Pakete
-`docker-compose-v2` oder Docker-Upstream-Pakete, nicht mischen). Danach **vor dem ersten Start
-von Automato**:
+### 5.1 Installieren
+
+Voraussetzung: `/var/lib/docker` ist eingehängt (Schritt 2, `findmnt /var/lib/docker` zeigt das
+eigene Volume) – sonst landen Images und Datenbank auf dem Root-Dateisystem.
+
+**Variante A – Ubuntu-Pakete (empfohlen, 24.04 und 26.04):** `docker-compose-v2` aus `universe`
+zieht die Engine (`docker.io`), `containerd` und `runc` mit; Sicherheitsupdates kommen mit den
+normalen Ubuntu-Updates (Schritt 4.1).
+
+```bash
+sudo apt-get update
+sudo apt-get -y install docker-compose-v2
+sudo systemctl enable --now docker containerd
+docker --version && docker compose version    # beide müssen eine Version zeigen
+```
+
+**Variante B – Docker-Upstream-Pakete** (von Docker Inc., meist neuer) – nur eine der beiden
+Varianten, **nicht mischen**. Fehlt der Codename bei Docker noch (`404 … Release`, oft bei einem
+frischen Ubuntu-Release), auf das letzte unterstützte LTS zeigen (`CODENAME=noble`):
+
+```bash
+sudo apt-get -y install ca-certificates curl gnupg
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+sudo chmod a+r /etc/apt/keyrings/docker.gpg
+CODENAME=$(. /etc/os-release && echo "$VERSION_CODENAME")     # bei 404: CODENAME=noble
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $CODENAME stable" \
+  | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+sudo apt-get update
+sudo apt-get -y install docker-ce docker-ce-cli containerd.io docker-compose-plugin docker-buildx-plugin
+sudo systemctl enable --now docker containerd
+docker --version && docker compose version
+```
+
+- Schlägt `apt-get update` mit der Docker-Zeile fehl: `sudo rm -f /etc/apt/sources.list.d/docker.list
+  /etc/apt/keyrings/docker.gpg` und Variante A nehmen.
+- Benutzer **nicht** in die Gruppe `docker` aufnehmen (sie entspricht root) – Docker-Befehle mit
+  `sudo`.
+- Später aktualisieren: `sudo deploy/aufbau.sh docker-update` (erkennt beide Varianten).
+
+### 5.2 Härten
+
+**Vor dem ersten Start von Automato:**
 
 ```bash
 sudo tee /etc/docker/daemon.json >/dev/null <<'EOF'
@@ -423,8 +463,8 @@ sudo tee /etc/docker/daemon.json >/dev/null <<'EOF'
 }
 EOF
 sudo systemctl restart docker && sudo systemctl enable docker containerd
-docker info --format '{{.LoggingDriver}} live-restore={{.LiveRestoreEnabled}} root={{.DockerRootDir}}'
-docker info --format '{{.SecurityOptions}}'      # apparmor, seccomp, no-new-privileges
+sudo docker info --format '{{.LoggingDriver}} live-restore={{.LiveRestoreEnabled}} root={{.DockerRootDir}}'
+sudo docker info --format '{{.SecurityOptions}}' # apparmor, seccomp, no-new-privileges
 ```
 
 - `log-driver local` mit Grösse: Container-Protokolle füllen die Disk nicht.

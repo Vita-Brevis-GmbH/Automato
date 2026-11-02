@@ -437,8 +437,9 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.118.0** | Rückmeldung 2026-10-30: Regelwerk der Applikations-Doku in den Einstellungen (Namensprofil) – Regeln an/aus, Wirkung, Reihenfolge; eingebaut Regelwerk 1 (Stand 0.117.0) und Regelwerk 2 (nicht im Pfad und über das Internet-Gateway hinaus weder gezeigt noch gezählt), eigene Profile, neue Reihenfolge nur als neues Profil (ADR 0043) |
 | **0.119.0** | Rückmeldung 2026-11-02: Profile des Regelwerks mit Name und Beschreibung (auch die eingebauten), löschen auch eingebaute (ausgeblendet, wiederherstellbar), nie das aktive |
 | **0.120.0** | Rückmeldung 2026-11-02: Regelwerke in der Applikations-Doku vergleichen – nur auf Knopfdruck, was dazukommt bzw. wegfällt mit Grund, gezählte Regeln beider |
+| **0.120.1** | Fehler in der Produktiv-Anleitung: Docker-Installation (Ubuntu-Pakete bzw. Docker-Upstream) direkt in `docs/INSTALLATION-PROD.md` Schritt 5.1 |
 
-### Nächste Arbeiten (Stand 0.120.0)
+### Nächste Arbeiten (Stand 0.120.1)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
 **0.68.0** (2026-10-26), bis **0.102.0** (2026-10-28: „ich teste nach dem Freigeben der Version
@@ -456,7 +457,8 @@ Einwand zu 0.114.0), bis **0.114.1** (2026-10-30, „go 115“ ohne Einwand), bi
 (2026-10-30, „go 116“ ohne Einwand), bis **0.116.0** (2026-10-30, Rückmeldung ohne Einwand
 zu 0.116.0), bis **0.117.0** (2026-10-30, Rückmeldung zum Regelwerk ohne Einwand zu 0.117.0), bis **0.118.0**
 (2026-11-02, Rückmeldung zu Namen und Löschen ohne Einwand zu 0.118.0), bis **0.119.0** (2026-11-02,
-Wunsch nach dem Vergleich ohne Einwand zu 0.119.0). Zur Abnahme steht 0.120.0. Seit 0.104.0 gilt eine
+Wunsch nach dem Vergleich ohne Einwand zu 0.119.0), bis **0.120.0** (2026-11-02, Rückmeldung zur
+Produktiv-Anleitung ohne Einwand zu 0.120.0). Zur Abnahme steht 0.120.1. Seit 0.104.0 gilt eine
 Version als abgenommen,
 sobald die nächste Rückmeldung des Anwenders keinen Einwand dazu enthält (`CLAUDE.md`, Ablauf).
 
