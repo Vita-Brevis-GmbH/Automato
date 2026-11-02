@@ -62,6 +62,13 @@ Test-Regelwerken.“
   wiederherstellbar, nicht aktivierbar). Das aktive Profil lässt sich nicht löschen – die Doku
   fällt nie still auf ein anderes Regelwerk zurück.
 
+## Ergänzung 0.120.0 (Anwender 2026-11-02)
+
+Vergleich der Regelwerke in der Doku – „nur mit Klicken auf einen Button, damit nicht zu viele
+Ressourcen verbraucht werden“: `GET /applications/{id}/ruleset-compare?key=` rechnet die Doku
+mit dem aktiven und dem gewählten Profil (geteilte `TenantData`, nichts gespeichert, kein Stand
+im Hintergrund) und nennt je Regel, die dazukommt bzw. wegfällt, die entscheidende Bedingung.
+
 ## Folgen
 
 - Fachentscheide zur Doku sind je Kunde einstellbar; neue Regeln aus Rückmeldungen kommen als

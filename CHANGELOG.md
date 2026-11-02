@@ -7,6 +7,24 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.120.0 – 2026-11-02
+
+Rückmeldung des Anwenders 2026-11-02 („bei den Dokus sehe ich nicht wirklich eine Veränderung“ –
+Vergleich gewünscht, „aber nur mit Klicken auf einen Button, damit nicht zu viele Ressourcen
+verbraucht werden“). Abnahme bis 0.119.0.
+
+- **Regelwerke vergleichen** in der Applikations-Doku: Knopf „Vergleichen“ neben „Regelwerk: …“
+  öffnet ein Fenster mit der Auswahl der Profile; gerechnet wird **erst mit „Vergleichen“** – die
+  Doku mit dem aktiven und dem gewählten Regelwerk, nichts gespeichert, die Doku selbst bleibt
+  beim aktiven. Ergebnis: je Regelwerk die Anzahl unter „Regeln & Contracts“ und in den
+  Kategorien sowie die gezählten; welche Regeln **dazukommen bzw. wegfallen** (Regeln &
+  Contracts, Kategorien), je mit der Bedingung und Wirkung, die entscheidet; Klick öffnet die
+  Regel. Beide Durchgänge teilen Wege und Relevanz (`TenantData`), der zweite ist günstig.
+- Nicht für Kunden-Benutzer (Regelwerk und Wege der Infrastruktur).
+- API: `GET /applications/{id}/ruleset-compare` (Auswahl) bzw. `?key=` (Vergleich);
+  `applications.compare_rulesets`, `build_doc(ruleset=, data=, trace=)`.
+- Tests: `test_appdoc_ruleset.py`; UI `e2e/release_0120.spec.ts` (neu).
+
 ## 0.119.0 – 2026-11-02
 
 Rückmeldung des Anwenders 2026-11-02 („Kann ich noch den Profilen der Regelwerke richtige Namen

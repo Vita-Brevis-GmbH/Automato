@@ -38,6 +38,7 @@ from app.store import (
     app_plan,
     app_refresh,
     appdoc_catalog,
+    appdoc_ruleset,
     customer_alias,
     doc_snapshots,
     peer_names,
@@ -46,6 +47,7 @@ from app.store import (
 )
 from app.store import applications as store
 from app.store import epgs as epg_store
+from app.store import naming_profiles as profile_store
 
 router = APIRouter(prefix="/applications", tags=["applications"])
 
@@ -1066,6 +1068,32 @@ def application_doc(
     out = _out(session, app, store.Resolver(session, app.tenant_id))
     out.editable = editable
     return ApplicationDocOut(application=out, snapshot=served.state(), **doc)
+
+
+@router.get("/{application_id}/ruleset-compare")
+def application_ruleset_compare(
+    application_id: int,
+    key: str | None = None,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Regelwerke vergleichen (0.120.0): ohne `key` das aktive und die Profile zur Auswahl; mit
+    `key` rechnet die Doku mit beiden Regelwerken - nur auf Knopfdruck (Anwender: „damit nicht zu
+    viele Ressourcen verbraucht werden“), nichts gespeichert. Nicht fuer Kunden-Benutzer."""
+    app = _load(session, principal, application_id)
+    if principal.is_customer:  # Regelwerk und Wege der Infrastruktur
+        raise HTTPException(status_code=403, detail="forbidden")
+    pid = profile_store.profile_id_for_tenant(session, app.tenant_id)
+    current = appdoc_ruleset.for_profile(session, pid)
+    found = {p.key: p for p in appdoc_ruleset.profiles(session, pid)}
+    if key is None:
+        return {"current": {"key": current.key, "title": appdoc_ruleset.title(current)},
+                "profiles": [{"key": p.key, "title": appdoc_ruleset.title(p),
+                              "description": appdoc_ruleset.description(p)}
+                             for p in found.values()]}  # fmt: skip
+    if key not in found:
+        raise HTTPException(status_code=404, detail=f"unknown ruleset {key!r}")
+    return store.compare_rulesets(session, app, found[key])
 
 
 @router.get("/{application_id}/doc/state", response_model=SnapshotOut)

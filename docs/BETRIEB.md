@@ -1294,6 +1294,11 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
          nicht löschen – zuerst ein anderes aktivieren.
        - Die Doku zeigt im Kopf von „Regeln & Contracts“ die gezählten Regeln je Bedingung und
          das aktive Regelwerk (Link hierher). Umschalten rechnet den Stand der Doku neu.
+       - **Vergleichen** (seit 0.120.0, nicht für Kunden-Benutzer): in der Doku „Vergleichen“
+         neben „Regelwerk: …“, Profil wählen, „Vergleichen“ – erst dann wird gerechnet (bei
+         grossen Applikationen etwas Geduld). Zeigt je Regelwerk die Anzahl und die gezählten
+         Regeln sowie, welche Regeln dazukommen bzw. wegfallen, mit der entscheidenden
+         Bedingung; Klick öffnet die Regel. Die Doku selbst bleibt beim aktiven Regelwerk.
 
     **Ohne Netz einer Zone** (any, grosse Bereiche) zählt, was hinter dem Interface der Regel
     liegt: die Anbindung, die Netze, die die Firewall dort routet, bzw. die Default-Route (Zonen

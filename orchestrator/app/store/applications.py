@@ -14,6 +14,7 @@ schon eine Applikation mit diesem Kuerzel, ergaenzt der Vorschlag deren Mitglied
 
 import ipaddress
 import re
+import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -692,7 +693,9 @@ def _hosts_with_ips(session: Session, tenant_id: int, ips: list[str]) -> list[Ne
 
 
 def build_doc(session: Session, app: Application, rule_ids: set[int] | None = None,
-              names: bool = False) -> dict:  # fmt: skip
+              names: bool = False, *, data: appdoc.TenantData | None = None,
+              ruleset: appdoc_ruleset.Profile | None = None,
+              trace: bool = False) -> dict:  # fmt: skip
     """Applikations-Doku (Dev-Befund 0.14.0): die Doku steht im Mittelpunkt.
 
     - `systems`: alle VMs der Applikation (Portgruppen ihrer EPGs, VMs hinter ihren Servern)
@@ -708,12 +711,18 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
     - `tables`: die 10 Kategorien fuer Export und Druck (gleiche Zeilen einmal); mit `names`
       (Einstellung des Mandanten, nur Betreuer - 0.95.0) Gegenstellen nur mit Adresse samt Namen
       (`peer_names`).
+
+    Vergleich der Regelwerke (0.120.0, `compare_rulesets`): `ruleset` statt des aktiven, `data`
+    geteilt zwischen zwei Durchgaengen (Wege, Relevanz einmal), `trace` = je Regel die
+    entscheidende Bedingung (`decisions`).
     """
     tid = app.tenant_id
     restricted = rule_ids is not None  # Kunden-Benutzer: nur ihre Regeln (ADR 0018)
     res = Resolver(session, tid)
     hosts, epgs = _origins(session, app, res)
-    data = appdoc.TenantData(session, tid)
+    data = data or appdoc.TenantData(session, tid)
+    if ruleset is not None:
+        data.ruleset = ruleset  # statt des aktiven Profils (Vergleich)
     ctx = references.context(session, tid)
     site_index = sites.SiteIndex(session, tid)
     portgroups = virtual.PortgroupIndex.load(session, tid)
@@ -886,11 +895,14 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
     ruleset = data.ruleset
     counted = appdoc_ruleset.Counted(ruleset)
     kept_rows = []
+    decided: dict[int, list[tuple[str, str | None]]] = defaultdict(list)
     for item in rows:
         row = item[2]
         row[appdoc.DECIDED], row[appdoc.DECIDED_BY] = appdoc_filter.decide(
             row, ruleset, assigned, excluded
         )
+        if trace and row.get(appdoc.RULE) is not None:
+            decided[row[appdoc.RULE]].append((row[appdoc.DECIDED], row[appdoc.DECIDED_BY]))
         if row[appdoc.DECIDED] in appdoc_ruleset.KEPT:
             kept_rows.append(item)
         elif row[appdoc.DECIDED] == appdoc_ruleset.COUNTED:
@@ -951,7 +963,7 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
     # Zonen und ohne Spalte „Zone“ (Netze der Infrastruktur)
     zone_heads(data, tables, restricted)
     tenant = session.get(Tenant, tid)
-    return {
+    out = {
         "tenant_code": tenant.code if tenant else None,
         "summary": {
             "vms": sum(1 for x in systems if x["kind"] == "vm"),
@@ -1008,6 +1020,79 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
             "rule_epgs": [[rid, sorted(v)] for rid, v in sorted(rule_epgs.items())],
         },
     }
+    if trace:  # Vergleich der Regelwerke: je Regel, was entschied
+        out["decisions"] = {rid: _decision(ds, ruleset) for rid, ds in decided.items()}
+    return out
+
+
+def _decision(ds: list[tuple[str, str | None]], profile: appdoc_ruleset.Profile) -> dict:
+    """Was fuer eine Regel entschied (0.120.0): in der Kategorie, sobald eine Zeile dort steht;
+    sonst die erste bleibende Wirkung (nur Treffer, Vermerk), sonst die erste Bedingung des
+    Profils, die sie weglaesst."""
+    for group in (appdoc_ruleset.SHOWN, appdoc_ruleset.KEPT):
+        hit = [d for d in ds if d[0] in group]
+        if hit:
+            effect, key = min(hit, key=lambda d: profile.position(d[1] or ""))
+            return {"effect": effect, "key": key}
+    effect, key = min(ds, key=lambda d: profile.position(d[1] or ""))
+    return {"effect": effect, "key": key}
+
+
+def compare_rulesets(session: Session, app: Application, other: appdoc_ruleset.Profile) -> dict:
+    """Doku mit dem aktiven und mit einem anderen Regelwerk (0.120.0, Anwender: „nur mit Klicken
+    auf einen Button, damit nicht zu viele Ressourcen verbraucht werden“): welche Regeln unter
+    „Regeln & Contracts“ bzw. in den Kategorien dazukommen oder wegfallen, je mit der Bedingung,
+    die entscheidet, und die gezaehlten Regeln beider. Zwei Durchgaenge mit geteilten Daten
+    (Wege und Relevanz einmal); nichts gespeichert, nur lesend."""
+    started = time.monotonic()
+    data = appdoc.TenantData(session, app.tenant_id)
+    current = data.ruleset
+    a = build_doc(session, app, data=data, ruleset=current, trace=True)
+    b = build_doc(session, app, data=data, ruleset=other, trace=True)
+    stmt = select(SourceSystem.id, SourceSystem.name).where(SourceSystem.tenant_id == app.tenant_id)
+    sources = dict(session.execute(stmt).all())
+    infos = {r.id: r for d in (a, b) for r in d["rules"]}
+
+    def rules(doc: dict) -> set[int]:
+        return {r.id for r in doc["rules"]}
+
+    def shown(doc: dict) -> set[int]:
+        return {rid for t in doc["tables"] for row in t["rows"] for rid in row.get("_rules", [])}
+
+    def items(ids: set[int], why: dict) -> list[dict]:
+        out = []
+        for rid in ids:
+            r, d = infos.get(rid), why.get(rid) or {}
+            key = d.get("key")
+            source = sources.get(r.source_system_id, "") if r is not None else ""
+            out.append({
+                "rule_id": rid, "name": r.name if r is not None else f"#{rid}",
+                "domain": r.domain if r is not None else "",
+                "source": f"{source} / {r.vdom}" if r is not None and r.vdom else source,
+                "key": key or "", "effect": d.get("effect") or "",
+                "why": appdoc_ruleset.BY_KEY[key].out()["title"] if key in appdoc_ruleset.BY_KEY
+                else "",
+                "effect_label": appdoc_ruleset.effect_label(d["effect"]) if d.get("effect")
+                else "",
+            })  # fmt: skip
+        return sorted(out, key=lambda x: (x["source"], x["name"].lower()))
+
+    def side(profile: appdoc_ruleset.Profile, doc: dict) -> dict:
+        return {"key": profile.key, "title": appdoc_ruleset.title(profile),
+                "rules": len(rules(doc)), "shown": len(shown(doc)),
+                "filtered": doc["summary"]["filtered"]}  # fmt: skip
+
+    da, db = a["decisions"], b["decisions"]
+    return {
+        "current": side(current, a),
+        "other": side(other, b),
+        # „Regeln & Contracts“: dazu (Grund: was im aktiven entschied) bzw. weg (im anderen)
+        "rules": {"added": items(rules(b) - rules(a), da),
+                  "removed": items(rules(a) - rules(b), db)},
+        "categories": {"added": items(shown(b) - shown(a), da),
+                       "removed": items(shown(a) - shown(b), db)},
+        "seconds": round(time.monotonic() - started, 1),
+    }  # fmt: skip
 
 
 def doc_findings(session: Session, app: Application, doc: dict, restricted: bool) -> list[dict]:

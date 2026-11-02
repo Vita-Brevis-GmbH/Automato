@@ -436,8 +436,9 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.117.0** | Rückmeldung 2026-10-30: Findings mehrere auf einmal ignorieren (Mehrfachauswahl); Übersicht mit wählbaren und verschiebbaren Bereichen (Grafiken Findings/Läufe, Schnellansichten, Routing-Änderungen, Applikationen, Regeln, Objekte nach Typ); Weg-Suche: Ziel hinter VIP/Load Balancer = EPG der Server; Objekte nach Präfix der Namenskonvention |
 | **0.118.0** | Rückmeldung 2026-10-30: Regelwerk der Applikations-Doku in den Einstellungen (Namensprofil) – Regeln an/aus, Wirkung, Reihenfolge; eingebaut Regelwerk 1 (Stand 0.117.0) und Regelwerk 2 (nicht im Pfad und über das Internet-Gateway hinaus weder gezeigt noch gezählt), eigene Profile, neue Reihenfolge nur als neues Profil (ADR 0043) |
 | **0.119.0** | Rückmeldung 2026-11-02: Profile des Regelwerks mit Name und Beschreibung (auch die eingebauten), löschen auch eingebaute (ausgeblendet, wiederherstellbar), nie das aktive |
+| **0.120.0** | Rückmeldung 2026-11-02: Regelwerke in der Applikations-Doku vergleichen – nur auf Knopfdruck, was dazukommt bzw. wegfällt mit Grund, gezählte Regeln beider |
 
-### Nächste Arbeiten (Stand 0.119.0)
+### Nächste Arbeiten (Stand 0.120.0)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
 **0.68.0** (2026-10-26), bis **0.102.0** (2026-10-28: „ich teste nach dem Freigeben der Version
@@ -454,7 +455,8 @@ Einwand), bis **0.113.0** (2026-10-29, Fehlerliste zu 0.112 ohne Einwand zu 0.11
 Einwand zu 0.114.0), bis **0.114.1** (2026-10-30, „go 115“ ohne Einwand), bis **0.115.0**
 (2026-10-30, „go 116“ ohne Einwand), bis **0.116.0** (2026-10-30, Rückmeldung ohne Einwand
 zu 0.116.0), bis **0.117.0** (2026-10-30, Rückmeldung zum Regelwerk ohne Einwand zu 0.117.0), bis **0.118.0**
-(2026-11-02, Rückmeldung zu Namen und Löschen ohne Einwand zu 0.118.0). Zur Abnahme steht 0.119.0. Seit 0.104.0 gilt eine
+(2026-11-02, Rückmeldung zu Namen und Löschen ohne Einwand zu 0.118.0), bis **0.119.0** (2026-11-02,
+Wunsch nach dem Vergleich ohne Einwand zu 0.119.0). Zur Abnahme steht 0.120.0. Seit 0.104.0 gilt eine
 Version als abgenommen,
 sobald die nächste Rückmeldung des Anwenders keinen Einwand dazu enthält (`CLAUDE.md`, Ablauf).
 

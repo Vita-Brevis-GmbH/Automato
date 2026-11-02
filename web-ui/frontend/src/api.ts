@@ -3532,6 +3532,37 @@ export const updateAppdocRuleset = (profileId: number, key: string, body: Rulese
 export const deleteAppdocRuleset = (profileId: number, key: string) => sendJSON<AppdocRuleset>(rulesetUrl(profileId, key), "DELETE");
 export const renameAppdocRuleset = (profileId: number, key: string, body: RulesetLabelIn) => sendJSON<AppdocRuleset>(rulesetUrl(profileId, key), "PATCH", body);
 export const restoreAppdocRuleset = (profileId: number, key: string) => sendJSON<AppdocRuleset>(`${rulesetUrl(profileId, key)}/restore`, "POST");
+// Regelwerke vergleichen (0.120.0): nur auf Knopfdruck, nichts gespeichert
+export interface RulesetChoice {
+  current: { key: string; title: string };
+  profiles: { key: string; title: string; description: string }[];
+}
+export interface RulesetDiffItem {
+  rule_id: number;
+  name: string;
+  domain: string;
+  source: string;
+  key: string; // Bedingung, die entschied
+  why: string;
+  effect: string;
+  effect_label: string;
+}
+export interface RulesetSide {
+  key: string;
+  title: string;
+  rules: number; // unter „Regeln & Contracts“
+  shown: number; // in den Kategorien
+  filtered: { key: string; title: string; count: number }[];
+}
+export interface RulesetCompare {
+  current: RulesetSide;
+  other: RulesetSide;
+  rules: { added: RulesetDiffItem[]; removed: RulesetDiffItem[] };
+  categories: { added: RulesetDiffItem[]; removed: RulesetDiffItem[] };
+  seconds: number;
+}
+export const fetchRulesetChoice = (appId: number) => getJSON<RulesetChoice>(`/api/applications/${appId}/ruleset-compare`);
+export const compareRuleset = (appId: number, key: string) => getJSON<RulesetCompare>(`/api/applications/${appId}/ruleset-compare${qs({ key })}`);
 export interface ZoneIn {
   tenant_id: number;
   name: string;

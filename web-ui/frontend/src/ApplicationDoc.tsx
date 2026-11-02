@@ -50,6 +50,7 @@ import { SnapshotBar } from "./SnapshotBar";
 import { ActionBadge, Dash, download, Drawer, Empty, ErrorBox, Expandable, ExportLangSelect, Icon, Loading, Modal } from "./ui";
 import { L } from "./i18n";
 import { RuleWegeLink } from "./modules/wege/RuleWegeLink";
+import RulesetCompare from "./modules/doku/RulesetCompare";
 
 type Go = (v: View, p?: ViewParams) => void;
 
@@ -244,6 +245,8 @@ export default function ApplicationDocView({
   const [systems, setSystems] = useState<System[]>([]);
   const [f, setF] = useState<Filters>(NO_FILTER);
   const [rule, setRule] = useState<number | null>(null);
+  // Regelwerke vergleichen (0.120.0): offen; während das Regel-Detail offen ist, ausgeblendet (Ergebnis bleibt)
+  const [comparing, setComparing] = useState<"" | "open" | "hidden">("");
   const [showEmpty, setShowEmpty] = useState(false);
   const [printing, setPrinting] = useState<Set<string> | null>(null); // Druck: gewählte Abschnitte offen
   const [exportOpen, setExportOpen] = useState(false);
@@ -608,6 +611,16 @@ export default function ApplicationDocView({
               {L(`Regelwerk: ${s.ruleset.title}`, `Ruleset: ${s.ruleset.title}`)}
             </a>
           )}
+          {s.ruleset && !me.isCustomer && (
+            <button
+              className="btn btn-ghost btn-sm no-print"
+              id="app-ruleset-compare"
+              title={L("Doku mit einem anderen Regelwerk vergleichen – rechnet erst auf Knopfdruck", "Compare the documentation with another ruleset – computes only on click")}
+              onClick={() => setComparing("open")}
+            >
+              {L("Vergleichen", "Compare")}
+            </button>
+          )}
           {s.helpers ? (
             <span
               className="faint"
@@ -950,11 +963,27 @@ export default function ApplicationDocView({
         />
       )}
 
+      {comparing && (
+        <div style={comparing === "hidden" ? { display: "none" } : undefined}>
+          <RulesetCompare
+            appId={id}
+            onClose={() => setComparing("")}
+            onRule={(rid) => {
+              setComparing("hidden");
+              setRule(rid);
+            }}
+          />
+        </div>
+      )}
+
       {rule != null && (
         <RuleDetailDrawer
           ruleId={rule}
           systemName={sourceName}
-          onClose={() => setRule(null)}
+          onClose={() => {
+            setRule(null);
+            if (comparing === "hidden") setComparing("open");
+          }}
           onGo={onGo}
           onRule={setRule}
           focus={selected ? ruleFocus(selected, doc.hits) : undefined}

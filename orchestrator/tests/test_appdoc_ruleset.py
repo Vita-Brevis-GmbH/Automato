@@ -234,3 +234,43 @@ def test_namen_beschreibung_und_ausblenden(client, session_factory):
     s.close()
     want = {"appdoc_ruleset.renamed", "appdoc_ruleset.restored", "appdoc_ruleset.deleted"}
     assert want <= set(acts)
+
+
+def test_regelwerke_vergleichen(client, session_factory):
+    """0.120.0 (Anwender: „Vergleich … aber nur mit Klicken auf einen Button“): die Doku mit dem
+    aktiven und einem anderen Regelwerk - was dazukommt bzw. wegfällt, mit Grund."""
+    tid = pc._seed(client)
+    pid = _default_profile(session_factory)
+    web = next(s["name"] for s in system_list(client, tid) if s["ip"] == "10.30.0.10")
+    body = {"name": "Web", "members": [{"kind": "host", "ref": web}]}
+    app = client.post(f"/applications?tenant_id={tid}", json=body, headers=OP).json()
+    url = f"/applications/{app['id']}/ruleset-compare"
+    choice = client.get(url, headers=VIEW).json()
+    assert choice["current"]["key"] == "v1"
+    assert [p["key"] for p in choice["profiles"]] == ["v1", "v2"]
+    assert client.get(url, params={"key": "x"}, headers=VIEW).status_code == 404
+
+    # eigenes Profil: deaktivierte Regeln zuerst weglassen
+    rules_url = f"/naming-profiles/{pid}/appdoc-ruleset"
+    v2 = next(p for p in client.get(rules_url, headers=VIEW).json()["profiles"]
+              if p["key"] == "v2")  # fmt: skip
+    own = _body(v2, disabled={"on": True, "effect": "drop"})
+    order = own["rules"]
+    own["rules"] = [order[7], *order[:7], *order[8:]]
+    key = client.post(rules_url, json=own, headers=ADMIN).json()["saved"]
+
+    out = client.get(url, params={"key": key}, headers=VIEW).json()
+    assert out["current"]["key"] == "v1" and out["other"]["key"] == key
+    removed = {x["name"]: x for x in out["rules"]["removed"]}
+    assert removed["block-all"]["key"] == "disabled"
+    assert removed["block-all"]["why"] == "Deaktivierte Firewall-Regeln"
+    assert removed["block-all"]["effect_label"] == "nicht gezeigt, nicht gezählt"
+    assert "block-all" in {x["name"] for x in out["categories"]["removed"]}
+    assert {f["key"] for f in out["current"]["filtered"]} >= {"impossible", "out_broad"}
+    assert not {f["key"] for f in out["other"]["filtered"]} & PATH
+    assert out["current"]["rules"] == out["other"]["rules"] + len(out["rules"]["removed"]) - len(
+        out["rules"]["added"])  # fmt: skip
+    # die Doku selbst bleibt beim aktiven Regelwerk
+    doc = client.get(f"/applications/{app['id']}/doc").json()
+    assert doc["summary"]["ruleset"]["key"] == "v1" and "block-all" in {
+        r["name"] for r in doc["rules"]}  # fmt: skip
