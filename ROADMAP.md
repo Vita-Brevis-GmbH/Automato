@@ -438,8 +438,9 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.119.0** | Rückmeldung 2026-11-02: Profile des Regelwerks mit Name und Beschreibung (auch die eingebauten), löschen auch eingebaute (ausgeblendet, wiederherstellbar), nie das aktive |
 | **0.120.0** | Rückmeldung 2026-11-02: Regelwerke in der Applikations-Doku vergleichen – nur auf Knopfdruck, was dazukommt bzw. wegfällt mit Grund, gezählte Regeln beider |
 | **0.120.1** | Fehler in der Produktiv-Anleitung: Docker-Installation (Ubuntu-Pakete bzw. Docker-Upstream) direkt in `docs/INSTALLATION-PROD.md` Schritt 5.1 |
+| **0.120.2** | Rückmeldung 2026-11-02 zur Produktiv-Anleitung: SSH mit Passwort-Anmeldung (fail2ban, Schlüssel optional, Rettung über die vCenter-Konsole), 6.2 `.env` Schritt für Schritt |
 
-### Nächste Arbeiten (Stand 0.120.1)
+### Nächste Arbeiten (Stand 0.120.2)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
 **0.68.0** (2026-10-26), bis **0.102.0** (2026-10-28: „ich teste nach dem Freigeben der Version
@@ -458,7 +459,8 @@ Einwand zu 0.114.0), bis **0.114.1** (2026-10-30, „go 115“ ohne Einwand), bi
 zu 0.116.0), bis **0.117.0** (2026-10-30, Rückmeldung zum Regelwerk ohne Einwand zu 0.117.0), bis **0.118.0**
 (2026-11-02, Rückmeldung zu Namen und Löschen ohne Einwand zu 0.118.0), bis **0.119.0** (2026-11-02,
 Wunsch nach dem Vergleich ohne Einwand zu 0.119.0), bis **0.120.0** (2026-11-02, Rückmeldung zur
-Produktiv-Anleitung ohne Einwand zu 0.120.0). Zur Abnahme steht 0.120.1. Seit 0.104.0 gilt eine
+Produktiv-Anleitung ohne Einwand zu 0.120.0), bis **0.120.1** (2026-11-02, Fragen zu 6.2 und SSH
+ohne Einwand zur Docker-Installation). Zur Abnahme steht 0.120.2. Seit 0.104.0 gilt eine
 Version als abgenommen,
 sobald die nächste Rückmeldung des Anwenders keinen Einwand dazu enthält (`CLAUDE.md`, Ablauf).
 

@@ -32,7 +32,7 @@ NetBox (ADR 0010).
 
   | Richtung | Port | Zweck |
   |---|---|---|
-  | Admin-Netz → VM | 22/tcp | SSH (nur Schlüssel) |
+  | Admin-Netz → VM | 22/tcp | SSH (Passwort, nur Gruppe `automato-admins`) |
   | Client-Netze → VM | 443/tcp | Oberfläche über den Proxy |
   | Agent-Stationen → VM | 8443/tcp | Agent-Gateway (Client-Zertifikat Pflicht) |
   | VM → Geräte | 443/tcp, 22/tcp, 161/udp | FortiGate, APIC, Infoblox, vCenter, NSX ALB (HTTPS); Switches (SSH bzw. SNMPv3) – nur lesend |
@@ -263,15 +263,20 @@ Docker wird nicht nebenbei aktualisiert (ein Update startet alle Container neu),
 
 ### 4.2 Konten und SSH
 
+Anmeldung per SSH mit **Passwort** (Entscheid des Anwenders 2026-11-02) – abgesichert durch: SSH
+nur aus dem Admin-Netz (4.3), kein Root-Login, nur Konten der Gruppe `automato-admins`, höchstens
+drei Versuche je Verbindung und `fail2ban` (sperrt Quellen nach Fehlversuchen). Je Betreiber ein
+eigenes Konto mit starkem Passwort. SSH-Schlüssel gehen zusätzlich (optional, unten).
+
 ```bash
 sudo groupadd -f automato-admins
 sudo usermod -aG automato-admins <admin>            # je Betreiber ein eigenes Konto
 sudo passwd -l root                                 # Root-Login gesperrt (Ubuntu-Vorgabe)
 sudo tee /etc/ssh/sshd_config.d/10-automato.conf >/dev/null <<'EOF'
 PermitRootLogin no
-PasswordAuthentication no
+PasswordAuthentication yes
+PubkeyAuthentication yes
 KbdInteractiveAuthentication no
-AuthenticationMethods publickey
 AllowGroups automato-admins
 X11Forwarding no
 AllowTcpForwarding no
@@ -283,11 +288,41 @@ ClientAliveCountMax 2
 EOF
 sudo sshd -t && sudo systemctl reload ssh
 sudo sshd -T | grep -E "^(permitrootlogin|passwordauthentication|allowgroups)"
+sudo apt-get -y install fail2ban                    # Jail sshd ist bei Ubuntu eingeschaltet
+sudo fail2ban-client status sshd
 ```
 
-**Zweite SSH-Sitzung offen lassen**, bis die Anmeldung mit Schlüssel in einer neuen Sitzung
-klappt. `sudo` verlangt das Passwort des eigenen Kontos. Die Gruppe `docker` ist gleichwertig mit
-root – niemanden aufnehmen, Docker-Befehle mit `sudo` (steht dann im Journal).
+**Zweite SSH-Sitzung offen lassen**, bis die Anmeldung in einer neuen Sitzung klappt (`id` zeigt
+die Gruppe `automato-admins` erst in einer neuen Sitzung; ohne die Gruppe weist SSH das Konto ab).
+`sudo` verlangt das Passwort des eigenen Kontos. Die Gruppe `docker` ist gleichwertig mit root –
+niemanden aufnehmen, Docker-Befehle mit `sudo` (steht dann im Journal).
+
+**Optional – SSH-Schlüssel** (zusätzlich zum Passwort): auf dem eigenen Rechner
+`ssh-keygen -t ed25519`, dann unter Windows (PowerShell)
+`type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh <admin>@<vm> "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"`
+bzw. unter macOS/Linux `ssh-copy-id <admin>@<vm>`. Mit **PuTTY**: in PuTTYgen *EdDSA (Ed25519)*
+erzeugen, `.ppk` speichern, den Text „Public key for pasting into OpenSSH authorized_keys file“
+in `~/.ssh/authorized_keys` der VM einfügen und in PuTTY unter *Connection → SSH → Auth →
+Credentials* die `.ppk` wählen. Wer später **nur noch Schlüssel** zulassen will: erst eine neue
+Sitzung mit Schlüssel prüfen, dann in `10-automato.conf` `PasswordAuthentication no` setzen.
+
+**Ausgesperrt?** (Meldung „No supported authentication methods available (server sent:
+publickey)“ – z. B. nach einer früheren Fassung dieser Anleitung mit nur Schlüsseln): über die
+**Konsole im vCenter** (Web- bzw. Remote-Konsole – die SSH-Einstellungen gelten dort nicht) mit
+Konto und Passwort anmelden und die Passwort-Anmeldung wieder zulassen:
+
+```bash
+sudo sed -i -e 's/^PasswordAuthentication no/PasswordAuthentication yes/' \
+  -e '/^AuthenticationMethods/d' /etc/ssh/sshd_config.d/10-automato.conf
+sudo sshd -t && sudo systemctl reload ssh
+sudo sshd -T | grep -E "^(passwordauthentication|authenticationmethods|allowgroups)"
+id <admin>                                   # muss automato-admins enthalten, sonst usermod -aG …
+```
+
+Erwartet: `passwordauthentication yes`, keine Zeile `authenticationmethods publickey`. Steht
+weiterhin `no`, setzt es eine andere Datei – suchen mit
+`sudo grep -ri "passwordauthentication\|authenticationmethods" /etc/ssh/sshd_config /etc/ssh/sshd_config.d/`
+(es gilt der **erste** gefundene Wert; `10-automato.conf` kommt vor `50-cloud-init.conf`).
 
 ### 4.3 Host-Firewall
 
@@ -491,8 +526,20 @@ sudo cp .env.example .env && sudo chmod 600 .env && sudo chown root:root .env
 
 ### 6.2 `.env` für Produktion
 
-Werte erzeugen (`openssl rand -hex 32` je Secret – hex, weil Teile davon in URLs stehen) und in
-`.env` setzen bzw. ergänzen:
+Alle Einstellungen und Secrets stehen in `.env` im Repo-Ordner – **vor dem ersten Start** (6.4)
+setzen. Die Secrets direkt in die Datei schreiben (sie erscheinen nicht am Bildschirm); die
+Hilfsfunktion ersetzt eine vorhandene (auch auskommentierte) Zeile bzw. hängt sie an:
+
+```bash
+cd /opt/automato/automato
+setenv() { if sudo grep -q "^#\? *$1=" .env; then sudo sed -i "s|^#\? *$1=.*|$1=$2|" .env; else echo "$1=$2" | sudo tee -a .env >/dev/null; fi; }
+for k in POSTGRES_PASSWORD AUTOMATO_INTERNAL_API_TOKEN AUTOMATO_AUDIT_ENCRYPTION_KEY AUTOMATO_AGENT_GATEWAY_SECRET; do
+  setenv "$k" "$(openssl rand -hex 32)"          # hex, weil Teile davon in URLs stehen
+done
+```
+
+Die übrigen Werte mit `setenv NAME 'wert'` bzw. `sudo nano .env` – eigene Namen und Netze statt
+der Beispiele:
 
 ```ini
 AUTOMATO_ENVIRONMENT=prod
@@ -528,6 +575,33 @@ AUTOMATO_DOCKER_UPDATE=1
 AUTOMATO_NETBOX_VERIFY_TLS=true
 AUTOMATO_FORTIGATE_VERIFY_TLS=true
 AUTOMATO_ACI_VERIFY_TLS=true
+```
+
+Was die Werte bedeuten:
+
+- `POSTGRES_PASSWORD` gilt nur beim **ersten** Anlegen der Datenbank – später ändern wirkt nicht
+  (ohne Daten: `sudo docker compose $P down -v` löscht die Datenbank, dann neu starten).
+- `AUTOMATO_COMPOSE_PROFILES`: `core` (Datenbank, Orchestrator, Oberfläche), `collectors`
+  (Worker), `proxy` (HTTPS 443), `agent-gateway` (8443, nur mit Agenten in anderen Netzen – sonst
+  weglassen, dann auch `AUTOMATO_AGENT_GATEWAY_*` und `AUTOMATO_INTERNAL_MTLS_MODE`).
+- `AUTOMATO_UI_HOST`: DNS-Name der Oberfläche (im internen DNS auf die VM, passend zum
+  Zertifikat). `AUTOMATO_UI_TLS`: Pfade **im Container** – `/etc/caddy/pki` ist
+  `deploy/proxy/pki/` auf der VM (6.3). `AUTOMATO_CORS_ORIGINS` = `https://` + `UI_HOST`.
+- `AUTOMATO_UI_ALLOW`: Netze, die die Oberfläche öffnen dürfen (mit Leerzeichen getrennt).
+- OIDC: Adresse der Keycloak-VM mit Realm `automato`, `AUDIENCE` = Client der API. Keycloak darf
+  später fertig werden (6.5) – bis dahin startet Automato, nur die Anmeldung geht noch nicht.
+- `*_VERIFY_TLS`: Vorgaben für Quellsysteme ohne eigene Einstellung (diese je Gerät in der
+  Oberfläche).
+- Werte mit Leerzeichen (`UI_TLS`, `UI_ALLOW`, `COMPOSE_PROFILES`) in Anführungszeichen; jede
+  Variable nur einmal in `.env`.
+
+Prüfen (ohne Secrets anzuzeigen):
+
+```bash
+sudo chmod 600 .env && sudo chown root:root .env
+sudo grep -E '^(AUTOMATO_|POSTGRES_)' .env | sed -E 's/((PASSWORD|TOKEN|SECRET|KEY)=).*/\1***/'
+P="--profile core --profile collectors --profile proxy --profile agent-gateway"
+sudo docker compose $P config --quiet && echo "Konfiguration ok"
 ```
 
 Hinweise:
@@ -632,8 +706,8 @@ VM mit Tang/vTPM bzw. der Passphrase.
       Notfall-Passphrase und Recovery Key im Tresor.
 - [ ] **VM:** EFI + Secure Boot (`mokutil --sb-state`), keine CD/Diskette/seriell/USB,
       Snapshots ohne Arbeitsspeicher, Konsole nur für Betreiber.
-- [ ] **SSH:** `sshd -T` → `permitrootlogin no`, `passwordauthentication no`,
-      `allowgroups automato-admins`.
+- [ ] **SSH:** `sshd -T` → `permitrootlogin no`, `allowgroups automato-admins`,
+      `maxauthtries 3`; `fail2ban-client status sshd` aktiv.
 - [ ] **Firewall:** `ufw status` (22 nur Admin-Netz); `iptables -L DOCKER-USER`; aus einem
       nicht freigegebenen Netz sind 443 und 8443 **nicht** erreichbar; 8000/5173 nur auf
       `127.0.0.1` (`ss -tlnp`).
@@ -668,7 +742,8 @@ VM mit Tang/vTPM bzw. der Passphrase.
 - **Schlüssel wechseln:** Disk-Passphrase mit `cryptsetup luksChangeKey`, danach neue
   Header-Kopie; Tang-Schlüssel mit `clevis luks regen`; Secrets in `.env` (Token, Passwörter) bei
   Personalwechsel – DB-Passwort der App-Rolle mit `deploy/aufbau.sh db-rollen --neu`.
-- **Konten:** Betreiber verlassen das Team → SSH-Schlüssel und Konto entfernen, Keycloak-Benutzer
+- **Konten:** Betreiber verlassen das Team → Konto sperren bzw. entfernen (`sudo usermod -L
+  <admin>`, `gpasswd -d <admin> automato-admins`, ggf. SSH-Schlüssel), Keycloak-Benutzer
   deaktivieren.
 
 ## 10. Bekannte Grenzen (Stand 0.116.0)

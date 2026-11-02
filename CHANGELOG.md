@@ -7,6 +7,22 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.120.2 – 2026-11-02
+
+Rückmeldungen des Anwenders 2026-11-02 beim Aufsetzen des Produktivservers („Kannst du mir 6.2
+genauer erklären“; nach dem Härten „No supported authentication methods available (server sent:
+publickey)“ – „Bitte Passwort-Anmeldung wieder erlauben“). Abnahme bis 0.120.1.
+
+- **`docs/INSTALLATION-PROD.md` 4.2 Konten und SSH:** Anmeldung per **Passwort** (Entscheid des
+  Anwenders), abgesichert durch SSH nur aus dem Admin-Netz, kein Root-Login, nur Gruppe
+  `automato-admins`, `MaxAuthTries 3` und `fail2ban`; SSH-Schlüssel optional (PowerShell,
+  `ssh-copy-id`, PuTTYgen). Neu **„Ausgesperrt?“**: Passwort-Anmeldung über die Konsole im
+  vCenter wieder zulassen, Prüfung mit `sshd -T`. Portmatrix, Abnahme-Checkliste und
+  Konten-Entzug angepasst.
+- **6.2 `.env` ausfüllen** Schritt für Schritt: Hilfsfunktion `setenv` (setzt oder ergänzt eine
+  Zeile), vier Geheimnisse mit `openssl rand -hex 32`, Bedeutung jedes Werts, Prüfung mit
+  maskierter Ausgabe und `docker compose … config --quiet`.
+
 ## 0.120.1 – 2026-11-02
 
 Rückmeldung des Anwenders 2026-11-02 beim Aufsetzen des Produktivservers („Unit docker.service not
