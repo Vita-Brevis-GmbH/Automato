@@ -7,6 +7,33 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.120.3 – 2026-11-03
+
+Rückmeldungen des Anwenders beim Aufsetzen der Produktion (2026-11-02/03) und Entscheide zur
+Plattform für viele Kunden. Abnahme bis 0.120.2.
+
+- **`docs/INSTALLATION-PROD.md`** nachgeführt mit dem, was beim Aufsetzen gefehlt hat:
+  - 4.2 „Ausgesperrt?“: SSH neu starten statt neu einlesen, Prüfung mit `sshd -T -C` (auch
+    `Match`-Blöcke), Journal mitlesen.
+  - 4.3: Name der Schnittstelle (`ip -br addr`), Zähler der `443`-Zeile; **Firewall vor der VM**
+    (443/8443 ohne NAT) mit Prüfung per `tcpdump` und `Test-NetConnection`.
+  - 5.1 `docker-buildx` dazu; 5.2 erst nach der Installation (sonst fehlt `/etc/docker`); 6.4
+    Prüfung `pgrep -c docker-proxy`.
+  - 6.2: `setenv` und `P` gelten nur in der aktuellen Sitzung; **`COMPOSE_PROFILES`** in `.env`,
+    damit `docker compose` ohne `$P` läuft.
+  - 6.3 Zertifikate Schritt für Schritt: Schlüssel und CSR auf der VM oder PFX umwandeln,
+    Pfade auf der VM gegen Pfade im Container, Prüfung von Name, Kette und Schlüssel;
+    **der eigenen CA vertrauen** (richtige Root über die Kette bzw. AIA finden, VM-Store,
+    `docker-compose.override.yml` mit `SSL_CERT_FILE` für Orchestrator und Worker).
+  - 6.5 Keycloak neu: Realm in einem **bestehenden Keycloak** (`make_realm.py`, Import, User
+    profile, OTP, erster Admin), **Issuer = `KC_HOSTNAME`** statt Admin-Name, Backchannel per
+    `extra_hosts`, Fehlerbilder (`ConnectError`, 403, 404), Rollen der Benutzer.
+- **ADR 0044 (Entwurf) – Plattform für viele Kunden:** Startseite je Kunde und Werkzeuge mit
+  Namen nach Schema (Variante B), NetBox je Kunde als eigener Stack, eine Instanz mit einem
+  Mandanten je Kunde, Anmeldung je Mandant mit Global Admin und globaler Sicht (V2), VPN in V2,
+  AD-DNS lesend; Name des Werkzeugs offen („Palantir“ verworfen). ADR 0014 und ROADMAP
+  (Version 1 Nr. 9–11, Version 2 Nr. 11–14) nachgeführt.
+
 ## 0.120.2 – 2026-11-02
 
 Rückmeldungen des Anwenders 2026-11-02 beim Aufsetzen des Produktivservers („Kannst du mir 6.2

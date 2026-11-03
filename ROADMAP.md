@@ -439,8 +439,9 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.120.0** | Rückmeldung 2026-11-02: Regelwerke in der Applikations-Doku vergleichen – nur auf Knopfdruck, was dazukommt bzw. wegfällt mit Grund, gezählte Regeln beider |
 | **0.120.1** | Fehler in der Produktiv-Anleitung: Docker-Installation (Ubuntu-Pakete bzw. Docker-Upstream) direkt in `docs/INSTALLATION-PROD.md` Schritt 5.1 |
 | **0.120.2** | Rückmeldung 2026-11-02 zur Produktiv-Anleitung: SSH mit Passwort-Anmeldung (fail2ban, Schlüssel optional, Rettung über die vCenter-Konsole), 6.2 `.env` Schritt für Schritt |
+| **0.120.3** | Produktiv-Anleitung nach dem Aufsetzen der Produktion (Zertifikate, eigene CA, Keycloak-Issuer und Backchannel, Realm in bestehendem Keycloak, `COMPOSE_PROFILES`, Firewall davor); Entscheide zur Plattform für viele Kunden als ADR 0044 (Entwurf), Roadmap V2 ergänzt |
 
-### Nächste Arbeiten (Stand 0.120.2)
+### Nächste Arbeiten (Stand 0.120.3)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
 **0.68.0** (2026-10-26), bis **0.102.0** (2026-10-28: „ich teste nach dem Freigeben der Version
@@ -460,7 +461,8 @@ zu 0.116.0), bis **0.117.0** (2026-10-30, Rückmeldung zum Regelwerk ohne Einwan
 (2026-11-02, Rückmeldung zu Namen und Löschen ohne Einwand zu 0.118.0), bis **0.119.0** (2026-11-02,
 Wunsch nach dem Vergleich ohne Einwand zu 0.119.0), bis **0.120.0** (2026-11-02, Rückmeldung zur
 Produktiv-Anleitung ohne Einwand zu 0.120.0), bis **0.120.1** (2026-11-02, Fragen zu 6.2 und SSH
-ohne Einwand zur Docker-Installation). Zur Abnahme steht 0.120.2. Seit 0.104.0 gilt eine
+ohne Einwand zur Docker-Installation), bis **0.120.2** (2026-11-03, Produktion aufgesetzt ohne
+Einwand zu 0.120.2). Zur Abnahme steht 0.120.3. Seit 0.104.0 gilt eine
 Version als abgenommen,
 sobald die nächste Rückmeldung des Anwenders keinen Einwand dazu enthält (`CLAUDE.md`, Ablauf).
 
@@ -480,12 +482,15 @@ Produktivschaltung weiter 0.1xx; **1.0.0 = produktiv**, danach 2.x mit neuem Nam
 | 6 | R14 vor dem Produktivbetrieb: OTP für alle, Oberfläche nur aus Management-Netz/VPN, Verschlüsselung des Datenträgers – umsetzen bzw. bestätigen, was ausserhalb von Automato erledigt ist | **Teil 1 in 0.116.0** (`docs/INSTALLATION-PROD.md`: LUKS mit Tang/vTPM, VM-, OS- und Docker-Hardening, Abnahme-Liste; Oberfläche nur aus `AUTOMATO_UI_ALLOW`, Orchestrator/Web-UI nur auf `127.0.0.1`; OTP-Schritt beschrieben); offen: auf der Prod-VM umsetzen und bestätigen, Produktions-Build der Oberfläche, Container-Härtung je Dienst |
 | 7 | Fehler bereinigen: HTTP 500 beim Laden der Doku (Referenz im Protokoll nötig) | offen |
 | 8 | Produktiv gehen, wenn die meisten Fehler raus sind (DC, ADR 0013) = **1.0.0** | danach |
+| 9 | NetBox je Kunde (ADR 0044): NetBox-Host mit einem Stack je Kunde (eigene Datenbank, Redis, Secret, Sicherung), gemeinsamer Proxy mit Namen nach Schema, Anmeldung über Keycloak; Werkzeug zum Anlegen, Sichern, Aktualisieren und Löschen einer Instanz mit Anleitung | offen (Entscheid: eigene VM) |
+| 10 | AD-DNS als Referenzquelle, nur lesend (Zonentransfer oder LDAP, eigene ADR) – DNS-Namen ohne Infoblox | offen (Entscheid: Zonentransfer oder LDAP) |
+| 11 | Projekt Datacenter: möglicherweise als Kopie des Projekts weiterführen (ADR 0044) | Entscheid später |
 
 *Version 2 – neuer Name und Cockpit (2.x):*
 
 | Nr. | Inhalt |
 |---|---|
-| 1 | Umbenennen des Tools (neuer Name) |
+| 1 | Umbenennen des Tools (neuer Name; „Palantir“ verworfen – stark geschützte Marke, Name offen) |
 | 2 | Einbinden in ein neues Cockpit (eigenes Repo bzw. Projekt, Orchestrator für die Produkte; ADR 0014 Entwurf v2) |
 | 3 | Magister im Cockpit |
 | 4 | Module nach Netzwerkschichten (Layer 1, Layer 2, Layer 3, Layer 4–7) und ein Modul, das die Wege miteinander vergleicht und abgleicht |
@@ -495,6 +500,10 @@ Produktivschaltung weiter 0.1xx; **1.0.0 = produktiv**, danach 2.x mit neuem Nam
 | 8 | Export automatisch in Wikis (Confluence und Open-Source-Wikis, z. B. BookStack v25.07.1) |
 | 9 | NSX ALB: Adressen der Service Engines, Content Switching, GSLB (Entscheid 2026-10-29) |
 | 10 | Reservierungen in der Doku (Anwender 2026-10-30): Elemente festlegen und reservieren – erst VLANs und BGP-AS-Nummern –, Befund bei Überschneidung (reserviert gegen gelesen bzw. doppelt); AS-Nummern im Routing einzeln darstellen (je AS die Nachbarn, Firewalls und Router) |
+| 11 | Startseite je Kunde (`<kunde>.mgmt…`) mit Kacheln zu seinen Werkzeugen, Werkzeuge mit Namen nach Schema (`<kunde>-netbox.mgmt…`, geteilte als `<werkzeug>.mgmt…`); zuerst statisch, dann aus dem Cockpit (ADR 0044, Anwender 2026-11-03: Variante B) |
+| 12 | Anmeldung je Mandant (eigene Login-Seite wie bei Magister); Global Admin sieht und verwaltet alle Mandanten – Sicht eines Kunden oder globale Sicht über alle Mandanten, z. B. Regeln zwischen zwei Kunden erstellen bzw. überwachen (grösserer Umbau, ADR 0044) |
+| 13 | VPN-Verbindungen: IPsec und SSL-VPN der FortiGate lesend (Tunnel, Gegenstellen, Phase-2-Selektoren, Routen über Tunnel) in Weg-Suche, Verbindungen und Doku (Anwender 2026-11-03) |
+| 14 | Lizenz- und Gerätemanagement als weiteres Werkzeug auf der Startseite (später; Automatisierung siehe Version 3) |
 
 *Version 3 – Automatisierung (3.x):* „Wiedergeburt“ von Automato mit Automatisierungen für
 Netzwerk und VMs (Proxmox, VMware usw.), in Zusammenarbeit mit Magister und dem

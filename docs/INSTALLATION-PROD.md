@@ -314,15 +314,18 @@ Konto und Passwort anmelden und die Passwort-Anmeldung wieder zulassen:
 ```bash
 sudo sed -i -e 's/^PasswordAuthentication no/PasswordAuthentication yes/' \
   -e '/^AuthenticationMethods/d' /etc/ssh/sshd_config.d/10-automato.conf
-sudo sshd -t && sudo systemctl reload ssh
-sudo sshd -T | grep -E "^(passwordauthentication|authenticationmethods|allowgroups)"
+sudo sshd -t && sudo systemctl restart ssh   # neu starten, nicht nur neu einlesen
+# was für das eigene Konto wirklich gilt (auch Match-Blöcke), IP des eigenen PCs:
+sudo sshd -T -C user=<admin>,host=pc,addr=<IP-des-PCs> | grep -E "^(passwordauthentication|authenticationmethods|allowgroups)"
 id <admin>                                   # muss automato-admins enthalten, sonst usermod -aG …
 ```
 
-Erwartet: `passwordauthentication yes`, keine Zeile `authenticationmethods publickey`. Steht
-weiterhin `no`, setzt es eine andere Datei – suchen mit
-`sudo grep -ri "passwordauthentication\|authenticationmethods" /etc/ssh/sshd_config /etc/ssh/sshd_config.d/`
+Erwartet: `passwordauthentication yes` und `authenticationmethods any`. Steht weiterhin `no`
+bzw. `publickey`, setzt es eine andere Datei oder ein `Match`-Block – suchen mit
+`sudo grep -rniE "^\s*(match|passwordauthentication|authenticationmethods)" /etc/ssh/sshd_config /etc/ssh/sshd_config.d/`
 (es gilt der **erste** gefundene Wert; `10-automato.conf` kommt vor `50-cloud-init.conf`).
+Klappt es danach noch nicht: `sudo journalctl -u ssh -f` beim Anmelden mitlesen – bleibt es
+still, erreicht der Client einen anderen Rechner (IP/Name in PuTTY prüfen).
 
 ### 4.3 Host-Firewall
 
@@ -336,7 +339,8 @@ sudo ufw --force enable && sudo ufw status verbose
 
 **Wichtig:** Ports, die Docker veröffentlicht (443, 8443), laufen an ufw vorbei (Kette
 `FORWARD`, nicht `INPUT`). Sie werden in der Kette `DOCKER-USER` eingeschränkt – am Ende von
-`/etc/ufw/after.rules` anfügen (Netze und Schnittstelle anpassen):
+`/etc/ufw/after.rules` anfügen (Netze und Schnittstelle anpassen; den Namen der Schnittstelle
+zeigt `ip -br addr`, z. B. `ens33` oder `ens192` – ohne passenden Namen greift keine Zeile):
 
 ```text
 # Automato: von Docker veröffentlichte Ports nur aus freigegebenen Netzen
@@ -356,6 +360,13 @@ sudo ufw reload && sudo iptables -L DOCKER-USER -n -v --line-numbers
 ```
 
 Gilt für das iptables-Backend von Docker (Vorgabe). Mit IPv6 dasselbe in `after6.rules`.
+Beim Aufruf der Oberfläche muss der Zähler der `443`-Zeile steigen.
+
+**Firewall vor der VM:** Freigaben zur VM ohne NAT (sonst sieht Automato nur die Adresse der
+Firewall, `AUTOMATO_UI_ALLOW` greift nicht) – HTTPS 443 aus den Client-Netzen, TCP 8443 aus den
+Netzen der Agenten. Ping und SSH sagen darüber nichts. Prüfen: `sudo tcpdump -ni <schnittstelle>
+tcp port 443` auf der VM, dazu auf dem PC `Test-NetConnection <name> -Port 443` – kommt auf der VM
+kein Paket an, fehlt die Freigabe davor (FortiGate: *Policy Lookup* bzw. `diagnose debug flow`).
 Ausgehende Verbindungen der Container (Geräte, NetBox, Keycloak) sind davon nicht betroffen.
 Ob der Weg aus den Containern zum Host frei ist, prüft später `sudo deploy/aufbau.sh pruefen`
 (Abschnitt Host-Firewall; Regeln dafür mit `firewall --anwenden`).
@@ -454,7 +465,7 @@ normalen Ubuntu-Updates (Schritt 4.1).
 
 ```bash
 sudo apt-get update
-sudo apt-get -y install docker-compose-v2
+sudo apt-get -y install docker-compose-v2 docker-buildx   # buildx: ohne Warnung „Bake“ beim Bau
 sudo systemctl enable --now docker containerd
 docker --version && docker compose version    # beide müssen eine Version zeigen
 ```
@@ -485,7 +496,8 @@ docker --version && docker compose version
 
 ### 5.2 Härten
 
-**Vor dem ersten Start von Automato:**
+**Nach 5.1** (ohne installiertes Docker fehlt `/etc/docker`, die Datei entsteht nicht) und **vor
+dem ersten Start von Automato:**
 
 ```bash
 sudo tee /etc/docker/daemon.json >/dev/null <<'EOF'
@@ -528,7 +540,10 @@ sudo cp .env.example .env && sudo chmod 600 .env && sudo chown root:root .env
 
 Alle Einstellungen und Secrets stehen in `.env` im Repo-Ordner – **vor dem ersten Start** (6.4)
 setzen. Die Secrets direkt in die Datei schreiben (sie erscheinen nicht am Bildschirm); die
-Hilfsfunktion ersetzt eine vorhandene (auch auskommentierte) Zeile bzw. hängt sie an:
+Hilfsfunktion ersetzt eine vorhandene (auch auskommentierte) Zeile bzw. hängt sie an. Sie gilt –
+wie später die Variable `P` – **nur in der aktuellen Shell**: nach einer neuen Anmeldung oder
+`sudo -i` die Zeile `setenv() …` erneut einfügen (als eine Zeile; `type setenv` zeigt „is a
+function“); `sudo setenv` geht nicht.
 
 ```bash
 cd /opt/automato/automato
@@ -544,6 +559,7 @@ der Beispiele:
 ```ini
 AUTOMATO_ENVIRONMENT=prod
 AUTOMATO_COMPOSE_PROFILES="--profile core --profile collectors --profile proxy --profile agent-gateway"
+COMPOSE_PROFILES=core,collectors,proxy,agent-gateway
 POSTGRES_PASSWORD=<hex>
 AUTOMATO_INTERNAL_API_TOKEN=<hex>
 AUTOMATO_AUDIT_ENCRYPTION_KEY=<hex>
@@ -584,6 +600,10 @@ Was die Werte bedeuten:
 - `AUTOMATO_COMPOSE_PROFILES`: `core` (Datenbank, Orchestrator, Oberfläche), `collectors`
   (Worker), `proxy` (HTTPS 443), `agent-gateway` (8443, nur mit Agenten in anderen Netzen – sonst
   weglassen, dann auch `AUTOMATO_AGENT_GATEWAY_*` und `AUTOMATO_INTERNAL_MTLS_MODE`).
+  Die Skripte (`aufbau.sh`, `update.sh`) lesen diese Variable.
+- `COMPOSE_PROFILES`: dieselben Profile mit Komma – Compose liest sie selbst aus `.env`. Damit
+  genügt im Repo-Ordner `sudo docker compose ps|logs|up -d …` ohne `$P`, auch in neuen
+  Sitzungen (ohne sie und ohne `$P` meldet Compose z. B. „no such service: web-ui“).
 - `AUTOMATO_UI_HOST`: DNS-Name der Oberfläche (im internen DNS auf die VM, passend zum
   Zertifikat). `AUTOMATO_UI_TLS`: Pfade **im Container** – `/etc/caddy/pki` ist
   `deploy/proxy/pki/` auf der VM (6.3). `AUTOMATO_CORS_ORIGINS` = `https://` + `UI_HOST`.
@@ -619,26 +639,121 @@ Hinweise:
 
 ### 6.3 Zertifikate
 
-```bash
-# Oberfläche: Fullchain + Schlüssel der eigenen CA
-sudo install -d -m 750 deploy/proxy/pki
-sudo install -m 640 automato.int.example.ch.crt automato.int.example.ch.key deploy/proxy/pki/
+Der Name der Oberfläche (`AUTOMATO_UI_HOST`) muss im Zertifikat stehen (SAN). `AUTOMATO_UI_TLS`
+nennt die Pfade **im Container** (`/etc/caddy/pki/…`) – auf der VM ist das `deploy/proxy/pki/` im
+Repo-Ordner. Alle Befehle im Repo-Ordner `/opt/automato/automato`.
 
-# Agent-Gateway: eigene Agent-CA, Server- und Agent-Zertifikate (deploy/agent-gateway/README.md)
+```bash
+H=automato.int.example.ch                     # = AUTOMATO_UI_HOST
+sudo install -d -m 750 deploy/proxy/pki
+```
+
+**Variante 1 – Schlüssel und Anfrage auf der VM** (empfohlen, der Schlüssel verlässt die VM nie):
+
+```bash
+sudo openssl req -new -newkey rsa:3072 -nodes -keyout deploy/proxy/pki/$H.key -out /tmp/$H.csr \
+  -subj "/CN=$H" -addext "subjectAltName=DNS:$H" -addext "extendedKeyUsage=serverAuth"
+sudo chmod 640 deploy/proxy/pki/$H.key
+```
+
+Die CSR (`/tmp/<host>.csr`) bei der CA einreichen – AD CS auf einem Domänen-Rechner:
+`certreq -submit -attrib "CertificateTemplate:WebServer" <host>.csr <host>.cer`, das Zertifikat
+der ausstellenden CA mit `certutil -ca.cert issuing-ca.cer`. Beide `.cer` nach `/tmp` auf die VM
+und als Fullchain zusammensetzen (Leaf zuerst; PEM oder DER):
+
+```bash
+for f in /tmp/$H.cer /tmp/issuing-ca.cer; do
+  openssl x509 -in "$f" 2>/dev/null || openssl x509 -inform DER -in "$f"
+done | sudo tee deploy/proxy/pki/$H.crt >/dev/null
+```
+
+**Variante 2 – fertiges Zertifikat mit Schlüssel** (z. B. `.pfx` aus der CA), per WinSCP bzw.
+`scp` nach `/home/<admin>/`:
+
+```bash
+PFX=/home/<admin>/$H.pfx                      # fragt jeweils das Passwort der PFX ab
+openssl pkcs12 -in "$PFX" -clcerts -nokeys | sed -n '/BEGIN/,/END/p' | sudo tee deploy/proxy/pki/$H.crt >/dev/null
+openssl pkcs12 -in "$PFX" -cacerts -nokeys | sed -n '/BEGIN/,/END/p' | sudo tee -a deploy/proxy/pki/$H.crt >/dev/null
+openssl pkcs12 -in "$PFX" -nocerts -nodes | sed -n '/BEGIN/,/END/p' | sudo tee deploy/proxy/pki/$H.key >/dev/null
+sudo chmod 640 deploy/proxy/pki/$H.crt deploy/proxy/pki/$H.key
+```
+
+Meldet OpenSSL „unsupported“, an jede `openssl pkcs12`-Zeile `-legacy` anhängen. Liegen Fullchain
+und Schlüssel schon als PEM vor: `sudo install -m 640 /home/<admin>/<host>.crt
+/home/<admin>/<host>.key deploy/proxy/pki/` (Quellpfade vollständig angeben).
+
+Prüfen:
+
+```bash
+sudo openssl x509 -in deploy/proxy/pki/$H.crt -noout -subject -ext subjectAltName -enddate
+sudo grep -c "BEGIN CERTIFICATE" deploy/proxy/pki/$H.crt            # 2 oder mehr (mit Kette)
+sudo openssl x509 -in deploy/proxy/pki/$H.crt -noout -pubkey | openssl md5
+sudo openssl pkey -in deploy/proxy/pki/$H.key -pubout | openssl md5  # muss gleich sein
+```
+
+**Agent-Gateway:** eigene Agent-CA, Server- und Agent-Zertifikate (`deploy/agent-gateway/README.md`):
+
+```bash
 cd deploy/agent-gateway
 sudo ./make-certs.sh ca
-sudo ./make-certs.sh server automato.int.example.ch
-sudo ./make-certs.sh agent <agent-name>        # je Agent, Name wie unter Collector-Agenten
+sudo ./make-certs.sh server automato.int.example.ch   # = AUTOMATO_AGENT_GATEWAY_HOST
+sudo ./make-certs.sh agent <agent-name>               # je Agent, Name wie unter Collector-Agenten
 cd ../..
 ```
 
 Den Schlüssel der Agent-CA (`deploy/agent-gateway/pki/agents-ca.key`) nach dem Ausstellen in
 den Tresor übernehmen und auf der VM löschen; er wird erst für das nächste Agent-Zertifikat
-wieder gebraucht.
+wieder gebraucht – auch für `server`, wenn sich `AUTOMATO_AGENT_GATEWAY_HOST` ändert (die
+Agent-Zertifikate bleiben dann gültig, nur die Gateway-Adresse der Agenten ändert sich).
+
+**Der eigenen CA vertrauen (VM und Container):** Stammen die Zertifikate von Keycloak, NetBox oder
+Geräten von der eigenen CA, braucht die VM deren **Root** – und Orchestrator und Worker dieselbe
+Liste. Die richtige Root ist der Aussteller (`i:`) des letzten Zertifikats der Kette; die
+Adresse zum Herunterladen steht meist im Zertifikat (AIA, „CA Issuers“):
+
+```bash
+openssl s_client -connect auth.example.ch:443 -servername auth.example.ch -showcerts </dev/null 2>/dev/null | grep -E "^ *[0-9] s:|^ *i:"
+openssl s_client -connect auth.example.ch:443 -servername auth.example.ch </dev/null 2>/dev/null | openssl x509 -noout -ext authorityInfoAccess
+```
+
+Steht in der Kette nur `0 s:…`, schickt der Server das Zwischenzertifikat nicht mit – dann ist
+dessen Aussteller die gesuchte CA (bzw. die Fullchain auf dem Server ergänzen). Root aufnehmen
+(PEM; DER vorher mit `openssl x509 -inform der -in ca.cer -out ca.crt` umwandeln):
+
+```bash
+openssl x509 -in /home/<admin>/root-ca.crt -noout -subject -issuer   # subject = issuer → Root
+sudo install -m 644 /home/<admin>/root-ca.crt /usr/local/share/ca-certificates/interne-root-ca.crt
+sudo update-ca-certificates                                           # „1 added“
+```
+
+Die Warnung „rehash: skipping ca-certificates.crt“ ist harmlos. Für die Container eine
+`docker-compose.override.yml` im Repo-Ordner (gitignored, gilt nur für diese VM; Compose und die
+Skripte lesen sie automatisch mit):
+
+```bash
+sudo tee docker-compose.override.yml >/dev/null <<'EOF'
+services:
+  orchestrator:
+    environment:
+      SSL_CERT_FILE: /etc/automato/host-ca.crt
+    volumes:
+      - /etc/ssl/certs/ca-certificates.crt:/etc/automato/host-ca.crt:ro
+  collector:
+    environment:
+      SSL_CERT_FILE: /etc/automato/host-ca.crt
+    volumes:
+      - /etc/ssl/certs/ca-certificates.crt:/etc/automato/host-ca.crt:ro
+EOF
+```
+
+TLS zwischen den Containern (interne CA, 6.4) bleibt davon unberührt. Nach jeder Änderung an den
+CAs: `sudo update-ca-certificates` und `sudo docker compose up -d --force-recreate orchestrator
+collector` – die eingebundene Datei liest ein laufender Container sonst nicht neu.
 
 ### 6.4 Erster Start und Härtung des Stacks
 
 ```bash
+# P nur ohne COMPOSE_PROFILES in .env nötig – gilt nur in dieser Sitzung
 P="--profile core --profile collectors --profile proxy --profile agent-gateway"   # wie in .env
 sudo docker compose $P run --rm --no-deps proxy caddy validate --config /etc/caddy/Caddyfile
 sudo deploy/aufbau.sh backup-schluessel     # age-Schlüssel für die Sicherung, Eintrag in .env
@@ -647,21 +762,86 @@ sudo deploy/aufbau.sh db-rollen             # Orchestrator ohne DDL-Rechte (eige
 sudo deploy/aufbau.sh tls-intern            # TLS zwischen allen Containern (interne CA)
 sudo deploy/aufbau.sh pruefen               # alles grün, Exit 0
 ss -tlnp | grep -E ':(443|8443|8000|5173) '  # 8000/5173 nur auf 127.0.0.1
+pgrep -c docker-proxy                       # 0 – sonst ist die Härtung aus 5.2 nicht aktiv
 ```
 
-Den age-Schlüssel (`/root/automato-backup.agekey`) **sofort** in den Tresor kopieren – ohne ihn
-ist keine Sicherung lesbar. Danach `sudo augenrules --load` (Audit-Regeln aus 4.5 greifen jetzt).
-Spätere Updates laufen mit `deploy/update.sh` (Schritt 9) – es sichert vorher und braucht dafür
-den laufenden Stack.
+`caddy validate` meldet „Valid configuration“ nur, wenn Zertifikat und Schlüssel zusammenpassen
+und lesbar sind. Läuft `pruefen` direkt nach einem Neustart („orchestrator (startet gerade)“,
+`/health` antwortet nicht), nach etwa 30 Sekunden wiederholen. Den age-Schlüssel
+(`/root/automato-backup.agekey`) **sofort** in den Tresor kopieren – ohne ihn ist keine Sicherung
+lesbar. Danach `sudo augenrules --load` (Audit-Regeln aus 4.5 greifen jetzt). Spätere Updates
+laufen mit `deploy/update.sh` (Schritt 9) – es sichert vorher und braucht dafür den laufenden
+Stack.
 
 ### 6.5 Anmeldung (Keycloak)
 
-1. Keycloak nach `deploy/keycloak/PROD-INSTALL.md` (Abschnitte 9a–9c), Redirect-URI und Web
-   Origin von `automato-web` auf `https://automato.int.example.ch` (`deploy/proxy/README.md`).
-2. **OTP für alle**: Admin-Konsole → Realm `automato` → *Authentication → Required actions →
-   Configure OTP* → **Set as default action** (gilt für neue Benutzer); bestehende Benutzer unter
-   *Users → … → Required user actions → Configure OTP*.
-3. Prüfen:
+Je Automato-Umgebung ein **eigener Realm** – die Mandanten-IDs gehören zur Datenbank der
+Umgebung; Benutzer, OTP und erlaubte Adressen bleiben getrennt.
+
+1. **Realm anlegen.** Neuer Keycloak: `deploy/keycloak/PROD-INSTALL.md` (Abschnitte 9a–9c,
+   Import beim ersten Start). **Bestehender Keycloak:** Realm-Datei aus der Vorlage erzeugen und
+   importieren – bestehende Realms bleiben unberührt:
+
+   ```bash
+   python3 deploy/keycloak/make_realm.py --realm automato --ui-url https://automato.int.example.ch \
+     --display-name "Automato" > /tmp/realm-automato.json
+   ```
+
+   Admin-Konsole → Realm-Auswahl → **Create realm** → *Resource file* = die Datei → *Create*.
+   Die Datei enthält Rollen, die Clients `automato-web`/`automato-api`, die Mapper (Audience,
+   `tenant_ids`, `customer_ids`), die Härtung und `automato-admin` ohne Passwort – keine
+   Secrets. Ist der Name schon vergeben (z. B. von Dev), einen eigenen wählen (`automato-prod`).
+2. **Im Realm einmalig:**
+   - *Realm settings → User profile → Create attribute* `tenant_ids` (Display name
+     „Mandanten-IDs“, **Multivalued** an, *Who can edit* **nur Admin**), ebenso `customer_ids`
+     („Kunden-IDs“) – ohne die Einträge lassen sich die Werte nicht setzen; Benutzer dürfen sie
+     nie selbst ändern.
+   - **OTP für alle:** *Authentication → Required actions → Configure OTP* → **Set as default
+     action**; bestehende Benutzer unter *Users → … → Required user actions → Configure OTP*.
+   - `automato-admin`: *Credentials → Set password* (Temporary an) – beim ersten Login neues
+     Passwort und OTP.
+   - Redirect-URI und Web-Origin von `automato-web` = `https://<AUTOMATO_UI_HOST>/*` bzw.
+     `https://<AUTOMATO_UI_HOST>` (setzt `make_realm.py`; nach einer Namensänderung von Hand,
+     dazu *Valid post logout redirect URIs*).
+3. **Issuer = `KC_HOSTNAME` von Keycloak** – der Name, mit dem Keycloak die Tokens ausstellt
+   (z. B. `https://auth.example.ch`), **nicht** der Admin-Name (`KC_HOSTNAME_ADMIN`, nur aus dem
+   Admin-Netz – von der Automato-VM HTTP 403). Mit einem anderen Namen lehnt der Orchestrator jedes
+   Token ab:
+
+   ```ini
+   AUTOMATO_OIDC_ISSUER=https://auth.example.ch/realms/automato
+   AUTOMATO_OIDC_JWKS_URL=https://auth.example.ch/realms/automato/protocol/openid-connect/certs
+   ```
+
+4. **Backchannel direkt zur Keycloak-VM** (Server zu Server, ohne Umweg über die WAF): erst
+   prüfen, dann in `docker-compose.override.yml` unter `orchestrator:` ergänzen:
+
+   ```bash
+   curl -sS -o /dev/null -w "%{http_code}\n" --resolve auth.example.ch:443:<KEYCLOAK-VM-IP> \
+     https://auth.example.ch/realms/automato/protocol/openid-connect/certs      # 200
+   ```
+
+   ```yaml
+       extra_hosts:
+         - "auth.example.ch:<KEYCLOAK-VM-IP>"
+   ```
+
+   Danach `sudo docker compose up -d`, nach etwa 30 Sekunden `sudo deploy/aufbau.sh pruefen` →
+   „Keycloak (JWKS)“ OK mit Schlüsseln. Sonst: `ConnectError` = Name, Weg oder Zertifikat (6.3:
+   der eigenen CA vertrauen), `HTTP 403` = Admin-Name oder WAF, `HTTP 404` = Realm.
+5. **Benutzer:** *Users → Create new user* (Benutzername, E-Mail, *Email verified* an) →
+   *Credentials* (Temporary an) → *Role mapping → Assign role*:
+
+   | Rolle | Darf | Mandanten-IDs |
+   |---|---|---|
+   | `admin` | alles, alle Mandanten | nicht nötig |
+   | `operator` | lesen, Findings bearbeiten, Läufe | nötig |
+   | `viewer` | nur lesen | nötig |
+   | `customer` | nur die Doku der eigenen Kunden | Mandanten- **und** Kunden-IDs |
+
+   Ohne Mandanten-IDs sehen `viewer` und `operator` nichts. Zuerst als `automato-admin` anmelden
+   und die Mandanten anlegen, dann deren IDs bei den übrigen Benutzern eintragen (Tab *Details*).
+6. Prüfen:
 
    ```bash
    curl -s http://127.0.0.1:8000/auth/config            # auth_mode "oidc"
@@ -669,7 +849,9 @@ den laufenden Stack.
    ```
 
    (mit TLS intern `https://` und `--cacert deploy/tls/pki/client/ca.crt`). Im Browser
-   `https://automato.int.example.ch` → Keycloak → Passwort + OTP → zurück.
+   `https://automato.int.example.ch` → Keycloak → Passwort + OTP → zurück. Antwortet die Seite
+   nicht: Freigabe auf der Firewall vor der VM (4.3); „Zugriff nur aus freigegebenen Netzen“ (403):
+   Netz in `AUTOMATO_UI_ALLOW` ergänzen, `sudo docker compose up -d --force-recreate proxy`.
 
 ### 6.6 Quellsysteme
 

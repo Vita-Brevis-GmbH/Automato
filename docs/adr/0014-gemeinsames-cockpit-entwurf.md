@@ -172,6 +172,11 @@ Ops-Benutzer ──OIDC (Ops-Realm, OTP)──► Cockpit (Web + API + Postgres:
 
 ## Offene Entscheide (Anwender)
 
+Stand 2026-11-03 (ADR 0044): zu 2 **eine Instanz mit einem Mandanten je Kunde** (viele kleine
+Kunden), NetBox je Kunde als eigener Stack; zu 3 **Anmeldung je Mandant** (eigene Login-Seite wie
+bei Magister) mit einem Global Admin über alle Mandanten und einer globalen Sicht – Umsetzung in V2.
+Startseite je Kunde mit Adressen nach Schema statt eines einzigen App-Starters.
+
 1. Cockpit aus Magister herauslösen und für alle Werkzeuge ausbauen – oder neu bauen?
 2. Automato für mehrere Firmen: eine Instanz je Firma (Empfehlung) oder eine gemeinsame?
 3. Keycloak: Realm je Firma (Empfehlung) oder ein Realm mit Organisationen? Soll Magister auf
