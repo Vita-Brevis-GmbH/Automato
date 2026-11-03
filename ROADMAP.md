@@ -444,8 +444,9 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.122.0** | Rückmeldung 2026-11-03: Übersicht neu – Bereiche je Zeile gleich hoch und ohne Lücke, Breite je Bereich (⅓, ½, ganz), Verschieben per Ziehen, Läufe als Liste ohne Querscrollen, Zonen als waagrechte Balken |
 | **0.123.0** | AD-DNS als Referenzquelle (ADR 0045): Zonen per Zonentransfer lesen, ohne Konto, immer Anreicherung; DNS-Namen je IP überall, Vergleich im Abgleich wählbar (gegen DNS nur die Namen), Verbindung prüfen mit Zonentransfer |
 | **0.124.0** | Rückmeldung 2026-11-03: Applikationen laden schnell (Liste gebündelt statt je Mitglied: 17 statt 7406 Abfragen), einzelne VMs als Mitglied (Art „VM“, in Doku, Zählung und NetBox-Sync) |
+| **0.125.0** | Rückmeldung 2026-11-03 (ADR 0046): Firewall-Regeln je Zone der Gegenstellen aufgeteilt, Zonentyp mit „(Applikation)“/„(andere)“, je Kategorie und Seite spezifisch/unspezifisch (abgewählte nur unter „Regeln & Contracts“) |
 
-### Nächste Arbeiten (Stand 0.124.0)
+### Nächste Arbeiten (Stand 0.125.0)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
 **0.68.0** (2026-10-26), bis **0.102.0** (2026-10-28: „ich teste nach dem Freigeben der Version
@@ -468,7 +469,8 @@ Produktiv-Anleitung ohne Einwand zu 0.120.0), bis **0.120.1** (2026-11-02, Frage
 ohne Einwand zur Docker-Installation), bis **0.120.2** (2026-11-03, Produktion aufgesetzt ohne
 Einwand zu 0.120.2), bis **0.120.3** (2026-11-03, Entscheide zu ADR 0044 ohne Einwand), bis **0.121.0** (2026-11-03,
 Wunsch zur Übersicht ohne Einwand), bis **0.122.0** (2026-11-03, „go AD DNS“ ohne Einwand), bis **0.123.0** (2026-11-03, Frage zum
-Agenten und Rückmeldung zu den Applikationen ohne Einwand). Zur Abnahme steht 0.124.0. Seit 0.104.0 gilt eine
+Agenten und Rückmeldung zu den Applikationen ohne Einwand), bis **0.124.0** (2026-11-03,
+Rückmeldung zu den Kategorien ohne Einwand). Zur Abnahme steht 0.125.0. Seit 0.104.0 gilt eine
 Version als abgenommen,
 sobald die nächste Rückmeldung des Anwenders keinen Einwand dazu enthält (`CLAUDE.md`, Ablauf).
 

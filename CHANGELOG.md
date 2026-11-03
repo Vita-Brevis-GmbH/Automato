@@ -7,6 +7,30 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.125.0 – 2026-11-03
+
+Rückmeldung des Anwenders 2026-11-03: „Firewall Regeln manchmal nicht am richtigen Ort … vor allem
+wenn mehrere Ziele drin sind, also solche von anderen Tenants, von VPN Verbindungen und dem MPLS“,
+dazu je Kategorie spezifisch/unspezifisch und „ob die Source das DC der Applikation ist, oder eben
+ein anderes DC Zone“; auf die Rückfrage „lieber aufgeteilt“ und abgewählte Zeilen nur unter
+„Regeln & Contracts“. ADR 0046. Abnahme bis 0.124.0.
+
+- **Regeln je Zone aufgeteilt:** eine Firewall-Regel mit Gegenstellen in mehreren Zonen steht je
+  Zone bzw. Kategorie als eigene Zeile mit nur ihren Gegenstellen (z. B. Ziel im VPN in „Zugriff in
+  das VPN“, Ziel im anderen Tenant in „Zugriff zu anderen Security Tenants“) – vorher eine Zeile
+  mit allen Zielen in „Unspezifische Zugriffe“. Gegenstellen, die alle zur Applikation gehören,
+  stehen in „innerhalb der Applikation“. Unter „Regeln & Contracts“ bleibt es eine Regel mit allen
+  Kategorien.
+- **DC der Applikation bzw. anderes DC:** in der Richtung einer Kategorie jeden Zonentyp auch mit
+  Zusatz „(Applikation)“ (Seite der Systeme der Applikation) bzw. „(andere)“ (Gegenstelle) wählen,
+  z. B. `DC (Applikation) → DC (andere)`; mit Zusatz genauer als ohne.
+- **Spezifisch/unspezifisch je Kategorie:** im Namensprofil je Kategorie für Quellen und Ziele
+  „spezifisch“ und/oder „unspezifisch“ (auch bei den festen Kategorien; Vorgabe beides).
+  Abgewählte Zeilen stehen nur als Treffer unter „Regeln & Contracts“ („Nicht gezeigt in
+  Kategorie …“); direkt zugeordnete Regeln immer in ihrer Kategorie. Gilt nach dem Regelwerk,
+  die eingebauten Regelwerke bleiben gleich; der Vergleich der Regelwerke nennt sie als Grund.
+- Tests: `orchestrator/tests/test_appdoc_split.py`, `e2e/release_0125.spec.ts`.
+
 ## 0.124.0 – 2026-11-03
 
 Rückmeldung des Anwenders 2026-11-03: „Das Laden der Applikationen extrem langsam“ und „Bei den

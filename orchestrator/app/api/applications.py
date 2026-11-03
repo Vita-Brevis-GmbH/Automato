@@ -236,6 +236,8 @@ class DocHitOut(BaseModel):
     helper_for: list[int] = []
     helpers: list[dict] = []
     l3out_note: str = ""
+    # nicht in der Kategorie nach ihrer Auswahl spezifisch/unspezifisch (0.125.0, ADR 0046)
+    category_hidden: bool = False
 
 
 class DocFilteredOut(BaseModel):

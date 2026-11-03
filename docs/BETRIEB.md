@@ -1270,16 +1270,28 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
        Titel englisch, **Source-Zone** und **Dest-Zone**. Je Seite einen oder mehrere Zonentypen
        wählen, „* jeder“ = jeder Zonentyp, z. B. „Zugriff aus den Ressourcen“ mit `DC-Ressourcen
        → DC`, „Zugriff aus anderen Kunden“ mit `DC → DC`.
-       - Fest, nur der Titel änderbar: **innerhalb der Applikation** (7), **innerhalb des
-         Security Tenants** (8) und **unspezifisch** (10).
+       - Seit 0.125.0 (ADR 0046) jeden Zonentyp auch mit **Zusatz**: „(Applikation)“ = die
+         Seite der Systeme der Applikation, „(andere)“ = die Gegenstelle, z. B. „Zugriff auf
+         andere DC“ mit `DC (Applikation) → DC (andere)`; ohne Zusatz beide Seiten.
+       - Je Seite **spezifisch** und/oder **unspezifisch** (Häkchen unter Source- bzw.
+         Dest-Zone, Vorgabe beides). Spezifisch: auf der Seite der Applikation das System selbst,
+         bei der Gegenstelle Host bzw. Netz in einer Zone oder eine EPG. Unspezifisch: Subnetz,
+         any, vzAny, Preferred Group bzw. bei der Gegenstelle any und Netze über mehrere Zonen.
+         Abgewählte Zugriffe stehen nicht in der Kategorie, nur unter „Regeln & Contracts“
+         („Nicht gezeigt in Kategorie …“); direkt zugeordnete Regeln immer.
+       - Fest, nur Titel und die Auswahl spezifisch/unspezifisch änderbar: **innerhalb der
+         Applikation** (7), **innerhalb des Security Tenants** (8) und **unspezifisch** (10).
        - Die Vorgaben (Internet, Unternehmensnetzwerk, VPN, andere Security Tenants, Management)
          lassen sich ändern oder entfernen; „Auf Vorgaben zurücksetzen“ stellt sie wieder her.
     3. Die **Doku** teilt so ein:
        - zuerst innerhalb der Applikation (Server intern, ACI im selben Application Profile),
          dann innerhalb des Security Tenants (ACI im selben Tenant bzw. Gegenstelle in der eigenen
          Zone);
-       - dann die genaueste Richtung: beide genannt vor „*“, bei Gleichstand die kleinere Nummer;
+       - dann die genaueste Richtung: mit Zusatz vor ohne, beide genannt vor „*“, bei
+         Gleichstand die kleinere Nummer;
        - sonst unspezifisch.
+       - Eine Firewall-Regel mit Gegenstellen in mehreren Zonen steht **je Zone** in ihrer
+         Kategorie, jede Zeile nur mit ihren Gegenstellen (seit 0.125.0).
     4. **Namensprofile → Regelwerk der Applikations-Doku** (Admin, seit 0.118.0, ADR 0043):
        welche Firewall-Regeln und Contracts die Doku zeigt.
        - Das Regelwerk wird **von oben nach unten** gelesen: die erste eingeschaltete Regel, die

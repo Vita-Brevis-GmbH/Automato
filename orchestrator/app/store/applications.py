@@ -1066,6 +1066,13 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
         row[appdoc.DECIDED], row[appdoc.DECIDED_BY] = appdoc_filter.decide(
             row, ruleset, assigned, excluded
         )
+        # Auswahl der Kategorie (0.125.0, ADR 0046): nur spezifische bzw. unspezifische Quellen
+        # bzw. Ziele - die uebrigen Zeilen nur als Treffer unter „Regeln & Contracts“
+        if row[appdoc.DECIDED] in appdoc_ruleset.SHOWN and not appdoc_filter.by_category(
+            row, data.catalog.get(item[1]), assigned
+        ):
+            row[appdoc.DECIDED] = appdoc_ruleset.HIT
+            row[appdoc.DECIDED_BY] = appdoc_filter.CATEGORY_SCOPE
         if trace and row.get(appdoc.RULE) is not None:
             decided[row[appdoc.RULE]].append((row[appdoc.DECIDED], row[appdoc.DECIDED_BY]))
         if row[appdoc.DECIDED] in appdoc_ruleset.KEPT:
@@ -1236,7 +1243,8 @@ def compare_rulesets(session: Session, app: Application, other: appdoc_ruleset.P
                 "source": f"{source} / {r.vdom}" if r is not None and r.vdom else source,
                 "key": key or "", "effect": d.get("effect") or "",
                 "why": appdoc_ruleset.BY_KEY[key].out()["title"] if key in appdoc_ruleset.BY_KEY
-                else "",
+                else appdoc_filter.category_scope_title()
+                if key == appdoc_filter.CATEGORY_SCOPE else "",
                 "effect_label": appdoc_ruleset.effect_label(d["effect"]) if d.get("effect")
                 else "",
             })  # fmt: skip
@@ -1484,7 +1492,8 @@ def _hits_and_tables(
         decided = row.get(appdoc.DECIDED, appdoc_ruleset.TABLE)
         if decided in appdoc_ruleset.SHOWN:
             appdoc_filter.mark(row)
-            gkey = (idx, pairs.get(rid, rid), row.get(appdoc.SIDE), row.get(appdoc.OBJECT))
+            gkey = (idx, pairs.get(rid, rid), row.get(appdoc.SIDE), row.get(appdoc.OBJECT),
+                    row.get(appdoc.CP_SCOPE))  # fmt: skip
             if rid is None:
                 gkey = (idx, None, len(groups))
             group = groups.setdefault(gkey, {"row": row, "systems": [], "rules": {}})
@@ -1498,7 +1507,9 @@ def _hits_and_tables(
                 group["systems"].append(name)
         if rid is None:
             continue
-        hit = (rid, key, row.get(appdoc.DIRECTION), row.get(appdoc.VIA))
+        # je Kategorie ein Treffer (0.125.0: Gegenstellen je Zone aufgeteilt)
+        hit = (rid, key, row.get(appdoc.DIRECTION), row.get(appdoc.VIA), idx,
+               row.get(appdoc.CP_SCOPE))  # fmt: skip
         if hit in seen_hits:
             continue
         seen_hits.add(hit)
@@ -1543,6 +1554,8 @@ def _hits_and_tables(
                     for x in row.get(appdoc.HELPERS) or []
                 ],  # fmt: skip
                 "l3out_note": row.get(appdoc.L3OUT_NOTE) or "",
+                # nicht in der Kategorie nach ihrer Auswahl spezifisch/unspezifisch (0.125.0)
+                "category_hidden": row.get(appdoc.DECIDED_BY) == appdoc_filter.CATEGORY_SCOPE,
             }
         )
     seen_rows: dict[tuple, dict] = {}

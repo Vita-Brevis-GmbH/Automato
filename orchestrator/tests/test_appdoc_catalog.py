@@ -44,7 +44,8 @@ def test_vorgaben():
     assert cat.get(2).out() == {
         "index": 2, "title": "Zugriff aus dem Internet", "title_en": "Access from the Internet",
         "src": ["Edge Internet", "Public"], "dst": ["DC"], "role": "", "enforcement": "firewall",
-        "builtin": True}  # fmt: skip
+        "builtin": True, "src_scope": ["specific", "unspecific"],
+        "dst_scope": ["specific", "unspecific"]}  # fmt: skip
     assert cat.get(7).src == () and cat.get(7).enforcement == "aci"
     assert cat.by_flow("public", "dc") == 2  # normalisiert wie das Grundschema
     assert appdoc_catalog.entries_of(cat) == []  # ohne Anpassung nichts gespeichert

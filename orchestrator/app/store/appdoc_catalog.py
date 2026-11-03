@@ -8,10 +8,21 @@ Zone, Dest Zone“ und „einfacher ist besser, in allem“. Eine **Kategorie** 
   Grundschemas im Namensprofil, `store/zone_types.py`; je Seite einer oder mehrere, z. B. Edge
   Internet und Public fuer „Internet“; `*` = jeder Zonentyp).
 
-Drei Kategorien sind fest (Rolle, nur der Titel aenderbar): **innerhalb der Applikation**
-(`aci_ap`, Server intern bzw. ACI im selben Application Profile), **innerhalb des Security
-Tenants** (`aci_tenant`, ACI im selben Tenant bzw. Gegenstelle in der eigenen Zone) und
-**unspezifisch** (`fallback`, keine Richtung passt).
+Seit 0.125.0 (ADR 0046, Anwender 2026-11-03: Firewall-Regeln mit Zielen in mehreren Zonen
+standen nicht am richtigen Ort) je Seite ausserdem:
+
+- ein Zonentyp mit **Zusatz** „(Applikation)“ bzw. „(andere)“ - die Seite, auf der die Systeme
+  der Applikation stehen, bzw. die Gegenstelle (`DC (Applikation)` → `DC (andere)` = Zugriffe der
+  Applikation auf andere DC-Zonen); ohne Zusatz beide;
+- welche Zeilen die Kategorie zeigt (`src_scope`, `dst_scope`): **spezifisch** (Host bzw. Netz
+  ganz in einer Zone; auf der Seite der Applikation das System direkt) und/oder
+  **unspezifisch** (any, Netz ueber mehrere Zonen; bei der Applikation ein Subnetz, any, vzAny,
+  Preferred Group). Abgewaehlte Zeilen stehen nur als Treffer unter „Regeln & Contracts“.
+
+Drei Kategorien sind fest (Rolle; nur Titel und die Auswahl spezifisch/unspezifisch aenderbar):
+**innerhalb der Applikation** (`aci_ap`, Server intern bzw. ACI im selben Application Profile),
+**innerhalb des Security Tenants** (`aci_tenant`, ACI im selben Tenant bzw. Gegenstelle in der
+eigenen Zone) und **unspezifisch** (`fallback`, keine Richtung passt).
 
 Die **Vorgaben** stehen hier im Code - Richtungen auf der eingebauten Vorlage des Grundschemas
 (DC, Edge Internet, Edge Office, …); die Plattform funktioniert ohne Konfiguration. Das
@@ -42,6 +53,31 @@ ROLES = ("aci_ap", "aci_tenant", "fallback")
 MAX_INDEX, MAX_TEXT, MAX_TYPES = 99, 200, 20
 ANY = "*"  # jeder Zonentyp
 Types = tuple[str, ...]
+SPECIFIC, UNSPECIFIC = "specific", "unspecific"
+SCOPES: Types = (SPECIFIC, UNSPECIFIC)  # Vorgabe je Seite: beides zeigen
+# Zusatz am Zonentyp (0.125.0): Seite der Applikation bzw. Gegenstelle - gespeichert deutsch
+APP_SIDE, OTHER_SIDE = "app", "other"
+_QUALIFIERS = {"applikation": APP_SIDE, "application": APP_SIDE, "andere": OTHER_SIDE,
+               "other": OTHER_SIDE}  # fmt: skip
+
+
+def split_type(name: str) -> tuple[str, str | None]:
+    """Zonentyp und Zusatz: „DC (Applikation)“ → („DC“, app), „DC (andere)“ → („DC“, other)."""
+    text = (name or "").strip()
+    if text.endswith(")") and "(" in text:
+        base, _, rest = text[:-1].rpartition("(")
+        qual = _QUALIFIERS.get(rest.strip().lower())
+        if qual and base.strip():
+            return base.strip(), qual
+    return text, None
+
+
+def scopes_of(value) -> Types:
+    """Auswahl einer Seite: spezifisch und/oder unspezifisch (Reihenfolge fest); sonst beides."""
+    items = value if isinstance(value, list | tuple) else str(value or "").split(",")
+    chosen = {str(x).strip().lower() for x in items}
+    out = tuple(x for x in SCOPES if x in chosen)
+    return out if value is not None else SCOPES
 
 
 @dataclass(frozen=True)
@@ -53,6 +89,13 @@ class Category:
     dst: Types = ()
     role: str = ""
     builtin: bool = False
+    src_scope: Types = SCOPES  # welche Quellen die Kategorie zeigt (0.125.0)
+    dst_scope: Types = SCOPES
+
+    def shows(self, src: str, dst: str) -> bool:
+        """Zeigt die Kategorie eine Zeile mit dieser Quelle bzw. diesem Ziel (spezifisch bzw.
+        unspezifisch)?"""
+        return src in self.src_scope and dst in self.dst_scope
 
     @property
     def enforcement(self) -> str:
@@ -62,7 +105,8 @@ class Category:
     def out(self) -> dict:
         return {"index": self.index, "title": self.title, "title_en": self.title_en,
                 "src": list(self.src), "dst": list(self.dst), "role": self.role,
-                "enforcement": self.enforcement, "builtin": self.builtin}  # fmt: skip
+                "enforcement": self.enforcement, "builtin": self.builtin,
+                "src_scope": list(self.src_scope), "dst_scope": list(self.dst_scope)}  # fmt: skip
 
 
 _C = Category
@@ -115,28 +159,49 @@ class Catalog:
         c = self.categories.get(index)
         return L(c.title, c.title_en or c.title) if c else str(index)
 
-    def by_flow(self, src: str | None, dst: str | None) -> int | None:
+    def by_flow(self, src: str | None, dst: str | None, app_side: str | None = None) -> int | None:
         """Kategorie der Richtung Zonentyp `src` → `dst`: die genaueste passende (beide genannt
-        vor einem `*`), bei Gleichstand die kleinste Nummer; keine = None."""
+        vor einem `*`, mit Zusatz „(Applikation)“/„(andere)“ vor ohne), bei Gleichstand die
+        kleinste Nummer; keine = None. `app_side` = Seite der Applikation (`src`/`dst`)."""
         if not src or not dst:
             return None
-        a, b = type_key(src), type_key(dst)
+        sides = ((type_key(src), APP_SIDE if app_side == "src" else OTHER_SIDE),
+                 (type_key(dst), APP_SIDE if app_side == "dst" else OTHER_SIDE))  # fmt: skip
         best: tuple[int, int] | None = None
         for c in self.ordered():
             if c.role or not c.src or not c.dst:
                 continue
-            s_any, d_any = ANY in c.src, ANY in c.dst
-            if not (s_any or a in {type_key(t) for t in c.src}):
-                continue
-            if not (d_any or b in {type_key(t) for t in c.dst}):
-                continue
-            score = (not s_any) + (not d_any)
-            if best is None or score > best[0]:
-                best = (score, c.index)
+            score = 0
+            for (key, where), wanted in zip(sides, (c.src, c.dst), strict=True):
+                points = _side_score(key, where if app_side else None, wanted)
+                if points is None:
+                    break
+                score += points
+            else:
+                if best is None or score > best[0]:
+                    best = (score, c.index)
         return best[1] if best else None
 
     def out(self) -> dict:
         return {"profile_id": self.profile_id, "categories": [c.out() for c in self.ordered()]}
+
+
+def _side_score(key: str, where: str | None, wanted: Types) -> int | None:
+    """Passt eine Seite (Zonentyp `key`, Seite der Applikation bzw. Gegenstelle) zu den
+    Zonentypen einer Kategorie? -> Punkte (`*` 0, Zonentyp 2, mit passendem Zusatz 3) bzw. None.
+    Ohne bekannte Seite zaehlt ein Zusatz nicht."""
+    if ANY in wanted:
+        return 0
+    best = None
+    for t in wanted:
+        base, qual = split_type(t)
+        if type_key(base) != key:
+            continue
+        if qual is None:
+            best = max(best or 0, 2)
+        elif where is not None and qual == where:
+            best = 3
+    return best
 
 
 def type_key(name: str | None) -> str:
@@ -206,13 +271,14 @@ def apply_entries(cat: Catalog, entries: list[DictionaryEntry]) -> Catalog:
                 del cat.categories[index]
             continue
         src, dst = _direction(x, base)
-        if base is not None and base.role:  # feste Rolle: nur der Titel
+        if base is not None and base.role:  # feste Rolle: nur Titel und Auswahl
             src, dst = (), ()
         cat.categories[index] = Category(
             index=index,
             title=(e.value or (base.title if base else str(index)))[:MAX_TEXT],
             title_en=str(x.get("title_en") or (base.title_en if base else "") or "")[:MAX_TEXT],
             src=src, dst=dst, role=base.role if base else "", builtin=bool(base and base.builtin),
+            src_scope=scopes_of(x.get("src_scope")), dst_scope=scopes_of(x.get("dst_scope")),
         )  # fmt: skip
     return cat
 
@@ -267,10 +333,14 @@ def validate(body: dict) -> Catalog:
         src, dst = ((), ()) if role else (types_of(item.get("src")), types_of(item.get("dst")))
         if not role and not (src and dst):
             raise Invalid(f"category {index} without source and destination zone")
+        src_scope, dst_scope = scopes_of(item.get("src_scope")), scopes_of(item.get("dst_scope"))
+        if not (src_scope and dst_scope):
+            raise Invalid(f"category {index}: choose specific and/or unspecific on each side")
         cat.categories[index] = Category(
             index=index, title=title[:MAX_TEXT],
             title_en=str(item.get("title_en") or "").strip()[:MAX_TEXT],
             src=src, dst=dst, role=role, builtin=bool(known and known.builtin),
+            src_scope=src_scope, dst_scope=dst_scope,
         )  # fmt: skip
     return cat
 
@@ -283,8 +353,12 @@ def entries_of(cat: Catalog) -> list[tuple[str, str, str, dict]]:
     for c in cat.ordered():
         if base.categories.get(c.index) == c:
             continue
-        out.append((KIND_CATEGORY, str(c.index), c.title,
-                    {"title_en": c.title_en, "src": list(c.src), "dst": list(c.dst)}))  # fmt: skip
+        extra = {"title_en": c.title_en, "src": list(c.src), "dst": list(c.dst)}
+        if c.src_scope != SCOPES:
+            extra["src_scope"] = list(c.src_scope)
+        if c.dst_scope != SCOPES:
+            extra["dst_scope"] = list(c.dst_scope)
+        out.append((KIND_CATEGORY, str(c.index), c.title, extra))
     for d in base.ordered():
         if d.index not in cat.categories and not d.role:
             out.append((KIND_CATEGORY, str(d.index), d.title, {"off": True}))

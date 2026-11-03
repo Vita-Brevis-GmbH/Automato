@@ -435,6 +435,10 @@ class CatalogCategoryIn(BaseModel):
     # festen Kategorien (innerhalb Applikation/Security Tenant, unspezifisch) ohne Bedeutung
     src: list[str] = Field(default_factory=list, max_length=appdoc_catalog.MAX_TYPES)
     dst: list[str] = Field(default_factory=list, max_length=appdoc_catalog.MAX_TYPES)
+    # welche Zeilen die Kategorie zeigt (0.125.0, ADR 0046): spezifisch und/oder unspezifisch je
+    # Seite; fehlt = beides
+    src_scope: list[str] | None = Field(default=None, max_length=2)
+    dst_scope: list[str] | None = Field(default=None, max_length=2)
 
 
 class CatalogIn(BaseModel):

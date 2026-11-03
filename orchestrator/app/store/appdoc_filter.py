@@ -17,6 +17,23 @@ from app.store.appdoc_ruleset import EXCEPT, MARK, TABLE
 
 # Kurztext an der Zeile bei der Wirkung `mark` (Spalte Aktion)
 _MARKS = {"disabled": ("deaktiviert", "disabled")}
+# Auswahl spezifisch/unspezifisch der Kategorie (0.125.0, ADR 0046): keine Bedingung des
+# Regelwerks, sondern eine Einstellung der Kategorie im Namensprofil - gilt nach dem Regelwerk
+CATEGORY_SCOPE = "category_scope"
+
+
+def category_scope_title() -> str:
+    return L("Kategorie zeigt diese Zugriffe nicht (spezifisch/unspezifisch im Namensprofil)",
+             "category does not show these accesses (specific/unspecific in the naming "
+             "profile)")  # fmt: skip
+
+
+def by_category(row: dict, category, assigned: Collection[int] = ()) -> bool:
+    """Zeigt die Kategorie die Zeile nach ihrer Auswahl spezifisch/unspezifisch je Seite
+    (0.125.0)? Direkt zugeordnete Regeln stehen immer in ihrer Kategorie."""
+    if category is None or row.get(appdoc.RULE) in assigned:
+        return True
+    return category.shows(*appdoc.scopes(row))
 
 
 def matches(key: str, row: dict, assigned: Collection[int] = (),

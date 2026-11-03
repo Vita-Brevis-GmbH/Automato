@@ -5,8 +5,11 @@
 // Grundschemas, `*` = jeder), je Seite einer oder mehrere. Fest (nur der Titel änderbar): innerhalb der Applikation,
 // innerhalb des Security Tenants und unspezifisch. Speichern und zurücksetzen = Admin; gilt für die Mandanten mit
 // diesem Profil.
+// Seit 0.125.0 (ADR 0046, Anwender 2026-11-03): Zonentypen mit Zusatz „(Applikation)“ = Seite der Systeme der
+// Applikation bzw. „(andere)“ = Gegenstelle (z. B. DC (Applikation) → DC (andere)) und je Seite die Auswahl
+// spezifisch/unspezifisch (auch bei den festen) - abgewählte Zeilen stehen nur unter „Regeln & Contracts“.
 import { useEffect, useState } from "react";
-import { AppdocCatalog, AppdocCatalogIn, fetchProfileAppdocCatalog, resetProfileAppdocCatalog, saveProfileAppdocCatalog } from "./api";
+import { AppdocCatalog, AppdocCatalogIn, AppdocScope, fetchProfileAppdocCatalog, resetProfileAppdocCatalog, saveProfileAppdocCatalog } from "./api";
 import { ErrorBox, Loading } from "./ui";
 import { L } from "./i18n";
 
@@ -18,24 +21,58 @@ const ROLE: Record<string, string> = {
   fallback: L("unspezifisch: keine Richtung passt", "unspecific: no direction matches"),
 };
 const ANY = "*";
+const SCOPES: AppdocScope[] = ["specific", "unspecific"];
+// Zusatz am Zonentyp (gespeichert deutsch, angezeigt in der Sprache der Oberfläche)
+const APP_SIDE = "Applikation";
+const OTHER_SIDE = "andere";
+
+function splitType(t: string): [string, string | null] {
+  const m = /^(.*\S)\s*\((Applikation|andere)\)$/i.exec(t.trim());
+  return m ? [m[1], m[2].toLowerCase() === "andere" ? OTHER_SIDE : APP_SIDE] : [t, null];
+}
+
+function typeLabel(t: string): string {
+  if (t === ANY) return L("* jeder", "* any");
+  const [base, side] = splitType(t);
+  if (side === APP_SIDE) return `${base} ${L("(Applikation)", "(application)")}`;
+  if (side === OTHER_SIDE) return `${base} ${L("(andere)", "(other)")}`;
+  return t;
+}
 
 function toDraft(c: Pick<AppdocCatalog, "categories">): CatDraft[] {
-  return c.categories.map((x) => ({ index: x.index, title: x.title, title_en: x.title_en, src: [...x.src], dst: [...x.dst], builtin: x.builtin, role: x.role }));
+  return c.categories.map((x) => ({
+    index: x.index,
+    title: x.title,
+    title_en: x.title_en,
+    src: [...x.src],
+    dst: [...x.dst],
+    src_scope: [...(x.src_scope ?? SCOPES)],
+    dst_scope: [...(x.dst_scope ?? SCOPES)],
+    builtin: x.builtin,
+    role: x.role,
+  }));
 }
 
 function toBody(d: CatDraft[]): AppdocCatalogIn {
   return { categories: d.map(({ builtin: _b, role: _r, ...c }) => ({ ...c, title: c.title.trim(), title_en: c.title_en.trim() })) };
 }
 
-// Zonentypen einer Seite: Chips mit ✕, dazu eine Auswahl der Zonen des Grundschemas (bzw. `*` = jeder)
+// Zonentypen einer Seite: Chips mit ✕, dazu eine Auswahl der Zonen des Grundschemas (bzw. `*` = jeder), je Zonentyp
+// auch mit Zusatz „(Applikation)“ bzw. „(andere)“ (0.125.0)
 function TypePicker({ value, types, label, disabled, onChange }: { value: string[]; types: string[]; label: string; disabled: boolean; onChange: (v: string[]) => void }) {
   const known = new Set(types.map((t) => t.toLowerCase()));
-  const left = [ANY, ...types].filter((t) => !value.includes(t));
+  const unknown = (t: string) => t !== ANY && known.size > 0 && !known.has(splitType(t)[0].toLowerCase());
+  const free = (list: string[]) => list.filter((t) => !value.includes(t));
+  const groups: [string, string[]][] = [
+    [L("Zonentyp (beide Seiten)", "zone type (both sides)"), free(types)],
+    [L("Seite der Applikation", "side of the application"), free(types.map((t) => `${t} (${APP_SIDE})`))],
+    [L("Gegenstelle (andere)", "peer (other)"), free(types.map((t) => `${t} (${OTHER_SIDE})`))],
+  ];
   return (
     <div className="chips" style={{ alignItems: "center" }}>
       {value.map((t) => (
-        <span key={t} className={`chip ${t !== ANY && known.size > 0 && !known.has(t.toLowerCase()) ? "warn" : "info"}`} title={t !== ANY && !known.has(t.toLowerCase()) ? L("nicht im Grundschema", "not in the base schema") : undefined}>
-          {t === ANY ? L("* jeder", "* any") : t}
+        <span key={t} className={`chip ${unknown(t) ? "warn" : "info"}`} title={unknown(t) ? L("nicht im Grundschema", "not in the base schema") : undefined}>
+          {typeLabel(t)}
           {!disabled && (
             <button className="chip-x" aria-label={L(`${t} entfernen`, `Remove ${t}`)} onClick={() => onChange(value.filter((x) => x !== t))}>
               ✕
@@ -46,13 +83,49 @@ function TypePicker({ value, types, label, disabled, onChange }: { value: string
       {!disabled && value[0] !== ANY && (
         <select className="sel" style={{ fontSize: 12 }} aria-label={label} value="" onChange={(e) => e.target.value && onChange(e.target.value === ANY ? [ANY] : [...value, e.target.value])}>
           <option value="">{L("+ Zonentyp", "+ zone type")}</option>
-          {left.map((t) => (
-            <option key={t} value={t}>
-              {t === ANY ? L("* jeder", "* any") : t}
-            </option>
-          ))}
+          <option value={ANY}>{L("* jeder", "* any")}</option>
+          {groups
+            .filter(([, list]) => list.length > 0)
+            .map(([name, list]) => (
+              <optgroup key={name} label={name}>
+                {list.map((t) => (
+                  <option key={t} value={t}>
+                    {typeLabel(t)}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
         </select>
       )}
+    </div>
+  );
+}
+
+// Auswahl einer Seite (0.125.0): spezifisch und/oder unspezifisch - mindestens eines bleibt
+function ScopePicker({ id, value, side, disabled, onChange }: { id: string; value: AppdocScope[]; side: "src" | "dst"; disabled: boolean; onChange: (v: AppdocScope[]) => void }) {
+  const names: Record<AppdocScope, string> = { specific: L("spezifisch", "specific"), unspecific: L("unspezifisch", "unspecific") };
+  const hint: Record<AppdocScope, string> = {
+    specific: L("Host bzw. Netz in einer Zone; auf der Seite der Applikation das System direkt", "host or network in one zone; on the side of the application the system itself"),
+    unspecific: L("any, Netz über mehrere Zonen; bei der Applikation Subnetz, any, vzAny, Preferred Group", "any, network across zones; for the application subnet, any, vzAny, preferred group"),
+  };
+  return (
+    <div className="scope-pick" style={{ display: "flex", gap: 10, fontSize: 11, marginTop: 4, flexWrap: "wrap" }}>
+      {side === "src" ? L("Quellen:", "Sources:") : L("Ziele:", "Destinations:")}
+      {SCOPES.map((s) => {
+        const on = value.includes(s);
+        return (
+          <label key={s} title={hint[s]} style={{ display: "inline-flex", gap: 3, alignItems: "center" }}>
+            <input
+              type="checkbox"
+              id={`${id}-${s}`}
+              checked={on}
+              disabled={disabled || (on && value.length === 1)}
+              onChange={() => onChange(SCOPES.filter((x) => (x === s ? !on : value.includes(x))))}
+            />
+            {names[s]}
+          </label>
+        );
+      })}
     </div>
   );
 }
@@ -98,7 +171,7 @@ export default function AppdocCatalogCard({ profileId, editable }: { profileId: 
   const setCat = (i: number, p: Partial<CatDraft>) => patch(draft.map((c, j) => (j === i ? { ...c, ...p } : c)));
   const addCategory = () => {
     const index = Math.max(0, ...draft.map((c) => c.index)) + 1;
-    patch([...draft, { index, title: "", title_en: "", src: [], dst: [], builtin: false, role: "" }]);
+    patch([...draft, { index, title: "", title_en: "", src: [], dst: [], src_scope: [...SCOPES], dst_scope: [...SCOPES], builtin: false, role: "" }]);
   };
   const run = async (call: () => Promise<AppdocCatalog>) => {
     setBusy(true);
@@ -124,8 +197,8 @@ export default function AppdocCatalogCard({ profileId, editable }: { profileId: 
         <h2>{L("Kategorien der Applikations-Doku", "Categories of the application documentation")}</h2>
         <span className="faint">
           {L(
-            "Je Kategorie die Richtung: Zonentyp der Quelle → Zonentyp des Ziels (Zonen des Grundschemas, * = jeder). Den Zonentyp jeder Zone setzt das Netzwerkdesign → Kategorien.",
-            "Per category the direction: zone type of the source → zone type of the destination (zones of the base schema, * = any). Network design → Categories sets the zone type of each zone.",
+            "Je Kategorie die Richtung: Zonentyp der Quelle → Zonentyp des Ziels (Zonen des Grundschemas, * = jeder; „(Applikation)“ = Seite der Applikation, „(andere)“ = Gegenstelle) und je Seite, ob spezifische und/oder unspezifische Zugriffe erscheinen – abgewählte stehen nur unter „Regeln & Contracts“. Den Zonentyp jeder Zone setzt das Netzwerkdesign → Kategorien.",
+            "Per category the direction: zone type of the source → zone type of the destination (zones of the base schema, * = any; “(application)” = side of the application, “(other)” = peer) and per side whether specific and/or unspecific accesses appear – deselected ones are only listed under “Rules & contracts”. Network design → Categories sets the zone type of each zone.",
           )}
         </span>
         {editable && (
@@ -186,14 +259,20 @@ export default function AppdocCatalogCard({ profileId, editable }: { profileId: 
                       <span className="faint" style={{ fontSize: 12 }}>
                         {ROLE[c.role] ?? c.role}
                       </span>
+                      <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+                        <ScopePicker id={`cat-${c.index}-src`} side="src" value={c.src_scope} disabled={!editable} onChange={(v) => setCat(i, { src_scope: v })} />
+                        <ScopePicker id={`cat-${c.index}-dst`} side="dst" value={c.dst_scope} disabled={!editable} onChange={(v) => setCat(i, { dst_scope: v })} />
+                      </div>
                     </td>
                   ) : (
                     <>
                       <td>
                         <TypePicker value={c.src} types={types} label={L(`Source-Zone der Kategorie ${c.index}`, `Source zone of category ${c.index}`)} disabled={!editable} onChange={(v) => setCat(i, { src: v })} />
+                        <ScopePicker id={`cat-${c.index}-src`} side="src" value={c.src_scope} disabled={!editable} onChange={(v) => setCat(i, { src_scope: v })} />
                       </td>
                       <td>
                         <TypePicker value={c.dst} types={types} label={L(`Dest-Zone der Kategorie ${c.index}`, `Destination zone of category ${c.index}`)} disabled={!editable} onChange={(v) => setCat(i, { dst: v })} />
+                        <ScopePicker id={`cat-${c.index}-dst`} side="dst" value={c.dst_scope} disabled={!editable} onChange={(v) => setCat(i, { dst_scope: v })} />
                       </td>
                     </>
                   )}
@@ -218,8 +297,8 @@ export default function AppdocCatalogCard({ profileId, editable }: { profileId: 
           {L("Zonentypen im Grundschema: ", "Zone types in the base schema: ")}
           {types.join(", ") || "–"}
           {L(
-            " · Reihenfolge: innerhalb der Applikation, innerhalb des Security Tenants, dann die genaueste Richtung (ohne * vor *), bei Gleichstand die kleinere Nummer; sonst unspezifisch.",
-            " · Order: within the application, within the security tenant, then the most specific direction (without * before *), on a tie the lower number; otherwise unspecific.",
+            " · Reihenfolge: innerhalb der Applikation, innerhalb des Security Tenants, dann die genaueste Richtung (mit Zusatz vor ohne, ohne * vor *), bei Gleichstand die kleinere Nummer; sonst unspezifisch. Eine Regel mit Gegenstellen in mehreren Zonen steht je Zone in ihrer Kategorie.",
+            " · Order: within the application, within the security tenant, then the most specific direction (with qualifier before without, without * before *), on a tie the lower number; otherwise unspecific. A rule with peers in several zones appears per zone in its category.",
           )}
         </div>
         {empty && editable && (

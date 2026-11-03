@@ -1030,6 +1030,13 @@ interface SideGroup {
   systems: string[];
   hits: AppDocHit[];
 }
+// Kategorien, in denen die Zugriffe nach der Auswahl spezifisch/unspezifisch nicht stehen (0.125.0) - nur, wo kein
+// anderer Treffer derselben Kategorie gezeigt wird
+function hiddenIn(hits: AppDocHit[]): number[] {
+  const shown = new Set(hits.filter((h) => !h.category_hidden).map((h) => h.table));
+  return [...new Set(hits.filter((h) => h.category_hidden && !shown.has(h.table)).map((h) => h.table))];
+}
+
 function sideGroups(hits: AppDocHit[], side: string, names: Map<string, string>): SideGroup[] {
   const out = new Map<string, SideGroup>();
   for (const h of hits.filter((x) => x.side === side)) {
@@ -1297,6 +1304,12 @@ function WhyBlock({
                 <div className="faint">
                   {L("Kategorie", "Category")} {tables.map((t) => `${t}. ${titles.get(t)}`).join(", ")}
                 </div>
+                {hiddenIn(g.hits).length > 0 && (
+                  <div className="faint category-hidden">
+                    {L("Nicht gezeigt in Kategorie", "Not shown in category")} {hiddenIn(g.hits).map((t) => `${t}. ${titles.get(t)}`).join(", ")}
+                    {L(" – die Kategorie zeigt diese Zugriffe nicht (spezifisch/unspezifisch im Namensprofil)", " – the category does not show these accesses (specific/unspecific in the naming profile)")}
+                  </div>
+                )}
                 {[...new Set(g.hits.filter((h) => h.relevance === "impossible").map((h) => h.relevance_text))].map((t) => (
                   <div key={t}>
                     <span className="chip crit">{L("routingtechnisch nicht möglich", "not possible by routing")}</span>{" "}

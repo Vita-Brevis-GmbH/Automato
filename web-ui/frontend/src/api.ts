@@ -837,6 +837,7 @@ export interface AppDocHit {
   helper_for?: number[];
   helpers?: { l3out: string; rule_ids: number[]; names: string[]; missing: string[] }[];
   l3out_note?: string;
+  category_hidden?: boolean; // 0.125.0: nicht in der Kategorie (Auswahl spezifisch/unspezifisch im Namensprofil)
 }
 export interface AppDocFinding {
   id: number;
@@ -3451,10 +3452,14 @@ export interface AppdocCategory {
   title_en: string;
   src: string[];
   dst: string[];
-  role: string; // feste Rolle (aci_ap, aci_tenant, fallback) - nur der Titel änderbar
+  role: string; // feste Rolle (aci_ap, aci_tenant, fallback) - nur Titel und Auswahl änderbar
   enforcement: "firewall" | "aci";
   builtin: boolean;
+  // 0.125.0 (ADR 0046): welche Zeilen die Kategorie zeigt, je Seite spezifisch und/oder unspezifisch
+  src_scope: AppdocScope[];
+  dst_scope: AppdocScope[];
 }
+export type AppdocScope = "specific" | "unspecific";
 // Gerät einer Zone (0.106.0): Firewall/VDOM, ACI-Tenant, ACI-VRF, Anbindung
 export type ZoneDeviceKind = "fw_vdom" | "aci_tenant" | "aci_vrf" | "exit";
 export interface ZoneDevice {
@@ -3472,7 +3477,7 @@ export interface AppdocCatalog {
   auto_types?: Record<string, string | null>; // … erkannt (ohne den von Hand)
   devices?: ZoneDevice[]; // Netzwerkdesign: Geräte zur Auswahl
 }
-export type AppdocCatalogIn = { categories: Pick<AppdocCategory, "index" | "title" | "title_en" | "src" | "dst">[] };
+export type AppdocCatalogIn = { categories: Pick<AppdocCategory, "index" | "title" | "title_en" | "src" | "dst" | "src_scope" | "dst_scope">[] };
 export const fetchAppdocCatalog = (tenantId: number) => getJSON<AppdocCatalog>(`/api/zones/appdoc/catalog${qs({ tenant_id: tenantId })}`);
 export const fetchProfileAppdocCatalog = (profileId: number) => getJSON<AppdocCatalog>(`/api/naming-profiles/${profileId}/appdoc-catalog`);
 export const saveProfileAppdocCatalog = (profileId: number, body: AppdocCatalogIn) =>
