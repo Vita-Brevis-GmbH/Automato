@@ -155,11 +155,12 @@ MODULES: tuple[Module, ...] = (
         "gateway",
         ("Gateway", "Gateway"),
         (
-            "Referenzquellen lesen: IPAM/DNS (Infoblox, NetBox) - nur lesend",
-            "Reads reference sources: IPAM/DNS (Infoblox, NetBox) - read-only",
+            "Referenzquellen lesen: IPAM/DNS (Infoblox, NetBox, AD-DNS) - nur lesend",
+            "Reads reference sources: IPAM/DNS (Infoblox, NetBox, AD DNS) - read-only",
         ),
         store=("references",),
         packages=(
+            "sot_gateway.adapters.dns_zone",
             "sot_gateway.adapters.infoblox",
             "sot_gateway.adapters.netbox",
             "sot_gateway.readonly",

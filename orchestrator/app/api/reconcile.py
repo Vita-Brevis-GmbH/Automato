@@ -81,7 +81,9 @@ def summary(
         "findings": by_type,
         "reference_sources": sources,
         "ipam": {
-            k: ipam[k] for k in ("available", "primary", "enrichment", "summary") if k in ipam
+            k: ipam[k]
+            for k in ("available", "mode", "primary", "enrichment", "enrichments", "summary")
+            if k in ipam
         },
     }
 
@@ -94,6 +96,7 @@ def ipam_compare(
     limit: int = 200,
     offset: int = 0,
     customer_id: int | None = None,
+    enrichment_id: int | None = None,  # Anreicherung (z. B. AD-DNS), sonst die erste
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> dict:
@@ -102,7 +105,14 @@ def ipam_compare(
         raise HTTPException(status_code=422, detail="invalid status")
     _, keep = _keep(session, principal, tid, customer_id)
     return references.compare_sources(
-        session, tid, status, q, min(limit, 2000), max(offset, 0), keep=keep
+        session,
+        tid,
+        status,
+        q,
+        min(limit, 2000),
+        max(offset, 0),
+        keep=keep,
+        enrichment_id=enrichment_id,
     )
 
 

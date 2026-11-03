@@ -84,7 +84,7 @@ from app.models.rule import (
 from app.models.rule_index import RuleIndex, RuleIpRange, RuleObjectUsage, RulePairDecision
 from app.models.service_object import Proto, ServiceObject
 from app.models.site import SITE_KINDS, Site, SiteLink
-from app.models.source_system import REFERENCE_PLATFORMS, Platform, SourceSystem
+from app.models.source_system import DNS_PLATFORMS, REFERENCE_PLATFORMS, Platform, SourceSystem
 from app.models.source_system import RefRole as ReferenceRole
 from app.models.sync_plan import SyncPlan, SyncStatus
 from app.models.tenant import DnsType, IpamType, Tenant
@@ -116,6 +116,7 @@ __all__ = [
     "L2_MODELS",
     "MEMBER_KINDS",
     "REFERENCE_PLATFORMS",
+    "DNS_PLATFORMS",
     "SERVICE_CATEGORIES",
     "TOPOLOGY_MODELS",
     "Agent",

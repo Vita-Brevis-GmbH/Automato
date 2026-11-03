@@ -7,6 +7,32 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.123.0 – 2026-11-03
+
+Auftrag des Anwenders 2026-11-03 („go AD DNS“; vorher: „DNS Geschichten bei dem AD abholen“,
+„Zonen Transfer ist ok“) – ADR 0045, setzt ADR 0044 Entscheid 6 um. Abnahme bis 0.122.0.
+
+- **AD-DNS als Referenzquelle:** neues Quellsystem *AD-DNS* mit **DNS-Server** (Name oder IP eines
+  DCs, optional `:Port`) und **Zonen** (je Zeile, Forward- und Reverse-Zonen). Gelesen wird per
+  **Zonentransfer** (AXFR über TCP 53) – ohne Konto, auf dem DC je Zone nur für die Adresse von
+  Automato bzw. des Agenten freigegeben. Je IP die DNS-Namen aus A/AAAA, CNAME (auf Hosts der
+  gelesenen Zonen) und PTR; Dienst-Einträge des AD (`_msdcs`, `_tcp` …), `DomainDnsZones`/
+  `ForestDnsZones`, Zonenkopf, `*` und Unterzonen werden übergangen.
+- **Immer Anreicherung:** ein DNS-Server kennt keine Netze – die Rolle „führend“ ist gesperrt, Netz,
+  VLAN und Standort kommen nie aus dem DNS. Die Namen erscheinen überall, wo Referenzquellen Namen
+  liefern (Objekte, NAT/VIP, Weg-Suche, Namen der Gegenstellen, Doku).
+- **Abgleich:** die Anreicherung für den Vergleich ist wählbar („Vergleich mit …“). Gegen AD-DNS nur
+  die Namen: *DNS-Name abweichend* (IPAM mit anderem bzw. ohne Namen) und *nur im DNS* (IP fehlt im
+  IPAM); IPs ohne DNS-Eintrag sind kein Fehler; alle DNS-Namen der IP in der Zeile.
+- **Verbindung prüfen:** Name, TCP 53 und je Zone der Anfang des Transfers mit SOA-Seriennummer;
+  eine abgelehnte Zone nennt Zone, Code und die Freigabe auf dem DC (deutsch/englisch, auch im Lauf).
+- **Nur lesend vom Protokoll her:** der Adapter kennt keine dynamischen Updates (`dns.update`) und
+  ruft nur den Zonentransfer auf (Test). Neue Abhängigkeit: `dnspython` (ISC-Lizenz) im
+  sot-gateway, auch im Agent-Paket.
+- Tests: `sot-gateway/tests/test_dns_zone_adapter.py` (echter AXFR gegen einen Test-Server),
+  `collectors/tests/test_ipam_collector.py`, `orchestrator/tests/test_ad_dns.py`,
+  `orchestrator/tests/test_i18n_runs.py`, `e2e/release_0123.spec.ts`.
+
 ## 0.122.0 – 2026-11-03
 
 Rückmeldung des Anwenders 2026-11-03 („Übersichtsseite besser gestalten … statische Boxen, welche

@@ -1,4 +1,5 @@
-"""Referenzquellen-Collector (Infoblox/NetBox), Poll-Schleife, Nur-Lese-Schutz (ADR 0010)."""
+"""Referenzquellen-Collector (Infoblox/NetBox/AD-DNS), Poll-Schleife, Nur-Lese-Schutz (ADR 0010,
+ADR 0045)."""
 
 import httpx
 import pytest
@@ -77,6 +78,53 @@ def test_ipam_check(monkeypatch):
     monkeypatch.setattr(t, "NetBoxAdapter", lambda url, token, verify_tls=True: _FakeAdapter(0))
     ok, msg = t.check_netbox(_target(platform="netbox", token="tok"))
     assert ok and "NetBox v2.12" in msg
+
+
+def test_ad_dns_lauf_mit_zonen_aus_dem_lesebereich(monkeypatch):
+    """AD-DNS (ADR 0045): Server aus der Adresse, Zonen aus dem Lesebereich, ohne Zugangsdaten."""
+    from sot_gateway.adapters import dns_zone
+
+    import collectors.ipam.tasks as t
+
+    seen = {}
+
+    def transfer(address, zone, port, timeout, lifetime):
+        seen.setdefault("calls", []).append((address, zone, port))
+        raise dns_zone.ZoneTransferError(zone, "dc01.example.ch", "refused", "REFUSED")
+
+    real = dns_zone.DnsZoneAdapter.from_url
+    monkeypatch.setattr(
+        t.DnsZoneAdapter,
+        "from_url",
+        lambda url, zones: real(url, zones, transfer=transfer, resolve=lambda h, p: "10.0.0.10"),
+    )
+    monkeypatch.setattr(t, "submit_result", lambda run_id, result, via_agent=False: None)
+    target = _target(platform="ad_dns", name="ad", base_url="dns://dc01.example.ch",
+                     read_scope="example.ch\n10.in-addr.arpa")  # fmt: skip
+    result = t.collect_ad_dns("r1", target)
+    assert result.status == "failed"
+    assert result.message.startswith("Zonentransfer von example.ch abgelehnt (REFUSED). Hinweis:")
+    assert seen["calls"] == [("10.0.0.10", "example.ch", 53)]
+    ok, msg = t.check_ad_dns(target)
+    assert not ok and "Zonenuebertragungen" in msg
+    # ohne Zonen bzw. Adresse: klare Meldung
+    result = t.collect_ad_dns("r1", _target(platform="ad_dns", name="ad", base_url="dns://dc01"))
+    assert result.status == "failed" and "keine Zonen" in result.message
+    result = t.collect_ad_dns("r1", _target(platform="ad_dns", name="ad", base_url=""))
+    assert result.status == "failed" and "keine Adresse" in result.message
+
+
+def test_ad_dns_check(monkeypatch):
+    import collectors.ipam.tasks as t
+
+    class _Zones:
+        def ping(self):
+            return {"example.ch": 42, "10.in-addr.arpa": 7}
+
+    monkeypatch.setattr(t.DnsZoneAdapter, "from_url", lambda url, zones: _Zones())
+    ok, msg = t.check_ad_dns(_target(platform="ad_dns", base_url="dns://dc01",
+                                     read_scope="example.ch,10.in-addr.arpa"))  # fmt: skip
+    assert ok and msg == "erreichbar: dns://dc01 (Zonentransfer erlaubt fuer 2 Zone(n))"
 
 
 def test_poll_arbeitet_alle_offenen_laeufe_ab(monkeypatch, capsys):

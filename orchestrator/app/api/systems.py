@@ -15,6 +15,10 @@ Zugangsdaten `username`, `auth_password`, `priv_password` (Pflicht, authPriv), `
 (SHA/SHA-2, Vorgabe sha256), `priv_protocol` (AES, Vorgabe aes128) und optional `context`.
 Ausgegeben werden davon nur die Protokolle (`snmp`). Ein Wechsel des Zugangs verwirft die
 bisherigen Zugangsdaten (sie gehören zum anderen Zugang).
+
+AD-DNS (ADR 0045): `base_url` = DNS-Server (`server`, `server:port` oder `dns://…`, gespeichert
+als `dns://server[:port]`), `read_scope` = Zonen (Pflicht, je Zeile), ohne Zugangsdaten, immer
+Anreicherung (ein DNS-Server kennt keine Netze).
 """
 
 import re
@@ -34,6 +38,7 @@ from app.config import get_settings
 from app.db import get_session, get_session_factory
 from app.i18n import L
 from app.models import (
+    DNS_PLATFORMS,
     REFERENCE_PLATFORMS,
     Agent,
     CollectorRun,
@@ -454,11 +459,36 @@ def _switch_base_url(read_scope: str, access: str | None = None) -> str:
     return f"{scheme}://{first}" if first else ""
 
 
+def _zones(value: str) -> str:
+    """AD-DNS (ADR 0045): Zonen je Zeile bzw. kommagetrennt, klein, ohne Punkt am Ende."""
+    from sot_gateway.adapters.dns_zone import normalize_zones
+
+    try:
+        zones = normalize_zones(value or "")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if not zones:
+        raise HTTPException(status_code=422, detail="zones required")
+    return "\n".join(zones)
+
+
+def _dns_server(value: str) -> str:
+    """AD-DNS: Adresse des DNS-Servers als `dns://server[:port]`."""
+    from sot_gateway.adapters.dns_zone import server_url
+
+    try:
+        return server_url(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 def _read_scope(platform: Platform, value: str) -> str:
     """Lesebereich normalisieren: ACI- bzw. Avi-Tenant-Namen, kommagetrennt (Cisco ACI, NSX
-    ALB) bzw. die Adressen der Switches (Cisco-Switches)."""
+    ALB), die Adressen der Switches (Cisco-Switches) bzw. die Zonen (AD-DNS)."""
     if platform == Platform.CISCO_SWITCH:
         return _switch_hosts(value)
+    if platform == Platform.AD_DNS:
+        return _zones(value)
     names = [x.strip() for x in value.split(",") if x.strip()]
     if not names:
         return ""
@@ -468,7 +498,7 @@ def _read_scope(platform: Platform, value: str) -> str:
             raise HTTPException(status_code=422, detail=f"invalid Avi tenant name: {bad[0]}")
         return ",".join(dict.fromkeys(names))
     if platform != Platform.CISCO_ACI:
-        detail = "read_scope only supported for cisco_aci/cisco_switch/avi"
+        detail = "read_scope only supported for cisco_aci/cisco_switch/avi/ad_dns"
         raise HTTPException(status_code=422, detail=detail)
     bad = [n for n in names if not _ACI_NAME.match(n)]
     if bad:
@@ -478,11 +508,17 @@ def _read_scope(platform: Platform, value: str) -> str:
 
 def _apply_ref_role(session: Session, src: SourceSystem, role: str | None) -> None:
     """Rolle einer Referenzquelle setzen; nur ein fuehrendes IPAM je Mandant (andere werden zur
-    Anreicherung). Default: Infoblox fuehrend, NetBox fuehrend nur ohne andere fuehrende Quelle."""
+    Anreicherung). Default: Infoblox fuehrend, NetBox fuehrend nur ohne andere fuehrende Quelle;
+    AD-DNS (nur DNS-Namen, ADR 0045) immer Anreicherung."""
     if src.platform not in REFERENCE_PLATFORMS:
         if role is not None:
-            raise HTTPException(status_code=422, detail="ref_role only for infoblox/netbox")
+            raise HTTPException(status_code=422, detail="ref_role only for infoblox/netbox/ad_dns")
         src.ref_role = None
+        return
+    if src.platform in DNS_PLATFORMS:
+        if role == ReferenceRole.PRIMARY.value:
+            raise HTTPException(status_code=422, detail="ad_dns is enrichment only (DNS names)")
+        src.ref_role = ReferenceRole.ENRICHMENT.value
         return
     others = [
         s
@@ -617,6 +653,7 @@ def check_system(
         s.platform.value,
         token=secrets.get("token"),
         verify_tls=s.verify_tls,
+        zones=s.read_scope.split() if s.platform == Platform.AD_DNS else None,
     )
     return {"system_id": s.id, "name": s.name, "from": "orchestrator", **result.out()}
 
@@ -653,6 +690,8 @@ def create_system(
         if not src.read_scope:
             raise HTTPException(status_code=422, detail="switch addresses required")
         src.base_url = src.base_url or _switch_base_url(src.read_scope, src.access)
+    if src.platform == Platform.AD_DNS:
+        src.base_url = _dns_server(src.base_url)
     _set_schedule(src, _schedule(body.schedule))
     _apply_credentials(src, _credential_changes(body))
     session.add(src)
@@ -730,6 +769,8 @@ def update_system(
     src.site_id = site_id
     if data.get("base_url") is not None:
         src.base_url = data["base_url"].strip()
+        if src.platform == Platform.AD_DNS:
+            src.base_url = _dns_server(src.base_url)
     if data.get("enabled") is not None:
         src.enabled = data["enabled"]
     if data.get("verify_tls") is not None:

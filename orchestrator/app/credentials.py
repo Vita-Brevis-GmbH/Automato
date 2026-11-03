@@ -39,6 +39,7 @@ FIELDS: dict[str, tuple[str, ...]] = {
     "vmware": ("username", "password"),  # vCenter-Konto mit Rolle Read-only (ADR 0017)
     "cisco_switch": ("username", "password"),  # SSH-Konto nur mit Leserechten (ADR 0025)
     "avi": ("username", "password"),  # NSX ALB: Rolle nur mit Leserechten (ADR 0027)
+    "ad_dns": (),  # Zonentransfer: Freigabe je Adresse auf dem DNS-Server, kein Konto (ADR 0045)
 }
 # Optionale Felder: NetBox-Schreib-Token nur fuer den NetBox-Sync des Orchestrators - wird nie
 # an einen Agenten ausgeliefert (siehe store.agents.target_for), ADR 0010.
@@ -71,14 +72,18 @@ def optional_fields(platform: str, access: str | None = None) -> tuple[str, ...]
 def complete(platform: str, token: str | None, access: str | None = None) -> bool:
     """Sind die Pflichtfelder der Plattform hinterlegt (z. B. NetBox: Lese-Token)? Ein
     NetBox-Quellsystem nur mit Schreib-Token ist damit *nicht* vollstaendig. Ohne lesbaren
-    Schluessel zaehlt, ob ueberhaupt etwas gespeichert ist."""
+    Schluessel zaehlt, ob ueberhaupt etwas gespeichert ist. Ohne Pflichtfelder (AD-DNS per
+    Zonentransfer, ADR 0045) immer vollstaendig."""
+    required = fields(platform, access)
+    if not required:
+        return True
     if not token:
         return False
     try:
         data = decrypt(token)
     except CredentialsUnavailable:
         return True
-    return all(data.get(f) for f in fields(platform, access))
+    return all(data.get(f) for f in required)
 
 
 def _key_from_file(path: Path) -> bytes:

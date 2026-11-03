@@ -17,11 +17,12 @@ je Adresse (`<typ> <base64>`); ein anderer Schluessel bricht die Verbindung ab.
 authPriv, nur lesend); bei `snmp` enthalten die Zugangsdaten `username`, `auth_protocol`,
 `auth_password`, `priv_protocol`, `priv_password` und optional `context`.
 
-Referenzquellen (Infoblox, NetBox; ADR 0010): `ref_role` = primary | enrichment,
+Referenzquellen (Infoblox, NetBox, AD-DNS; ADR 0010): `ref_role` = primary | enrichment,
 `reference_run_id` = Lauf, dessen Eintraege (`reference_record`) der aktuelle Stand sind.
 NetBox kann zusaetzlich ein Schreib-Token tragen (`write_token` in `credentials`) - nur fuer
 den NetBox-Sync des Orchestrators, nie an einen Agenten. `site_id` = Standort des Geraets
-(dort legt der NetBox-Sync Geraete und Ports an).
+(dort legt der NetBox-Sync Geraete und Ports an). AD-DNS (ADR 0045): `base_url` =
+`dns://server[:port]`, `read_scope` = Zonen je Zeile; ohne Zugangsdaten, nur Anreicherung.
 """
 
 import enum
@@ -44,10 +45,13 @@ class Platform(enum.StrEnum):
     # (AOS-CX); Gruppe von Geraeten
     CISCO_SWITCH = "cisco_switch"
     AVI = "avi"  # VMware NSX Advanced Load Balancer: Virtual Services, VIPs, Pools (ADR 0027)
+    AD_DNS = "ad_dns"  # DNS-Server (AD) per Zonentransfer: nur DNS-Namen (ADR 0045)
 
 
 # Referenzquellen (IPAM) - liefern keinen Regeln, sondern den Referenz-Stand
-REFERENCE_PLATFORMS = frozenset({Platform.INFOBLOX, Platform.NETBOX})
+REFERENCE_PLATFORMS = frozenset({Platform.INFOBLOX, Platform.NETBOX, Platform.AD_DNS})
+# Referenzquellen nur mit DNS-Namen (keine Netze, Ranges, VLANs): immer Anreicherung (ADR 0045)
+DNS_PLATFORMS = frozenset({Platform.AD_DNS})
 
 
 class RefRole(enum.StrEnum):

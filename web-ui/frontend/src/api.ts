@@ -1040,8 +1040,10 @@ export interface ReconcileSummary {
   reference_sources: (SourceRef & { ref_role: string; has_reference: boolean })[];
   ipam: {
     available: boolean;
+    mode?: "ipam" | "dns"; // dns: Anreicherung ist ein DNS-Server (AD-DNS, ADR 0045) – nur DNS-Namen
     primary?: SourceRef;
     enrichment?: SourceRef;
+    enrichments?: SourceRef[]; // alle Anreicherungen (wählbar, DNS-Server zuletzt)
     summary?: Record<string, number>; // missing | different | only_enrichment | equal
   };
 }
@@ -1053,6 +1055,7 @@ export interface RefBrief {
   vlan: number | null;
   site: string | null;
   url: string | null;
+  dns_names?: string[]; // DNS-Server: alle Namen der IP (A/AAAA, CNAME, PTR)
 }
 export interface IpamRow {
   status: string; // missing | different | only_enrichment
@@ -1064,8 +1067,10 @@ export interface IpamRow {
 }
 export interface IpamCompare extends Paged<IpamRow> {
   available: boolean;
+  mode?: "ipam" | "dns";
   primary?: SourceRef;
   enrichment?: SourceRef;
+  enrichments?: SourceRef[];
   summary?: Record<string, number>;
 }
 
@@ -2199,7 +2204,7 @@ export const fetchReconcileSummary = (tenantId: number) =>
   getJSON<ReconcileSummary>(`/api/reconcile/summary${cq({ tenant_id: tenantId })}`);
 export const fetchIpamCompare = (
   tenantId: number,
-  params: { status?: string; q?: string; limit?: number; offset?: number } = {},
+  params: { status?: string; q?: string; limit?: number; offset?: number; enrichment_id?: number } = {},
 ) => getJSON<IpamCompare>(`/api/reconcile/ipam${cq({ tenant_id: tenantId, ...params, q: params.q?.trim() })}`);
 // Datenqualität (ADR 0029): Bereiche mit Ampel, Kennzahl, Einträgen (Ursache, Hinweis, Link) und
 // Gesamtnote – Werte wie `status`/`key`/`view` kommen als Schlüssel, Texte in der Sprache der Anfrage

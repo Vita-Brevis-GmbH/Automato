@@ -12,8 +12,10 @@ export const PLATFORM_LABEL: Record<string, string> = {
   avi: "NSX ALB (Avi)",
   infoblox: "Infoblox DDI",
   netbox: "NetBox",
+  ad_dns: "AD-DNS",
 };
-export const REFERENCE_PLATFORMS = ["infoblox", "netbox"];
+// AD-DNS (ADR 0045): Referenzquelle nur mit DNS-Namen (Zonentransfer), immer Anreicherung
+export const REFERENCE_PLATFORMS = ["infoblox", "netbox", "ad_dns"];
 export const REF_ROLE_LABEL: Record<string, string> = {
   primary: L("IPAM führend", "Primary IPAM"),
   enrichment: L("Anreicherung", "Enrichment"),

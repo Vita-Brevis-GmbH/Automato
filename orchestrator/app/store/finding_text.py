@@ -1621,6 +1621,7 @@ _PLATFORM = {
     "avi": ("NSX ALB (Avi)", "NSX ALB (Avi)"),
     "infoblox": ("Infoblox DDI", "Infoblox DDI"),
     "netbox": ("NetBox", "NetBox"),
+    "ad_dns": ("AD-DNS", "AD DNS"),
 }
 
 _PARTIAL_HINT = {  # Art des Teilfehlers -> was pruefen

@@ -63,7 +63,7 @@ und 3 von ADR 0014 an.
    Phase-2-Selektoren, Routen über Tunnel) in Weg-Suche, Verbindungen und Doku.
 6. **DNS ohne Infoblox:** NetBox als IPAM; das AD-DNS als zusätzliche Referenzquelle, nur lesend
    über **Zonentransfer** (Entscheid 2026-11-03; auf dem DC nur für die Automato-VM freigegeben, kein
-   AD-Konto); eigene ADR beim Bau.
+   AD-Konto); umgesetzt in 0.123.0 (ADR 0045).
 7. **Projekt Datacenter:** möglicherweise als Kopie des Projekts weiterführen – Entscheid später.
 
 ## Folgen

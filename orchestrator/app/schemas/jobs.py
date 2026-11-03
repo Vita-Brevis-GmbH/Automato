@@ -4,7 +4,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 PlatformName = Literal[
-    "fortigate", "cisco_aci", "infoblox", "netbox", "vmware", "cisco_switch", "avi"
+    "fortigate", "cisco_aci", "infoblox", "netbox", "vmware", "cisco_switch", "avi", "ad_dns"
 ]
 
 

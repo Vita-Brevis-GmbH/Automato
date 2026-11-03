@@ -1144,6 +1144,7 @@ function SystemDialog({
   const isVmware = platform === "vmware";
   const isSwitch = platform === "cisco_switch";
   const isAvi = platform === "avi";
+  const isAdDns = platform === "ad_dns"; // Zonentransfer, ohne Zugangsdaten (ADR 0045)
   const isRef = REFERENCE_PLATFORMS.includes(platform);
   const userPass = isAci || isInfoblox || isVmware || isSwitch || isAvi;
   // Switches (0.62.0): Host-Schlüssel vergessen (beim nächsten Lauf neu lernen)
@@ -1183,9 +1184,9 @@ function SystemDialog({
       base_url: baseUrl.trim(),
       agent_id: agentId,
       verify_tls: verifyTls,
-      ...(isAci || isSwitch || isAvi ? { read_scope: readScope.trim() } : {}),
+      ...(isAci || isSwitch || isAvi || isAdDns ? { read_scope: readScope.trim() } : {}),
       ...(isSwitch ? { access } : {}),
-      ...(isRef && refRole ? { ref_role: refRole } : {}),
+      ...(isRef && refRole && !isAdDns ? { ref_role: refRole } : {}),
       ...(isRef ? {} : { site_id: siteId }),
       schedule: schedule.trim(),
     };
@@ -1282,8 +1283,25 @@ function SystemDialog({
             <option value="avi">VMware NSX ALB (Avi, Load Balancer)</option>
             <option value="infoblox">{L("Infoblox DDI (Referenzquelle)", "Infoblox DDI (reference source)")}</option>
             <option value="netbox">{L("NetBox (Referenzquelle)", "NetBox (reference source)")}</option>
+            <option value="ad_dns">
+              {L("AD-DNS (Zonentransfer, DNS-Namen als Referenz)", "AD DNS (zone transfer, DNS names as reference)")}
+            </option>
           </select>
-          {isRef && (
+          {isAdDns ? (
+            <div className="hint">
+              {L(
+                <>
+                  Liest die Zonen des DNS-Servers per Zonentransfer und ergänzt jede IP um ihre DNS-Namen (A/AAAA, CNAME,
+                  PTR) – in Objekten, Weg-Suche, Doku und im Vergleich mit dem führenden IPAM. Nur lesend, ohne Konto.
+                </>,
+                <>
+                  Reads the zones of the DNS server via zone transfer and adds the DNS names (A/AAAA, CNAME, PTR) to each
+                  IP – in objects, path search, documentation and in the comparison with the primary IPAM. Read-only,
+                  without an account.
+                </>,
+              )}
+            </div>
+          ) : isRef && (
             <div className="hint">
               {L(
                 <>
@@ -1298,7 +1316,19 @@ function SystemDialog({
             </div>
           )}
         </div>
-        {isRef && (
+        {isAdDns && (
+          <div className="field">
+            <label>{L("Rolle", "Role")}</label>
+            <div className="hint" id="ss-role-dns">
+              {REF_ROLE_LABEL.enrichment}{" "}
+              {L(
+                "– immer: ein DNS-Server kennt keine Netze, Ranges oder VLANs und ist darum nie führend.",
+                "– always: a DNS server knows no networks, ranges or VLANs and is therefore never primary.",
+              )}
+            </div>
+          </div>
+        )}
+        {isRef && !isAdDns && (
           <div className="field">
             <label htmlFor="ss-role">{L("Rolle", "Role")}</label>
             <select id="ss-role" className="sel input" value={refRole} onChange={(e) => setRefRole(e.target.value)}>
@@ -1506,14 +1536,16 @@ function SystemDialog({
         )}
         {!isSwitch && (
         <div className="field">
-          <label htmlFor="ss-url">{L("Adresse", "Address")}</label>
+          <label htmlFor="ss-url">{isAdDns ? L("DNS-Server", "DNS server") : L("Adresse", "Address")}</label>
           <input
             id="ss-url"
             className="input mono"
             value={baseUrl}
             maxLength={500}
             placeholder={
-              isAci
+              isAdDns
+                ? "dc01.kunde.lan"
+                : isAci
                 ? "https://apic-01.kunde.lan"
                 : isVmware
                   ? "https://vcenter.kunde.lan"
@@ -1528,10 +1560,15 @@ function SystemDialog({
             onChange={(e) => setBaseUrl(e.target.value)}
           />
           <div className="hint">
-            {L(
-              "So, wie der Agent das Gerät erreicht (vom Agent-Rechner aus gesehen).",
-              "As the agent reaches the device (seen from the agent host).",
-            )}
+            {isAdDns
+              ? L(
+                  "Name oder IP eines DNS-Servers mit den Zonen (z. B. ein Domain Controller), optional mit :Port – der Zonentransfer läuft über TCP 53.",
+                  "Name or IP of a DNS server holding the zones (e.g. a domain controller), optionally with :port – the zone transfer uses TCP 53.",
+                )
+              : L(
+                  "So, wie der Agent das Gerät erreicht (vom Agent-Rechner aus gesehen).",
+                  "As the agent reaches the device (seen from the agent host).",
+                )}
           </div>
         </div>
         )}
@@ -1646,7 +1683,35 @@ function SystemDialog({
             </Note>
           )}
         </div>
-        {isInfoblox ? (
+        {isAdDns ? (
+          <div className="field">
+            <label htmlFor="ss-zones">{L("Zonen", "Zones")}</label>
+            <textarea
+              id="ss-zones"
+              className="input mono"
+              rows={4}
+              value={readScope}
+              placeholder={"kunde.lan\n10.in-addr.arpa\n20.172.in-addr.arpa"}
+              onChange={(e) => setReadScope(e.target.value)}
+            />
+            <div className="hint">
+              {L(
+                <>
+                  Je Zeile eine Zone – Forward-Zonen (Namen → IP) und Reverse-Zonen (<code>…in-addr.arpa</code>, IP → Name).
+                  Keine Zugangsdaten: auf dem DNS-Server je Zone den Zonentransfer nur für die Adresse von Automato bzw. des
+                  Agenten erlauben (AD: DNS-Manager → Zone → Eigenschaften → Zonenübertragungen → „Nur an folgende
+                  Server“). Dienst-Einträge des AD (<code>_msdcs</code>, <code>_tcp</code> …) werden übergangen.
+                </>,
+                <>
+                  One zone per line – forward zones (names → IP) and reverse zones (<code>…in-addr.arpa</code>, IP →
+                  name). No credentials: on the DNS server allow the zone transfer per zone only for the address of
+                  Automato or the agent (AD: DNS Manager → zone → Properties → Zone Transfers → “Only to the following
+                  servers”). Service records of the AD (<code>_msdcs</code>, <code>_tcp</code> …) are skipped.
+                </>,
+              )}
+            </div>
+          </div>
+        ) : isInfoblox ? (
           <>
             <div className="field">
               <label htmlFor="ss-user">{L("Infoblox-Benutzer (read-only)", "Infoblox user (read-only)")}</label>
@@ -2041,7 +2106,7 @@ function SystemDialog({
             </div>
           </div>
         )}
-        {(hasCreds || hasWrite) && (
+        {(hasCreds || hasWrite) && !isAdDns && (
           <div className="field">
             <label className="check">
               <input type="checkbox" checked={clearCreds} onChange={(e) => setClearCreds(e.target.checked)} />
@@ -2051,6 +2116,7 @@ function SystemDialog({
             </label>
           </div>
         )}
+        {!isAdDns && (
         <div className="field">
           <label className="check">
             <input type="checkbox" checked={verifyTls} onChange={(e) => setVerifyTls(e.target.checked)} />
@@ -2060,6 +2126,7 @@ function SystemDialog({
             )}
           </label>
         </div>
+        )}
         {system && (
           <div className="field">
             <label className="check">
@@ -2150,7 +2217,11 @@ function SystemTable({
               )}
             </td>
             <td className="nowrap">
-              {s.has_credentials ? (
+              {s.platform === "ad_dns" ? (
+                <span className="chip na" title={L("Zonentransfer ohne Konto", "Zone transfer without an account")}>
+                  {L("keine nötig", "none needed")}
+                </span>
+              ) : s.has_credentials ? (
                 <span className="chip ok">
                   <Icon name="lock" size={12} /> {L("hinterlegt", "stored")}
                 </span>

@@ -146,6 +146,32 @@ PHRASES: tuple[tuple[str, str], ...] = (
     ("^Ergebnis-Upload fehlgeschlagen: ", "Result upload failed: "),
     (" (Details: docker compose logs orchestrator)",
      " (details: docker compose logs orchestrator)"),
+    # DNS-Server per Zonentransfer (ADR 0045, collectors/common/diagnose.py, ipam/tasks.py)
+    ("auf dem DNS-Server den Zonentransfer fuer die Adresse von Automato bzw. des Agenten "
+     "erlauben (AD: DNS-Manager > Zone > Eigenschaften > Zonenuebertragungen > 'Nur an folgende "
+     "Server'); Zone auf diesem Server vorhanden und Name richtig?",
+     "allow the zone transfer for the address of Automato or the agent on the DNS server (AD: "
+     "DNS Manager > zone > Properties > Zone Transfers > 'Only to the following servers'); is the "
+     "zone on this server and is the name right?"),
+    ("TCP 53 von Automato bzw. dem Agenten zum DNS-Server freigeben (Zonentransfer laeuft "
+     "ueber TCP)",
+     "open TCP 53 from Automato or the agent to the DNS server (zone transfers use TCP)"),
+    ("Zonentransfer von {zone} abgelehnt ({detail})", "zone transfer of {zone} refused ({detail})"),
+    ("{server} hat die Verbindung beim Zonentransfer von {zone} ohne Antwort beendet - meist ist "
+     "der Transfer fuer diese Adresse nicht erlaubt",
+     "{server} closed the connection without an answer during the zone transfer of {zone} - "
+     "usually the transfer is not allowed for this address"),
+    ("keine Antwort von {server} beim Zonentransfer von {zone}. ",
+     "no response from {server} during the zone transfer of {zone}. "),
+    ("{server}: Verbindung abgelehnt (DNS-Dienst aus bzw. falscher Port)",
+     "{server}: connection refused (DNS service off or wrong port)"),
+    ("^{server} nicht aufloesbar ({detail})$", "{server} not resolvable ({detail})"),
+    ("keine gueltige Antwort auf den Zonentransfer von {zone}: {detail}",
+     "no valid answer to the zone transfer of {zone}: {detail}"),
+    ("Netzwerkfehler beim Zonentransfer von {zone}: {detail}",
+     "network error during the zone transfer of {zone}: {detail}"),
+    ("keine Zonen fuer {who} - im Web-UI beim Quellsystem unter 'Zonen' hinterlegen",
+     "no zones for {who} - store them at the source system in the web UI under 'Zones'"),
     # Verbindung (collectors/common/http.py describe_error)
     (" - keine Antwort: Ziel aus oder Weg gesperrt (Firewall/Netz)",
      " - no response: target off or path blocked (firewall/network)"),

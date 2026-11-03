@@ -1,9 +1,10 @@
 [project]
 name = "sot-gateway"
-version = "0.122.0"
+version = "0.123.0"
 description = "SoT Gateway - Adapter-Package fuer IPAM/Source-of-Truth-Tools (ADR 0002)"
 requires-python = ">=3.11"
 dependencies = [
+    "dnspython>=2.6",  # AD-DNS per Zonentransfer (ADR 0045), ISC-Lizenz
     "httpx>=0.27",
     "pydantic>=2.7",
 ]

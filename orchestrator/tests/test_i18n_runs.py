@@ -195,6 +195,20 @@ def test_collector_englisch_gleich_wie_tabelle(monkeypatch):
             raise AssertionError("kein Fehler")
 
         makers.append(adapter_error)
+    makers.append(lambda: ipam._no_zones(dto.Target(name="dc01")))
+    makers.append(lambda: ipam._no_zones(None))
+    # DNS-Server per Zonentransfer (ADR 0045)
+    from sot_gateway.adapters.dns_zone import ZoneTransferError
+
+    for reason, detail in (("refused", "REFUSED"), ("closed", ""), ("timeout", ""),
+                           ("connect", "[Errno 111] Connection refused"),
+                           ("dns", "Name or service not known"), ("invalid", "no SOA"),
+                           ("network", "Network is unreachable")):  # fmt: skip
+        makers.append(
+            lambda r=reason, d=detail: diagnose.device_error(
+                ZoneTransferError("example.ch", "dc01.example.ch", r, d), "ad_dns"
+            )
+        )
     try:  # Switches: paramiko/ntc-templates sind nur mit dem Collector installiert
         switch = importlib.import_module("collectors.cisco_switch.tasks")
     except ImportError:

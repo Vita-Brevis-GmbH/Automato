@@ -120,6 +120,9 @@ def device_error(
     vsphere = _vsphere_fault(exc)
     if vsphere:
         return vsphere
+    zone = _zone_transfer_error(exc)
+    if zone:
+        return zone
     snmp = _snmp_error(exc, platform, target, local)
     if snmp:
         return snmp
@@ -153,6 +156,59 @@ def device_error(
 
 def _note() -> str:
     return L("Hinweis", "Note")
+
+
+# DNS-Server per Zonentransfer (ADR 0045): Freigabe auf dem Server und Weg TCP 53
+_ZONE_TRANSFER = (
+    "auf dem DNS-Server den Zonentransfer fuer die Adresse von Automato bzw. des Agenten "
+    "erlauben (AD: DNS-Manager > Zone > Eigenschaften > Zonenuebertragungen > 'Nur an folgende "
+    "Server'); Zone auf diesem Server vorhanden und Name richtig?",
+    "allow the zone transfer for the address of Automato or the agent on the DNS server (AD: "
+    "DNS Manager > zone > Properties > Zone Transfers > 'Only to the following servers'); is the "
+    "zone on this server and is the name right?",
+)
+_TCP53 = (
+    "TCP 53 von Automato bzw. dem Agenten zum DNS-Server freigeben (Zonentransfer laeuft "
+    "ueber TCP)",
+    "open TCP 53 from Automato or the agent to the DNS server (zone transfers use TCP)",
+)
+
+
+def _zone_transfer_error(exc: Exception) -> str | None:
+    """Zonentransfer gescheitert (`sot_gateway.adapters.dns_zone.ZoneTransferError`)."""
+    if type(exc).__name__ != "ZoneTransferError":
+        return None
+    zone, server = getattr(exc, "zone", "?"), getattr(exc, "server", "?")
+    reason, detail = getattr(exc, "reason", ""), getattr(exc, "detail", "")
+    allow, path = f"{_note()}: {L(*_ZONE_TRANSFER)}", f"{_note()}: {L(*_TCP53)}"
+    if reason == "refused":
+        return L(f"Zonentransfer von {zone} abgelehnt ({detail})",
+                 f"zone transfer of {zone} refused ({detail})") + f". {allow}"  # fmt: skip
+    if reason == "closed":
+        return (
+            L(
+                f"{server} hat die Verbindung beim Zonentransfer von {zone} ohne Antwort beendet - "
+                "meist ist der Transfer fuer diese Adresse nicht erlaubt",
+                f"{server} closed the connection without an answer during the zone transfer of "
+                f"{zone} - usually the transfer is not allowed for this address",
+            )
+            + f". {allow}"
+        )
+    if reason == "timeout":
+        silent = L(f"keine Antwort von {server} beim Zonentransfer von {zone}",
+                   f"no response from {server} during the zone transfer of {zone}")  # fmt: skip
+        return f"{silent}. {path}"
+    if reason == "connect":
+        refused = L(f"{server}: Verbindung abgelehnt (DNS-Dienst aus bzw. falscher Port)",
+                    f"{server}: connection refused (DNS service off or wrong port)")  # fmt: skip
+        return f"{refused}. {path}"
+    if reason == "dns":
+        return L(f"{server} nicht aufloesbar ({detail})", f"{server} not resolvable ({detail})")
+    if reason == "invalid":
+        return L(f"keine gueltige Antwort auf den Zonentransfer von {zone}: {detail}",
+                 f"no valid answer to the zone transfer of {zone}: {detail}")  # fmt: skip
+    return L(f"Netzwerkfehler beim Zonentransfer von {zone}: {detail}",
+             f"network error during the zone transfer of {zone}: {detail}")  # fmt: skip
 
 
 def _snmp_error(exc: Exception, platform: str, target: Target | None, local: bool) -> str | None:

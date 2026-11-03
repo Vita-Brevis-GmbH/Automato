@@ -418,9 +418,7 @@ def list_inventory(
             row["site"] = site_index.from_name(r.context_name, prefixes)
         if ctx is not None:
             row["ipam"] = _prefix_info(ctx.primary, r.prefix)
-            row["enrichment"] = _prefix_info(
-                ctx.enrichments[0] if ctx.enrichments else None, r.prefix
-            )
+            row["enrichment"] = _prefix_info(ctx.prefix_enrichment(), r.prefix)
         rows.append(row)
     if q:
         ql = q.strip().lower()

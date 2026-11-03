@@ -1649,13 +1649,34 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   Services des ersten gewählten Avi-Tenants (seit 0.78.3), NetBox: **Lese-Token** + optional **Schreib-Token** (nur
   NetBox-Sync, geht nie an einen Agenten) – nur schreibbar, verschlüsselt gespeichert, Anzeige
   nur „hinterlegt"; bei Infoblox/NetBox die **Rolle** *IPAM führend* oder *Anreicherung*
-  (genau ein führendes IPAM je Mandant); TLS-Prüfung, aktiv; **Zeitplan** (stündlich,
+  (genau ein führendes IPAM je Mandant); **AD-DNS** (seit 0.123.0, ADR 0045): **DNS-Server**
+  (Name oder IP eines DCs, optional `:Port`, gespeichert als `dns://…`) und **Zonen** (je Zeile,
+  Forward- und Reverse-Zonen wie `kunde.lan`, `10.in-addr.arpa`), ohne Zugangsdaten und ohne
+  TLS, Rolle immer *Anreicherung* (Liste: „keine nötig“) – siehe „AD-DNS als Referenzquelle“
+  unten; TLS-Prüfung, aktiv; **Zeitplan** (stündlich,
   täglich 02:00, werktags 06:00, wöchentlich oder eigener Cron-Ausdruck; Zeitzone
   `AUTOMATO_SCHEDULER_TIMEZONE`, Standard Europe/Zurich – die Tabelle zeigt den nächsten
   Termin); Name je Mandant eindeutig; ADR 0009/0010). **Löschen:** Quellsystem (✕, Rückfrage nennt die mit
   gelöschten Regeln/NAT-Einträge) und **Mandant löschen** (nur nach Eintippen des Namens;
   löscht alle Daten des Mandanten inkl. seiner Collector-Agenten; Audit-Log bleibt).
   Altbestände ohne Mandant erscheinen unter „Nicht zugeordnete Quellsysteme“ zum Zuordnen.
+- **AD-DNS als Referenzquelle (0.123.0, ADR 0045):** liest die angegebenen Zonen per
+  **Zonentransfer** (AXFR, TCP 53) und ergänzt jede IP um ihre DNS-Namen (A/AAAA, CNAME auf
+  Hosts der gelesenen Zonen, PTR) – in Objekten, NAT/VIP, Weg-Suche, Namen der Gegenstellen und
+  Doku. Dienst-Einträge des AD (`_msdcs`, `_sites`, `_tcp` …), `DomainDnsZones`/`ForestDnsZones`,
+  der Zonenkopf und Unterzonen werden übergangen. Einrichten:
+  1. Auf dem DC (DNS-Manager) je Zone → *Eigenschaften* → *Zonenübertragungen* →
+     „Zonenübertragungen zulassen“ → **„Nur an folgende Server“** → Adresse der Automato-VM
+     (bzw. des Agenten, der das Quellsystem liest). Kein AD-Konto nötig.
+  2. TCP 53 von der Automato-VM (bzw. dem Agenten) zum DC freigeben – auch auf einer Firewall
+     davor.
+  3. In Automato beim Mandanten **+ Quellsystem** → *AD-DNS*, DNS-Server und Zonen eintragen,
+     **Verbindung prüfen** (Name, TCP 53, je Zone der Anfang des Transfers mit SOA-Seriennummer),
+     dann einlesen (Zeitplan z. B. täglich).
+  Eine abgelehnte Zone lässt den Lauf mit Zone und Hinweis scheitern (kein halber Stand). Im
+  **Abgleich** ist die Anreicherung wählbar („Vergleich mit …“); gegen AD-DNS zeigt er nur
+  *DNS-Name abweichend* (das IPAM hat einen anderen bzw. keinen Namen) und *nur im DNS* (IP fehlt
+  im IPAM) – IPs ohne DNS-Eintrag sind kein Fehler. Netz, VLAN und Standort kommen nie aus dem DNS.
 - **Kunden (0.30.0, ADR 0018, Operator schreibt):** Ein Kunde ist ein Ausschnitt der
   Umgebung (des Mandanten). Statt Listen beschreiben ihn **Selektoren**:
   - ACI-Tenant, VRF (`TE_ka:VRF_ka` bzw. `VRF_ka`), Application Profile (`TE_ka/AP_007`),
@@ -2071,7 +2092,8 @@ an (`deploy/agent-gateway`, Port 8443).
   hinterlegt werden. Ein Agent bekommt nur die Tokens der ihm zugewiesenen Geräte.
 - **Nur lesen, ausser NetBox (ADR 0010):** Die Lese-Clients für FortiGate, APIC, Infoblox und
   NetBox lassen technisch nur GET zu (APIC zusätzlich Login/Logout) – ein Schreibversuch
-  bricht vor dem Senden ab. Der vCenter-Client (SOAP) lässt nur lesende vSphere-Methoden zu
+  bricht vor dem Senden ab. Das AD-DNS wird nur per Zonentransfer gelesen (ADR 0045); dynamische
+  Updates sind im Adapter nicht eingebunden. Der vCenter-Client (SOAP) lässt nur lesende vSphere-Methoden zu
   (Anmelden, Container-View, Eigenschaften abrufen; ADR 0017). Der Switch-Client (SSH) setzt je
   Befehl einen Exec-Aufruf ohne Shell und Terminal ab und lässt nur die festen `show`-Befehle
   des Lesevertrags zu (kein `show running-config`); er verlangt den beim ersten Lauf

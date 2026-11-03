@@ -1,4 +1,5 @@
-"""Referenz-Ebene: gespeicherter Stand der Referenzquellen (Infoblox DDI, NetBox), ADR 0010.
+"""Referenz-Ebene: gespeicherter Stand der Referenzquellen (Infoblox DDI, NetBox, AD-DNS),
+ADR 0010.
 
 - Speichern: Teil-Uploads eines Laufs (`add_batch`), Abschluss (`finalize_run`) macht den
   Lauf zum aktuellen Stand der Quelle und verwirft aeltere Eintraege.
@@ -7,7 +8,9 @@
   verknuepft die Werte-Objekte des Mandanten nach jedem Lauf neu (fuehrend + Anreicherung).
 - Anzeige: `describe` liefert Referenz- und Anreicherungsdaten je Werte-Objekt.
 - Pruefungen: `checks` (Name ↔ DNS-Name, Subnetz nicht im IPAM, VLAN abweichend) und
-  `compare_sources` (DDI ↔ NetBox).
+  `compare_sources` (DDI ↔ NetBox; gegen einen DNS-Server nur die DNS-Namen je IP).
+- DNS-Server (AD-DNS, ADR 0045) liefern nur DNS-Namen: immer Anreicherung, im Kontext nach den
+  IPAM-Anreicherungen (Netz-Infos kommen nie von dort).
 Gegenueber den Quellen nur lesend.
 """
 
@@ -22,6 +25,7 @@ from sqlalchemy import delete, func, insert, select
 from sqlalchemy.orm import Session
 
 from app.models import (
+    DNS_PLATFORMS,
     CollectorRun,
     MatchStatus,
     Platform,
@@ -168,6 +172,11 @@ class ReferenceIndex:
     def platform(self) -> str:
         return self.source.platform.value
 
+    @property
+    def dns_only(self) -> bool:
+        """Quelle nur mit DNS-Namen (AD-DNS, ADR 0045) - keine Netze, Ranges, VLANs."""
+        return self.source.platform in DNS_PLATFORMS
+
     def ip_records(self, ip: str) -> list[Ref]:
         key = _norm_ip(ip)
         return list(self.by_ip.get(key, [])) if key else []
@@ -313,7 +322,11 @@ def forget_indexes() -> None:
 @dataclass
 class Context:
     primary: ReferenceIndex | None = None
-    enrichments: list[ReferenceIndex] = field(default_factory=list)
+    enrichments: list[ReferenceIndex] = field(default_factory=list)  # DNS-Server zuletzt
+
+    def prefix_enrichment(self) -> ReferenceIndex | None:
+        """Anreicherung fuer Netz-Infos: die erste mit Netzen (nicht ein DNS-Server)."""
+        return next((e for e in self.enrichments if not e.dns_only), None)
 
 
 def context(session: Session, tenant_id: int | None) -> Context:
@@ -330,9 +343,10 @@ def context(session: Session, tenant_id: int | None) -> Context:
     if cached is not None:
         return cached
     ctx = Context()
-    for s in sorted(sources, key=lambda x: x.id):
+    for s in sorted(sources, key=lambda x: (x.platform in DNS_PLATFORMS, x.id)):
         idx = load_index(session, s)
-        if s.ref_role == ReferenceRole.PRIMARY.value and ctx.primary is None:
+        primary = s.ref_role == ReferenceRole.PRIMARY.value and not idx.dns_only
+        if primary and ctx.primary is None:
             ctx.primary = idx
         else:
             ctx.enrichments.append(idx)
@@ -622,7 +636,8 @@ def finalize_run(session: Session, run, source: SourceSystem) -> int:
     )
     source.reference_run_id = run.id
     if source.ref_role is None:
-        source.ref_role = ReferenceRole.PRIMARY.value
+        dns = source.platform in DNS_PLATFORMS  # nur DNS-Namen: Anreicherung (ADR 0045)
+        source.ref_role = (ReferenceRole.ENRICHMENT if dns else ReferenceRole.PRIMARY).value
     session.flush()
     return run_count(session, run.id)
 
@@ -753,6 +768,10 @@ def _ip_view(index: ReferenceIndex) -> dict[str, Ref]:
     return {ip: recs[0] for ip, recs in index.by_ip.items() if recs}
 
 
+def _dns(name: str | None) -> str:
+    return (name or "").rstrip(".").lower()
+
+
 def compare_sources(
     session: Session,
     tenant_id: int,
@@ -761,64 +780,89 @@ def compare_sources(
     limit: int = 200,
     offset: int = 0,
     keep=None,
+    enrichment_id: int | None = None,
 ) -> dict:
-    """Fuehrendes IPAM gegen die Anreicherung vergleichen (nur Felder mit DDI-Hoheit:
+    """Fuehrendes IPAM gegen eine Anreicherung vergleichen (nur Felder mit DDI-Hoheit:
     Existenz von Netzen/Ranges/IPs und der DNS-Name je IP). `keep` (0.76.0, Kunde gewaehlt):
-    Wert (IP, Netz, Range) -> im Ausschnitt?"""
+    Wert (IP, Netz, Range) -> im Ausschnitt? `enrichment_id` (0.123.0): welche Anreicherung,
+    sonst die erste. Gegen einen DNS-Server (AD-DNS, ADR 0045, `mode` dns) nur die DNS-Namen:
+    je IP des DNS, ob das IPAM sie kennt und ob sein Name einer der DNS-Namen ist - IPs ohne
+    DNS-Eintrag sind kein Fehler."""
     ctx = context(session, tenant_id)
     if ctx.primary is None or not ctx.enrichments:
         return {"available": False}
-    primary, enrichment = ctx.primary, ctx.enrichments[0]
+    primary = ctx.primary
+    enrichment = next(
+        (e for e in ctx.enrichments if e.source.id == enrichment_id), ctx.enrichments[0]
+    )
+    dns_mode = enrichment.dns_only
     rows: list[dict] = []
 
-    def add(state: str, kind: str, value: str, p: Ref | None, e: Ref | None, diffs=()):
+    def add(state: str, kind: str, value: str, p: Ref | None, e, diffs=()):
         rows.append(
             {
                 "status": state,
                 "kind": kind,
                 "value": value,
                 "primary": _brief(p),
-                "enrichment": _brief(e),
+                "enrichment": e if isinstance(e, dict) or e is None else _brief(e),
                 "diffs": list(diffs),
             }
         )
 
-    for kind, pmap, emap in (
-        ("prefix", primary.prefix_by_value, enrichment.prefix_by_value),
-        (
-            "range",
-            {r.value: r for *_, r in primary.ranges},
-            {r.value: r for *_, r in enrichment.ranges},
-        ),
-    ):
-        for value, p in pmap.items():
-            if value not in emap:
-                add("missing", kind, value, p, None)
-        for value, e in emap.items():
-            if value not in pmap:
-                add("only_enrichment", kind, value, None, e)
-    pips, eips = _ip_view(primary), _ip_view(enrichment)
-    for ip, p in pips.items():
-        e = eips.get(ip)
-        if e is None:
-            add("missing", "ip", ip, p, None)
-        elif (p.dns_name or "").rstrip(".").lower() != (e.dns_name or "").rstrip(".").lower():
-            add("different", "ip", ip, p, e, ["dns_name"])
-    for ip, e in eips.items():
-        if ip not in pips:
-            add("only_enrichment", "ip", ip, None, e)
+    pips = _ip_view(primary)
+    equal = 0
+    if dns_mode:
+        for ip, recs in enrichment.by_ip.items():
+            if not recs:
+                continue
+            names = sorted({_dns(r.dns_name) for r in recs if r.dns_name})
+            e = {**_brief(recs[0]), "dns_names": names}
+            p = pips.get(ip)
+            if p is None:
+                add("only_enrichment", "ip", ip, None, e)
+            elif _dns(p.dns_name) not in names:
+                add("different", "ip", ip, p, e, ["dns_name"])
+            elif keep is None or keep(ip):
+                equal += 1
+    else:
+        for kind, pmap, emap in (
+            ("prefix", primary.prefix_by_value, enrichment.prefix_by_value),
+            (
+                "range",
+                {r.value: r for *_, r in primary.ranges},
+                {r.value: r for *_, r in enrichment.ranges},
+            ),
+        ):
+            for value, p in pmap.items():
+                if value not in emap:
+                    add("missing", kind, value, p, None)
+            for value, e in emap.items():
+                if value not in pmap:
+                    add("only_enrichment", kind, value, None, e)
+        eips = _ip_view(enrichment)
+        for ip, p in pips.items():
+            e = eips.get(ip)
+            if e is None:
+                add("missing", "ip", ip, p, None)
+            elif _dns(p.dns_name) != _dns(e.dns_name):
+                add("different", "ip", ip, p, e, ["dns_name"])
+        for ip, e in eips.items():
+            if ip not in pips:
+                add("only_enrichment", "ip", ip, None, e)
 
     if keep is not None:
         rows = [r for r in rows if keep(r["value"])]
     summary = {s: 0 for s in COMPARE_STATUSES}
     for r in rows:
         summary[r["status"]] += 1
-    values = [*pips, *primary.prefix_by_value, *(r.value for *_, r in primary.ranges)]
-    equal = (
-        sum(1 for v in values if keep is None or keep(v))
-        - summary["missing"]
-        - summary["different"]
-    )
+    if not dns_mode:
+        values = [*pips, *primary.prefix_by_value, *(r.value for *_, r in primary.ranges)]
+        equal = (
+            sum(1 for v in values if keep is None or keep(v))
+            - summary["missing"]
+            - summary["different"]
+        )
     if q:
         ql = q.lower()
         rows = [
@@ -826,7 +870,9 @@ def compare_sources(
             for r in rows
             if ql in r["value"].lower()
             or any(
-                ql in (x or {}).get("dns_name", "").lower() for x in (r["primary"], r["enrichment"])
+                ql in (x or {}).get("dns_name", "").lower()
+                or any(ql in n for n in (x or {}).get("dns_names", []))
+                for x in (r["primary"], r["enrichment"])
             )
         ]
     if status:
@@ -834,18 +880,16 @@ def compare_sources(
     order = {s: i for i, s in enumerate(COMPARE_STATUSES)}
     kinds = {"prefix": 0, "range": 1, "ip": 2}  # Netze vor einzelnen IPs
     rows.sort(key=lambda r: (order[r["status"]], kinds[r["kind"]], _sort_key(r["value"])))
+
+    def ref(idx: ReferenceIndex) -> dict:
+        return {"id": idx.source.id, "name": idx.source.name, "platform": idx.platform}
+
     return {
         "available": True,
-        "primary": {
-            "id": primary.source.id,
-            "name": primary.source.name,
-            "platform": primary.platform,
-        },
-        "enrichment": {
-            "id": enrichment.source.id,
-            "name": enrichment.source.name,
-            "platform": enrichment.platform,
-        },
+        "mode": "dns" if dns_mode else "ipam",
+        "primary": ref(primary),
+        "enrichment": ref(enrichment),
+        "enrichments": [ref(e) for e in ctx.enrichments],
         "summary": {**summary, "equal": max(equal, 0)},
         "total": len(rows),
         "rows": rows[offset : offset + limit],
