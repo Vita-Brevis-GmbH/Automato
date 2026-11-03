@@ -7,6 +7,26 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.126.1 – 2026-11-03
+
+Rückmeldung des Anwenders 2026-11-03: „Im Netzwerk Plan sehe ich auf einmal nur noch die internen
+Verbindungen, keine Firewall Anbindungen mehr … ich habe nicht das AP oder die EG gewählt, sondern
+nur die VM“ und „Die EPG wird auch nicht ausgefüllt, in der Doku“ – auf den Vorschlag „So
+umsetzen“. Abnahme bis 0.126.0.
+
+- **Ursache:** mit nur der VM als Mitglied gehörte ihre EPG nicht zur Applikation. Firewall-Regeln
+  über das Servernetz (Subnetz der EPG) zählten für die einzelne VM als unspezifisch („Subnetz“)
+  und fielen nach dem Regelwerk weg (ausgehend mit breiter Quelle, unspezifisch von Firewalls nicht
+  auf dem Weg) – damit gab es keine Verbindungen über die Firewall, nur die ACI-internen.
+- **EPG der VM:** die EPG, in der eine VM der Applikation steht (Portgruppe, sonst gelernter
+  Endpunkt), erscheint als „EPG der VM …“ im Abschnitt EPGs, beim System und im Netzwerkplan (die
+  VM in ihrer EPG im Rahmen des APs) – selbst kein Mitglied: ohne ihre übrigen VMs und ohne Regeln,
+  die nur andere Hosts der EPG nennen. Gilt auch für VMs hinter einem Server-Mitglied.
+- **Regeln über das Netz der EPG** gelten für die VM spezifisch wie für die EPG (Bezug „… · Netz
+  der EPG …“): sie stehen in den Kategorien, unter „Regeln & Contracts“ und als Verbindungen über
+  die Firewall. Grössere Netze (z. B. 10.0.0.0/8) bleiben unspezifisch.
+- Tests: `orchestrator/tests/test_app_vm_epg.py`, `e2e/release_0126_1.spec.ts`.
+
 ## 0.126.0 – 2026-11-03
 
 Rückmeldung des Anwenders 2026-11-03: „Bei den Kategorien wäre es schön, wenn ich die Reihenfolge

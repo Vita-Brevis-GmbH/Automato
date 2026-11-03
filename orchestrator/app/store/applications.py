@@ -907,6 +907,9 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
     systems: list[dict] = []
     rows: list[tuple[str, int, dict]] = []  # (System-Schluessel, Tabelle, Zeile)
     covered_hosts: set[int] = set()
+    # EPGs der VMs, die nicht Mitglied sind (0.126.1, Anwender 2026-11-03): als „EPG der VM“ in
+    # der Doku und im Netzwerkplan - ohne ihre uebrigen VMs und Regeln (EPG -> Namen der VMs)
+    context: dict[int, list[str]] = defaultdict(list)
     for vm_id, e in sorted(vms.items(), key=lambda kv: kv[1]["vm"].name):
         vm: Vm = e["vm"]
         ips = list(dict.fromkeys(ip for n in vm.nics for ip in n.ips or []))
@@ -940,6 +943,14 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
                 }
             )
         key = f"vm:{vm_id}"
+        found: set[int] = set()  # EPGs der VM im ACI (Portgruppe, sonst gelernter Endpunkt)
+        for idx, row in appdoc.vm_rows(
+            session, data, vm.name, ips, list(servers.values()), nic_epgs, prefer, mapped, found
+        ):
+            rows.append((key, idx, row))
+        shown = {i for i in (nic_epgs or found) if i in data.epgs_by_id}
+        for i in sorted(shown - set(epgs)):
+            context[i].append(vm.name)
         systems.append(
             {
                 "key": key,
@@ -948,9 +959,7 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
                 "ips": ips,
                 "dns": dns(ips),
                 "servers": sorted(h.name for h in servers.values()),
-                "epgs": sorted(
-                    inventory_label(data.epgs_by_id[i]) for i in nic_epgs if i in data.epgs_by_id
-                ),
+                "epgs": sorted(inventory_label(data.epgs_by_id[i]) for i in shown),
                 "portgroups": nets,
                 "nics": nics,
                 "hints": list(dict.fromkeys(hints)),
@@ -963,10 +972,6 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
                 "member": "; ".join(dict.fromkeys(e["why"])),
             }
         )
-        for idx, row in appdoc.vm_rows(
-            session, data, vm.name, ips, list(servers.values()), nic_epgs, prefer, mapped
-        ):
-            rows.append((key, idx, row))
     for hid, (h, why) in sorted(hosts.items(), key=lambda kv: kv[1][0].name):
         if hid in covered_hosts:
             continue  # steht als VM da
@@ -1010,11 +1015,20 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
     for e in vms.values():
         for i in e["epg_ids"]:
             vm_count[i] += 1
+    for i, names in context.items():
+        vm_count[i] = len(names)
+    shown_epgs = {eid: (epg, why, False) for eid, (epg, why) in epgs.items()} | {
+        i: (data.epgs_by_id[i], L(f"EPG der VM {', '.join(names)}",
+                                  f"EPG of the VM {', '.join(names)}"), True)
+        for i, names in context.items()
+    }  # fmt: skip
     epg_out: list[dict] = []
-    for eid, (epg, why) in sorted(epgs.items(), key=lambda kv: inventory_label(kv[1][0])):
+    for eid, (epg, why, of_vm) in sorted(shown_epgs.items(),
+                                         key=lambda kv: inventory_label(kv[1][0])):  # fmt: skip
         key = f"epg:{eid}"
-        doc = appdoc.epg_doc(session, epg, data, full=True)
-        rows += [(key, t["index"], r) for t in doc["tables"] for r in t["rows"]]
+        if not of_vm:  # EPG der VM: nur zur Einordnung, ohne die Regeln der ganzen EPG
+            doc = appdoc.epg_doc(session, epg, data, full=True)
+            rows += [(key, t["index"], r) for t in doc["tables"] for r in t["rows"]]
         subnets = list(
             session.scalars(
                 select(EpgSubnet.ip).where(EpgSubnet.epg_id == eid).order_by(EpgSubnet.ip)
@@ -1039,6 +1053,7 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
                 "vm_count": vm_count.get(eid, 0),
                 "endpoint_count": endpoints or 0,
                 "member": why,
+                "of_vm": of_vm,  # 0.126.1: EPG der VM, nicht Mitglied
             }
         )
 

@@ -198,6 +198,8 @@ class DocEpgOut(BaseModel):
     vm_count: int = 0
     endpoint_count: int = 0
     member: str
+    # 0.126.1: EPG einer VM der Applikation, selbst kein Mitglied (ohne ihre uebrigen Regeln)
+    of_vm: bool = False
     rules: RuleCounts = RuleCounts()
 
 

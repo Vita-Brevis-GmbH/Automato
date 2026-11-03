@@ -372,7 +372,9 @@ def test_doku_server_ohne_vm(client):
     (web,) = doc["systems"]
     assert (web["kind"], web["name"]) == ("vm", "web01-007-ka")
     assert web["member"] == "IP 10.20.0.5 = Server 10.20.0.5 (Server 10.20.0.5)"
-    assert doc["epgs"] == [] and doc["summary"]["vms"] == 1
+    assert doc["summary"]["vms"] == 1
+    # 0.126.1: die EPG der VM zur Einordnung, selbst kein Mitglied
+    assert [(e["label"], e["of_vm"]) for e in doc["epgs"]] == [("TE_ka/AP_007/EG_web01", True)]
     assert client.get(f"/applications/{app['id']}/doc", headers=ADMIN).status_code == 200
 
 

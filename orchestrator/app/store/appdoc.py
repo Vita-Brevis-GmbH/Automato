@@ -1436,11 +1436,14 @@ def _covered_rows(
     contained: list[str] | None = None,
     show_ips: bool = True,
     own_zones: list[int] | None = None,
+    epg_nets: dict[str, str] | None = None,
 ) -> list:
     """Firewall-Regeln eines Systems: direkt (Endpunkt) und alle, deren Quelle/Ziel den Wert
     enthaelt (Host-IP) bzw. sich mit ihm ueberschneidet (EPG-Subnetz) - ueber Netze, Bereiche,
     Gruppen und any, gleichwertig (Dev-Befund 0.10.0). `contained`: Werte, die eine Regel ganz
-    enthalten muss (Subnetz eines BD, den die EPG mit anderen teilt, 0.43.1)."""
+    enthalten muss (Subnetz eines BD, den die EPG mit anderen teilt, 0.43.1). `epg_nets`: Netze
+    der EPG einer VM (Netz -> EPG, 0.126.1) - ein Objekt darin ist fuer die VM spezifisch wie fuer
+    die EPG (sonst „Subnetz“)."""
     cover = rule_index.covers(
         session, data.tenant_id, values, overlap=overlap, domain=RuleDomain.FIREWALL
     )
@@ -1456,6 +1459,8 @@ def _covered_rows(
     # eigene Zonen des Systems (0.105.0): Gegenstellen darin sind „innerhalb der eigenen Zone“
     zm = data.zone_map
     own = own_zones if own_zones is not None else (zm.own(values) if zm.active else [])
+    nets = [(rng, label) for net, label in (epg_nets or {}).items()
+            if (rng := rule_index.value_range(net)) is not None]  # fmt: skip
     out = []
     for r in data.rules((direct_ids or set()) | set(cover)):
         sides: dict[str, tuple[str, str, str, str]] = {}
@@ -1471,7 +1476,11 @@ def _covered_rows(
                     else:
                         sides[role] = (direct, "specific", o.name if o else "", _label(o, None))
         for role in c.sides if c else ():
-            sides.setdefault(role, (c.via(role), c.scope(role), c.via(role), c.value(role)))
+            scope, via = c.scope(role), c.via(role)
+            epg = _in_epg_net(c.value(role), nets) if scope == "subnet" and nets else None
+            if epg is not None:  # Netz der EPG der VM (0.126.1): wie bei der EPG spezifisch
+                scope, via = "specific", f"{via} · {L('Netz der EPG', 'network of the EPG')} {epg}"
+            sides.setdefault(role, (via, scope, c.via(role), c.value(role)))
         if any(side[1] != "any" for side in sides.values()):
             # Server -> any: das System steht gezielt auf einer Seite; dass any auf der Gegenseite
             # es auch umfasst, ist kein eigener Zugriff (Dev-Befund 0.14.0)
@@ -1486,6 +1495,33 @@ def _covered_rows(
                 off = data.on_path.check(r, s, values, data.device(r))
                 rels[s] = off or rels[s]
         out += _fw_rows(data, r, sides, system_name, dnat, rels, shown, own)
+    return out
+
+
+def _in_epg_net(value: str | None, nets: list[tuple[tuple, str]]) -> str | None:
+    """EPG, in deren Netz ein Bereich der Regel ganz liegt (0.126.1), sonst None."""
+    rng = rule_index.value_range(value)
+    if rng is None:
+        return None
+    fam, lo, hi = rng[0], int(rng[1], 16), int(rng[2], 16)
+    for (nfam, nlo, nhi, _any), label in nets:
+        if nfam == fam and int(nlo, 16) <= lo and hi <= int(nhi, 16):
+            return label
+    return None
+
+
+def nets_of_epgs(session: Session, data: TenantData, epg_ids: set[int]) -> dict[str, str]:
+    """Netze der EPGs einer VM (0.126.1, Anwender 2026-11-03): ihre Subnetze (auch die ihres BD)
+    -> EPG. Eine Firewall-Regel mit einem dieser Netze gilt fuer die VM spezifisch, wie fuer die
+    EPG - ohne die Regeln, die nur andere Hosts der EPG nennen."""
+    out: dict[str, str] = {}
+    ids = sorted(i for i in epg_ids if i in data.epgs_by_id)
+    if not ids:
+        return out
+    for s in session.scalars(select(EpgSubnet).where(EpgSubnet.epg_id.in_(ids))
+                             .order_by(EpgSubnet.epg_id, EpgSubnet.ip)):  # fmt: skip
+        if aci_relevance.assigns(s.origin, s.scope):  # Export Route Control: kein Netz (0.111.0)
+            out.setdefault(s.ip, epg_store.inventory_label(data.epgs_by_id[s.epg_id]))
     return out
 
 
@@ -1630,11 +1666,13 @@ def vm_rows(
     epg_ids: set[int],
     prefer: frozenset | set = frozenset(),
     mapped: set[str] | frozenset = frozenset(),
+    found: set[int] | None = None,
 ) -> list:
     """Zeilen einer VM (Applikations-Doku, 0.14.0): Firewall-Regeln ueber ihre IPs - direkt
     ueber das Host-Objekt einer IP, sonst ueber Netze, Bereiche, Gruppen und any - und die
     Contracts ihrer EPGs (Portgruppe; gelernter Endpunkt bzw. verknuepfter Server nur in den
-    VRFs der Portgruppen, siehe `fabric_epgs`).
+    VRFs der Portgruppen, siehe `fabric_epgs`). Seit 0.126.1 ist ein Netz ihrer EPG fuer die VM
+    spezifisch (`nets_of_epgs`); `found` erhaelt die EPGs der VM.
 
     Vorgabe vor Gelerntem (0.43.1, R12): Fuer IPs an einer NIC mit EPG (`mapped`) gilt die EPG
     der Portgruppe; ein gelernter Endpunkt mit dieser IP in einer anderen EPG (alt, verschoben,
@@ -1643,15 +1681,6 @@ def vm_rows(
     direct: set[int] = set()
     for hid in host_ids:
         direct |= data.rule_ids(RuleDomain.FIREWALL, network_object_id=hid)
-    out = _covered_rows(
-        session,
-        data,
-        ips,
-        name,
-        overlap=False,
-        direct_ids=direct,
-        is_direct=lambda e: e.network_object_id in host_ids,
-    )
     free = [h for h in hosts if not h.value or h.value.split("/")[0] not in mapped]
     free_ids = {h.id for h in free}
     by_ip = {e.id for e in data.epgs_by_id.values() if e.network_object_id in free_ids}
@@ -1660,6 +1689,18 @@ def vm_rows(
     if values:
         by_ip |= set(session.scalars(select(EpgEndpoint.epg_id).where(EpgEndpoint.ip.in_(values))))
     ids = fabric_epgs(data, set(epg_ids), by_ip, prefer)
+    if found is not None:
+        found |= ids
+    out = _covered_rows(
+        session,
+        data,
+        ips,
+        name,
+        overlap=False,
+        direct_ids=direct,
+        is_direct=lambda e: e.network_object_id in host_ids,
+        epg_nets=nets_of_epgs(session, data, ids),
+    )
     for i in sorted(ids):
         epg = data.epgs_by_id[i]
         out += _aci_rows(data, epg, name, via=f"EPG {epg_store.inventory_label(epg)}", ips=ips)

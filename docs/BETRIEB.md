@@ -861,6 +861,10 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     Grund „VM <Name>“ – mit ihren IPs, Regeln, EPGs und Portgruppen wie eine VM über EPG bzw.
     Server. Wird sie nicht mehr gelesen, bleibt das Mitglied „nicht mehr gelesen“ stehen.
     Kunden-Benutzer pflegen Applikationen mit VM-Mitgliedern nicht selbst (fail-closed).
+    Seit 0.126.1 steht die EPG der VM (Portgruppe, sonst gelernter Endpunkt) als „EPG der VM …“
+    unter EPGs und im Netzwerkplan – nicht als Mitglied, also ohne ihre übrigen VMs und Regeln
+    anderer Hosts; Firewall-Regeln über das Netz dieser EPG gelten für die VM spezifisch (Bezug
+    „… · Netz der EPG …“). Soll die ganze EPG dazugehören, die EPG als Mitglied nehmen.
   - **Ohne VMs** (0.75.0): Spalte „VMs“ (an den Portgruppen der EPGs, hinter den Servern bzw. als Mitglied);
     „ohne VMs ausblenden“ (bleibt im Browser), „ohne VMs auswählen“ bzw. einzeln ankreuzen und
     „N löschen“ (Operator, mit Bestätigung; gelesene Daten bleiben).

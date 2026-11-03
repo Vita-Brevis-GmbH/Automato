@@ -810,6 +810,7 @@ export interface AppDocEpg {
   vm_count: number;
   endpoint_count: number;
   member: string;
+  of_vm?: boolean; // 0.126.1: EPG einer VM der Applikation, selbst kein Mitglied
   rules: DocRuleCounts;
 }
 export interface AppDocHit {

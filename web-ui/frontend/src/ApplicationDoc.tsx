@@ -1693,7 +1693,19 @@ function EpgsCard({ items, fold, onPick }: { items: AppDocEpg[]; fold: Fold; onP
                   <td className="mono">{e.subnets.length ? e.subnets.map((x) => <div key={x}>{x}</div>) : <Dash />}</td>
                   <td className="num">{e.vm_count}</td>
                   <td className="num">{e.endpoint_count}</td>
-                  <td className="faint">{e.member}</td>
+                  <td
+                    className={`faint${e.of_vm ? " epg-of-vm" : ""}`}
+                    title={
+                      e.of_vm
+                        ? L(
+                            "Nicht Mitglied: die EPG, in der eine VM der Applikation steht – ohne ihre übrigen VMs und Regeln",
+                            "Not a member: the EPG an application VM sits in – without its other VMs and rules",
+                          )
+                        : undefined
+                    }
+                  >
+                    {e.member}
+                  </td>
                   <td className="nowrap">
                     <span className="chip ok" title={L("spezifische Regeln", "specific rules")}>
                       {e.rules.specific}
