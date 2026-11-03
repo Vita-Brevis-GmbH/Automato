@@ -1,0 +1,28 @@
+# Proxy des NetBox-Hosts (netbox-host.sh, ADR 0044). Je Kunde zwei Einträge in sites/:
+#   <kunde>.<domain>         Startseite (statisch aus www/<kunde>)
+#   <kunde>-netbox.<domain>  NetBox des Kunden (Container nb-<kunde> im Netz netbox-front)
+# und start.<domain> als interne Übersicht. ALLOW (.env aus host.conf): Netze mit Zugriff.
+{
+	servers {
+		protocols h1 h2
+	}
+}
+
+(common) {
+	tls /etc/caddy/pki/wildcard.crt /etc/caddy/pki/wildcard.key {
+		protocols tls1.2 tls1.3
+	}
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Frame-Options "SAMEORIGIN"
+		-Server
+	}
+	# Nur aus freigegebenen Netzen; Docker muss die Quell-IP erhalten ("userland-proxy": false)
+	@blocked not remote_ip {$ALLOW}
+	respond @blocked "Zugriff nur aus freigegebenen Netzen" 403
+}
+
+import /etc/caddy/sites/*.caddy

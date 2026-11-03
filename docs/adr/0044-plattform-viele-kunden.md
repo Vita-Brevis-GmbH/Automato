@@ -40,9 +40,10 @@ und 3 von ADR 0014 an.
    - Greifen Kunden von eigenen Rechnern zu, braucht es ein öffentlich gültiges Zertifikat (z. B.
      Let's Encrypt mit DNS-01) oder die Verteilung der eigenen Root.
 2. **NetBox je Kunde als eigener Stack** (eigene Datenbank, eigenes Redis, eigener `SECRET_KEY`,
-   eigene Sicherung) auf einem NetBox-Host mit gemeinsamem Proxy; Anmeldung über Keycloak (OIDC,
-   Rechte über Gruppen). Eigene VM empfohlen (Entscheid offen); Werkzeug zum Anlegen, Sichern,
-   Aktualisieren und Löschen einer Instanz folgt.
+   eigene Sicherung) auf einer **eigenen VM** (Entscheid 2026-11-03) mit gemeinsamem Proxy.
+   Umgesetzt in 0.121.0: `deploy/netbox-host/netbox-host.sh` (anlegen, Tokens für Automato,
+   Startseiten, sichern, wiederherstellen, aktualisieren, löschen, prüfen) und
+   `docs/INSTALLATION-NETBOX-HOST.md`. Anmeldung vorerst lokal je Instanz, über Keycloak in V2.
 3. **Eine Instanz des Werkzeugs, ein Mandant je Kunde** (statt einer Instanz je Firma, ADR 0014
    Entscheid 2) – jeder Mandant mit eigenen Quellsystemen, auch seiner NetBox als Referenz und
    Sync-Ziel (heute schon so). Kunden auf geteilter Infrastruktur bleiben Kunden innerhalb eines
@@ -52,15 +53,17 @@ und 3 von ADR 0014 an.
    - der **Global Admin** sieht und verwaltet alle Mandanten: entweder die Sicht eines Kunden
      (gefiltert nach Mandant) oder eine **globale Sicht** über alle Mandanten – Objekte und
      Werkzeuge übergreifend, z. B. um Regeln zwischen zwei Kunden zu erstellen bzw. zu überwachen.
-   - Vorschlag zur Umsetzung (abzustimmen): Realm je Mandant (eigene Login-Seite, eigener IdP des
-     Kunden) und ein Betriebs-Realm für Vita Brevis; der Orchestrator nimmt mehrere Aussteller an
-     und leitet den Mandanten aus dem Aussteller ab – ein Token aus dem Realm eines Kunden gilt nur
-     für dessen Mandanten, unabhängig von den Claims (fail-closed); Global Admin nur aus dem
-     Betriebs-Realm. Alternative: ein Realm mit Keycloak-Organisationen.
+   - **Entschieden 2026-11-03: Realm je Mandant** (eigene Login-Seite, eigener IdP des Kunden)
+     und ein **Betriebs-Realm** für Vita Brevis mit Anbindung des lokalen AD (Keycloak-User-
+     Federation über LDAP). Der Orchestrator nimmt mehrere Aussteller an und leitet den Mandanten
+     aus dem Aussteller ab – ein Token aus dem Realm eines Kunden gilt nur für dessen Mandanten,
+     unabhängig von den Claims (fail-closed); Global Admin nur aus dem Betriebs-Realm. Verworfen:
+     ein Realm mit Keycloak-Organisationen.
 5. **VPN-Verbindungen** in Version 2: IPsec und SSL-VPN der FortiGate lesend (Tunnel, Gegenstellen,
    Phase-2-Selektoren, Routen über Tunnel) in Weg-Suche, Verbindungen und Doku.
-6. **DNS ohne Infoblox:** NetBox als IPAM; das AD-DNS als zusätzliche Referenzquelle, nur lesend –
-   Zonentransfer (empfohlen) oder LDAP, Entscheid offen; eigene ADR beim Bau.
+6. **DNS ohne Infoblox:** NetBox als IPAM; das AD-DNS als zusätzliche Referenzquelle, nur lesend
+   über **Zonentransfer** (Entscheid 2026-11-03; auf dem DC nur für die Automato-VM freigegeben, kein
+   AD-Konto); eigene ADR beim Bau.
 7. **Projekt Datacenter:** möglicherweise als Kopie des Projekts weiterführen – Entscheid später.
 
 ## Folgen

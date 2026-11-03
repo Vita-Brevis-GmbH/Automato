@@ -7,6 +7,29 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.121.0 – 2026-11-03
+
+Entscheide des Anwenders 2026-11-03 (ADR 0044): „1. Eigene VM. 2. Zonentransfer ist ok. 3. Realm
+pro Mandant ist super, auch der Betriebs-Realm mit Einbindung des ADs lokal.“ Abnahme bis 0.120.3.
+
+- **NetBox je Kunde** auf einer eigenen VM: `deploy/netbox-host/netbox-host.sh`
+  - `init`: Grundgerüst `/opt/netbox-host`, `host.conf`, Proxy (Caddy, nur Port 443,
+    Wildcard-Zertifikat, Zugriff nur aus `ALLOW`), age-Schlüssel, tägliche Sicherung per cron.
+  - `neu <kunde>`: netbox-docker in der Version aus `host.conf`, eigene Secrets (Vorgaben von
+    netbox-docker nie benutzt), eigene Datenbank und Redis, nur im Netz des Proxys
+    (`nb-<kunde>`), erster Admin mit Zufallspasswort; Adresse `<kunde>-netbox.<domain>`.
+  - `token <kunde>`: Lese- und Sync-Benutzer mit Tokens für das Quellsystem in Automato.
+  - **Startseite je Kunde** `<kunde>.<domain>` mit Kacheln (NetBox, Dokumentation, weitere per
+    `link`), interne Übersicht `start.<domain>`; Texte maskiert, nur `http(s)`-Links.
+  - `sichern`, `wiederherstellen`, `update` (immer erst sichern), `loeschen --ja` (letzte
+    Sicherung zuerst), `liste`, `pruefen`.
+- **Anleitung** `docs/INSTALLATION-NETBOX-HOST.md` (VM, DNS mit Wildcard, Zertifikat,
+  Einrichten, Kunde anlegen und an Automato anbinden, Betrieb, Grenzen).
+- **ADR 0044** nachgeführt: eigene VM, AD-DNS über Zonentransfer, Realm je Mandant mit
+  Betriebs-Realm (lokales AD über LDAP); ROADMAP Version 1 Nr. 9 umgesetzt, Nr. 10 als Nächstes.
+- Tests: `orchestrator/tests/test_netbox_host_script.py` (Werkzeug mit Ersatz für docker, git,
+  age und curl).
+
 ## 0.120.3 – 2026-11-03
 
 Rückmeldungen des Anwenders beim Aufsetzen der Produktion (2026-11-02/03) und Entscheide zur

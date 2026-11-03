@@ -2043,6 +2043,9 @@ an (`deploy/agent-gateway`, Port 8443).
 - **Produktiv installieren** (0.116.0, R14): `docs/INSTALLATION-PROD.md` – VM mit LUKS
   (automatisch entsperrt über Clevis + Tang oder vTPM), gehärtetes Ubuntu und Docker, Automato
   mit Anmeldung, Agent-Gateway, Sicherung und Abnahme-Liste.
+- **NetBox je Kunde** (0.121.0, ADR 0044): `docs/INSTALLATION-NETBOX-HOST.md` – eigene VM, je Kunde
+  eine NetBox hinter einem Proxy mit Startseite; anlegen, an Automato anbinden (`token`), sichern,
+  aktualisieren und löschen mit `deploy/netbox-host/netbox-host.sh`.
 - **Oberfläche nur aus erlaubten Netzen** (0.116.0, R14): `AUTOMATO_UI_ALLOW` in `.env`
   (Netze mit Leerzeichen getrennt, z. B. `"10.0.10.0/24 10.8.0.0/16"`; Vorgabe alles) – der
   Proxy antwortet anderen Quellen mit 403. Docker muss dafür die Quell-IP erhalten
