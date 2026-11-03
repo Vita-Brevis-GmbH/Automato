@@ -94,7 +94,8 @@ def _tenant_parts(session: Session, tid: int) -> tuple:
 
 def _fp(app: Application, var: str, tenant: tuple, own: int | None) -> str:
     runs, sources, config = tenant
-    parts = [__version__, app.id, str(app.updated_at), str(runs), sources, config, own, var]
+    parts = [__version__, app.id, str(app.updated_at), str(runs), sources, config, own, var,
+             get_settings().app_traces_max]  # 0.130.0: andere Grenze = neu rechnen  # fmt: skip
     return hashlib.sha256(repr(parts).encode()).hexdigest()
 
 

@@ -62,7 +62,7 @@ from app.store import epgs as epg_store
 from app.store import nat as nat_store
 from app.store.topology import endpoint, is_net, within
 
-MAX_TRACES = 120  # Wege je Applikation
+MAX_TRACES = 120  # Wege je Applikation in den Befunden (Vorgabe, `app_findings_traces`)
 MAX_COUNTER = 6  # Gegenstellen je Regel und Seite
 MAX_PARTS = 8  # genauer geroutete Teile eines Netzes als eigene Verbindungen (0.79.1)
 MAX_SERVICES = 3  # Dienste je Regel
@@ -99,16 +99,20 @@ class _Conn:
 
 def build(session: Session, app: Application, doc: dict | None = None,
           graph: paths.Graph | None = None,
-          checks: policy_check.Checks | None = None, zones: bool = True) -> dict:  # fmt: skip
+          checks: policy_check.Checks | None = None, zones: bool = True,
+          limit: int | None = None) -> dict:  # fmt: skip
     """Verbindungen der Applikation mit Weg, Urteil je Hop und Abgleich mit den Regeln. Graph
     und Policies lassen sich fuer mehrere Applikationen teilen (Befunde, 0.59.0); `zones`:
     logische Zonen je Verbindung und Hop mit der Absicht (0.78.0, ADR 0024) - die Befunde
-    brauchen sie nicht."""
+    brauchen sie nicht. `limit`: so viele Wege (Vorgabe `app_traces_max`, 0 = alle, 0.130.0) -
+    Verbindungen zu any zuletzt."""
+    from app.config import get_settings
     from app.store import (
         applications,  # spaet: applications nutzt appdoc wie dieses Modul
         zone_path,  # spaet: Zonen nutzen Kunden, diese die Applikationen
     )
 
+    limit = get_settings().app_traces_max if limit is None else limit
     tid = app.tenant_id
     doc = doc or applications.build_doc(session, app)
     data = appdoc.TenantData(session, tid)
@@ -119,11 +123,11 @@ def build(session: Session, app: Application, doc: dict | None = None,
             select(Rule).where(Rule.id.in_(rule_ids)).options(selectinload(Rule.services))
         )
     }
-    conns, notes, without = _candidates(session, data, doc, rules)
+    conns, notes, without = _candidates(session, data, doc, rules, limit)
     graph = graph or paths.Graph(session, tid)
     checks = checks or policy_check.Checks.load(session, tid)
     out: list[dict] = []
-    cut = len(conns) > MAX_TRACES
+    cut = bool(limit) and len(conns) > limit
     l3 = L3Outs(session, {k[0] for k in graph.nodes})
     l3.locator = epg_locate.Locator(session, tid, data.aci, data.epgs_by_id)
     zctx = zone_path.ZoneContext(session, tid, graph) if zones else None
@@ -139,7 +143,7 @@ def build(session: Session, app: Application, doc: dict | None = None,
                       for x in conn["unused"])  # fmt: skip
         return bool(conn["rules"]) or not conn["unused"]
 
-    for c in list(conns.values())[:MAX_TRACES]:
+    for c in list(conns.values())[: limit or None]:
         conn = _connection(session, tid, graph, checks, data, rules, c, l3, zctx, assigner)
         if c.probe:  # any: Firewall nicht auf dem Weg nach dem Routing - kein Befund (0.127.0)
             for x in conn["unused"]:
@@ -165,8 +169,10 @@ def build(session: Session, app: Application, doc: dict | None = None,
     if cut:
         notes.append(
             L(
-                f"{len(conns)} Verbindungen – nur die ersten {MAX_TRACES} geprüft",
-                f"{len(conns)} connections – only the first {MAX_TRACES} checked",
+                f"{len(conns)} Verbindungen – nur die ersten {limit} geprüft (Verbindungen zu "
+                "any zuletzt; Grenze AUTOMATO_APP_TRACES_MAX in der .env, 0 = ohne Grenze)",
+                f"{len(conns)} connections – only the first {limit} checked (connections to any "
+                "last; limit AUTOMATO_APP_TRACES_MAX in the .env, 0 = no limit)",
             )
         )
     if unused:
@@ -304,8 +310,9 @@ def _why(key: str) -> str:
 
 
 def _candidates(
-    session: Session, data: appdoc.TenantData, doc: dict, rules: dict[int, Rule]
-) -> tuple[dict[tuple, _Conn], list[str], dict[int, set[str]]]:
+    session: Session, data: appdoc.TenantData, doc: dict, rules: dict[int, Rule],
+    limit: int = MAX_TRACES,
+) -> tuple[dict[tuple, _Conn], list[str], dict[int, set[str]]]:  # fmt: skip
     systems = {x["key"]: x for x in doc["systems"]} | _epg_systems(session, doc)
     ranges, anys = _ranges(session, set(rules))
     without: dict[int, set[str]] = defaultdict(set)  # Regel -> Gruende ohne Verbindung
@@ -427,8 +434,10 @@ def _candidates(
                 f"without a checkable peer (reason under “rules without a connection”): {names}",
             )
         )
-    if len(merged) > MAX_TRACES:
-        for c in list(merged.values())[MAX_TRACES:]:
+    # Verbindungen zu any zuletzt (0.130.0): ueber der Grenze fallen zuerst sie weg
+    merged = dict(sorted(merged.items(), key=lambda kv: kv[1].probe))
+    if limit and len(merged) > limit:
+        for c in list(merged.values())[limit:]:
             for rid in c.rules:
                 without[rid].add(_why("limit"))
     return merged, notes, without

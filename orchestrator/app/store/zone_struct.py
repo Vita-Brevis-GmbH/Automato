@@ -36,6 +36,9 @@ Transfernetz gehoert zur Zone.
 - Netze eines Uebergangs gehoeren keiner Zone („Netze in der Zone sind nur die, die keine
   Uebergaenge sind“). Zonen ohne eigenes Netz sind normal (z. B. Edge Internet: ein Bein im DC,
   eines in Public).
+- **Session-Sync** (0.130.0, Anwender: „Session Links, welche dort nicht hingehören“): das Netz
+  mit der Adresse des Sync-Partners (FGSP `peerip`), an dem nur die beiden Partner liegen, ist
+  weder Uebergang noch Netz einer Zone - es traegt keine Daten (`sync_links`).
 
 Nur lesend.
 """
@@ -48,7 +51,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import LogicalZone, TopoExit
+from app.models import LogicalZone, TopoExit, TopoHa
 from app.store import customers, topo_model
 from app.store import exits as exit_store
 from app.store.customers import Net, Selector
@@ -91,6 +94,8 @@ class Structure:
     contacts: dict[int, list[dict]] = field(default_factory=lambda: defaultdict(list))
     # je Netz an den Knoten: die Knoten daran und die Zonen, die es beruehrt (Plan je Kunde)
     segments: list[tuple[set[str], set]] = field(default_factory=list)
+    # Session-Sync-Netze (FGSP, 0.130.0): kein Uebergang, kein Netz einer Zone
+    sync_links: list[dict] = field(default_factory=list)
 
     def zone_nodes(self) -> dict[int, list[Key]]:
         out: dict[int, list[Key]] = defaultdict(list)
@@ -215,6 +220,7 @@ def build(session: Session, tenant_id: int, items: list[LogicalZone],
                 return i
         return None
 
+    sync = _sync_links(session, tenant_id, g, m, comp_at)
     routers: dict[int, dict[str, list[str]]] = defaultdict(dict)
     for ip, uses in exit_store.detect(g).items():
         for key in uses:
@@ -260,6 +266,9 @@ def build(session: Session, tenant_id: int, items: list[LogicalZone],
         if routed.get(i):  # Zonen nur hinter dem Router: die Routen dorthin (0.81.0)
             info["routes"] = [{"zone": zid, "prefixes": sorted(p, key=_prefix_order)}
                               for zid, p in sorted(routed[i].items())]  # fmt: skip
+        if i in sync:  # Session-Sync (0.130.0): traegt keine Daten
+            st.sync_links.append(info)
+            continue
         st.segments.append(({x["node"] for x in legs}, assigned | explicit))
         pairs: set[tuple[Side, Side]] = set()
         if explicit:
@@ -298,6 +307,31 @@ def build(session: Session, tenant_id: int, items: list[LogicalZone],
             t = st.transitions.setdefault(key, Transition(*key))
             t.networks.append(info)
     return st
+
+
+def _sync_links(session: Session, tenant_id: int, g: Graph, m, comp_at) -> set[int]:
+    """Netze des Session-Sync (FGSP, 0.130.0): je Sync-Partner (`peerip`) das Netz mit seiner
+    Adresse - am Partner bzw. am eigenen Interface -, wenn daran nur die beiden Partner liegen
+    (sonst traegt es auch Daten und bleibt, wie es ist)."""
+    out: set[int] = set()
+    owners = g.owners()
+    for h in session.scalars(select(TopoHa).where(TopoHa.tenant_id == tenant_id)):
+        for peer in h.sync_peers or []:
+            ip = str(peer.get("peerip") or "").split("/")[0]
+            if not ip:
+                continue
+            partners = {h.source_system_id}
+            found: set[int | None] = set()
+            for key, *_ in owners.get(ip, []):
+                partners.add(key[0])
+                found.add(comp_at(key, ip))
+            for key in g.nodes:
+                if key[0] == h.source_system_id:
+                    found.add(comp_at(key, ip))
+            for i in found - {None}:
+                if {a.key[0] for a in m.components[i][1]} <= partners:
+                    out.add(i)
+    return out
 
 
 def _routed(

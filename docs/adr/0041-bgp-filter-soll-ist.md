@@ -150,5 +150,23 @@ Anwender 2026-10-30 („go 116“, Roadmap Version 1 Nr. 3 Rest):
     gehörten, stehen in der Begründung (`chain.not_via`). Konfiguration statt Code: ohne Häkchen
     trennt jede Zone gleiche Zonen – die verbindende (Zonen-Firewall) setzt der Anwender.
 
+## Ergänzung 0.130.0 (2026-11-03)
+
+16. **Session-Sync ist kein Zonenübergang:** Anwender: „Es zeigt mir nun auch andere Zonen an, wo
+    es nicht möglich sein soll. Zonen, welche in anderen Tenants oder Session Links, welche dort
+    nicht hingehören“. Das Netz mit der Adresse eines FGSP-Sync-Partners (`peerip` aus `topo_ha`),
+    an dem nur die beiden Partner liegen, ist im Zonenplan (`zone_struct.build`) weder Übergang noch
+    Netz einer Zone (`Structure.sync_links`) – es trägt keine Daten, verband aber Zonen (fremde
+    Zonen dahinter) bzw. stand als Netz im Soll. Liegt ein drittes Gerät daran, bleibt es ein
+    gewöhnliches Netz.
+17. **Abstand je Weg:** die Breitensuche über Paare Zone/Vorgänger (Nr. 15) zählt je Paar seinen
+    eigenen Abstand; bis 0.129.0 gab eine Zone, die zuerst über einen gesperrten Durchgang und
+    später über einen Umweg erreicht wurde, den kürzeren Abstand weiter (Zonen dahinter mit zu
+    kleinem Abstand, falsche Zonen im Soll).
+18. **Weg je Zone in der Begründung:** `chain.zones[].path` = die Zonen ab der Zone der Firewall
+    (Ausgang: ab dem Nachbarn) mit dem Netz je Übergang (zwischen Firewall und Nachbar zuerst das
+    Netz mit seiner Adresse, `more` = weitere Netze desselben Übergangs) – sichtbar, welcher
+    Übergang eine Zone hereinbringt; in Oberfläche („Weg je Zone“) und Befund.
+
 Offen: Vergleich im Verlauf des Routings (Änderungen der Filter über die Zeit), Export-Route-Control
 gegen die Zonen diesseits (heute nur gelesen und gezeigt).

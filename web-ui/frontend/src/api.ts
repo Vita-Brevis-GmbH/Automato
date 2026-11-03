@@ -883,6 +883,8 @@ export interface ApplicationDoc {
   rules: Rule[];
   findings: AppDocFinding[];
   tables: DocTable[];
+  // 0.130.0: Namensprofil, aus dem Titel und Reihenfolge der Kategorien kommen (null = Vorgaben)
+  catalog_profile?: { id: number; customer: string; name: string } | null;
   // 0.60.0: direkt zugeordnete (rule) bzw. ausgeschlossene (norule) Regeln, Abhängigkeiten
   rule_members?: { member_id: number; kind: "rule" | "norule"; label: string; rule_id: number }[];
   dependencies?: { uses: AppDependency[]; used_by: AppDependency[] };
@@ -2097,11 +2099,13 @@ export interface AppConnections {
 export const fetchAppConnections = (id: number, fresh = false) =>
   getJSON<AppConnections>(`/api/applications/${id}/connections${fresh ? "?fresh=true" : ""}`);
 // 0.74.0: `rules` = Ebene „Regeln“ mit exportieren
+// 0.130.0: die Verbindungen des Filters im Rumpf (mehr als in eine Adresse passen)
 export async function exportAppPlan(id: number, format: "svg" | "drawio", keys?: string[], rules = true): Promise<{ blob: Blob; filename: string }> {
-  const params = new URLSearchParams({ format });
-  (keys ?? []).forEach((k) => params.append("key", k));
-  if (!rules) params.set("rules", "false");
-  const response = await fetchChecked(withLang(`/api/applications/${id}/connections/plan/export?${params.toString()}`));
+  const response = await fetchChecked(withLang(`/api/applications/${id}/connections/plan/export`), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ format, keys: keys ?? null, rules }),
+  });
   const match = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") ?? "");
   return { blob: await response.blob(), filename: match?.[1] ?? `netzwerkplan.${format}` };
 }
@@ -3056,8 +3060,14 @@ export interface BgpZoneChain {
   device?: boolean;
   network?: string;
   interface?: string;
-  zones: { name: string; hops: number | null }[];
+  // 0.130.0: je Zone der Weg (Zone und Netz des Übergangs je Schritt)
+  zones: { name: string; hops: number | null; path?: BgpZoneStep[] }[];
   not_via?: string[]; // 0.128.0: nur über eine Zone erreichbar, die gleiche Zonen nicht verbindet
+}
+export interface BgpZoneStep {
+  zone: string;
+  network: string | null;
+  more?: number;
 }
 export interface BgpZoneList {
   family: number;
@@ -3542,6 +3552,7 @@ export interface AppdocCatalog {
   types?: Record<string, string | null>; // Netzwerkdesign: Zone (id) → wirksamer Zonentyp
   auto_types?: Record<string, string | null>; // … erkannt (ohne den von Hand)
   devices?: ZoneDevice[]; // Netzwerkdesign: Geräte zur Auswahl
+  tenants?: string[] | null; // 0.130.0: Mandanten, deren Doku dieses Profil nutzt (nur Betreuer)
 }
 export type AppdocCatalogIn = { categories: Pick<AppdocCategory, "index" | "title" | "title_en" | "src" | "dst" | "src_scope" | "dst_scope">[] };
 export const fetchAppdocCatalog = (tenantId: number) => getJSON<AppdocCatalog>(`/api/zones/appdoc/catalog${qs({ tenant_id: tenantId })}`);

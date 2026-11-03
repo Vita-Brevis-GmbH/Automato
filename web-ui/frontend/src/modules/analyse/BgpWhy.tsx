@@ -93,6 +93,36 @@ export function ZoneChainLine({ c, out }: { c: BgpZoneChain; out: boolean }) {
     <div className="faint bgp-zone-chain" style={{ margin: "4px 0" }}>
       {L("Zone der Firewall", "Zone of the firewall")}: <b>{c.home}</b> · {L("Zone am Nachbarn", "Zone at the neighbor")}: <b>{c.neighbor}</b>
       {via && ` (${via})`} · {out ? L("Zonen diesseits", "Zones on this side") : L("Zonen dahinter", "Zones behind")}: {zones}
+      {c.zones.some((z) => (z.path ?? []).length > 1) && (
+        <details className="bgp-zone-paths" style={{ margin: "2px 0" }}>
+          <summary>
+            {L(
+              "Weg je Zone (woher eine Zone kommt: Zone und Netz je Übergang)",
+              "Path per zone (where a zone comes from: zone and network per transition)",
+            )}
+          </summary>
+          <ul style={{ margin: "2px 0", paddingLeft: 18 }}>
+            {c.zones.map((z) => (
+              <li key={z.name} data-zone={z.name}>
+                <b>{z.name}</b>:{" "}
+                {(z.path ?? []).map((s, i) => (
+                  <span key={`${s.zone}-${i}`}>
+                    {i > 0 && " → "}
+                    {s.zone}
+                    {s.network && (
+                      <span className="mono">
+                        {" "}
+                        ({L("über", "via")} {s.network}
+                        {s.more ? ` +${s.more}` : ""})
+                      </span>
+                    )}
+                  </span>
+                ))}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
       {(c.not_via ?? []).length > 0 && (
         <div className="bgp-not-via">
           {L(

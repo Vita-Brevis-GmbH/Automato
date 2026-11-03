@@ -450,8 +450,9 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.127.0** | Rückmeldung 2026-11-03 (Einwand zu 0.126.1): Firewall-Regeln zu any/all und externe EPGs 0.0.0.0/0 als Verbindungen über L3Out und Firewall (Netzwerkplan), „Regeln ohne Verbindung“ mit Grund, BGP-Befunde mit Zone und entscheidender Regel je Netz |
 | **0.128.0** | Rückmeldung 2026-11-03: Grundschema „verbindet gleiche Zonen“ (Vorgabe aus) – BGP-/Import-Soll ohne Durchgang zwischen gleichen Zonen verschiedener Kunden (z. B. über die Internet-Firewall) |
 | **0.129.0** | Wunsch 2026-11-03: Übersicht „Stand der Doku“ – je Applikation aktuell, veraltet, rechnet, noch nie berechnet, Vorrechnen |
+| **0.130.0** | Rückmeldung 2026-11-03: Grenze der Verbindungen einstellbar (2000, any zuletzt), Plan mit Verbindungen zwischen EPGs der Applikation, BGP ohne Session-Sync als Zonenübergang, Abstand je Weg, Weg je Zone; Namensprofil der Kategorien in der Doku |
 
-### Nächste Arbeiten (Stand 0.129.0)
+### Nächste Arbeiten (Stand 0.130.0)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
 **0.68.0** (2026-10-26), bis **0.102.0** (2026-10-28: „ich teste nach dem Freigeben der Version
@@ -479,8 +480,9 @@ Rückmeldung zu den Kategorien ohne Einwand), bis **0.125.0** (2026-11-03, Wunsc
 Reihenfolge ohne Einwand), bis **0.126.0** (2026-11-03, „So umsetzen“ ohne Einwand). Zu 0.126.1
 Einwand (Firewall-Regeln nach extern fehlten in Verbindungen und Netzwerkplan) – korrigiert in
 0.127.0, bis **0.127.0** (2026-11-03, Antwort zu den Zonenübergängen ohne Einwand), bis
-**0.128.0** (2026-11-03, Wunsch nach dem Stand der Doku ohne Einwand). Zur Abnahme steht 0.129.0.
-Offen zur Klärung: das Beispiel „Eingang zeigt den Ausgangsfilter“ (Anwender testet erneut). Seit 0.104.0 gilt eine
+**0.128.0** (2026-11-03, Wunsch nach dem Stand der Doku ohne Einwand), bis **0.129.0** (2026-11-03,
+Rückmeldung zu Plan, BGP und Kategorien ohne Einwand; „Eingang zeigt den Ausgangsfilter“ nicht mehr
+gesehen, erledigt). Zur Abnahme steht 0.130.0. Seit 0.104.0 gilt eine
 Version als abgenommen,
 sobald die nächste Rückmeldung des Anwenders keinen Einwand dazu enthält (`CLAUDE.md`, Ablauf).
 

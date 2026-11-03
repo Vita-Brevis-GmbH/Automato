@@ -866,6 +866,17 @@ export default function ApplicationDocView({
             )}
           </div>
         </div>
+        {categories.open && !me.isCustomer && doc.catalog_profile !== undefined && (
+          // 0.130.0 (Anwender: „Die Reihenfolge … wird nicht in der Reihenfolge des Namensprofils angezeigt“)
+          <div className="faint no-print" id="app-catalog-profile" style={{ fontSize: 12, marginTop: 6 }}>
+            {doc.catalog_profile
+              ? L(
+                  `Titel und Reihenfolge der Kategorien aus dem Namensprofil „${doc.catalog_profile.customer} / ${doc.catalog_profile.name}“ dieses Mandanten`,
+                  `Titles and order of the categories from the naming profile “${doc.catalog_profile.customer} / ${doc.catalog_profile.name}” of this tenant`,
+                )
+              : L("Titel und Reihenfolge der Kategorien: Vorgaben (kein Namensprofil)", "Titles and order of the categories: defaults (no naming profile)")}
+          </div>
+        )}
         {(categories.open || printing?.has("hidden")) && (
           <div className="stack" style={{ marginTop: 10 }}>
             {tables.length === 0 ? (
@@ -1139,7 +1150,8 @@ function RuleRow({
   onGo?: Go;
 }) {
   const directions = [...new Set(hits.map((h) => h.direction))];
-  const tables = [...new Set(hits.map((h) => h.table))].filter((t) => t > 0).sort((x, y) => x - y);
+  // 0.130.0: in der Reihenfolge des Namensprofils (angezeigte Nummer), nicht nach der Kennung
+  const tables = [...new Set(hits.map((h) => h.table))].filter((t) => t > 0).sort((x, y) => (titles.get(x)?.number ?? x) - (titles.get(y)?.number ?? y));
   const aci = r.domain === "aci_contract";
   const impossible = hits.filter((h) => h.relevance === "impossible");
   const notes = [...new Set(hits.map((h) => h.l3out_note ?? "").filter(Boolean))];
@@ -1293,7 +1305,7 @@ function WhyBlock({
         {(["dst", "src"] as const).flatMap((side) => {
           const role = side === "dst" ? (aci ? "Provider" : L("Ziel", "Destination")) : aci ? "Consumer" : L("Quelle", "Source");
           return sideGroups(hits, side, new Map()).map((g) => {
-            const tables = [...new Set(g.hits.map((h) => h.table))];
+            const tables = [...new Set(g.hits.map((h) => h.table))].sort((x, y) => (titles.get(x)?.number ?? x) - (titles.get(y)?.number ?? y));
             const counterparts = [...new Set(g.hits.flatMap((h) => h.counterpart.split(", ")).filter(Boolean))];
             return (
               <li key={`${side}-${g.object}-${g.value}`}>

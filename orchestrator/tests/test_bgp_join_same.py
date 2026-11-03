@@ -58,6 +58,26 @@ def test_schalter_verbindet_gleiche_zonen():
     assert set(zs.behind(TA, EDGE)) == {EDGE, INET, TB, SRV_B}
 
 
+def test_abstand_je_weg():
+    """0.130.0: die DMZ grenzt an Transfer Kunde A und Edge. Edge ist zuerst direkt erreicht
+    (dort ist Transfer -> Edge -> Transfer gesperrt), Transfer Kunde B erst ueber den Umweg
+    DMZ -> Edge - mit der Laenge des Umwegs (3), nicht der des ersten Wegs zu Edge (2)."""
+    dmz = 7
+    zs = _soll()
+    zs.st = None
+    zs.zones[dmz] = SimpleNamespace(id=dmz, name="DMZ")
+    zs.types[dmz] = "DMZ"
+    for other in (TA, EDGE):
+        zs.adj.setdefault(dmz, set()).add(other)
+        zs.adj[other].add(dmz)
+    dist, path = zs.walk(TA)
+    assert (dist[EDGE], dist[TB], dist[SRV_B]) == (1, 3, 4)
+    assert path[TB] == [TA, dmz, EDGE, TB]
+    # Weg je Zone in der Begruendung: Zone je Schritt (ohne Zonenplan ohne Netz)
+    steps = zs._paths(TA, dmz, out=False)[TB]
+    assert [s["zone"] for s in steps] == ["Transfer Kunde A", "DMZ", "Edge", "Transfer Kunde B"]
+
+
 def test_zonen_ohne_zonentyp_ohne_sperre():
     zs = _soll()
     zs.types = {}

@@ -103,6 +103,12 @@ class Settings(BaseSettings):
     # Neuberechnung nach einem Lauf; was nicht drankommt, behaelt seine Befunde und ist beim
     # naechsten Mal zuerst dran (0 = ohne Grenze)
     app_findings_seconds: int = 120
+    # Verbindungen je Applikation, deren Weg geprueft wird (0.130.0, Anwender: „808 Verbindungen
+    # – nur die ersten 120 geprüft. Wie kann ich das umgehen?“): Verbindungen, Netzwerkplan und
+    # Stand der Doku (im Hintergrund); die Befunde nach einem Lauf pruefen hoechstens
+    # `app_findings_traces` je Applikation (Zeitgrenze oben). 0 = ohne Grenze
+    app_traces_max: int = 2000
+    app_findings_traces: int = 120
     # IPAM im Speicher (0.107.0, Anwender: „es braucht enorm lange, dann sind die Namen da“): so
     # viele Indizes der Referenzquellen (je Quelle und Lauf) bleiben je Prozess geladen statt je
     # Anfrage neu gelesen (0 = aus); ein neuer IPAM-Lauf ersetzt sie

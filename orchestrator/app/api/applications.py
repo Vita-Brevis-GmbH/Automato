@@ -34,7 +34,6 @@ from app.schemas.appdoc import DocTableOut, SiteRef
 from app.schemas.rules import RuleOut
 from app.store import (
     app_import,
-    app_paths,
     app_plan,
     app_refresh,
     appdoc_catalog,
@@ -50,6 +49,7 @@ from app.store import epgs as epg_store
 from app.store import naming_profiles as profile_store
 
 router = APIRouter(prefix="/applications", tags=["applications"])
+PLAN_KEYS_MAX = 5000  # Verbindungen im Filter des Exports (0.130.0, bis dahin 120)
 
 MemberKind = Literal[
     "ap", "epg", "host", "vm", "rule", "norule"
@@ -315,6 +315,8 @@ class ApplicationDocOut(BaseModel):
     # 0.101.0: Namen der Gegenstellen eingeschaltet (Einstellung des Mandanten, nur Betreuer)
     peer_names: bool = False
     snapshot: SnapshotOut | None = None  # 0.108.0: Stand der Doku
+    # 0.130.0: Namensprofil der Kategorien (Titel, Reihenfolge) - nur fuer Betreuer
+    catalog_profile: dict | None = None
 
 
 class RuleMemberIn(BaseModel):
@@ -958,7 +960,36 @@ def export_connections_plan(
     """Netzwerkplan der Applikation (0.67.0) als SVG bzw. draw.io - wie in der Ansicht; mit
     `key` nur die Verbindungen des Filters, mit `rules=false` ohne die Ebene „Regeln“ (0.74.0).
     Nicht fuer Kunden-Benutzer (Freigabeliste)."""
-    if key and len(key) > app_paths.MAX_TRACES:
+    return _plan_export(background, application_id, format, key, rules, principal, session,
+                        factory)  # fmt: skip
+
+
+class PlanExport(BaseModel):
+    """Export des Netzwerkplans mit vielen Verbindungen des Filters (0.130.0: mehr als in eine
+    Adresse passen)."""
+
+    format: str = Field("svg", pattern="^(svg|drawio)$")
+    keys: list[str] | None = Field(None, max_length=PLAN_KEYS_MAX)
+    rules: bool = True
+
+
+@router.post("/{application_id}/connections/plan/export")
+def export_connections_plan_post(
+    background: BackgroundTasks,
+    application_id: int,
+    body: PlanExport,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
+) -> Response:
+    """Wie GET, die Verbindungen des Filters im Rumpf (nur lesend)."""
+    return _plan_export(background, application_id, body.format, body.keys, body.rules,
+                        principal, session, factory)  # fmt: skip
+
+
+def _plan_export(background, application_id, format, key, rules, principal, session,  # noqa: A002
+                 factory) -> Response:  # fmt: skip
+    if key and len(key) > PLAN_KEYS_MAX:
         raise HTTPException(
             status_code=422, detail=L("zu viele Verbindungen", "too many connections")
         )
@@ -1097,6 +1128,8 @@ def application_doc(
                   force=fresh)  # fmt: skip
     doc = served.data
     doc["peer_names"] = names
+    if principal.is_customer:
+        doc["catalog_profile"] = None
     if not modules.enabled(session, app.tenant_id, "findings"):  # Modul aus (0.107.0)
         doc["findings"] = []
     if dependencies:

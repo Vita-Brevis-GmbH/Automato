@@ -124,7 +124,7 @@ def test_begruendung_je_abweichung(client, session_factory):
     chain = r["chain"]
     assert (chain["home"], chain["neighbor"]) == ("DC FW", "Lan")
     assert chain.get("device") or chain.get("network")
-    assert chain["zones"] == [{"name": "Lan", "hops": 1}]
+    assert [(z["name"], z["hops"]) for z in chain["zones"]] == [("Lan", 1)]
 
     (f,) = client.get("/findings", params={"tenant_id": tid, "type": "bgp_zone_mismatch"}).json()
     assert "gesperrt: 10.99.0.0/16 (Lan)" in f["message"]
@@ -136,6 +136,56 @@ def test_begruendung_je_abweichung(client, session_factory):
     en = client.get("/findings", params={"tenant_id": tid, "type": "bgp_zone_mismatch"},
                     headers={"Accept-Language": "en"}).json()[0]  # fmt: skip
     assert "Firewall in zone DC FW, neighbor in zone Lan" in en["message"]
+
+
+def test_session_sync_kein_uebergang(client, session_factory):
+    """0.130.0 (Anwender: „Es zeigt mir nun auch andere Zonen an, wo es nicht möglich sein soll.
+    Zonen, welche in anderen Tenants oder Session Links“): fw-02 synchronisiert die Sessions
+    ueber 10.0.9.0/30 mit fw-03 (Zone „Kunde B“, FGSP). Das Sync-Netz ist kein Uebergang - Kunde
+    B liegt nicht hinter Lan - und kein Netz der Zone; je Zone der Weg mit dem Netz."""
+    fw2 = copy.deepcopy(tp.FW2)
+    fw2["inventory"]["interfaces"].append(tp._if("fw-02", "sync", "10.0.9.1/30"))
+    fw2["routing"]["ha"] = [{"node": "fw-02", "mode": "a-p",
+                             "sync_peers": [{"peerip": "10.0.9.2"}]}]  # fmt: skip
+    fw3 = {"status": "completed",
+           "inventory": {"devices": [{"name": "fw-03", "role": "firewall"}],
+                         "interfaces": [tp._if("fw-03", "sync", "10.0.9.2/30"),
+                                        tp._if("fw-03", "lan", "10.61.0.1/24")]},
+           "routing": {"contexts": [{"node": "fw-03", "context": "root"}]}}  # fmt: skip
+    tid = client.post("/tenants", json={"name": "Kunde A"}, headers=ADMIN).json()["id"]
+    for name, result in (("fw-01", _fw1()), ("fw-02", fw2), ("fw-03", fw3)):
+        tp._deliver(client, tid, tp._system(client, tid, name, "fortigate"), "fortigate", result)
+    sys = _ids(client, tid)
+
+    def dev(sid):
+        return {"kind": "fw_vdom", "value": "root", "source_system_id": sid}
+
+    _zone(client, tid, "DC FW", [dev(sys["fw-01"])])
+    lan = _zone(client, tid, "Lan", [dev(sys["fw-02"]),
+                                     {"kind": "prefix", "value": "10.50.0.0/16"}])  # fmt: skip
+    _zone(client, tid, "Kunde B", [dev(sys["fw-03"])])
+    from app.models import TopoPeer
+    from app.store import bgp_zones, zone_struct
+    from app.store import zones as zone_store
+
+    s = session_factory()
+    st = zone_struct.build(s, tid, zone_store.load(s, tid))
+    assert [x["network"] for x in st.sync_links] == ["10.0.9.0/30"]
+    assert not any(i["network"] == "10.0.9.0/30" for t in st.transitions.values()
+                   for i in t.networks)  # fmt: skip
+    assert "10.0.9.0/30" not in {str(n) for n in st.nets(lan)[1]}
+    p = s.query(TopoPeer).filter_by(peer_ip=FW02).one()
+    r = bgp_zones.for_peer(s, tid, p)
+    s.close()
+    assert [z["name"] for z in r["zones"]] == ["Lan"]  # ohne Kunde B
+    (v4,) = r["lists"]
+    assert "10.0.9.0/30" not in {e["prefix"] for e in v4["entries"]}
+    # Uebergang zum Nachbarn: zuerst das Netz mit seiner Adresse (dazu 10.255.0.0/29: Lan nur
+    # hinter dem Router des ACI)
+    assert r["chain"]["zones"][0]["path"] == [
+        {"zone": "DC FW", "network": None},
+        {"zone": "Lan", "network": "10.70.0.0/30", "more": 1},
+    ]
 
 
 # -- Stufe 3 (0.116.0): Ausgangsfilter je Zone und ACI import-rtctrl aus den Zonen ----------

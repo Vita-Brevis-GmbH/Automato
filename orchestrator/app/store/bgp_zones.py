@@ -196,26 +196,49 @@ class ZoneSoll:
     def dist(self, start: int, first: int | None = None, strict: bool = True) -> dict[int, int]:
         """Abstand (Uebergaenge) von `start` je Zone; `first` = erster Schritt fest (ueber diese
         Zone); `strict=False` ohne die Sperre gleicher Zonen (Vergleich fuer die Begruendung)."""
-        dist = {start: 0}
+        return self.walk(start, first, strict)[0]
+
+    def walk(self, start: int, first: int | None = None,
+             strict: bool = True) -> tuple[dict[int, int], dict[int, list[int]]]:  # fmt: skip
+        """Abstand je Zone und der Weg dorthin (Zonen ab `start`). Je Schritt zaehlt der Weg, auf
+        dem er liegt (0.130.0): eine Zone, die frueh ueber einen gesperrten Durchgang und spaeter
+        ueber einen Umweg erreicht wird, gibt den Umweg mit seiner Laenge weiter."""
+        dist, path = {start: 0}, {start: [start]}
+        parent: dict[tuple, tuple | None] = {}
         if first is not None:
             if first not in self.adj.get(start, ()):
-                return dist
-            dist[first] = 1
-            todo = deque([(first, start)])
+                return dist, path
+            begin = (first, start)
+            parent[begin] = (start, None)
+            parent[(start, None)] = None
+            todo = deque([(begin, 1)])
         else:
-            todo = deque([(start, None)])
-        seen = set(todo)
+            begin = (start, None)
+            parent[begin] = None
+            todo = deque([(begin, 0)])
+
+        def trail(state) -> list[int]:
+            out = []
+            while state is not None:
+                out.append(state[0])
+                state = parent.get(state)
+            return out[::-1]
+
+        if first is not None:
+            dist[first], path[first] = 1, [start, first]
         while todo:
-            cur, prev = todo.popleft()
+            (cur, prev), d = todo.popleft()
             for nxt in self.adj.get(cur, ()):
-                if nxt == prev or (nxt, cur) in seen:
+                state = (nxt, cur)
+                if nxt == prev or state in parent:
                     continue
                 if strict and prev is not None and self._blocked(prev, cur, nxt):
                     continue
-                seen.add((nxt, cur))
-                dist.setdefault(nxt, dist[cur] + 1)
-                todo.append((nxt, cur))
-        return dist
+                parent[state] = (cur, prev)
+                if nxt not in dist:
+                    dist[nxt], path[nxt] = d + 1, trail(state)
+                todo.append((state, d + 1))
+        return dist, path
 
     def behind(self, home: int, neighbor: int, strict: bool = True) -> list[int]:
         """Zonen, deren kuerzester Weg von `home` ueber `neighbor` fuehrt (inkl. `neighbor`)."""
@@ -317,17 +340,57 @@ class ZoneSoll:
         wide = (self.behind(neighbor, home, strict=False) if out
                 else self.behind(home, neighbor, strict=False))  # fmt: skip
         dropped = [z for z in wide if z not in set(zones)]
+        paths = self._paths(home, neighbor, out, p.peer_ip)
         chain = {
             "home": self.zones[home].name,
             "neighbor": self.zones[neighbor].name,
             **how,
-            "zones": [{"name": self.zones[z].name, "hops": dist.get(z)} for z in zones],
+            # 0.130.0: je Zone der Weg mit dem Netz je Uebergang (woher eine Zone kommt)
+            "zones": [
+                {"name": self.zones[z].name, "hops": dist.get(z), "path": paths.get(z, [])}
+                for z in zones
+            ],  # fmt: skip
             # 0.128.0: ueber eine Zone, die gleiche Zonen nicht verbindet, nicht erreicht
             "not_via": [self.zones[z].name for z in dropped],
         }
         return {**base, "neighbor_zone": self._zone(neighbor),
                 "zones": [self._zone(z) for z in zones], "lists": lists, "public_only": public_only,
                 "state": state, "text": text, "chain": chain}  # fmt: skip
+
+    def _paths(self, home: int, neighbor: int, out: bool,
+               peer_ip: str | None = None) -> dict[int, list[dict]]:  # fmt: skip
+        """Weg je Zone (0.130.0, Anwender: „Es zeigt mir nun auch andere Zonen an … Session
+        Links, welche dort nicht hingehören“): ab der Zone der Firewall ueber die Zone am
+        Nachbarn (Ausgang: ab dem Nachbarn ueber die Firewall), je Schritt die Zone und das Netz
+        des Uebergangs - so ist sichtbar, welcher Uebergang eine Zone dazu bringt. Zwischen
+        Firewall und Nachbar zuerst das Netz mit der Adresse des Nachbarn."""
+        try:
+            peer = ipaddress.ip_address(bgp_filters._bare(peer_ip)) if peer_ip else None
+        except ValueError:
+            peer = None
+
+        def has_peer(text: str) -> bool:
+            net = _net(text)
+            return peer is not None and net is not None and net.version == peer.version and (
+                peer in net)  # fmt: skip
+
+        start, via = (neighbor, home) if out else (home, neighbor)
+        if via in self.adj.get(start, ()):
+            _dist, trails = self.walk(start, via)
+        else:  # Zone am Nachbarn ohne Uebergang im Plan: ab ihr
+            _dist, trails = self.walk(via)
+        result: dict[int, list[dict]] = {}
+        for z, trail in trails.items():
+            steps = [{"zone": self.zones[trail[0]].name, "network": None}]
+            for a, b in zip(trail, trail[1:], strict=False):
+                t = self.st.transitions.get(tuple(sorted((a, b)))) if self.st else None
+                nets = list(dict.fromkeys(i["network"] for i in (t.networks if t else [])))
+                if {a, b} == {home, neighbor}:
+                    nets.sort(key=lambda n: not has_peer(n))
+                steps.append({"zone": self.zones[b].name, "network": nets[0] if nets else None,
+                              "more": max(len(nets) - 1, 0)})  # fmt: skip
+            result[z] = steps
+        return result
 
     def _soll(self, zones: list[int], public_only: bool = False):
         """Netze (groessere umfassen kleinere) und Ausschluesse der Zonen."""

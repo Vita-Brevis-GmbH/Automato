@@ -234,10 +234,12 @@ def _app_issues(session: Session, tenant_id: int, apps: list,
     import logging
     import time
 
+    from app.config import get_settings
     from app.store import app_paths, paths, policy_check
 
     if not apps:
         return [], set()
+    limit = get_settings().app_findings_traces  # Wege je Applikation (0.130.0)
     started = time.monotonic()
     graph = paths.Graph(session, tenant_id)
     checks = policy_check.Checks.load(session, tenant_id)
@@ -256,7 +258,7 @@ def _app_issues(session: Session, tenant_id: int, apps: list,
         try:
             with session.begin_nested():
                 result = app_paths.build(session, app, graph=graph, checks=checks,
-                                         zones=False)  # fmt: skip
+                                         zones=False, limit=limit)  # fmt: skip
         except Exception:  # noqa: BLE001 - eine Applikation darf den Lauf nicht scheitern lassen
             logging.getLogger(__name__).exception("Verbindungen von Applikation %s", app.id)
             failed.add(app.id)

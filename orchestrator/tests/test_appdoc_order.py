@@ -93,6 +93,18 @@ def test_reihenfolge_in_doku_und_export(client, session_factory):
     doc = client.get(f"/applications/{app['id']}/doc").json()
     assert [(t["index"], t["number"]) for t in doc["tables"]][:4] == [(10, 1), (1, 2), (2, 3),
                                                                       (9, 4)]  # fmt: skip
+    # 0.130.0 (Anwender: „nicht in der Reihenfolge des Namensprofils“): aus welchem Profil die
+    # Kategorien kommen und welche Mandanten ein Profil nutzen
+    assert doc["catalog_profile"] == {"id": pid, "customer": "default", "name": "default"}
+    tenant = next(t["name"] for t in client.get("/tenants", headers=ADMIN).json() if t["id"] == tid)
+    assert tenant in client.get(url, headers=VIEW).json()["tenants"]
+    other = client.post("/naming-profiles", json={"customer": "Kunde X", "name": "Test"},
+                        headers=ADMIN).json()["id"]  # fmt: skip
+    assert client.get(f"/naming-profiles/{other}/appdoc-catalog", headers=VIEW).json()[
+        "tenants"] == []  # fmt: skip
+    cust = {"X-Dev-Roles": "customer", "X-Dev-Customers": "1"}
+    seen = client.get(url, headers=cust)
+    assert seen.status_code != 200 or seen.json()["tenants"] is None
     t9 = next(t for t in doc["tables"] if t["index"] == 9)
     assert [h["Description"] for h in t9["hidden"]] == ["web-to-many"]  # Kennung bleibt
     assert _where(doc)["web-to-many"] == {3, 6}  # ohne die ausgeblendete in 9

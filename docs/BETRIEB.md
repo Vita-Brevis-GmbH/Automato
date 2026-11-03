@@ -640,7 +640,12 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     `prefix-list-out`; seit 0.127.0 mit Begründung: woher die Zonen kommen (Zone der Firewall,
     Zone am Nachbarn über das Netz des Übergangs bzw. gelesenes Gerät, Zonen dahinter mit Abstand),
     je Netz in „Filter heute“ die entscheidende Regel und je Abweichung Netz, Zone und Regel bzw.
-    „keine Regel passt – am Ende gesperrt“ mit den erlaubten Teilen – ebenso im Befund), **HA &
+    „keine Regel passt – am Ende gesperrt“ mit den erlaubten Teilen – ebenso im Befund; seit
+    0.130.0 aufklappbar **„Weg je Zone“**: je Zone dahinter bzw. diesseits die Zonen bis zu ihr mit
+    dem Netz jedes Übergangs, z. B. „DC FW → Lan (über 10.70.0.0/30) → Aussen (über …)“ – so ist
+    sichtbar, welcher Übergang eine Zone hereinbringt. Netze des Session-Sync (FGSP: Netz mit der
+    Adresse des Sync-Partners, nur die beiden Partner daran) sind seit 0.130.0 kein Übergang und
+    kein Netz einer Zone mehr), **HA &
     Session-Sync** (Modus, Gruppe, Mitglieder mit Rolle, FGSP-Peers), **Policy-Routen &
     SD-WAN** (Bedingung, Weg, Mitglieder nach Vorrang), **L3Outs (ACI)** (VRF, Border-Leafs mit
     Namen, Router-ID und statischen Routen, Interfaces/SVIs mit VLAN und Adressen, BGP-Peers
@@ -1124,6 +1129,16 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
       „Abgleich“ und beim Ändern bzw. Löschen einer Applikation; Triage bleibt erhalten. Nach
       einem Lauf höchstens `AUTOMATO_APP_FINDINGS_SECONDS` (120, `0` = ohne Grenze) – was nicht
       drankommt, behält seine Befunde und ist beim nächsten Lauf zuerst dran (Hinweis im Log).
+      Je Applikation prüfen die Befunde die Wege der ersten `AUTOMATO_APP_FINDINGS_TRACES`
+      Verbindungen (120, `0` = alle, seit 0.130.0).
+    - **Grenze der Verbindungen (0.130.0, vorher fest 120):** geprüft werden die Wege der ersten
+      `AUTOMATO_APP_TRACES_MAX` Verbindungen je Applikation (Vorgabe 2000, `0` = alle) –
+      Verbindungen, Netzwerkplan und Export; Verbindungen zu any (Gegenstelle hinter dem
+      Interface der Regel) zuletzt. Sind es mehr, steht unter den Verbindungen „n Verbindungen –
+      nur die ersten m geprüft (…)“, die übrigen Regeln stehen unter „Regeln ohne Verbindung“
+      mit „mehr Verbindungen als geprüft werden“. Ändern in der `.env` (`AUTOMATO_APP_TRACES_MAX=0`)
+      und Orchestrator neu starten; die Stände der Doku rechnen danach neu. Grosse Applikationen
+      brauchen entsprechend länger (die Doku rechnet im Hintergrund, Übersicht → Stand der Doku).
     - **Export und Druck (0.59.0):** der Export der Applikations-Doku enthält den Abschnitt
       „Verbindungen Ende zu Ende“ (Richtung, Quelle, Ziel, Dienst, Weg mit der entscheidenden
       Regel je Hop, Urteil, Abweichung bzw. Wege uneinheitlich); „Drucken / PDF“ zeigt je
@@ -1189,7 +1204,13 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
         Richtung und die Interfaces (`automato_ports_a`/`_b`) als Eigenschaften; die Rahmen der
         APs stehen hinter den Kästen, die Regeln auf der eigenen Ebene „Regeln“ (in draw.io
         über *Ansicht → Ebenen* ein- und ausblendbar). API
-        `GET /applications/{id}/connections/plan/export?format=svg|drawio&key=…&rules=false`.
+        `GET /applications/{id}/connections/plan/export?format=svg|drawio&key=…&rules=false`,
+        seit 0.130.0 auch `POST` mit `{"format", "keys", "rules"}` im Rumpf (die Oberfläche;
+        viele hervorgehobene Verbindungen passen nicht in eine Adresse).
+      - **Verbindungen innerhalb der Applikation (0.130.0):** ist die Gegenstelle eine EPG bzw.
+        ein System derselben Applikation (z. B. Contract zwischen zwei EPGs eines AP), endet die
+        Linie an deren Kasten im Rahmen der Applikation – nicht mehr an einer eigenen
+        Gegenstelle rechts.
     - Nicht für Kunden-Benutzer (zeigt die Infrastruktur).
   - **Regeln direkt zuordnen bzw. ausschliessen (0.60.0, ADR 0012):** Im Regel-Detail der
     Applikations-Doku „Der Applikation zuordnen“ (die Regel gehört dazu, auch wenn sie nur über
@@ -1306,6 +1327,12 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
        - **Reihenfolge** (seit 0.126.0): je Zeile ↑/↓ wie beim Regelwerk, auch die festen. So
          zeigen Doku und Word-Export die Kategorien, die Nummern fortlaufend (Spalte „Nr.“);
          ausgeblendete Regeln bleiben beim Verschieben erhalten.
+       - **Welches Profil gilt?** (seit 0.130.0) Die Doku nimmt die Kategorien aus dem
+         Namensprofil ihres Mandanten (Administration → Mandanten), ohne eigenes aus „default“.
+         Über der Tabelle der Kategorien steht „Gilt für die Doku der Mandanten: …“ bzw. „Kein
+         Mandant nutzt dieses Namensprofil“; in der Doku unter „Doku nach Kategorie“ „Titel und
+         Reihenfolge der Kategorien aus dem Namensprofil „Kunde / Name““. Stimmt die Reihenfolge
+         nicht, zuerst dort nachsehen, ob das richtige Profil bearbeitet wurde.
        - Die Vorgaben (Internet, Unternehmensnetzwerk, VPN, andere Security Tenants, Management)
          lassen sich ändern oder entfernen; „Auf Vorgaben zurücksetzen“ stellt sie wieder her.
     3. Die **Doku** teilt so ein:

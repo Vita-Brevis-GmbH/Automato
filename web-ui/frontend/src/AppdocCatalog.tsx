@@ -222,6 +222,22 @@ export default function AppdocCatalogCard({ profileId, editable }: { profileId: 
         )}
       </div>
       <ErrorBox error={err} onClose={() => setErr(null)} />
+      {catalog.tenants != null && (
+        // 0.130.0 (Anwender: „Die Reihenfolge … wird nicht in der Reihenfolge des Namensprofils angezeigt“): die Doku
+        // folgt dem Namensprofil ihres Mandanten (eigenes, sonst „default“)
+        <div className="faint" id="appdoc-catalog-tenants" style={{ padding: "0 14px", fontSize: 12 }}>
+          {catalog.tenants.length > 0 ? (
+            L(`Gilt für die Doku der Mandanten: ${catalog.tenants.join(", ")}`, `Applies to the documentation of the tenants: ${catalog.tenants.join(", ")}`)
+          ) : (
+            <span className="chip warn">
+              {L(
+                "Kein Mandant nutzt dieses Namensprofil – die Doku folgt dem Profil ihres Mandanten (Administration → Mandanten)",
+                "No tenant uses this naming profile – the documentation follows the profile of its tenant (Administration → Tenants)",
+              )}
+            </span>
+          )}
+        </div>
+      )}
       {saved && !dirty && (
         <div className="faint" id="appdoc-catalog-saved" style={{ padding: "0 14px", fontSize: 12 }}>
           {L("Gespeichert – die Applikations-Doku ordnet beim nächsten Laden neu.", "Saved – the application documentation re-sorts on the next load.")}

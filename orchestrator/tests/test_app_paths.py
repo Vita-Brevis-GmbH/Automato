@@ -337,7 +337,7 @@ def test_unspezifische_regel_nur_von_firewalls_auf_dem_weg(client):
     assert doc["summary"]["impossible"] >= 1
 
 
-def test_regel_zu_any_und_externe_epg_0_0_0_0(client):
+def test_regel_zu_any_und_externe_epg_0_0_0_0(client, session_factory):
     """0.127.0 (Anwender: „viele Firewall Regeln nach extern, über L3Os, diese werden aber nicht
     angezeigt im Netzwerkplan“ und „in der Tabelle der Verbindungen … keine Rules von den L3Os,
     nur in den Regeln und Contracts“): eine Firewall-Regel mit dem Ziel all ergibt eine
@@ -383,3 +383,19 @@ def test_regel_zu_any_und_externe_epg_0_0_0_0(client):
     # im Netzwerkplan: die Gegenstelle any und der L3Out
     kinds = {n["kind"] for n in out["plan"]["nodes"]}
     assert "l3out" in kinds, kinds
+
+    # 0.130.0 (Anwender: „808 Verbindungen – nur die ersten 120 geprüft. Wie kann ich das
+    # umgehen?“): Grenze einstellbar, Verbindungen zu any zuletzt - ueber der Grenze faellt any weg
+    from app.models import Application
+    from app.store import app_paths
+
+    s = session_factory()
+    app = s.query(Application).filter_by(tenant_id=tid).one()
+    total = len(app_paths.build(s, app, zones=False, limit=0)["connections"])
+    cut = app_paths.build(s, app, zones=False, limit=total - 1)
+    s.close()
+    assert not any(c["dst"]["kind"] == "any" for c in cut["connections"])
+    assert any(f"nur die ersten {total - 1} geprüft" in n and "AUTOMATO_APP_TRACES_MAX" in n
+               for n in cut["notes"]), cut["notes"]  # fmt: skip
+    assert "mehr Verbindungen als geprüft werden" in {
+        r for x in cut["without"] for r in x["reasons"]}  # fmt: skip

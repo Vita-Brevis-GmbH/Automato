@@ -446,13 +446,26 @@ class CatalogIn(BaseModel):
     categories: list[CatalogCategoryIn] = Field(default_factory=list, max_length=100)
 
 
-def _catalog_out(session: Session, profile_id: int | None) -> dict:
-    """Katalog des Profils mit den Vorgaben und den Zonentypen seines Grundschemas (0.105.0)."""
+def _catalog_out(session: Session, profile_id: int | None, staff: bool = True) -> dict:
+    """Katalog des Profils mit den Vorgaben und den Zonentypen seines Grundschemas (0.105.0);
+    fuer Betreuer (`staff`) die Mandanten, die es nutzen (0.130.0)."""
     cat = appdoc_catalog.for_profile(session, profile_id)
     schema = zone_schema.load(session, profile_id) if profile_id is not None else None
     schema = schema if schema is not None and schema.zones else zone_schema.default_schema()
     return {**cat.out(), "default": appdoc_catalog.default().out(),
-            "zone_types": [z.name for z in schema.zones]}  # fmt: skip
+            "zone_types": [z.name for z in schema.zones],
+            "tenants": _profile_tenants(session, profile_id) if staff else None}  # fmt: skip
+
+
+def _profile_tenants(session: Session, profile_id: int | None) -> list[str]:
+    """Mandanten, deren Doku die Kategorien dieses Profils nutzt (0.130.0, Anwender: „Die
+    Reihenfolge … nicht in der Reihenfolge des Namensprofils“): mit diesem Profil, beim Profil
+    „default“ auch die ohne eigenes."""
+    return sorted(
+        (t.name for t in session.scalars(select(Tenant))
+         if store.profile_id_for_tenant(session, t.id) == profile_id),
+        key=str.lower,
+    )  # fmt: skip
 
 
 def _refresh_catalog_tenants(session: Session, background: BackgroundTasks,
@@ -472,12 +485,12 @@ def appdoc_catalog_default(_: Principal = Depends(require_viewer)) -> dict:
 @router.get("/{profile_id}/appdoc-catalog")
 def get_appdoc_catalog(
     profile_id: int,
-    _: Principal = Depends(require_viewer),
+    principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> dict:
     """Kategorien der Applikations-Doku des Profils: Vorgaben mit den Anpassungen."""
     _profile(session, profile_id)
-    return _catalog_out(session, profile_id)
+    return _catalog_out(session, profile_id, staff=not principal.is_customer)
 
 
 @router.put("/{profile_id}/appdoc-catalog")

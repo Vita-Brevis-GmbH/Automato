@@ -1192,6 +1192,9 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
         "rules": rules,
         "findings": findings,
         "tables": tables,
+        # 0.130.0 (Anwender: „Die Reihenfolge … wird nicht in der Reihenfolge des Namensprofils
+        # angezeigt“): aus welchem Namensprofil Titel und Reihenfolge der Kategorien kommen
+        "catalog_profile": _catalog_profile(session, data.catalog.profile_id),
         "narrower": narrower,
         # Hilfs-Contracts ueber L3Outs mit den Firewall-Regeln, an denen sie stehen (ADR 0034)
         "helpers": helpers,
@@ -1687,6 +1690,15 @@ def _app_findings(
             }
         )
     return out
+
+
+def _catalog_profile(session: Session, profile_id: int | None) -> dict | None:
+    """Namensprofil der Kategorien (0.130.0): das des Mandanten, sonst „default“ - ID, Kunde und
+    Name; ohne Profil None (Vorgaben)."""
+    from app.models import NamingProfile
+
+    p = session.get(NamingProfile, profile_id) if profile_id is not None else None
+    return {"id": p.id, "customer": p.customer, "name": p.name} if p is not None else None
 
 
 def _table_meta(c, catalog) -> dict:

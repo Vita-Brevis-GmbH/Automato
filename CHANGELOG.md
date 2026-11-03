@@ -7,6 +7,42 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.130.0 – 2026-11-03
+
+Rückmeldung des Anwenders 2026-11-03: „Der Fehler mit ein und Ausgangsfilter habe ich nicht mehr
+gesehen, also vergessen“, „Der Netzwerkplan zeigt immer noch nicht alles, ich habe eine Meldung:
+808 Verbindungen – nur die ersten 120 geprüft. Wie kann ich das umgehen?“, „Verbindungen zwischen
+den EPGs eines APs werden im Netzwerkplan nicht dargestellt“, „Die Reihenfolge der Dokumentation
+nach Kategorie wird nicht in der Reihenfolge des Namensprofils angezeigt (nicht im UI und auch
+nicht im Word / PDF)“ und „im BGP Filtering … Es zeigt mir nun auch andere Zonen an, wo es nicht
+möglich sein soll. Zonen, welche in anderen Tenants oder Session Links, welche dort nicht
+hingehören“. Abnahme bis 0.129.0 (ohne Einwand).
+
+- **Grenze der Verbindungen einstellbar:** geprüft werden die Wege der ersten
+  `AUTOMATO_APP_TRACES_MAX` Verbindungen je Applikation (neu Vorgabe 2000 statt fest 120, `0` =
+  alle) – Verbindungen, Netzwerkplan, Export; Verbindungen zu any zuletzt. Der Hinweis nennt die
+  Einstellung. Die Befunde nach einem Lauf prüfen weiter 120 je Applikation
+  (`AUTOMATO_APP_FINDINGS_TRACES`, wegen des Zeitbudgets). Eine geänderte Grenze rechnet die Stände
+  der Doku neu. Export des Plans mit vielen hervorgehobenen Verbindungen per `POST` (bis 5000).
+- **Netzwerkplan: Verbindungen innerhalb der Applikation** (z. B. Contract zwischen zwei EPGs eines
+  AP) enden an der EPG bzw. dem System im Rahmen der Applikation – bisher an einer eigenen
+  Gegenstelle mit der IP, die Verbindung zwischen den EPGs war nicht zu sehen.
+- **BGP – Zonen dahinter:**
+  - **Session-Sync** (FGSP: Netz mit der Adresse des Sync-Partners, nur die beiden Partner
+    daran) ist im Zonenplan kein Übergang und kein Netz einer Zone mehr – er verband Zonen
+    (fremde Zonen „dahinter“) bzw. stand als Netz im Soll.
+  - **Abstand je Weg:** eine Zone, die über einen gesperrten Durchgang (0.128.0) und über einen
+    Umweg erreicht wird, zählt mit der Länge des Umwegs (vorher zu kurz – falsche Zonen dahinter).
+  - **„Weg je Zone“** in der Zonenkette (BGP-Nachbar und Befund): je Zone die Zonen bis zu ihr mit
+    dem Netz jedes Übergangs – so ist sichtbar, welcher Übergang eine Zone hereinbringt.
+- **Reihenfolge der Kategorien:** Doku und Word folgen der Reihenfolge des Namensprofils **ihres
+  Mandanten** (eigenes, sonst „default“) – im Code kein Fehler gefunden. Neu nennt die Doku unter
+  „Doku nach Kategorie“ das Profil, aus dem Titel und Reihenfolge kommen, und das Namenskonzept je
+  Profil die Mandanten, die es nutzen („Kein Mandant nutzt dieses Namensprofil“). Die Kategorien
+  am Regel-Detail stehen in der Reihenfolge (Nummer) statt nach der Kennung.
+- ADR 0041 Ergänzung (Nr. 16–18). Tests: `test_bgp_zones.py`, `test_bgp_join_same.py`,
+  `test_app_plan.py`, `test_app_paths.py`, `test_appdoc_order.py`, `e2e/release_0130.spec.ts`.
+
 ## 0.129.0 – 2026-11-03
 
 Wunsch des Anwenders 2026-11-03: „Kannst du mir in der Übersicht noch ein Fenster erstellen, wo

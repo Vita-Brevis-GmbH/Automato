@@ -164,6 +164,14 @@ def _chain(c: dict, place: _Place | None = None) -> list[dict]:
                 x["l3out"] = " / ".join(names)
                 x["id"] = f"l3o:{h['key']}|{x['l3out']}"
         chain.append(x)
+    # 0.130.0 (Anwender: „Verbindungen zwischen den EPGs eines APs werden im Netzwerkplan nicht
+    # dargestellt“): ist die Gegenstelle eine EPG bzw. ein System der Applikation, endet die
+    # Linie an ihrem Kasten im Rahmen der Applikation statt an einer eigenen Gegenstelle
+    pid, pepg = place.own(peer)
+    if pepg or peer.get("kind") == "system":
+        chain.append({"id": pid, "role": "own", "side": peer, "epg": pepg, "left": [],
+                      "right": []})  # fmt: skip
+        return chain
     chain.append({"id": f"peer:{peer['ip']}", "role": "peer", "side": peer, "left": [],
                   "right": []})  # fmt: skip
     return chain
