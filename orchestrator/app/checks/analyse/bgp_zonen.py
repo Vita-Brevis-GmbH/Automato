@@ -13,6 +13,8 @@ from app.checks.analyse.bgp_filter import SHOWN, _label
 from app.models import FindingType, Severity, SubjectKind
 from app.store.reconcile import Issue
 
+WHY = 30  # Begruendungen im Befund (0.127.0)
+
 
 def _run(session: Session, tenant_id: int, cx: Context) -> list[Issue]:
     from app.store import bgp_filters, bgp_zones
@@ -38,7 +40,11 @@ def _run(session: Session, tenant_id: int, cx: Context) -> list[Issue]:
                   "missing": [n for x in lists for n in x["missing"]][:SHOWN],
                   "too_open": [t["prefix"] for x in lists for t in x["too_open"]][:SHOWN],
                   "excluded_allowed": [n for x in lists
-                                       for n in x["excluded_allowed"]][:SHOWN]}  # fmt: skip
+                                       for n in x["excluded_allowed"]][:SHOWN],
+                  # 0.127.0 (Anwender: „ich sehe keine Details, weshalb“): je Abweichung Netz,
+                  # Zone und entscheidende Regel; dazu woher die Zonen kommen
+                  "why": [w for x in lists for w in x.get("reasons") or []][:WHY],
+                  "chain": r.get("chain")}  # fmt: skip
         out.append(Issue(FindingType.BGP_ZONE_MISMATCH, SubjectKind.NODE, f"{label} → {p.peer_ip}",
                          p.source_system_id, Severity.INFO, detail=detail))  # fmt: skip
     return out

@@ -51,12 +51,13 @@ NO_EPG = "ohne EPG"
 
 KIND = {"system": "System der Applikation", "firewall": "Firewall", "vdom": "VDOM",
         "vrf": "ACI-VRF", "l3out": "L3Out", "object": "Gegenstelle", "epg": "EPG",
-        "external": "externe EPG", "lb": "Load Balancer", "l3": "Router"}  # fmt: skip
+        "external": "externe EPG", "lb": "Load Balancer", "l3": "Router",
+        "any": "Gegenstelle any"}  # fmt: skip
 VERDICT = {"allow": "erlaubt", "deny": "gesperrt", "depends": "abhängig", "unknown": "unbekannt",
            "blocked": "vorher gesperrt"}  # fmt: skip
 # Anzeige auf Englisch (0.87.0, ADR 0028); die Schluessel bleiben
 _KIND_EN = {"system": "Application system", "vrf": "ACI VRF", "object": "Peer",
-            "external": "external EPG"}  # fmt: skip
+            "external": "external EPG", "any": "Peer any"}  # fmt: skip
 _VERDICT_EN = {"allow": "allowed", "deny": "blocked", "depends": "depends", "unknown": "unknown",
                "blocked": "blocked earlier"}  # fmt: skip
 IMPLICIT = "implizit gesperrt"  # Anzeige ohne entscheidende Regel (Merkmal `implicit`)

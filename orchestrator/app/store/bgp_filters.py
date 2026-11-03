@@ -97,6 +97,32 @@ def list_verdict(kind: str, rules: list[dict], net: Net) -> str | None:
     return DENY
 
 
+def rule_text(rule: dict | None) -> str | None:
+    """Regel wie in der FortiOS-Konfiguration (0.127.0): `10 deny 10.0.0.0/8 le 24`."""
+    if rule is None:
+        return None
+    parts = [str(rule["id"])] if rule.get("id") is not None else []
+    parts.append(str(rule.get("action") or PERMIT))
+    if rule.get("prefix"):
+        parts.append(str(rule["prefix"]))
+    parts += [f"{k} {rule[k]}" for k in ("ge", "le") if rule.get(k)]
+    if rule.get("exact"):
+        parts.append("exact-match")
+    parts += [f"match {k} {v}" for k, v in (rule.get("match") or {}).items()]
+    return " ".join(parts)
+
+
+def _decide(kind: str, rules: list[dict], net: Net) -> tuple[str | None, dict | None]:
+    """Wie `list_verdict`, dazu die entscheidende Regel (keine passt: None = am Ende deny)."""
+    for r in rules:
+        hit = _MATCH[kind](r, net)
+        if hit is None:
+            return None, r
+        if hit:
+            return r.get("action") or PERMIT, r
+    return DENY, None
+
+
 def catch_all(rule: dict) -> bool:
     """Regel, die alle Netze erlaubt (`any`, 0.0.0.0/0 le 32) - kein bestimmtes Soll."""
     if rule.get("prefix") == "any":
@@ -173,6 +199,50 @@ class Config:
         if DENY in out:
             return DENY
         return None if None in out else PERMIT
+
+    def decide(self, filters: dict[str, str], net: Net) -> list[dict]:
+        """Je Filter einer Richtung das Urteil fuer das Netz mit der entscheidenden Regel (0.127.0,
+        Anwender: „ich sehe keine Details, weshalb dies so sein soll“): `rule` None bei deny =
+        keine Regel passt (am Ende gesperrt); `list`/`list_rule` = die Liste hinter `match` der
+        Route-Map-Regel; `unread` = Filter nicht gelesen. Wie `verdict`."""
+        out: list[dict] = []
+        for kind, name in filters.items():
+            item: dict = {"kind": kind, "filter": name, "verdict": None, "rule": None}
+            if kind == "route_map":
+                item.update(self._route_map_decision(name, net))
+            elif kind in ("prefix_list", "distribute_list"):
+                lk = "prefix_list" if kind == "prefix_list" else "access_list"
+                rules = self.rules(lk, net.version, name)
+                if rules is None:
+                    item["unread"] = True
+                else:
+                    verdict, rule = _decide(lk, rules, net)
+                    item.update(verdict=verdict, rule=rule_text(rule))
+            out.append(item)
+        return out
+
+    def _route_map_decision(self, name: str, net: Net) -> dict:
+        rules = self.rules("route_map", None, name)
+        if rules is None:
+            return {"unread": True}
+        key = "ip6-address" if net.version == 6 else "ip-address"
+        for r in rules:
+            match = r.get("match") or {}
+            if set(match) - {"ip-address", "ip6-address"}:
+                return {"verdict": None, "rule": rule_text(r)}
+            if key in match:
+                found = self.match_list(str(match[key]), net.version)
+                verdict, inner = _decide(*found, net) if found is not None else (None, None)
+                if verdict is None:
+                    return {"verdict": None, "rule": rule_text(r)}
+                if verdict != PERMIT:
+                    continue
+                return {"verdict": r.get("action") or PERMIT, "rule": rule_text(r),
+                        "list": str(match[key]), "list_rule": rule_text(inner)}  # fmt: skip
+            elif match:
+                continue
+            return {"verdict": r.get("action") or PERMIT, "rule": rule_text(r)}
+        return {"verdict": DENY, "rule": None}
 
     def entries(self, filters: dict[str, str], family: int) -> list[dict]:
         """Netze, die die Filter einer Richtung ausdruecklich erlauben (Soll)."""

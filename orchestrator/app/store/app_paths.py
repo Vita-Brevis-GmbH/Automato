@@ -40,6 +40,7 @@ Infrastruktur (ADR 0018).
 """
 
 import ipaddress
+from collections import defaultdict
 from dataclasses import dataclass, field
 
 from sqlalchemy import select
@@ -91,6 +92,9 @@ class _Conn:
     # ACI ist zustandslos (0.69.1): nur aus der Rueckrichtung eines Contracts (Provider ->
     # Consumer mit Filtern ohne Ports)
     reverse: bool = False
+    # Gegenstelle any der Firewall-Regel (0.127.0): geprueft mit dem, was hinter ihrem Interface
+    # liegt - liegt die Firewall nicht auf dem Weg, ist das kein Befund „nie gebraucht“
+    probe: bool = False
 
 
 def build(session: Session, app: Application, doc: dict | None = None,
@@ -115,7 +119,7 @@ def build(session: Session, app: Application, doc: dict | None = None,
             select(Rule).where(Rule.id.in_(rule_ids)).options(selectinload(Rule.services))
         )
     }
-    conns, notes = _candidates(session, data, doc, rules)
+    conns, notes, without = _candidates(session, data, doc, rules)
     graph = graph or paths.Graph(session, tid)
     checks = checks or policy_check.Checks.load(session, tid)
     out: list[dict] = []
@@ -137,6 +141,12 @@ def build(session: Session, app: Application, doc: dict | None = None,
 
     for c in list(conns.values())[:MAX_TRACES]:
         conn = _connection(session, tid, graph, checks, data, rules, c, l3, zctx, assigner)
+        if c.probe:  # any: Firewall nicht auf dem Weg nach dem Routing - kein Befund (0.127.0)
+            for x in conn["unused"]:
+                without[x["rule_id"]].add(_why("probe_off_path"))
+            conn["unused"] = []
+            if not conn["rules"]:
+                continue
         # nur die genauer gerouteten Teile zaehlen (von Hand, 0.111.0): das ganze Netz nicht
         shown = keep(conn) and (conn.get("assign") or {}).get("state") != "ignore"
         if shown:
@@ -173,6 +183,12 @@ def build(session: Session, app: Application, doc: dict | None = None,
         )
     order = {"deny": 0, "depends": 1, "unknown": 2, "allow": 3}
     out.sort(key=lambda c: (not c["mismatch"], order.get(c["verdict"], 2)))
+    # Regeln ohne Verbindung (0.127.0, Anwender: „in der Tabelle der Verbindungen … keine Rules
+    # von den L3Os, nur in den Regeln und Contracts“): je Regel der Grund
+    used = {x["rule_id"] for c in out for x in c["rules"]}
+    used |= {x["rule_id"] for x in unused}
+    missing = [{"rule_id": rid, "label": _rule_label(rules[rid]), "reasons": sorted(why)}
+               for rid, why in without.items() if rid in rules and rid not in used]  # fmt: skip
     return {
         "connections": out,
         "notes": notes,
@@ -190,6 +206,7 @@ def build(session: Session, app: Application, doc: dict | None = None,
             "unused": len({x["rule_id"] for x in unused}),  # 0.107.0
         },
         "unused": unused,
+        "without": sorted(missing, key=lambda x: x["label"].lower()),
         "members": members(doc),
         # 0.78.2: L3Out-Contracts, die weniger oeffnen als die Firewall (Befund)
         "narrower": doc.get("narrower") or [],
@@ -261,11 +278,37 @@ class L3Outs:
 # -- Verbindungen aus den Treffern ------------------------------------------------------
 
 
+def _why(key: str) -> str:
+    """Grund, warum eine Regel der Doku keine Verbindung ergibt (0.127.0)."""
+    return {
+        "impossible": L("routingtechnisch nicht möglich", "not possible by routing"),
+        "unspecific": L("unspezifisch (any, vzAny bzw. Preferred Group auf der Seite der "
+                        "Applikation) – keine eigene Verbindung",
+                        "unspecific (any, vzAny or preferred group on the application side) – no "
+                        "connection of its own"),
+        "helper": L("Hilfs-Contract über einen L3Out – geprüft mit der Firewall-Regel dahinter",
+                    "helper contract via an L3Out – checked with the firewall rule behind it"),
+        "replies": L("nur Antworten (Consumer → Provider)", "replies only (consumer → provider)"),
+        "counter": L("Gegenstelle nicht als IP prüfbar (FQDN, ISDB, Geo)",
+                     "peer cannot be checked as an IP (FQDN, ISDB, geo)"),
+        "counter_aci": L("Gegenstelle ohne prüfbares Netz bzw. Endpunkt (z. B. externe EPG nur "
+                         "mit Subnetzen für das Routing)", "peer without a checkable network or "
+                         "endpoint (e.g. external EPG with subnets for routing only)"),
+        "family": L("keine IP des Systems in der Adressfamilie der Gegenstelle",
+                    "no IP of the system in the address family of the peer"),
+        "probe_off_path": L("Gegenstelle any: der Weg nach dem Routing führt nicht über die "
+                            "Firewall der Regel", "peer any: the path by the routing does not "
+                            "pass the firewall of the rule"),
+        "limit": L("mehr Verbindungen als geprüft werden", "more connections than are checked"),
+    }[key]  # fmt: skip
+
+
 def _candidates(
     session: Session, data: appdoc.TenantData, doc: dict, rules: dict[int, Rule]
-) -> tuple[dict[tuple, _Conn], list[str]]:
+) -> tuple[dict[tuple, _Conn], list[str], dict[int, set[str]]]:
     systems = {x["key"]: x for x in doc["systems"]} | _epg_systems(session, doc)
-    ranges = _ranges(session, set(rules))
+    ranges, anys = _ranges(session, set(rules))
+    without: dict[int, set[str]] = defaultdict(set)  # Regel -> Gruende ohne Verbindung
     counters: dict[str, list[_Side]] = {}
     conns: dict[tuple, _Conn] = {}
     skipped: set[str] = set()
@@ -284,14 +327,20 @@ def _candidates(
     )
     for h in hits:
         rule = rules[h["rule_id"]]
-        if h["relevance"] == "impossible" or h["scope"] in _SKIP:
+        if h["relevance"] == "impossible":
+            without[rule.id].add(_why("impossible"))
+            continue
+        if h["scope"] in _SKIP:
+            without[rule.id].add(_why("unspecific"))
             continue
         if h.get("helper"):
+            without[rule.id].add(_why("helper"))
             continue  # Hilfs-Contract ueber einen L3Out (ADR 0034): nur Teil des ACI-Hops
         system = systems[h["system"]]
         if rule.domain == RuleDomain.ACI_CONTRACT and not h.get("reverse"):
             names = [x.canonical_name for x in rule.services]
             if aci_direction.replies_only(rule.raw, names):
+                without[rule.id].add(_why("replies"))
                 continue  # Consumer -> Provider nur Antworten (0.72.1): keine Verbindung
         if rule.domain == RuleDomain.ACI_CONTRACT:
             key = f"aci:{rule.id}:{h['side']}:{h.get('epg') or h['system']}"
@@ -300,16 +349,25 @@ def _candidates(
             own_ips = _nic_ips(system, h.get("epg"))
         else:
             key = f"fw:{rule.id}:{h['side']}"
+            cp_side = _other(h["side"])
             if key not in counters:
-                counters[key] = _fw_counter(ranges.get((rule.id, _other(h["side"])), []))
+                counters[key] = _fw_counter(ranges.get((rule.id, cp_side), []))
+                if not counters[key] and anys.get((rule.id, cp_side)):
+                    # any (0.127.0, Anwender: Regeln nach extern ueber L3Outs fehlten im Plan)
+                    counters[key] = _fw_any(data, rule, cp_side, anys[(rule.id, cp_side)])
             own_ips = _own_ips(system, h.get("value"))
             entry = _entry(data, rule, h)  # ueber VIP bzw. Load Balancer (0.79.0)
             if entry is not None:
                 own_ips = [entry]
         if not counters[key]:
             skipped.add(rule.name or f"#{rule.external_id}")
+            aci = rule.domain == RuleDomain.ACI_CONTRACT
+            without[rule.id].add(_why("counter_aci" if aci else "counter"))
             continue
         services = _named(h["services"]) if h.get("reverse") else _services(rule)
+        families = {_family(i) for i in own_ips}
+        if not any(_family(cp.ip) in families for cp in counters[key]):
+            without[rule.id].add(_why("family"))
         for cp in counters[key]:
             ip = next((i for i in own_ips if _family(i) == _family(cp.ip)), None)
             if ip is None:
@@ -321,7 +379,8 @@ def _candidates(
                 conn = conns.get(ckey)
                 if conn is None:
                     conn = conns[ckey] = _Conn(_copy(src), _copy(dst), svc, h["direction"],
-                                               reverse=bool(h.get("reverse")))  # fmt: skip
+                                               reverse=bool(h.get("reverse")),
+                                               probe=cp.kind == "any")  # fmt: skip
                 else:
                     _add_system(conn.dst if h["direction"] == "in" else conn.src, system)
                 conn.rules.setdefault(rule.id)
@@ -340,6 +399,7 @@ def _candidates(
     for c in conns.values():
         k = (c.src.ip, c.dst.ip, c.service)
         if k in merged:
+            merged[k].probe = merged[k].probe and c.probe
             _merge(merged[k], c)
         else:
             merged[k] = c
@@ -350,6 +410,8 @@ def _candidates(
         if cp.kind not in ("epg", "external") or not is_net(endpoint(cp.ip)):
             continue
         net = endpoint(cp.ip)
+        if net.prefixlen == 0:
+            continue  # externe EPG 0.0.0.0/0 (0.127.0): eigene Verbindung ueber ihren L3Out
         hosts = [m for m in merged.values() if m is not c and _same_end(m, c, net)]
         for m in hosts:
             m.rules.update(c.rules)
@@ -361,11 +423,15 @@ def _candidates(
         names = ", ".join(sorted(skipped)[:5]) + (" …" if len(skipped) > 5 else "")
         notes.append(
             L(
-                f"ohne prüfbare Gegenstelle (FQDN, ISDB, any): {names}",
-                f"without a checkable peer (FQDN, ISDB, any): {names}",
+                f"ohne prüfbare Gegenstelle (Grund unter „Regeln ohne Verbindung“): {names}",
+                f"without a checkable peer (reason under “rules without a connection”): {names}",
             )
         )
-    return merged, notes
+    if len(merged) > MAX_TRACES:
+        for c in list(merged.values())[MAX_TRACES:]:
+            for rid in c.rules:
+                without[rid].add(_why("limit"))
+    return merged, notes, without
 
 
 def _entry(data: appdoc.TenantData, rule: Rule, h: dict) -> str | None:
@@ -491,10 +557,15 @@ def _nic_ips(system: dict, epg: str | None) -> list[str]:
     return ips or sorted(dict.fromkeys(system["ips"]), key=lambda i: ":" in i)
 
 
-def _ranges(session: Session, rule_ids: set[int]) -> dict[tuple[int, str], list[tuple]]:
+Ranges = dict[tuple[int, str], list[tuple]]
+
+
+def _ranges(session: Session, rule_ids: set[int]) -> tuple[Ranges, dict[tuple[int, str], set[int]]]:
+    """Bereiche je Regel und Seite (ohne any) und die Adressfamilien mit any (0.127.0)."""
     out: dict[tuple[int, str], list[tuple]] = {}
+    anys: dict[tuple[int, str], set[int]] = defaultdict(set)
     if not rule_ids:
-        return out
+        return out, anys
     for rid, role, fam, lo, hi, is_any, via in session.execute(
         select(
             RuleIpRange.rule_id,
@@ -510,7 +581,33 @@ def _ranges(session: Session, rule_ids: set[int]) -> dict[tuple[int, str], list[
     ):
         if not is_any:
             out.setdefault((rid, role), []).append((fam, int(lo, 16), int(hi, 16), via))
-    return out
+        else:
+            anys[(rid, role)].add(fam)
+    return out, anys
+
+
+def _fw_any(data: appdoc.TenantData, rule: Rule, side: str, families: set[int]) -> list[_Side]:
+    """Gegenstelle any einer Firewall-Regel (0.127.0, Anwender: „viele Firewall Regeln nach
+    extern, über L3Os, diese werden aber nicht angezeigt im Netzwerkplan“): was hinter Interface
+    bzw. Zone der Regel auf dieser Seite liegt - die Netze dorthin (Routing bzw. Anbindung),
+    sonst die Default-Route (0.0.0.0/0 bzw. ::/0)."""
+    zone = data.zones.get(rule.src_zone_id if side == "src" else rule.dst_zone_id)
+    found = data.relevance.behind(rule, side, zone)
+    nets = []
+    for n in (found or {}).get("nets") or []:
+        try:
+            net = ipaddress.ip_network(str(n), strict=False)
+        except ValueError:
+            continue
+        if net.version in families and net.prefixlen and str(net) not in nets:
+            nets.append(str(net))
+    # Transfernetze (/29 und kleiner) nur, wenn sonst nichts dahinter liegt
+    wide = [n for n in nets if endpoint(n).prefixlen < (29 if ":" not in n else 125)]
+    nets = wide or nets
+    if nets:
+        return [_Side(n, f"any → {n}", "any") for n in nets[:MAX_COUNTER]]
+    text = f"any → {found['text']}" if found and found.get("text") else "any"
+    return [_Side("0.0.0.0/0" if fam == 4 else "::/0", text, "any") for fam in sorted(families)]
 
 
 def _fw_counter(ranges: list[tuple]) -> list[_Side]:
@@ -543,7 +640,7 @@ def _fw_counter(ranges: list[tuple]) -> list[_Side]:
 def _aci_counter(session: Session, data: appdoc.TenantData, h: dict) -> list[_Side]:
     """Gegenstellen eines Contracts im Scope (`parties`, 0.43.2): EPG mit einer IP ihrer VMs
     (Portgruppe) bzw. Endpunkte, sonst ihr Subnetz; externe EPG mit ihren Subnetzen (ohne
-    0.0.0.0/0)."""
+    0.0.0.0/0; nur mit 0.0.0.0/0 seit 0.127.0 dieses - der Weg ueber ihren L3Out)."""
     dns = list(dict.fromkeys((h.get("parties") or {}).get("counter") or []))[:MAX_COUNTER]
     if not dns:
         return []
@@ -557,16 +654,14 @@ def _aci_counter(session: Session, data: appdoc.TenantData, h: dict) -> list[_Si
             continue
         label = epg_store.inventory_label(e)
         if e.kind == "external":
-            for net in _subnets(session, e.id)[:3]:
-                if net.prefixlen:
-                    out.append(
-                        _Side(
-                            str(net),
-                            f"{L('externe EPG', 'external EPG')} {e.l3out}|{e.name} ({net})",
-                            "external",
-                            l3out=e.l3out,
-                        )  # fmt: skip
-                    )
+            nets = _subnets(session, e.id)
+            if nets and not any(n.prefixlen for n in nets):
+                nets = nets[:2]  # nur 0.0.0.0/0 (Internet, 0.127.0): ueber den L3Out pruefen
+            else:
+                nets = [n for n in nets if n.prefixlen][:3]
+            label = f"{L('externe EPG', 'external EPG')} {e.l3out}|{e.name}"
+            out += [_Side(str(net), f"{label} ({net})", "external", l3out=e.l3out)
+                    for net in nets]  # fmt: skip
             continue
         names = [v["name"] for v in vms.get(e.id, []) if v["ips"]]
         ip = next((i for v in vms.get(e.id, []) for i in v["ips"]), None)
@@ -806,7 +901,7 @@ def _assign(c: _Conn, first: dict | None, assigner) -> dict | None:
 
 def _net_parts(c: _Conn, first: dict | None) -> list[str]:
     """Genauer geroutete Teile des Ziels, wenn es ein Netz ist: die Route, die das ganze Netz
-    enthaelt (z. B. 0.0.0.0/0), gilt fuer sie nicht (0.79.1)."""
+    enthaelt (z. B. 0.0.0.0/0), gilt fuer sie nicht (0.79.1). Nicht fuer any (0.127.0)."""
     if first is None or c.dst.kind != "object" or not is_net(endpoint(c.dst.ip)):
         return []  # nur Netze der Firewall-Regeln (EPG-Subnetze nicht in Host-Routen zerlegen)
     out: list[str] = []

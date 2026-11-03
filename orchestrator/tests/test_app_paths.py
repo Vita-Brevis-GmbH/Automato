@@ -335,3 +335,51 @@ def test_unspezifische_regel_nur_von_firewalls_auf_dem_weg(client):
     assert len(rows) == 1 and "fw-01" in str(rows[0]), rows
     assert "fw-03" not in str(rows)
     assert doc["summary"]["impossible"] >= 1
+
+
+def test_regel_zu_any_und_externe_epg_0_0_0_0(client):
+    """0.127.0 (Anwender: „viele Firewall Regeln nach extern, über L3Os, diese werden aber nicht
+    angezeigt im Netzwerkplan“ und „in der Tabelle der Verbindungen … keine Rules von den L3Os,
+    nur in den Regeln und Contracts“): eine Firewall-Regel mit dem Ziel all ergibt eine
+    Verbindung zu den Netzen hinter ihrem Ausgangs-Interface, ein Contract zur externen EPG mit
+    0.0.0.0/0 (L3Out ohne bekannte Firewall dahinter, sonst Hilfs-Contract) eine Verbindung ueber
+    ihren L3Out; was keine Verbindung ergibt, steht mit Grund in `without`."""
+    fw1 = copy.deepcopy(FW1)
+    fw1["rules"] += [
+        _fw("42", "net-all", WEB, "all", 9443, "to-aci", "to-fw02", ("aci", "transit")),
+        _fw("44", "fqdn", WEB, "www.example.ch", 443, "to-aci", "to-fw02", ("aci", "transit")),
+    ]
+    apic = copy.deepcopy(APIC)
+    inet = f"{TE}/out-L3O_inet/instP-EN_inet"
+    apic["epgs"].append(ar._ext("EN_inet", "L3O_inet", ["0.0.0.0/0"]))
+    apic["rules"].append(
+        {"source_platform": "cisco_aci", "external_id": f"{TE}/brc-CT_inet/SJ_1",
+         "name": "CT_inet", "action": "allow", "sources": [f"epg:{ar.WEB}"],
+         "destinations": [f"epg:{inet}"], "services": ["tcp/80"], "aci_scope": "context",
+         "raw": {"name": "CT_inet", "kind": "contract", "scope": "context"}}
+    )  # fmt: skip
+    tid = client.post("/tenants", json={"name": "Kunde A"}, headers=tp.ADMIN).json()["id"]
+    systems = (("fw-01", "fortigate", fw1), ("fw-02", "fortigate", FW2),
+               ("fw-03", "fortigate", FW3), ("apic-01", "cisco_aci", apic))  # fmt: skip
+    for name, platform, result in systems:
+        tp._deliver(client, tid, tp._system(client, tid, name, platform), platform, result)
+    out = _connections(client, tid)
+    conns = {(c["dst"]["ip"], c["service"]): c for c in out["connections"]}
+    # any: das LAN hinter fw-01 (Interface to-fw02), ueber das ACI und beide Firewalls
+    net = conns[("10.60.0.0/24", "tcp/9443")]
+    assert (net["dst"]["kind"], net["dst"]["label"]) == ("any", "any → 10.60.0.0/24")
+    assert [h["label"] for h in net["hops"]] == [
+        "apic-01 · VRF TE:VRF1", "fw-01 · VDOM root", "fw-02"]  # fmt: skip
+    assert "Policy 42 „net-all“" in {s["label"] for s in net["rules"]}
+    # externe EPG nur mit 0.0.0.0/0: eigene Verbindung mit ihrem L3Out
+    ext = conns[("0.0.0.0/0", "tcp/80")]
+    assert (ext["dst"]["kind"], ext["dst"]["l3out"]) == ("external", "L3O_inet")
+    assert ext["dst"]["label"] == "externe EPG L3O_inet|EN_inet (0.0.0.0/0)"
+    assert "Contract CT_inet" in {s["label"] for s in ext["rules"]}
+    # ohne Verbindung: der FQDN mit Grund; was in einer Verbindung steht, nicht
+    without = {x["label"]: x["reasons"] for x in out["without"]}
+    assert without == {"Policy 44 „fqdn“": [
+        "Gegenstelle nicht als IP prüfbar (FQDN, ISDB, Geo)"]}, without  # fmt: skip
+    # im Netzwerkplan: die Gegenstelle any und der L3Out
+    kinds = {n["kind"] for n in out["plan"]["nodes"]}
+    assert "l3out" in kinds, kinds

@@ -1894,7 +1894,7 @@ export const fetchAppDependencies = (id: number) => getJSON<AppDependencies>(`/a
 export interface AppConnSide {
   ip: string;
   label: string;
-  kind: "system" | "object" | "epg" | "external";
+  kind: "system" | "object" | "epg" | "external" | "any"; // any: Gegenstelle any einer Firewall-Regel (0.127.0)
   name: string | null; // IPAM-Name der Gegenstelle
   systems: string[];
   more: number;
@@ -2057,9 +2057,16 @@ export interface AppPlan {
   groups?: { title: string; x: number; y: number; w: number; h: number; nodes: string[] }[]; // Rahmen je AP (0.74.0)
   summary: { connections: number; total: number; nodes: number; edges: number };
 }
+// 0.127.0: Regel der Doku ohne Verbindung mit dem Grund
+export interface AppConnWithout {
+  rule_id: number;
+  label: string;
+  reasons: string[];
+}
 export interface AppConnections {
   connections: AppConnection[];
   notes: string[];
+  without?: AppConnWithout[];
   summary: { total: number; allow: number; blocked: number; open: number; mismatch: number; inconsistent?: number; zone_violations?: number; unused?: number };
   plan?: AppPlan;
   snapshot?: DocSnapshot; // 0.108.0
@@ -2998,16 +3005,47 @@ export interface BgpZoneRef {
   name: string;
   code?: string | null;
 }
+// 0.127.0: Urteil eines Filters für ein Netz mit der entscheidenden Regel (rule null bei deny = keine Regel passt)
+export interface BgpDecision {
+  kind: string;
+  filter: string;
+  verdict: BgpVerdict;
+  rule: string | null;
+  list?: string; // Route-Map: Liste hinter match
+  list_rule?: string | null;
+  unread?: boolean;
+}
+// 0.127.0: Begründung je Abweichung (Netz mit Zone und entscheidender Regel)
+export interface BgpWhy {
+  kind: "missing" | "too_open" | "excluded_allowed";
+  prefix: string;
+  zones?: string[];
+  by?: BgpDecision[];
+  parts?: string[]; // gesperrtes Netz: erlaubte Teile darin
+  filter?: string;
+  rule?: string | null;
+  all?: boolean;
+}
+// 0.127.0: woher die Zonen kommen
+export interface BgpZoneChain {
+  home: string;
+  neighbor: string;
+  device?: boolean;
+  network?: string;
+  interface?: string;
+  zones: { name: string; hops: number | null }[];
+}
 export interface BgpZoneList {
   family: number;
   name: string;
   filters: Record<string, string>;
   open: boolean;
-  entries: { prefix: string; action: "permit" | "deny"; zones: string[]; verdict: BgpVerdict }[];
+  entries: { prefix: string; action: "permit" | "deny"; zones: string[]; verdict: BgpVerdict; decided?: BgpDecision[] }[];
   missing: string[];
   missing_total: number;
-  too_open: { prefix: string; filter: string; all?: boolean }[];
+  too_open: { prefix: string; filter: string; all?: boolean; rule?: string | null; zones?: string[] }[];
   excluded_allowed: string[];
+  reasons?: BgpWhy[];
   // Ausgang (0.116.0): heute angekündigte Routen ausserhalb der Zonen diesseits
   announced_outside?: string[];
   announced_outside_total?: number;
@@ -3024,6 +3062,7 @@ export interface BgpZoneSoll {
   lists?: BgpZoneList[];
   way?: "in" | "out"; // 0.116.0: Eingang (Zonen dahinter) bzw. Ausgang (Zonen diesseits)
   public_only?: boolean; // Nachbar in einer Zone ausserhalb: nur öffentliche Netze
+  chain?: BgpZoneChain; // 0.127.0
 }
 export const fetchBgpPeerZones = (tenantId: number, peerId: number, way: "in" | "out" = "in") =>
   getJSON<BgpZoneSoll>(`/api/routing/bgp/peers/${peerId}/zones${cq({ tenant_id: tenantId, way })}`);

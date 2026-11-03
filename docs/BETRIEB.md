@@ -634,7 +634,10 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     Ausgang**: Ausgang = Netze der Zonen diesseits (Zone der Firewall und alles, was der Nachbar
     über sie erreicht), an einen Nachbarn in einer Zone der Art `external` nur öffentliche Netze;
     dazu „n Routen ausserhalb der Zonen angekündigt“ und der Vorschlag `PL_<Zone>_OUT` mit
-    `prefix-list-out`), **HA &
+    `prefix-list-out`; seit 0.127.0 mit Begründung: woher die Zonen kommen (Zone der Firewall,
+    Zone am Nachbarn über das Netz des Übergangs bzw. gelesenes Gerät, Zonen dahinter mit Abstand),
+    je Netz in „Filter heute“ die entscheidende Regel und je Abweichung Netz, Zone und Regel bzw.
+    „keine Regel passt – am Ende gesperrt“ mit den erlaubten Teilen – ebenso im Befund), **HA &
     Session-Sync** (Modus, Gruppe, Mitglieder mit Rolle, FGSP-Peers), **Policy-Routen &
     SD-WAN** (Bedingung, Weg, Mitglieder nach Vorrang), **L3Outs (ACI)** (VRF, Border-Leafs mit
     Namen, Router-ID und statischen Routen, Interfaces/SVIs mit VLAN und Adressen, BGP-Peers
@@ -1060,8 +1063,20 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     Weg-Suche, je Knoten eingefärbt nach seinem Urteil, und dem Gesamturteil.
     - Abgeleitet aus den Regeln der Doku: System der Applikation mit seiner IP; Gegenseite die
       Objekte der Regel (Host, Netz als Ganzes) bzw. beim Contract die Gegenstellen im Scope
-      (EPG mit der IP ihrer ersten VM bzw. ihres ersten Endpunkts). Gegenstelle any, vzAny und
-      Preferred Group bleiben Regeln ohne Verbindung; FQDN/ISDB stehen als Hinweis da.
+      (EPG mit der IP ihrer ersten VM bzw. ihres ersten Endpunkts). vzAny und Preferred Group
+      auf der Seite der Applikation bleiben Regeln ohne Verbindung; FQDN/ISDB stehen als Hinweis
+      da.
+    - **Gegenstelle any (seit 0.127.0):** eine Firewall-Regel mit „all“/any als Gegenstelle (z. B.
+      ins Internet bzw. nach extern über einen L3Out) ist eine Verbindung zu den Netzen hinter
+      Interface bzw. Zone der Regel, sonst zur Default-Route („any → extern (Default-Route über
+      wan1)“); der Weg zeigt ACI-VRF, L3Out und Firewall, Hilfs-Contracts prüfen im ACI-Hop mit.
+      Führt das Routing nicht über die Firewall der Regel, entfällt die Verbindung ohne Befund.
+      Eine externe EPG nur mit 0.0.0.0/0 ohne Firewall hinter dem L3Out ist eine eigene
+      Verbindung über ihren L3Out.
+    - **Regeln ohne Verbindung (seit 0.127.0):** unter der Tabelle zugeklappt „Regeln ohne
+      Verbindung (n)“ mit dem Grund je Regel (FQDN/ISDB/Geo, externe EPG ohne prüfbares Netz,
+      unspezifisch, Hilfs-Contract, nur Antworten, nicht möglich, Adressfamilie, Grenze); Klick
+      öffnet die Regel.
     - **Netz als Ziel (seit 0.79.1):** Die Route, die das ganze Netz enthält (oft 0.0.0.0/0),
       gilt nicht für seine genauer gerouteten Teile. Diese Teile (z. B. Netze hinter einem
       anderen L3Out bzw. Interface) sind eigene Verbindungen mit ihrem Weg, beschriftet „Netz ›

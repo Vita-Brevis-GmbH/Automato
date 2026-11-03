@@ -12,6 +12,7 @@ import {
   AppConnHop,
   AppConnSide,
   AppConnState,
+  AppConnWithout,
   AppConnZones,
   AppPlan,
   AppPlanVerdict,
@@ -186,6 +187,41 @@ function Facets({ conns, base, picked, onPick }: { conns: AppConnection[]; base:
         <button className="linkbtn" id="conn-filter-reset" onClick={() => onPick({})}>
           {L("Filter zurücksetzen", "Reset filter")}
         </button>
+      )}
+    </div>
+  );
+}
+
+// 0.127.0 (Anwender: „in der Tabelle der Verbindungen … keine Rules von den L3Os, nur in den Regeln und
+// Contracts“): Regeln der Doku ohne Verbindung mit dem Grund – zugeklappt
+function WithoutList({ items, onRule }: { items: AppConnWithout[]; onRule: (id: number) => void }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="card-body pad" id="conn-without">
+      <button className="linkbtn" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+        {open ? "▾" : "▸"} {L(`Regeln ohne Verbindung (${items.length})`, `Rules without a connection (${items.length})`)}
+      </button>
+      {open && (
+        <table style={{ marginTop: 6 }}>
+          <thead>
+            <tr>
+              <th>{L("Regel", "Rule")}</th>
+              <th>{L("Grund", "Reason")}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((x) => (
+              <tr key={x.rule_id}>
+                <td>
+                  <button className="linkbtn" onClick={() => onRule(x.rule_id)} title={L("Regel öffnen", "Open rule")}>
+                    {x.label}
+                  </button>
+                </td>
+                <td className="conn-without-why">{x.reasons.join("; ")}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       )}
     </div>
   );
@@ -803,7 +839,7 @@ function PlanView({
                   fill={PLAN_FILL[n.role]}
                   stroke={stroke}
                   strokeWidth={focus?.id === n.id ? 3 : n.role === "hop" ? 2 : 1.4}
-                  strokeDasharray={n.kind === "external" ? "4 3" : undefined}
+                  strokeDasharray={n.kind === "external" || n.kind === "any" ? "4 3" : undefined}
                 />
                 <text x={10} y={18} fontSize={12} fontWeight={600} fill="var(--fg)">
                   {short(n.title)}
@@ -1033,10 +1069,12 @@ export default function ConnectionsCard({
           {L(
             "Je Verbindung (Quelle → Ziel, Dienst) eine Zeile mit dem Weg über Firewalls und ACI wie in der Weg-Suche; " +
               "Klick zeigt je Hop die entscheidende Policy bzw. den Contract mit den Objekten und welche Regeln der Doku dort " +
-              "greifen. Gegenstelle any, vzAny und Preferred Group bleiben Regeln ohne Verbindung.",
+              "greifen. Gegenstelle any: geprüft mit den Netzen hinter dem Interface der Regel, sonst 0.0.0.0/0. " +
+              "Regeln ohne Verbindung stehen unten mit dem Grund.",
             "One row per connection (source → destination, service) with the path through firewalls and ACI as in the path " +
               "search; a click shows per hop the deciding policy or contract with the objects and which rules of the " +
-              "documentation apply there. Peer any, vzAny and Preferred Group remain rules without a connection.",
+              "documentation apply there. Peer any: checked with the networks behind the interface of the rule, otherwise " +
+              "0.0.0.0/0. Rules without a connection are listed below with the reason.",
           )}
         </div>
         <div className="filterbar" style={{ marginBottom: 10 }}>
@@ -1202,6 +1240,7 @@ export default function ConnectionsCard({
         )}
       </div>
       )}
+      {data?.without && data.without.length > 0 && <WithoutList items={data.without} onRule={onRule} />}
       </>
       )}
       {explain && tenantId != null && (

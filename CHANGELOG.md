@@ -7,6 +7,42 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.127.0 – 2026-11-03
+
+Rückmeldung des Anwenders 2026-11-03 zu 0.126.1: „Ich habe viele Firewall Regeln nach extern,
+über L3Os, diese werden aber nicht angezeigt im Netzwerkplan“, „Er zeigt mir auch nur ACI VRF an
+und keine L3Os“, „Auch in der Tabelle der Verbindungen Ende zu Ende ist auch keine Rules von den
+L3Os vorhanden, nur in den Regeln und Contracts“ und „Bei BGP Findings sehe ich sehr viele Filter,
+welche nicht passen würden, aber ich sehe keine Details, weshalb dies so sein soll“. Abnahme bleibt
+bei 0.126.0 (Einwand zu 0.126.1).
+
+- **Ursache:** Firewall-Regeln mit der Gegenstelle „all“/any (typisch Regeln ins Internet bzw.
+  nach extern über einen L3Out) ergaben nie eine Verbindung, ebenso Contracts zu externen EPGs nur
+  mit 0.0.0.0/0. Sie standen in „Regeln & Contracts“, fehlten aber in den Verbindungen und damit
+  im Netzwerkplan (dort nur das ACI-VRF, kein L3Out, keine Firewall).
+- **Gegenstelle any:** geprüft mit den Netzen hinter dem Interface bzw. der Zone der Regel auf
+  dieser Seite (Routing bzw. Anbindung, Transfernetze nur ohne anderes), sonst mit der
+  Default-Route (0.0.0.0/0 bzw. ::/0) – beschriftet „any → …“, z. B. „any → extern
+  (Default-Route über wan1)“. Der Weg läuft über ACI, L3Out und Firewall; Hilfs-Contracts über den
+  L3Out prüfen im ACI-Hop mit (ADR 0034). Führt der Weg nach dem Routing nicht über die Firewall
+  der Regel, entsteht keine Verbindung und kein Befund „nie gebraucht“.
+- **Externe EPG nur mit 0.0.0.0/0:** eigene Verbindung über ihren L3Out (ohne Firewall dahinter;
+  mit Firewall bleibt der Contract Hilfs-Contract der Firewall-Regel).
+- **Regeln ohne Verbindung (n):** zugeklappte Liste unter den Verbindungen, je Regel der Grund –
+  Gegenstelle nicht als IP prüfbar (FQDN, ISDB, Geo), externe EPG ohne prüfbares Netz,
+  unspezifisch (any/vzAny/Preferred Group auf der Seite der Applikation), Hilfs-Contract, nur
+  Antworten, routingtechnisch nicht möglich, Adressfamilie, Grenze der geprüften Verbindungen.
+- **BGP gegen die Zonen mit Begründung:** je Abweichung das Netz mit seiner Zone und der
+  entscheidenden Regel des Filters („Prefix-Liste PL_x: Regel 10 deny …“ bzw. „keine Regel passt –
+  am Ende gesperrt“, dazu „erlaubt sind nur Teile davon: …“), je zu offener Regel die Regel und die
+  Zone, zu der das Netz gehört („gehört zur Zone …, die nicht hinter diesem Nachbarn liegt“), dazu
+  woher die Zonen kommen (Zone der Firewall, Zone am Nachbarn über das Netz des Übergangs bzw.
+  gelesenes Gerät, Zonen dahinter mit Abstand). Im Befund (Satz und Detail), im BGP-Nachbarn je
+  Netz die entscheidende Regel in „Filter heute“.
+- Tests: `orchestrator/tests/test_app_paths.py`, `test_l3out_firewall.py`, `test_bgp_zones.py`,
+  `e2e/release_0127.spec.ts`, `e2e/apps.spec.ts` (Webshop mit 7 statt 5 Verbindungen: die Regeln
+  ins Internet).
+
 ## 0.126.1 – 2026-11-03
 
 Rückmeldung des Anwenders 2026-11-03: „Im Netzwerk Plan sehe ich auf einmal nur noch die internen

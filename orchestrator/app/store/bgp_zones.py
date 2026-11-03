@@ -149,16 +149,22 @@ class ZoneSoll:
     # -- Zonen ----------------------------------------------------------------------------
 
     def _neighbor_zone(self, key: tuple[int, str], home: int, peer_ip: str) -> int | None:
+        return self._neighbor(key, home, peer_ip)[0]
+
+    def _neighbor(self, key: tuple[int, str], home: int, peer_ip: str) -> tuple[int | None, dict]:
+        """Zone am Nachbarn und woher sie kommt (0.127.0): `device` = der Nachbar ist ein
+        gelesenes Geraet dieser Zone, `network` = Netz des Uebergangs mit seiner IP bzw. am
+        Interface zu ihm."""
         st = self.st
         g = st.graph
         for k, *_ in g.owners().get(peer_ip, []):  # Nachbar ist ein gelesenes Geraet
             z = st.node_zone.get(k)
             if k != key and z is not None and z != home:
-                return z
+                return z, {"device": True}
         try:
             ip = ipaddress.ip_address(peer_ip)
         except ValueError:
-            return None
+            return None, {}
         me = zone_struct.node_id(key)
         iface = g.interface_to(key, peer_ip, 0)
         for (a, b), t in st.transitions.items():
@@ -170,8 +176,11 @@ class ZoneSoll:
                 net = _net(info["network"])
                 inside = net is not None and net.version == ip.version and ip in net
                 if legs and (inside or any(x.get("interface") == iface for x in legs if iface)):
-                    return other
-        return None
+                    return other, {
+                        "network": info["network"],
+                        **({"interface": iface} if iface and not inside else {}),
+                    }
+        return None, {}
 
     def behind(self, home: int, neighbor: int) -> list[int]:
         """Zonen, deren kuerzester Weg von `home` ueber `neighbor` fuehrt (inkl. `neighbor`)."""
@@ -224,7 +233,7 @@ class ZoneSoll:
             return {"state": "no_zone", "way": way, "text": L(
                 "Die Firewall gehört zu keiner Zone (Netzwerkdesign → Zonen → Geräte)",
                 "The firewall belongs to no zone (network design → zones → devices)")}  # fmt: skip
-        neighbor = self._neighbor_zone(key, home, p.peer_ip)
+        neighbor, how = self._neighbor(key, home, p.peer_ip)
         base = {"home": self._zone(home), "way": way}
         if neighbor is None:
             return {**base, "state": "no_neighbor_zone", "text": L(
@@ -265,9 +274,19 @@ class ZoneSoll:
                       "Outbound filter matches the zones on this side") if out
                     else L("Eingangsfilter passt zu den Zonen dahinter",
                            "Inbound filter matches the zones behind"))  # fmt: skip
+        # Begruendung der Zonen (0.127.0): Zone am Nachbarn woher, je Zone dahinter der Abstand
+        # (Uebergaenge im Zonenplan) von der Zone der Firewall, diesseits vom Nachbarn aus
+        start = neighbor if out else home
+        dist = _distances(self.adj, start)
+        chain = {
+            "home": self.zones[home].name,
+            "neighbor": self.zones[neighbor].name,
+            **how,
+            "zones": [{"name": self.zones[z].name, "hops": dist.get(z)} for z in zones],
+        }
         return {**base, "neighbor_zone": self._zone(neighbor),
                 "zones": [self._zone(z) for z in zones], "lists": lists, "public_only": public_only,
-                "state": state, "text": text}  # fmt: skip
+                "state": state, "text": text, "chain": chain}  # fmt: skip
 
     def _soll(self, zones: list[int], public_only: bool = False):
         """Netze (groessere umfassen kleinere) und Ausschluesse der Zonen."""
@@ -292,6 +311,16 @@ class ZoneSoll:
         except KeyError:
             return []
 
+    def zones_of(self, net: Net) -> list[str]:
+        """Zonen, deren Netze das Netz enthalten bzw. in ihm liegen (0.127.0)."""
+        out = []
+        for zid, z in self.zones.items():
+            found, _ = self.nets(zid)
+            if any(n.version == net.version and (net.subnet_of(n) or n.subnet_of(net))
+                   for n in found):  # fmt: skip
+                out.append(z.name)
+        return sorted(out, key=str.lower)
+
     def _zone(self, zid: int) -> dict:
         z = self.zones[zid]
         return {"id": z.id, "name": z.name, "code": z.code}
@@ -310,10 +339,13 @@ class ZoneSoll:
                 return None
             return cfg.verdict(fin, net) if fin else bgp_filters.PERMIT
 
+        def decided(net: Net) -> list[dict]:  # 0.127.0: entscheidende Regel je Filter
+            return cfg.decide(fin, net) if cfg is not None and fin else []
+
         entries = [{"prefix": str(n), "action": "deny", "zones": sorted(excluded[n]),
-                    "verdict": verdict(n)} for n in out_nets]  # fmt: skip
+                    "verdict": verdict(n), "decided": decided(n)} for n in out_nets]  # fmt: skip
         entries += [{"prefix": str(n), "action": "permit", "zones": sorted(permit[n]),
-                     "verdict": verdict(n)} for n in mine]  # fmt: skip
+                     "verdict": verdict(n), "decided": decided(n)} for n in mine]  # fmt: skip
         missing = [e["prefix"] for e in entries
                    if e["action"] == "permit" and e["verdict"] == bgp_filters.DENY]  # fmt: skip
         allowed = [e["prefix"] for e in entries if fin and e["action"] == "deny"
@@ -323,20 +355,28 @@ class ZoneSoll:
             everything = any(n.prefixlen == 0 for n in mine)
             for kind, rm in fin.items():  # Route-Map mit permit ohne Bedingung: alles
                 rules = cfg.rules("route_map", None, rm) if kind == "route_map" else None
-                if not everything and any((r.get("action") or "permit") == "permit"
-                                          and not r.get("match") for r in rules or []):  # fmt: skip
-                    too_open.append({"prefix": "any", "filter": rm, "all": True})
+                free = [
+                    r
+                    for r in rules or []
+                    if (r.get("action") or "permit") == "permit" and not r.get("match")
+                ]
+                if not everything and free:
+                    too_open.append({"prefix": "any", "filter": rm, "all": True,
+                                     "rule": bgp_filters.rule_text(free[0])})  # fmt: skip
             for e in cfg.entries(fin, family):
                 base = _net(e.get("prefix")) if e.get("prefix") != "any" else None
                 if e.get("all"):
                     if not everything:
                         too_open.append({"prefix": e.get("prefix"), "filter": e["filter"],
-                                         "all": True})  # fmt: skip
+                                         "all": True,
+                                         "rule": bgp_filters.rule_text(e)})  # fmt: skip
                     continue
                 inside = base is not None and any(base.subnet_of(n) for n in mine)
                 if not inside:
+                    # 0.127.0: zu welcher Zone das Netz gehoert (nicht hinter diesem Nachbarn)
                     too_open.append({"prefix": str(base or e.get("prefix")),
-                                     "filter": e["filter"]})  # fmt: skip
+                                     "filter": e["filter"], "rule": bgp_filters.rule_text(e),
+                                     "zones": self.zones_of(base) if base else []})  # fmt: skip
         # Ausgang (0.116.0): heute angekuendigte Routen ausserhalb der Zonen diesseits;
         # default-originate ist gewollt und keine Abweichung
         outside = []
@@ -349,6 +389,24 @@ class ZoneSoll:
                         net.subnet_of(n) for n in out_nets):  # fmt: skip
                     outside.append(str(net))
         name = list_name(neighbor, way)
+        # Begruendung je Abweichung (0.127.0, Anwender: „ich sehe nur, dass es nicht passen
+        # soll“): Netz mit Zone und der entscheidenden Regel bzw. den erlaubten Teilen darin
+        reasons: list[dict] = []
+        opened = cfg.entries(fin, family) if cfg is not None and fin else []
+        for e in entries:
+            if e["action"] == "permit" and e["verdict"] == bgp_filters.DENY:
+                net = _net(e["prefix"])
+                by = [d for d in e["decided"] if d["verdict"] == bgp_filters.DENY]
+                parts = [str(x.get("prefix")) for x in opened
+                         if (b := _net(x.get("prefix"))) is not None and b != net
+                         and b.version == net.version and b.subnet_of(net)]  # fmt: skip
+                reasons.append({"kind": "missing", "prefix": e["prefix"], "zones": e["zones"],
+                                "by": by, "parts": list(dict.fromkeys(parts))[:5]})  # fmt: skip
+            elif e["action"] == "deny" and fin and e["verdict"] == bgp_filters.PERMIT:
+                by = [d for d in e["decided"] if d["verdict"] == bgp_filters.PERMIT]
+                reasons.append({"kind": "excluded_allowed", "prefix": e["prefix"],
+                                "zones": e["zones"], "by": by})  # fmt: skip
+        reasons += [{"kind": "too_open", **t} for t in too_open]
         return {
             "family": family,
             "name": name,
@@ -359,6 +417,7 @@ class ZoneSoll:
             "missing_total": len(missing),
             "too_open": too_open[:SHOWN],
             "excluded_allowed": allowed[:SHOWN],
+            "reasons": reasons[: SHOWN * 2],
             **(
                 {"announced_outside": outside[:SHOWN], "announced_outside_total": len(outside)}
                 if way == "out"

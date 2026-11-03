@@ -20,15 +20,7 @@ import {
 } from "../../api";
 import { L } from "../../i18n";
 import { Drawer, ErrorBox, Loading } from "../../ui";
-
-const KIND: Record<string, string> = {
-  route_map: "Route-Map",
-  prefix_list: L("Prefix-Liste", "Prefix list"),
-  distribute_list: L("Distribute-Liste", "Distribute list"),
-  filter_list: L("Filter-Liste (AS-Path)", "Filter list (AS path)"),
-  access_list: L("Access-Liste", "Access list"),
-};
-const kindOf = (k: string) => KIND[k.replace(/6$/, "")] ?? k;
+import { BgpWhyList, decisionText, kindOf, ZoneChainLine } from "./BgpWhy";
 
 export function Verdict({ v }: { v: BgpVerdict }) {
   if (v === "permit") return <span className="chip ok">{L("erlaubt", "permitted")}</span>;
@@ -324,7 +316,11 @@ function ZoneSoll({ tenantId, peerId }: { tenantId: number; peerId: number }) {
           <div className={`note ${z.state === "differs" ? "warn" : ""}`} id="bgp-zones-state" data-state={z.state}>
             {z.text}
           </div>
-          {z.neighbor_zone && (
+          {z.chain && <ZoneChainLine c={z.chain} out={out} />}
+          {z.chain && z.public_only && (
+            <span className="chip info">{L("nur öffentliche Netze (Nachbar ausserhalb)", "public networks only (neighbor outside)")}</span>
+          )}
+          {!z.chain && z.neighbor_zone && (
             <div className="faint" style={{ margin: "4px 0" }}>
               {L("Zone der Firewall", "Zone of the firewall")}: <b>{z.home?.name}</b> · {L("Zone am Nachbarn", "Zone at the neighbor")}:{" "}
               <b>{z.neighbor_zone.name}</b> · {out ? L("Zonen diesseits", "Zones on this side") : L("Zonen dahinter", "Zones behind")}:{" "}
@@ -362,6 +358,9 @@ function ZoneSoll({ tenantId, peerId }: { tenantId: number; peerId: number }) {
                       <td>{e.zones.join(", ")}</td>
                       <td>
                         <Verdict v={e.verdict} />
+                        {(e.decided ?? []).length > 0 && (
+                          <div className="faint bgp-decided">{(e.decided ?? []).map(decisionText).join("; ")}</div>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -386,6 +385,7 @@ function ZoneSoll({ tenantId, peerId }: { tenantId: number; peerId: number }) {
                   <span className="mono">{x.excluded_allowed.join(", ")}</span>
                 </div>
               )}
+              {(x.reasons ?? []).length > 0 && <BgpWhyList why={x.reasons ?? []} out={out} />}
               {(x.announced_outside ?? []).length > 0 && (
                 <div className="bgp-zone-outside" style={{ marginTop: 4 }}>
                   <span className="chip warn">{L("angekündigt ausserhalb der Zonen", "announced outside the zones")}</span>{" "}

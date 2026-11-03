@@ -715,31 +715,66 @@ def _aci_import(subject: str, d: dict) -> tuple[str, str]:
     )
 
 
+def _bgp_nets(d: dict, kind: str) -> list[str]:
+    """Netze einer Abweichung mit ihrer Zone (0.127.0, Anwender: „ich sehe keine Details,
+    weshalb“) - aus `why`, sonst wie bis 0.126 nur die Netze."""
+    why = [w for w in d.get("why") or [] if w.get("kind") == kind]
+    if not why:
+        return list(d.get(kind) or [])
+    out = []
+    for w in why:
+        zones = ", ".join(w.get("zones") or [])
+        if kind == "too_open":
+            where = L(f"Zone {zones}", f"zone {zones}") if zones else L("keine Zone", "no zone")
+            out.append(f"{w.get('prefix')} ({w.get('filter')}; {where})")
+        else:
+            out.append(f"{w.get('prefix')} ({zones})" if zones else str(w.get("prefix")))
+    return out
+
+
+def _bgp_chain(d: dict) -> str:
+    """Woher die Zonen kommen (0.127.0): Zone der Firewall, Zone am Nachbarn und warum."""
+    c = d.get("chain") or {}
+    if not c:
+        return ""
+    if c.get("device"):
+        via = L(" (gelesenes Gerät)", " (read device)")
+    elif c.get("network"):
+        via = L(f" (Übergang über {c['network']})", f" (transition via {c['network']})")
+    else:
+        via = ""
+    return L(
+        f" Firewall in Zone {c.get('home')}, Nachbar in Zone {c.get('neighbor')}{via}.",
+        f" Firewall in zone {c.get('home')}, neighbor in zone {c.get('neighbor')}{via}.",
+    )
+
+
 def _bgp_zones(subject: str, d: dict) -> tuple[str, str]:
     """Eingangsfilter passt nicht zu den Zonen dahinter (0.114.0, ADR 0041 Stufe 2)."""
-    where, zones = _bgp_where(d), _list(d.get("zones") or [], 4)
+    where, zones = _bgp_where(d), _list(d.get("zones") or [], 6)
     parts_de, parts_en = [], []
     if d.get("open"):
         parts_de.append("kein Eingangsfilter")
         parts_en.append("no inbound filter")
     if d.get("missing"):
-        nets = _list(d["missing"], 4)
+        nets = _list(_bgp_nets(d, "missing"), 6)
         parts_de.append(f"gesperrt: {nets}")
         parts_en.append(f"denied: {nets}")
     if d.get("too_open"):
-        nets = _list(d["too_open"], 4)
+        nets = _list(_bgp_nets(d, "too_open"), 6)
         parts_de.append(f"ausserhalb der Zonen erlaubt: {nets}")
         parts_en.append(f"permitted outside the zones: {nets}")
     if d.get("excluded_allowed"):
         nets = _list(d["excluded_allowed"], 4)
         parts_de.append(f"Ausschluss erlaubt: {nets}")
         parts_en.append(f"exclusion permitted: {nets}")
+    chain = _bgp_chain(d)
     return (
         L(
             f"{where}: der Eingangsfilter passt nicht zu den Zonen dahinter ({zones}) – "
-            f"{'; '.join(parts_de)}.",
+            f"{'; '.join(parts_de)}.{chain}",
             f"{where}: the inbound filter does not match the zones behind ({zones}) – "
-            f"{'; '.join(parts_en)}.",
+            f"{'; '.join(parts_en)}.{chain}",
         ),
         L(
             "Routing → BGP-Nachbarn → Soll/Ist → „Soll aus den Zonen“: Prefix-Liste als "
@@ -756,13 +791,13 @@ def _bgp_zones_out(subject: str, d: dict) -> tuple[str, str]:
     """Ausgangsfilter passt nicht zu den Zonen diesseits (0.116.0, ADR 0041 Stufe 3)."""
     where = L(f"{d.get('label')} zum Nachbarn {d.get('peer')}",
               f"{d.get('label')} to neighbor {d.get('peer')}")  # fmt: skip
-    zones = _list(d.get("zones") or [], 4)
+    zones = _list(d.get("zones") or [], 6)
     parts_de, parts_en = [], []
     if d.get("open"):
         parts_de.append("kein Ausgangsfilter")
         parts_en.append("no outbound filter")
     if d.get("missing"):
-        nets = _list(d["missing"], 4)
+        nets = _list(_bgp_nets(d, "missing"), 6)
         parts_de.append(f"gesperrt: {nets}")
         parts_en.append(f"denied: {nets}")
     if d.get("announced_outside"):
@@ -771,7 +806,7 @@ def _bgp_zones_out(subject: str, d: dict) -> tuple[str, str]:
         parts_de.append(f"{n} Routen ausserhalb der Zonen angekündigt: {nets}")
         parts_en.append(f"{n} routes announced outside the zones: {nets}")
     if d.get("too_open"):
-        nets = _list(d["too_open"], 4)
+        nets = _list(_bgp_nets(d, "too_open"), 6)
         parts_de.append(f"Filter erlaubt ausserhalb der Zonen: {nets}")
         parts_en.append(f"filter permits outside the zones: {nets}")
     if d.get("excluded_allowed"):
@@ -782,12 +817,13 @@ def _bgp_zones_out(subject: str, d: dict) -> tuple[str, str]:
     if d.get("public_only"):
         public = L(" (nur öffentliche Netze, Nachbar ausserhalb)",
                    " (public networks only, neighbor outside)")  # fmt: skip
+    chain = _bgp_chain(d)
     return (
         L(
             f"{where}: der Ausgangsfilter passt nicht zu den Zonen diesseits ({zones}){public} – "
-            f"{'; '.join(parts_de)}.",
+            f"{'; '.join(parts_de)}.{chain}",
             f"{where}: the outbound filter does not match the zones on this side ({zones}){public}"
-            f" – {'; '.join(parts_en)}.",
+            f" – {'; '.join(parts_en)}.{chain}",
         ),
         L(
             "BGP-Nachbarn öffnen → „Soll aus den Zonen“, Richtung Ausgang: Prefix-Liste als "

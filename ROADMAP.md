@@ -447,8 +447,9 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.125.0** | Rückmeldung 2026-11-03 (ADR 0046): Firewall-Regeln je Zone der Gegenstellen aufgeteilt, Zonentyp mit „(Applikation)“/„(andere)“, je Kategorie und Seite spezifisch/unspezifisch (abgewählte nur unter „Regeln & Contracts“) |
 | **0.126.0** | Rückmeldung 2026-11-03: Reihenfolge der Kategorien mit ↑/↓ wie beim Regelwerk, Doku und Word-Export in dieser Reihenfolge mit fortlaufenden Nummern, Gleichstand: die weiter oben |
 | **0.126.1** | Rückmeldung 2026-11-03: VM als Mitglied – EPG der VM in Doku und Netzwerkplan (kein Mitglied), Regeln über das Netz der EPG für die VM spezifisch (Verbindungen über die Firewall wieder da) |
+| **0.127.0** | Rückmeldung 2026-11-03 (Einwand zu 0.126.1): Firewall-Regeln zu any/all und externe EPGs 0.0.0.0/0 als Verbindungen über L3Out und Firewall (Netzwerkplan), „Regeln ohne Verbindung“ mit Grund, BGP-Befunde mit Zone und entscheidender Regel je Netz |
 
-### Nächste Arbeiten (Stand 0.126.1)
+### Nächste Arbeiten (Stand 0.127.0)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
 **0.68.0** (2026-10-26), bis **0.102.0** (2026-10-28: „ich teste nach dem Freigeben der Version
@@ -473,8 +474,10 @@ Einwand zu 0.120.2), bis **0.120.3** (2026-11-03, Entscheide zu ADR 0044 ohne Ei
 Wunsch zur Übersicht ohne Einwand), bis **0.122.0** (2026-11-03, „go AD DNS“ ohne Einwand), bis **0.123.0** (2026-11-03, Frage zum
 Agenten und Rückmeldung zu den Applikationen ohne Einwand), bis **0.124.0** (2026-11-03,
 Rückmeldung zu den Kategorien ohne Einwand), bis **0.125.0** (2026-11-03, Wunsch nach der
-Reihenfolge ohne Einwand), bis **0.126.0** (2026-11-03, „So umsetzen“ ohne Einwand). Zur Abnahme
-steht 0.126.1. Seit 0.104.0 gilt eine
+Reihenfolge ohne Einwand), bis **0.126.0** (2026-11-03, „So umsetzen“ ohne Einwand). Zu 0.126.1
+Einwand (Firewall-Regeln nach extern fehlten in Verbindungen und Netzwerkplan) – korrigiert in
+0.127.0, das zur Abnahme steht. Offen zur Klärung: Zonenübergänge bei Dreiecksbeziehungen (BGP-Soll)
+und das Beispiel „Eingang zeigt den Ausgangsfilter“. Seit 0.104.0 gilt eine
 Version als abgenommen,
 sobald die nächste Rückmeldung des Anwenders keinen Einwand dazu enthält (`CLAUDE.md`, Ablauf).
 

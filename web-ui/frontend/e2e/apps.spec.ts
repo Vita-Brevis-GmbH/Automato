@@ -397,7 +397,7 @@ test("Applikation: Verbindungen Ende zu Ende mit Weg, Regeln je Hop und Abweichu
   await open(page);
   const card = page.locator("#app-connections");
   await expect(card).toContainText("Verbindungen Ende zu Ende");
-  await expect(card.locator(".card-head")).toContainText("5 Verbindungen");
+  await expect(card.locator(".card-head")).toContainText("7 Verbindungen");
   // CT_rt: die externe EPG EN_rt hat nur ein Subnetz für das Routing (Export Route Control) – seit
   // 0.111.0 keine Gegenstelle (Anwender: „ist ganz was anderes“), der Contract bleibt in der Doku
   await expect(card).toContainText("ohne prüfbare Gegenstelle");
@@ -405,7 +405,7 @@ test("Applikation: Verbindungen Ende zu Ende mit Weg, Regeln je Hop und Abweichu
   await expect(card.locator("tbody tr.clickable").filter({ hasText: "EN_rt" })).toHaveCount(0);
   // ohne gelesenes Routing: nicht prüfbar statt „nicht auf dem Weg“
   await card.locator("button.toggle", { hasText: "nur Abweichungen" }).click();
-  await expect(card.locator("tbody tr.clickable")).toHaveCount(5);
+  await expect(card.locator("tbody tr.clickable")).toHaveCount(7);
   await card.locator("tbody tr.clickable").filter({ hasText: "H_db01" }).click();
   await expect(card.locator(".conn-rules")).toContainText("nicht prüfbar");
   // Zonen je Verbindung (0.78.0): das Ziel liegt in der Zone Internet
@@ -500,7 +500,7 @@ test("Applikation: Verbindungen nach Urteil, Regeln und Hinweisen filtern (0.80.
   await open(page);
   const card = page.locator("#app-connections");
   const rows = card.locator("tbody tr.clickable");
-  await expect(rows).toHaveCount(5);
+  await expect(rows).toHaveCount(7);
   const filter = card.locator("#app-conn-filter");
   await expect(filter).toContainText("Urteil");
   await expect(filter).toContainText("Regel auf dem Weg");
@@ -514,18 +514,18 @@ test("Applikation: Verbindungen nach Urteil, Regeln und Hinweisen filtern (0.80.
   await expect(inbound).toHaveClass(/on/);
   await expect(rows).toHaveCount(n);
   await expect(rows.filter({ hasText: "H_db01" })).toHaveCount(0);
-  await expect(card.locator("#conn-filter-count")).toHaveText(`${n} von 5`);
+  await expect(card.locator("#conn-filter-count")).toHaveText(`${n} von 7`);
   // zwischen den Gruppen „und“: eingehend und offen (alle offen)
   await filter.locator("#conn-filter-verdict-open").click();
   await expect(rows).toHaveCount(n);
   // in der Gruppe „oder“: eingehend oder ausgehend
   await filter.locator("#conn-filter-direction-out").click();
-  await expect(rows).toHaveCount(5);
+  await expect(rows).toHaveCount(7);
   await card.locator("#conn-filter-reset").click();
-  await expect(rows).toHaveCount(5);
+  await expect(rows).toHaveCount(7);
   // Regel auf dem Weg: „nicht prüfbar“ (ohne gelesenes Routing)
   await filter.locator("#conn-filter-state-unknown").click();
-  await expect(rows).toHaveCount(5);
+  await expect(rows).toHaveCount(7);
   await card.locator("#conn-filter-reset").click();
   await expect(card.locator("#conn-filter-count")).toHaveCount(0);
 });
@@ -592,13 +592,13 @@ test("Applikation: Wege uneinheitlich, Bereiche zuklappen, Export mit Auswahl (0
 test("Applikation: Netzwerkplan mit Knoten, Diensten, Interfaces und Export (0.67.0)", async ({ page }) => {
   await open(page);
   const card = page.locator("#app-connections");
-  await expect(card.locator(".card-head")).toContainText("5 Verbindungen");
+  await expect(card.locator(".card-head")).toContainText("7 Verbindungen");
   await card.locator("#app-conn-plan").click();
   const svg = card.locator("#app-plan-svg");
   await expect(svg).toBeVisible();
   // ohne gelesenes Routing ohne Weg: die Applikation und ihre Gegenstellen
-  await expect(svg.locator("g.app-plan-node")).toHaveCount(5);
-  await expect(svg.locator("g.app-plan-edge")).toHaveCount(4);
+  await expect(svg.locator("g.app-plan-node")).toHaveCount(6);
+  await expect(svg.locator("g.app-plan-edge")).toHaveCount(5);
   await expect(svg.locator(".app-plan-col")).toHaveText(["Applikation", "Gegenstellen"]);
   // 0.74.0 kompakt: die EPG mit ihrer VM im Rahmen des APs
   const node = (name: string) => svg.locator(`g.app-plan-node[data-node="${name}"]`);
@@ -623,7 +623,7 @@ test("Applikation: Netzwerkplan mit Knoten, Diensten, Interfaces und Export (0.6
   expect(Number(await svg.getAttribute("width"))).toBe(width);
   // Suche der Karte hebt hervor, der Rest wird blass
   await card.getByPlaceholder("System, Gegenstelle, Firewall, Regel…").fill("H_db01");
-  await expect(svg.locator("g.app-plan-edge.dim")).toHaveCount(3);
+  await expect(svg.locator("g.app-plan-edge.dim")).toHaveCount(4);
   await expect(card.locator("#app-plan-export")).toContainText("Export (1 Verbindungen)");
   await card.getByPlaceholder("System, Gegenstelle, Firewall, Regel…").fill("");
   await expect(svg.locator("g.app-plan-edge.dim")).toHaveCount(0);
@@ -638,7 +638,7 @@ test("Applikation: Netzwerkplan mit Knoten, Diensten, Interfaces und Export (0.6
   expect(file.suggestedFilename()).toMatch(/^netzwerkplan-webshop-\d{4}-\d{2}-\d{2}\.drawio$/);
   const xml = readFileSync((await file.path())!, "utf-8");
   expect(xml).toContain("Netzwerkplan Webshop");
-  expect(xml).toContain("1 Verbindungen (von 5, gefiltert)");
+  expect(xml).toContain("1 Verbindungen (von 7, gefiltert)");
   // Details öffnen die Verbindung in der Tabelle
   await focus.locator("button", { hasText: "Details" }).click();
   await expect(card.locator("#app-conn-table")).toHaveClass(/on/);

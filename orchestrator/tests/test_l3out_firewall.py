@@ -330,7 +330,15 @@ def test_hilfs_contracts_an_der_firewall_regel(client):
     # ACI-Hop der Verbindung der Firewall-Regel mit
     conns = client.get(f"/applications/{ids['app']}/connections").json()["connections"]
     by = {(c["src"]["ip"], c["dst"]["ip"], c["service"]): c for c in conns}
-    assert ("10.50.1.10", "0.0.0.0/0", "tcp/443") not in by
+    # 0.127.0 (Anwender: „viele Firewall Regeln nach extern, über L3Os“ fehlten): die Regel ins
+    # Internet (Ziel all) ist eine Verbindung ueber das ACI und fw-inet, CT_inet prueft mit
+    inet = by[("10.50.1.10", "0.0.0.0/0", "tcp/443")]
+    assert (inet["dst"]["kind"], inet["dst"]["label"]) == (
+        "any", "any → extern (Default-Route über wan1)")  # fmt: skip
+    assert [h["label"] for h in inet["hops"]] == ["apic-01 · VRF TE:VRF1", "fw-inet"]
+    inet_states = {s["label"]: s["state"] for s in inet["rules"]}
+    assert inet_states["Policy 31 „app-inet“"] == "decides" and "Contract CT_inet" in inet_states
+    assert inet["verdict"] == "allow"
     https = by[("192.168.0.0/16", APP, "tcp/443")]
     states = {s["label"]: s["state"] for s in https["rules"]}
     # Start auf fw-bit (das Netz haengt an keinem gelesenen Interface): die Policy ist moeglich

@@ -37,10 +37,11 @@ def _fw1() -> dict:
     return fw
 
 
-def _seed(client) -> tuple[int, int]:
+def _seed(client, fw: dict | None = None) -> tuple[int, int]:
     tid = client.post("/tenants", json={"name": "Kunde A"}, headers=ADMIN).json()["id"]
-    for name, platform, result in (("fw-01", "fortigate", _fw1()), ("fw-02", "fortigate", tp.FW2),
-                                   ("apic-01", "cisco_aci", tp.APIC)):  # fmt: skip
+    systems = (("fw-01", "fortigate", fw or _fw1()), ("fw-02", "fortigate", tp.FW2),
+               ("apic-01", "cisco_aci", tp.APIC))  # fmt: skip
+    for name, platform, result in systems:
         tp._deliver(client, tid, tp._system(client, tid, name, platform), platform, result)
     sys = _ids(client, tid)
 
@@ -90,6 +91,51 @@ def test_soll_aus_den_zonen_dahinter(client, session_factory):
     assert "passt nicht zu den Zonen dahinter (Lan)" in f["message"]
     assert "gesperrt: 10.99.0.0/16" in f["message"]
     assert "ausserhalb der Zonen erlaubt: 172.16.0.0/12" in f["message"]
+
+
+def test_begruendung_je_abweichung(client, session_factory):
+    """0.127.0 (Anwender: „Bei BGP Findings sehe ich sehr viele Filter, welche nicht passen
+    wuerden, aber ich sehe keine Details, weshalb“): je Abweichung Netz, Zone und entscheidende
+    Regel (bzw. keine passt, mit den erlaubten Teilen darin), je zu offener Regel die Regel,
+    dazu woher die Zonen kommen - in der Ansicht und im Befund."""
+    fw = _fw1()
+    fw["routing"]["bgp"][1]["data"]["rules"].append(
+        {"id": 4, "action": "permit", "prefix": "10.99.1.0/24"})  # fmt: skip
+    tid, _fw = _seed(client, fw)
+    from app.models import TopoPeer
+    from app.store import bgp_zones
+
+    s = session_factory()
+    p = s.query(TopoPeer).filter_by(peer_ip=FW02).one()
+    r = bgp_zones.for_peer(s, tid, p)
+    s.close()
+    (v4,) = r["lists"]
+    why = {(w["kind"], w["prefix"]): w for w in v4["reasons"]}
+    miss = why[("missing", "10.99.0.0/16")]
+    assert miss["zones"] == ["Lan"]
+    assert miss["by"] == [{"kind": "prefix_list", "filter": "PL_FW02", "verdict": "deny",
+                           "rule": None}]  # fmt: skip
+    assert miss["parts"] == ["10.99.1.0/24"]  # nur ein Teil ist erlaubt
+    wide = why[("too_open", "172.16.0.0/12")]
+    assert (wide["filter"], wide["rule"], wide["zones"]) == (
+        "PL_FW02", "3 permit 172.16.0.0/12 le 32", [])  # fmt: skip
+    ok = next(e for e in v4["entries"] if e["prefix"] == "10.50.0.0/16")
+    assert [d["rule"] for d in ok["decided"]] == ["2 permit 10.50.0.0/16 le 24"]
+    chain = r["chain"]
+    assert (chain["home"], chain["neighbor"]) == ("DC FW", "Lan")
+    assert chain.get("device") or chain.get("network")
+    assert chain["zones"] == [{"name": "Lan", "hops": 1}]
+
+    (f,) = client.get("/findings", params={"tenant_id": tid, "type": "bgp_zone_mismatch"}).json()
+    assert "gesperrt: 10.99.0.0/16 (Lan)" in f["message"]
+    assert "172.16.0.0/12 (PL_FW02; keine Zone)" in f["message"]
+    assert "Firewall in Zone DC FW, Nachbar in Zone Lan" in f["message"]
+    kinds = [(w["kind"], w["prefix"]) for w in f["detail"]["why"]]
+    assert ("missing", "10.99.0.0/16") in kinds and ("too_open", "172.16.0.0/12") in kinds
+    assert f["detail"]["chain"]["neighbor"] == "Lan"
+    en = client.get("/findings", params={"tenant_id": tid, "type": "bgp_zone_mismatch"},
+                    headers={"Accept-Language": "en"}).json()[0]  # fmt: skip
+    assert "Firewall in zone DC FW, neighbor in zone Lan" in en["message"]
 
 
 # -- Stufe 3 (0.116.0): Ausgangsfilter je Zone und ACI import-rtctrl aus den Zonen ----------

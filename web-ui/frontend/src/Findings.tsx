@@ -14,8 +14,10 @@ import {
 import type { View, ViewParams } from "./App";
 import { customerCan, type Me } from "./auth";
 import FindingDialog from "./FindingDialog";
+import { BgpWhyList } from "./modules/analyse/BgpWhy";
 import Checks from "./modules/findings/Checks";
 import { NetAssignDialog } from "./modules/wege/NetAssign";
+import type { BgpWhy, BgpZoneChain } from "./api";
 import { FINDING_GROUPS, FINDING_HINT, FINDING_LABEL, findingLabel } from "./refs";
 import { Empty, ErrorBox, fmtTime, Icon, Loading, PageHead, SeverityBadge } from "./ui";
 import { L } from "./i18n";
@@ -119,6 +121,9 @@ const DETAIL_LABEL: Record<string, string | null> = {
   parts: null,
   contexts: null,
   context_count: null,
+  // BGP gegen die Zonen (0.127.0): Begründung und Zonen als Liste darunter
+  why: null,
+  chain: null,
   // BGP-Filter (0.113.0): Netze stehen als Liste darunter (`entries` als Präfixe)
   total: L("Anzahl", "Count"),
   filters: L("Filter", "Filters"),
@@ -702,6 +707,13 @@ export default function Findings({
                                   <dd className="mono">{fmtTime(f.first_seen)}</dd>
                                 </dl>
                                 <RouteEntries f={f} />
+                                {(f.type === "bgp_zone_mismatch" || f.type === "bgp_zone_out_mismatch") && (
+                                  <BgpWhyList
+                                    why={(Array.isArray(f.detail?.why) ? f.detail!.why : []) as BgpWhy[]}
+                                    chain={(f.detail?.chain ?? null) as BgpZoneChain | null}
+                                    out={f.type === "bgp_zone_out_mismatch"}
+                                  />
+                                )}
                               {f.type === "net_wider_than_routes" && canAdd && (
                                 <div style={{ marginTop: 6 }}>
                                   <button className="btn btn-sm" onClick={() => setAssigning(String(f.detail?.value ?? ""))}>
