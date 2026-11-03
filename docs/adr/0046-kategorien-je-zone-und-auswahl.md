@@ -57,6 +57,21 @@ also nichts verloren.“ Ergänzt ADR 0035 (Kategorien als Richtungen) und ADR 0
    gespeichert nur Abweichungen (`src_scope`, `dst_scope` im Wörterbuch-Eintrag der Kategorie).
    Keine Migration.
 
+## Ergänzung 0.126.0 – Reihenfolge
+
+Anwender 2026-11-03: „Bei den Kategorien wäre es schön, wenn ich die Reihenfolge noch anpassen
+könnte“, auf den Vorschlag „Ordnen wie beim Regelwerk“, „Bei Gleichstand ja“, „Nummerierung
+fortlaufend“.
+
+6. **Reihenfolge** je Namensprofil (↑/↓ wie beim Regelwerk, auch die festen): Doku und
+   Word-Export zeigen die Kategorien so, **Nummern fortlaufend** nach der Position. Die Nummer
+   der Kategorie bleibt ihre **feste Kennung** (ausgeblendete Regeln, Wörterbuch, Treffer); nur
+   die Anzeige nummeriert neu.
+7. **Gleichstand** zweier gleich genauer Richtungen: die weiter oben gewinnt (ohne eigene
+   Reihenfolge wie bisher die kleinere Nummer).
+8. Gespeichert als ein Eintrag `order` der Art `appdoc_category`, nur wenn die Reihenfolge von
+   der Nummer abweicht; unbekannte Nummern werden übergangen, fehlende stehen am Ende.
+
 ## Folgen
 
 - Regeln mit Gegenstellen in mehreren Zonen stehen nach dem Update in mehreren Kategorien statt in

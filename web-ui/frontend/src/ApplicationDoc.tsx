@@ -317,7 +317,8 @@ export default function ApplicationDocView({
   const sourceName = (sid: number) => systems.find((x) => x.id === sid)?.name ?? `#${sid}`;
   // Firewall mit VDOM, wenn sie mehrere hat (0.43.2) – wie in Regeln & Contracts
   const ruleSource = (r: Rule) => sourceName(r.source_system_id) + (vdomShown(r.source_system_id, r.vdom) ? ` · VDOM ${r.vdom}` : "");
-  const titles = new Map(doc.tables.map((t) => [t.index, t.title]));
+  // Kategorien je Kennung: angezeigte Nummer (0.126.0: fortlaufend in der Reihenfolge) und Titel
+  const titles: CatNames = new Map(doc.tables.map((t) => [t.index, { number: t.number ?? t.index, title: t.title }]));
   const epgLabel = f.epg ? names.get(f.epg) : null;
 
   // Treffer nach den Filtern; EPG = die EPG selbst oder Systeme in ihr – ACI-Contracts eines
@@ -1030,6 +1031,13 @@ interface SideGroup {
   systems: string[];
   hits: AppDocHit[];
 }
+// Kategorien je Kennung mit der angezeigten Nummer (0.126.0) und dem Titel
+type CatNames = Map<number, { number: number; title: string }>;
+function catLabel(titles: CatNames, index: number): string {
+  const c = titles.get(index);
+  return c ? `${c.number}. ${c.title}` : String(index);
+}
+
 // Kategorien, in denen die Zugriffe nach der Auswahl spezifisch/unspezifisch nicht stehen (0.125.0) - nur, wo kein
 // anderer Treffer derselben Kategorie gezeigt wird
 function hiddenIn(hits: AppDocHit[]): number[] {
@@ -1124,7 +1132,7 @@ function RuleRow({
   r: Rule;
   hits: AppDocHit[];
   names: Map<string, string>;
-  titles: Map<number, string>;
+  titles: CatNames;
   source: string;
   findings: number;
   onOpen: () => void;
@@ -1190,8 +1198,8 @@ function RuleRow({
       </td>
       <td className="nowrap">
         {tables.map((t) => (
-          <span key={t} className="chip na" title={`${t}. ${titles.get(t)}`}>
-            {t}
+          <span key={t} className="chip na" title={catLabel(titles, t)}>
+            {titles.get(t)?.number ?? t}
           </span>
         ))}
       </td>
@@ -1250,7 +1258,7 @@ function WhyBlock({
   r: Rule;
   hits: AppDocHit[];
   byKey: Map<string, AppDocSystem2 | AppDocEpg>;
-  titles: Map<number, string>;
+  titles: CatNames;
   source: string;
   findings: ApplicationDoc["findings"];
   onGo?: Go;
@@ -1302,11 +1310,11 @@ function WhyBlock({
                   </span>
                 )}
                 <div className="faint">
-                  {L("Kategorie", "Category")} {tables.map((t) => `${t}. ${titles.get(t)}`).join(", ")}
+                  {L("Kategorie", "Category")} {tables.map((t) => catLabel(titles, t)).join(", ")}
                 </div>
                 {hiddenIn(g.hits).length > 0 && (
                   <div className="faint category-hidden">
-                    {L("Nicht gezeigt in Kategorie", "Not shown in category")} {hiddenIn(g.hits).map((t) => `${t}. ${titles.get(t)}`).join(", ")}
+                    {L("Nicht gezeigt in Kategorie", "Not shown in category")} {hiddenIn(g.hits).map((t) => catLabel(titles, t)).join(", ")}
                     {L(" – die Kategorie zeigt diese Zugriffe nicht (spezifisch/unspezifisch im Namensprofil)", " – the category does not show these accesses (specific/unspecific in the naming profile)")}
                   </div>
                 )}
@@ -2374,7 +2382,7 @@ function HideDialog({
         </div>
         <label className="check">
           <input type="radio" name="hide-scope" checked={!all} onChange={() => setAll(false)} />{" "}
-          {L("nur in Kategorie", "only in category")} {table.index}. {table.title}
+          {L("nur in Kategorie", "only in category")} {table.number ?? table.index}. {table.title}
         </label>
         <label className="check" style={{ display: "block", marginTop: 4 }}>
           <input type="radio" name="hide-scope" id="hide-all" checked={all} onChange={() => setAll(true)} />{" "}

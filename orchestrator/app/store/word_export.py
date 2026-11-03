@@ -378,9 +378,9 @@ def _tables(out: Writer, tables: list[dict], rows_too: bool = True,
     empty = []
     for t in tables if rows_too else []:
         if not t.get("rows"):
-            empty.append(f"{t['index']}. {t['title']}")
+            empty.append(f"{t.get('number', t['index'])}. {t['title']}")
             continue
-        out.heading(f"{t['index']}. {t['title']}", 2)
+        out.heading(f"{t.get('number', t['index'])}. {t['title']}", 2)
         if t.get("zones"):  # 0.101.0: Zonen der Kategorie mit ihren Netzen
             out.note(zones_text(t["zones"]))
         cols = t.get("columns") or []
@@ -400,7 +400,8 @@ def _tables(out: Writer, tables: list[dict], rows_too: bool = True,
         rows = []
         for t, row in hidden:
             hides = row.get("_hides") or []
-            rows.append([f"{t['index']}. {t['title']}", str(row.get("Description") or ""),
+            rows.append([f"{t.get('number', t['index'])}. {t['title']}",
+                         str(row.get("Description") or ""),
                          str(row.get("_app") or "").replace("\n", ", "),
                          "; ".join(h.get("reason") or "" for h in hides),
                          ", ".join(dict.fromkeys(h.get("by") or "" for h in hides)),

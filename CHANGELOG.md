@@ -7,6 +7,23 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.126.0 – 2026-11-03
+
+Rückmeldung des Anwenders 2026-11-03: „Bei den Kategorien wäre es schön, wenn ich die Reihenfolge
+noch anpassen könnte“ – auf den Vorschlag: „Ordnen wie beim Regelwerk“, „Wirkung ja“, „Bei
+Gleichstand ja“, „Nummerierung fortlaufend“. Ergänzung zu ADR 0046. Abnahme bis 0.125.0.
+
+- **Reihenfolge der Kategorien:** im Namensprofil → Kategorien der Applikations-Doku je Zeile ↑/↓
+  wie beim Regelwerk, auch für die festen Kategorien; „Auf Vorgaben zurücksetzen“ stellt auch die
+  Reihenfolge wieder her.
+- **Wirkung:** die Applikations-Doku und der Word-Export zeigen die Kategorien in dieser
+  Reihenfolge, die **Nummern fortlaufend** (1., 2., 3. …) – auch in „Regeln & Contracts“ und
+  beim Ausblenden. Passen zwei Richtungen gleich genau, gewinnt die **weiter oben** (vorher die
+  kleinere Nummer).
+- Die Kategorie behält intern ihre Kennung: ausgeblendete Regeln und die Einstellungen bleiben
+  beim Verschieben erhalten. Gespeichert nur, wenn die Reihenfolge von der Vorgabe abweicht.
+- Tests: `orchestrator/tests/test_appdoc_order.py`, `e2e/release_0126.spec.ts`.
+
 ## 0.125.0 – 2026-11-03
 
 Rückmeldung des Anwenders 2026-11-03: „Firewall Regeln manchmal nicht am richtigen Ort … vor allem

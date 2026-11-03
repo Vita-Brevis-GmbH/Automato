@@ -644,7 +644,8 @@ export interface NatDetail extends Nat {
 
 // Tabellen der Kategorien (Applikations-Doku)
 export interface DocTable {
-  index: number;
+  index: number; // feste Kennung der Kategorie
+  number?: number; // 0.126.0: angezeigte Nummer, fortlaufend in der Reihenfolge des Namensprofils
   title: string;
   enforcement: string;
   // sichtbare Spalten (0.84.0: leere NAT-/VIP-/Load-Balancer-Spalten fehlen)
@@ -3447,7 +3448,8 @@ export interface LogicalZone {
 // Quelle → Zonentyp des Ziels (Zonen des Grundschemas, je Seite einer oder mehrere, `*` = jeder); fest (nur Titel):
 // innerhalb der Applikation, innerhalb des Security Tenants, unspezifisch
 export interface AppdocCategory {
-  index: number;
+  index: number; // feste Kennung (Ausblenden, Wörterbuch)
+  number?: number; // 0.126.0: angezeigte Nummer in der Reihenfolge
   title: string;
   title_en: string;
   src: string[];

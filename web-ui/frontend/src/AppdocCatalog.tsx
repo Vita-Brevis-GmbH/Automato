@@ -8,6 +8,8 @@
 // Seit 0.125.0 (ADR 0046, Anwender 2026-11-03): Zonentypen mit Zusatz „(Applikation)“ = Seite der Systeme der
 // Applikation bzw. „(andere)“ = Gegenstelle (z. B. DC (Applikation) → DC (andere)) und je Seite die Auswahl
 // spezifisch/unspezifisch (auch bei den festen) - abgewählte Zeilen stehen nur unter „Regeln & Contracts“.
+// Seit 0.126.0 die Reihenfolge mit ↑/↓ wie beim Regelwerk: so zeigen Doku und Export die Kategorien, fortlaufend
+// nummeriert; bei gleich genauer Richtung gewinnt die weiter oben. Die Kennung (`index`) bleibt.
 import { useEffect, useState } from "react";
 import { AppdocCatalog, AppdocCatalogIn, AppdocScope, fetchProfileAppdocCatalog, resetProfileAppdocCatalog, saveProfileAppdocCatalog } from "./api";
 import { ErrorBox, Loading } from "./ui";
@@ -169,6 +171,13 @@ export default function AppdocCatalogCard({ profileId, editable }: { profileId: 
     setDraft(next);
   };
   const setCat = (i: number, p: Partial<CatDraft>) => patch(draft.map((c, j) => (j === i ? { ...c, ...p } : c)));
+  const move = (i: number, d: -1 | 1) => {
+    const j = i + d;
+    if (j < 0 || j >= draft.length) return;
+    const next = [...draft];
+    [next[i], next[j]] = [next[j], next[i]];
+    patch(next);
+  };
   const addCategory = () => {
     const index = Math.max(0, ...draft.map((c) => c.index)) + 1;
     patch([...draft, { index, title: "", title_en: "", src: [], dst: [], src_scope: [...SCOPES], dst_scope: [...SCOPES], builtin: false, role: "" }]);
@@ -226,11 +235,11 @@ export default function AppdocCatalogCard({ profileId, editable }: { profileId: 
             <col style={{ width: "20%" }} />
             <col style={{ width: "24%" }} />
             <col style={{ width: "24%" }} />
-            <col style={{ width: 40 }} />
+            <col style={{ width: 96 }} />
           </colgroup>
           <thead>
             <tr>
-              <th>{L("Nr.", "No.")}</th>
+              <th title={L("Nummer in der Doku – fortlaufend in dieser Reihenfolge", "number in the documentation – consecutive in this order")}>{L("Nr.", "No.")}</th>
               <th>{L("Titel", "Title")}</th>
               <th>{L("Titel englisch", "Title English")}</th>
               <th title={L("Zonentyp der Quelle (eingehend die Gegenstelle, ausgehend das System)", "zone type of the source (inbound the peer, outbound the system)")}>{L("Source-Zone", "Source zone")}</th>
@@ -245,7 +254,7 @@ export default function AppdocCatalogCard({ profileId, editable }: { profileId: 
               return (
                 <tr key={c.index}>
                   <td>
-                    <b>{c.index}</b>
+                    <b className="cat-no">{i + 1}</b>
                     {!c.builtin ? <div className="faint" style={{ fontSize: 11 }}>{L("eigen", "own")}</div> : changed ? <div className="faint" style={{ fontSize: 11 }}>{L("angepasst", "adjusted")}</div> : null}
                   </td>
                   <td>
@@ -277,10 +286,20 @@ export default function AppdocCatalogCard({ profileId, editable }: { profileId: 
                     </>
                   )}
                   <td>
-                    {!c.role && editable && (
-                      <button className="btn btn-sm btn-ghost" title={L("Kategorie entfernen", "Remove category")} aria-label={L(`Kategorie ${c.index} entfernen`, `Remove category ${c.index}`)} onClick={() => patch(draft.filter((_, j) => j !== i))}>
-                        ✕
-                      </button>
+                    {editable && (
+                      <span style={{ whiteSpace: "nowrap" }}>
+                        <button className="btn btn-ghost btn-sm" title={L("nach oben", "up")} aria-label={L(`Kategorie ${c.index} nach oben`, `Move category ${c.index} up`)} disabled={i === 0} onClick={() => move(i, -1)}>
+                          ↑
+                        </button>
+                        <button className="btn btn-ghost btn-sm" title={L("nach unten", "down")} aria-label={L(`Kategorie ${c.index} nach unten`, `Move category ${c.index} down`)} disabled={i === draft.length - 1} onClick={() => move(i, 1)}>
+                          ↓
+                        </button>
+                        {!c.role && (
+                          <button className="btn btn-sm btn-ghost" title={L("Kategorie entfernen", "Remove category")} aria-label={L(`Kategorie ${c.index} entfernen`, `Remove category ${c.index}`)} onClick={() => patch(draft.filter((_, j) => j !== i))}>
+                            ✕
+                          </button>
+                        )}
+                      </span>
                     )}
                   </td>
                 </tr>
@@ -297,8 +316,8 @@ export default function AppdocCatalogCard({ profileId, editable }: { profileId: 
           {L("Zonentypen im Grundschema: ", "Zone types in the base schema: ")}
           {types.join(", ") || "–"}
           {L(
-            " · Reihenfolge: innerhalb der Applikation, innerhalb des Security Tenants, dann die genaueste Richtung (mit Zusatz vor ohne, ohne * vor *), bei Gleichstand die kleinere Nummer; sonst unspezifisch. Eine Regel mit Gegenstellen in mehreren Zonen steht je Zone in ihrer Kategorie.",
-            " · Order: within the application, within the security tenant, then the most specific direction (with qualifier before without, without * before *), on a tie the lower number; otherwise unspecific. A rule with peers in several zones appears per zone in its category.",
+            " · Zuordnung: innerhalb der Applikation, innerhalb des Security Tenants, dann die genaueste Richtung (mit Zusatz vor ohne, ohne * vor *), bei Gleichstand die weiter oben; sonst unspezifisch. Eine Regel mit Gegenstellen in mehreren Zonen steht je Zone in ihrer Kategorie. Mit ↑/↓ die Reihenfolge in Doku und Export (Nummern fortlaufend).",
+            " · Assignment: within the application, within the security tenant, then the most specific direction (with qualifier before without, without * before *), on a tie the one higher up; otherwise unspecific. A rule with peers in several zones appears per zone in its category. Use ↑/↓ for the order in documentation and export (consecutive numbers).",
           )}
         </div>
         {empty && editable && (

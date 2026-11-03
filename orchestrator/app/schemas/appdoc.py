@@ -5,7 +5,9 @@ from pydantic import BaseModel
 
 
 class DocTableOut(BaseModel):
-    index: int
+    index: int  # feste Kennung der Kategorie
+    # angezeigte Nummer, fortlaufend in der Reihenfolge des Namensprofils (0.126.0)
+    number: int | None = None
     title: str
     enforcement: str
     columns: list[str]  # Schluessel der Zeilen (deutsch, bleiben fuer Vergleiche)

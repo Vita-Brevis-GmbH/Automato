@@ -24,6 +24,12 @@ Drei Kategorien sind fest (Rolle; nur Titel und die Auswahl spezifisch/unspezifi
 **innerhalb des Security Tenants** (`aci_tenant`, ACI im selben Tenant bzw. Gegenstelle in der
 eigenen Zone) und **unspezifisch** (`fallback`, keine Richtung passt).
 
+Seit 0.126.0 (Anwender 2026-11-03: „die Reihenfolge noch anpassen“) eine **Reihenfolge** der
+Kategorien (`Catalog.order`, im Namensprofil wie das Regelwerk mit ↑/↓): die Doku und der Export
+zeigen sie so, die Ueberschriften fortlaufend nummeriert (`Catalog.numbers`); bei gleich genauer
+Richtung gewinnt die weiter oben. Die Nummer der Kategorie (`index`) bleibt ihre feste Kennung
+(ausgeblendete Regeln, Woerterbuch).
+
 Die **Vorgaben** stehen hier im Code - Richtungen auf der eingebauten Vorlage des Grundschemas
 (DC, Edge Internet, Edge Office, …); die Plattform funktioniert ohne Konfiguration. Das
 **Namensprofil** des Mandanten (`tenant.naming_profile_id`) passt sie an (Woerterbuch-Art
@@ -48,6 +54,7 @@ KIND_CATEGORY = "appdoc_category"
 # Arten aus 0.104.0/0.105.0 (Bereiche, Optionen): nicht mehr gelesen, beim Speichern entfernt
 LEGACY_KINDS = ("appdoc_area", "appdoc_option")
 KINDS = (KIND_CATEGORY, *LEGACY_KINDS)
+ORDER_KEY = "order"  # Eintrag der Reihenfolge (Art `appdoc_category`, 0.126.0)
 # feste Rollen: innerhalb der Applikation (7), innerhalb des Security Tenants (8), unspezifisch (10)
 ROLES = ("aci_ap", "aci_tenant", "fallback")
 MAX_INDEX, MAX_TEXT, MAX_TYPES = 99, 200, 20
@@ -139,9 +146,20 @@ DEFAULT_CATEGORIES: tuple[Category, ...] = (
 class Catalog:
     categories: dict[int, Category] = field(default_factory=dict)
     profile_id: int | None = None
+    order: tuple[int, ...] = ()  # Reihenfolge (0.126.0); fehlende danach nach Nummer
 
     def ordered(self) -> list[Category]:
-        return [self.categories[i] for i in sorted(self.categories)]
+        """Kategorien in der Reihenfolge des Profils (ohne: nach Nummer)."""
+        rank = {index: i for i, index in enumerate(self.order)}
+        keys = sorted(self.categories, key=lambda i: (rank.get(i, len(rank)), i))
+        return [self.categories[i] for i in keys]
+
+    def numbers(self) -> dict[int, int]:
+        """Angezeigte Nummer je Kategorie: fortlaufend in der Reihenfolge (0.126.0)."""
+        return {c.index: n for n, c in enumerate(self.ordered(), start=1)}
+
+    def number(self, index: int) -> int:
+        return self.numbers().get(index, index)
 
     def get(self, index: int) -> Category | None:
         return self.categories.get(index)
@@ -161,8 +179,9 @@ class Catalog:
 
     def by_flow(self, src: str | None, dst: str | None, app_side: str | None = None) -> int | None:
         """Kategorie der Richtung Zonentyp `src` → `dst`: die genaueste passende (beide genannt
-        vor einem `*`, mit Zusatz „(Applikation)“/„(andere)“ vor ohne), bei Gleichstand die
-        kleinste Nummer; keine = None. `app_side` = Seite der Applikation (`src`/`dst`)."""
+        vor einem `*`, mit Zusatz „(Applikation)“/„(andere)“ vor ohne), bei Gleichstand die weiter
+        oben in der Reihenfolge (ohne Reihenfolge: die kleinste Nummer); keine = None.
+        `app_side` = Seite der Applikation (`src`/`dst`)."""
         if not src or not dst:
             return None
         sides = ((type_key(src), APP_SIDE if app_side == "src" else OTHER_SIDE),
@@ -183,7 +202,10 @@ class Catalog:
         return best[1] if best else None
 
     def out(self) -> dict:
-        return {"profile_id": self.profile_id, "categories": [c.out() for c in self.ordered()]}
+        """Kategorien in der Reihenfolge, je mit der angezeigten Nummer (`number`)."""
+        return {"profile_id": self.profile_id,
+                "categories": [{**c.out(), "number": n}
+                               for n, c in enumerate(self.ordered(), start=1)]}  # fmt: skip
 
 
 def _side_score(key: str, where: str | None, wanted: Types) -> int | None:
@@ -262,6 +284,9 @@ def apply_entries(cat: Catalog, entries: list[DictionaryEntry]) -> Catalog:
         if e.kind != KIND_CATEGORY:
             continue  # Bereiche und Optionen aus 0.104.0/0.105.0 gelten nicht mehr
         x = e.extra if isinstance(e.extra, dict) else {}
+        if e.key == ORDER_KEY:  # Reihenfolge (0.126.0)
+            cat.order = _order(x.get("order"))
+            continue
         index = _int(e.key, 0)
         if not 1 <= index <= MAX_INDEX:
             continue
@@ -281,6 +306,17 @@ def apply_entries(cat: Catalog, entries: list[DictionaryEntry]) -> Catalog:
             src_scope=scopes_of(x.get("src_scope")), dst_scope=scopes_of(x.get("dst_scope")),
         )  # fmt: skip
     return cat
+
+
+def _order(value) -> tuple[int, ...]:
+    """Reihenfolge aus dem Woerterbuch: Nummern 1-99, ohne doppelte."""
+    items = value if isinstance(value, list | tuple) else []
+    out: list[int] = []
+    for item in items:
+        index = _int(item, 0)
+        if 1 <= index <= MAX_INDEX and index not in out:
+            out.append(index)
+    return tuple(out)
 
 
 def for_profile(session: Session, profile_id: int | None) -> Catalog:
@@ -313,11 +349,12 @@ class Invalid(ValueError):
 
 def validate(body: dict) -> Catalog:
     """Katalog aus der Pflege pruefen: Nummer 1-99, Titel, Quelle und Ziel (Zonentyp bzw. `*`).
-    Die festen Kategorien fehlen nie (fehlen sie im Text, gilt die Vorgabe); die uebrigen
-    Vorgaben fallen weg, wenn sie fehlen."""
+    Die festen Kategorien fehlen nie (fehlen sie im Text, gilt die Vorgabe, am Ende); die uebrigen
+    Vorgaben fallen weg, wenn sie fehlen. Die Reihenfolge im Text ist die Reihenfolge (0.126.0)."""
     base = default()
     cat = Catalog({c.index: c for c in base.categories.values() if c.role})
     seen: set[int] = set()
+    seen_order: list[int] = []
     for item in body.get("categories") or []:
         index = _int(item.get("index"), 0)
         title = str(item.get("title") or "").strip()
@@ -328,6 +365,7 @@ def validate(body: dict) -> Catalog:
         if not title:
             raise Invalid(f"category {index} without title")
         seen.add(index)
+        seen_order.append(index)
         known = base.categories.get(index)
         role = known.role if known else ""
         src, dst = ((), ()) if role else (types_of(item.get("src")), types_of(item.get("dst")))
@@ -342,6 +380,10 @@ def validate(body: dict) -> Catalog:
             src=src, dst=dst, role=role, builtin=bool(known and known.builtin),
             src_scope=src_scope, dst_scope=dst_scope,
         )  # fmt: skip
+    cat.order = tuple([*(i for i in seen_order if i in cat.categories),
+                       *(i for i in sorted(cat.categories) if i not in seen)])  # fmt: skip
+    if list(cat.order) == sorted(cat.categories):
+        cat.order = ()  # Reihenfolge nach Nummer: nichts zu merken
     return cat
 
 
@@ -362,6 +404,9 @@ def entries_of(cat: Catalog) -> list[tuple[str, str, str, dict]]:
     for d in base.ordered():
         if d.index not in cat.categories and not d.role:
             out.append((KIND_CATEGORY, str(d.index), d.title, {"off": True}))
+    order = [c.index for c in cat.ordered()]
+    if order != sorted(order):  # Reihenfolge abweichend von der Nummer (0.126.0)
+        out.append((KIND_CATEGORY, ORDER_KEY, "Reihenfolge", {"order": order}))
     return out
 
 

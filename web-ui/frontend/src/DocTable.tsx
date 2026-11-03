@@ -126,7 +126,7 @@ export function DocTableView({
     <div className="card">
       <div className="card-head">
         <FoldTitle fold={fold}>
-          {table.index}. {table.title}
+          {table.number ?? table.index}. {table.title}
         </FoldTitle>
         <span className="chip">
           {aci ? L("ACI intern", "ACI internal") : L("Über eine Firewall", "Via a firewall")}

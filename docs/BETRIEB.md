@@ -1281,6 +1281,9 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
          („Nicht gezeigt in Kategorie …“); direkt zugeordnete Regeln immer.
        - Fest, nur Titel und die Auswahl spezifisch/unspezifisch änderbar: **innerhalb der
          Applikation** (7), **innerhalb des Security Tenants** (8) und **unspezifisch** (10).
+       - **Reihenfolge** (seit 0.126.0): je Zeile ↑/↓ wie beim Regelwerk, auch die festen. So
+         zeigen Doku und Word-Export die Kategorien, die Nummern fortlaufend (Spalte „Nr.“);
+         ausgeblendete Regeln bleiben beim Verschieben erhalten.
        - Die Vorgaben (Internet, Unternehmensnetzwerk, VPN, andere Security Tenants, Management)
          lassen sich ändern oder entfernen; „Auf Vorgaben zurücksetzen“ stellt sie wieder her.
     3. Die **Doku** teilt so ein:
@@ -1288,7 +1291,7 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
          dann innerhalb des Security Tenants (ACI im selben Tenant bzw. Gegenstelle in der eigenen
          Zone);
        - dann die genaueste Richtung: mit Zusatz vor ohne, beide genannt vor „*“, bei
-         Gleichstand die kleinere Nummer;
+         Gleichstand die weiter oben in der Reihenfolge;
        - sonst unspezifisch.
        - Eine Firewall-Regel mit Gegenstellen in mehreren Zonen steht **je Zone** in ihrer
          Kategorie, jede Zeile nur mit ihren Gegenstellen (seit 0.125.0).

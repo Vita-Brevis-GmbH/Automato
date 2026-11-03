@@ -1434,6 +1434,7 @@ def _narrower(rows: list[tuple[str, int, dict]], systems: list[dict], epgs: list
     names = {x["key"]: x["name"] for x in systems} | {e["key"]: e["label"] for e in epgs}
     catalog = catalog or appdoc.DEFAULT_CATALOG
     titles = {c.index: catalog.title(c.index) for c in catalog.ordered()}
+    numbers = catalog.numbers()
     out: dict[int, dict] = {}
     for key, idx, row in rows:
         if not row.get(appdoc.NARROW) or row.get(appdoc.REL) == "impossible":
@@ -1450,7 +1451,7 @@ def _narrower(rows: list[tuple[str, int, dict]], systems: list[dict], epgs: list
         for x in row.get(appdoc.FW_RULES) or []:
             if x not in entry["firewall_rules"]:
                 entry["firewall_rules"].append(x)
-        cat = f"{idx} {titles.get(idx, '')}".strip()
+        cat = f"{numbers.get(idx, idx)} {titles.get(idx, '')}".strip()
         if row.get(appdoc.DIRECTION) == "out":
             cat += L(" (ausgehend)", " (outbound)")
         if cat not in entry["categories"]:
@@ -1677,6 +1678,7 @@ def _table_meta(c, catalog) -> dict:
     columns = appdoc.table_columns()
     return {
         "index": c.index,
+        "number": catalog.number(c.index),  # fortlaufend in der Reihenfolge (0.126.0)
         "title": catalog.title(c.index),
         "enforcement": c.enforcement,
         "columns": columns,

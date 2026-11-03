@@ -375,10 +375,12 @@ def _envelope(
         for row in rows:
             place(row)
     tables = []
+    numbers = catalog.numbers()
     for c in catalog.ordered():
         rows = rows_by_table.get(c.index, [])
         columns = visible_columns(rows)
-        tables.append({"index": c.index, "title": catalog.title(c.index),
+        tables.append({"index": c.index, "number": numbers[c.index],
+                       "title": catalog.title(c.index),
                        "enforcement": c.enforcement, "columns": columns,
                        "labels": column_labels(columns), "rows": rows})  # fmt: skip
     tenant = session.get(Tenant, tenant_id)
