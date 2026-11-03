@@ -7,6 +7,27 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.128.0 – 2026-11-03
+
+Rückmeldung des Anwenders 2026-11-03 zur Frage der Zonenübergänge: „Der Schalter ist ok, er muss
+einfach nur die Rückwege zu einer gleichen Zone ein oder ausschalten … es betrifft nur die
+Verbindungen zu gleichen Zonen unterschiedlicher Tenants“, „Eventuell kannst du dies im
+Namensprofil einsetzen im Design“ und „Generell sollte der Schalter aus sein als Default“.
+Abnahme bis 0.127.0 (ohne Einwand).
+
+- **Grundschema (Namensprofil → Design): „verbindet gleiche Zonen“** je Zone des Grundschemas,
+  Vorgabe aus – im Editor als Häkchen, in der Zeichnung `automato_join_same` = ja. Jede Zone
+  erbt es über ihren Zonentyp.
+- **BGP- und Import-Soll aus den Zonen:** eine Zone ist kein Durchgang zwischen zwei Zonen
+  desselben Zonentyps (z. B. die Internet-Firewall zwischen „Transfer Kunde A“ und „Transfer
+  Kunde B“), ausser ihr Zonentyp verbindet gleiche Zonen (z. B. die Zone der Zonen-Firewall).
+  Übergänge zu Zonen anderer Typen bleiben wie bisher (kürzester Weg). Zonen ohne Zonentyp sind
+  nicht betroffen.
+- **Begründung:** die Zonenkette nennt die Zonen, die deshalb nicht dazu gehören („Nicht dazu
+  (nur über eine Zone, die gleiche Zonen nicht verbindet …)“).
+- ADR 0041 Ergänzung (Nr. 15). Tests: `orchestrator/tests/test_bgp_join_same.py`,
+  `e2e/release_0128.spec.ts`, `e2e/release_0127.spec.ts`.
+
 ## 0.127.0 – 2026-11-03
 
 Rückmeldung des Anwenders 2026-11-03 zu 0.126.1: „Ich habe viele Firewall Regeln nach extern,

@@ -48,7 +48,8 @@ test("BGP-Befund: je Netz Zone und entscheidende Regel, Zonenkette (0.127.0)", a
         },
         { kind: "too_open", prefix: "172.16.0.0/12", filter: "PL_FW02", rule: "3 permit 172.16.0.0/12 le 32", zones: ["Tenant B"] },
       ],
-      chain: { home: "DC FW", neighbor: "Lan", network: "10.70.0.0/30", zones: [{ name: "Lan", hops: 1 }] },
+      // not_via (0.128.0): nur über eine Zone erreichbar, die gleiche Zonen nicht verbindet
+      chain: { home: "DC FW", neighbor: "Lan", network: "10.70.0.0/30", zones: [{ name: "Lan", hops: 1 }], not_via: ["Transfer Kunde B"] },
     },
   };
   await page.route(/\/api\/findings(\?|$)/, (route) =>
@@ -60,6 +61,8 @@ test("BGP-Befund: je Netz Zone und entscheidende Regel, Zonenkette (0.127.0)", a
   await expect(why.locator(".bgp-zone-chain")).toContainText("Zone der Firewall: DC FW");
   await expect(why.locator(".bgp-zone-chain")).toContainText("Übergang über 10.70.0.0/30");
   await expect(why.locator(".bgp-zone-chain")).toContainText("Zonen dahinter: Lan (1)");
+  await expect(why.locator(".bgp-not-via")).toContainText("Nicht dazu (nur über eine Zone, die gleiche Zonen nicht verbindet");
+  await expect(why.locator(".bgp-not-via")).toContainText("Transfer Kunde B");
   const missing = why.locator("li[data-kind='missing']");
   await expect(missing).toContainText("10.99.0.0/16");
   await expect(missing).toContainText("Netz der Zone Lan");

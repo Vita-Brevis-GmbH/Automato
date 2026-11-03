@@ -8,7 +8,12 @@ erreicht werden.
   sonst die andere Seite des Uebergangs (Zonenplan, `zone_struct`) mit dem Netz des Nachbarn an
   dieser Firewall, sonst die Nachbarzone hinter dem Interface zum Nachbarn.
 - **Zonen dahinter:** im Zonenplan alle Zonen, deren kuerzester Weg von der Zone der Firewall
-  ueber die Zone am Nachbarn fuehrt (wie `zone_exits`).
+  ueber die Zone am Nachbarn fuehrt (wie `zone_exits`). Seit 0.128.0 (Anwender: „Man muss
+  einstellen können wo die Zonen übergänge bei Dreiecksbeziehungen sein soll“, Entscheid: nur
+  „die Verbindungen zu gleichen Zonen unterschiedlicher Tenants“, Vorgabe aus): eine Zone ist
+  kein Durchgang zwischen zwei Zonen desselben Zonentyps (z. B. die Zone der Internet-Firewall
+  zwischen den Zonen zweier Kunden), ausser ihr Zonentyp hat im Grundschema „verbindet gleiche
+  Zonen“ - die Zonen, die deshalb wegfallen, nennt die Begruendung (`chain.not_via`).
 - **Soll:** ihre Netze (wie erfasst bzw. abgeleitet, groessere umfassen kleinere) als `permit
   … le 32`, die Ausschluesse davor als `deny … le 32` - je Familie eine Prefix-Liste.
 - **Vergleich** mit den gelesenen Eingangsfiltern: Netz der Zonen gesperrt („fehlt im Filter“),
@@ -66,18 +71,6 @@ def _net(value) -> Net | None:
         return ipaddress.ip_network(str(value).strip(), strict=False)
     except ValueError:
         return None
-
-
-def _distances(adj: dict[int, set[int]], start: int) -> dict[int, int]:
-    dist = {start: 0}
-    todo = deque([start])
-    while todo:
-        z = todo.popleft()
-        for n in adj.get(z, ()):
-            if n not in dist:
-                dist[n] = dist[z] + 1
-                todo.append(n)
-    return dist
 
 
 def _collapse(nets: dict[Net, set[str]]) -> dict[Net, set[str]]:
@@ -138,6 +131,16 @@ class ZoneSoll:
         self.zones = {z.id: z for z in self.items}
         self.st = (zone_struct.build(session, tenant_id, self.items)
                    if zone_struct.has_nodes(self.items) else None)  # fmt: skip
+        # 0.128.0: Zonentyp je Zone und Zonen, die gleiche Zonen nicht verbinden (Grundschema)
+        from app.store import zone_types  # spaet: zone_types -> zone_detect -> ...
+
+        schema = zone_types.schema_for(session, tenant_id)
+        self.types = zone_types.types(session, tenant_id, self.items, schema)
+        self.joins = {
+            zid
+            for zid, t in self.types.items()
+            if t and (sz := schema.zone(t)) is not None and sz.joins_same
+        }
         self.adj: dict[int, set[int]] = defaultdict(set)
         if self.st is not None:
             for a, b in self.st.transitions:
@@ -182,18 +185,50 @@ class ZoneSoll:
                     }
         return None, {}
 
-    def behind(self, home: int, neighbor: int) -> list[int]:
+    def _blocked(self, prev: int, cur: int, nxt: int) -> bool:
+        """Durchgang prev -> cur -> nxt gesperrt: prev und nxt haben denselben Zonentyp und cur
+        verbindet gleiche Zonen nicht (0.128.0, Vorgabe)."""
+        if cur in self.joins:
+            return False
+        a, b = self.types.get(prev), self.types.get(nxt)
+        return a is not None and a == b
+
+    def dist(self, start: int, first: int | None = None, strict: bool = True) -> dict[int, int]:
+        """Abstand (Uebergaenge) von `start` je Zone; `first` = erster Schritt fest (ueber diese
+        Zone); `strict=False` ohne die Sperre gleicher Zonen (Vergleich fuer die Begruendung)."""
+        dist = {start: 0}
+        if first is not None:
+            if first not in self.adj.get(start, ()):
+                return dist
+            dist[first] = 1
+            todo = deque([(first, start)])
+        else:
+            todo = deque([(start, None)])
+        seen = set(todo)
+        while todo:
+            cur, prev = todo.popleft()
+            for nxt in self.adj.get(cur, ()):
+                if nxt == prev or (nxt, cur) in seen:
+                    continue
+                if strict and prev is not None and self._blocked(prev, cur, nxt):
+                    continue
+                seen.add((nxt, cur))
+                dist.setdefault(nxt, dist[cur] + 1)
+                todo.append((nxt, cur))
+        return dist
+
+    def behind(self, home: int, neighbor: int, strict: bool = True) -> list[int]:
         """Zonen, deren kuerzester Weg von `home` ueber `neighbor` fuehrt (inkl. `neighbor`)."""
-        dh = _distances(self.adj, home)
-        dn = _distances(self.adj, neighbor)
-        adjacent = dh.get(neighbor) == 1
-        out = []
-        for z in self.zones:
-            if z == home or z not in dn:
-                continue
-            if (dh.get(z) == dn[z] + 1) if adjacent else (dn[z] < dh.get(z, dn[z] + 1)):
-                out.append(z)
-        return sorted(out, key=lambda z: (dn[z], self.zones[z].name.lower()))
+        dh = self.dist(home, strict=strict)
+        adjacent = neighbor in self.adj.get(home, ())
+        if adjacent:  # kuerzester Weg mit dem ersten Schritt zum Nachbarn
+            via = self.dist(home, neighbor, strict=strict)
+            out = [z for z in self.zones if z != home and z in via and via[z] == dh.get(z)]
+        else:
+            via = self.dist(neighbor, strict=strict)
+            out = [z for z in self.zones
+                   if z != home and z in via and via[z] < dh.get(z, via[z] + 1)]  # fmt: skip
+        return sorted(out, key=lambda z: (via[z], self.zones[z].name.lower()))
 
     def nets(self, zid: int) -> tuple[dict[Net, set[str]], list[Net]]:
         """Netze der Zone (wie erfasst, dazu die abgeleiteten, die keines umfasst) und ihre
@@ -277,12 +312,18 @@ class ZoneSoll:
         # Begruendung der Zonen (0.127.0): Zone am Nachbarn woher, je Zone dahinter der Abstand
         # (Uebergaenge im Zonenplan) von der Zone der Firewall, diesseits vom Nachbarn aus
         start = neighbor if out else home
-        dist = _distances(self.adj, start)
+        dist = self.dist(start)
+        # Zonen, die nur ohne die Sperre gleicher Zonen dazu gehoerten (0.128.0)
+        wide = (self.behind(neighbor, home, strict=False) if out
+                else self.behind(home, neighbor, strict=False))  # fmt: skip
+        dropped = [z for z in wide if z not in set(zones)]
         chain = {
             "home": self.zones[home].name,
             "neighbor": self.zones[neighbor].name,
             **how,
             "zones": [{"name": self.zones[z].name, "hops": dist.get(z)} for z in zones],
+            # 0.128.0: ueber eine Zone, die gleiche Zonen nicht verbindet, nicht erreicht
+            "not_via": [self.zones[z].name for z in dropped],
         }
         return {**base, "neighbor_zone": self._zone(neighbor),
                 "zones": [self._zone(z) for z in zones], "lists": lists, "public_only": public_only,

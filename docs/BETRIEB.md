@@ -1830,6 +1830,12 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
       der Zone selbst. Zonen eines Kunden passen ohne Name bzw. Kürzel des Kunden auf die
       Vorlage (kein Hinweis „ausserhalb des Schemas“); die Absichten der Vorlage gelten nur
       zwischen Zonen desselben Kunden (bzw. mit geteilten Zonen).
+    - **Verbindet gleiche Zonen** (seit 0.128.0): `automato_join_same` = ja – im Editor das
+      Häkchen „verbindet gleiche Zonen“, Vorgabe aus. Für das Soll der BGP- bzw. Import-Filter aus
+      den Zonen ist eine Zone sonst kein Durchgang zwischen zwei Zonen desselben Zonentyps (z. B.
+      die Internet-Firewall zwischen den Transferzonen zweier Kunden); setzen für die Zone, die
+      Kunden bzw. Tenants wirklich verbindet (Zonen-Firewall). Die Zonenkette im BGP-Nachbarn und
+      im Befund nennt die Zonen, die deshalb nicht dazu gehören.
     - Pfeil = Übergang: Beschriftung „erlaubt“, „eingeschränkt“ bzw. „gesperrt“ (oder
       `automato_intent`), sonst gestrichelt = eingeschränkt, rote Linie = gesperrt, sonst
       erlaubt; Linie ohne bzw. mit zwei Pfeilen gilt in beide Richtungen.

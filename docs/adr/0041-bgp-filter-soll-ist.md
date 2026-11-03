@@ -137,5 +137,18 @@ Anwender 2026-10-30 („go 116“, Roadmap Version 1 Nr. 3 Rest):
     EPG mit „Import Route Control Subnet“ (und aggregate, wo zusammengefasst) – Automato schreibt
     nichts ins ACI (ADR 0010).
 
+## Ergänzung 0.128.0 (2026-11-03)
+
+15. **Gleiche Zonen nicht über eine Zone dazwischen:** Anwender: „Eine Internet Firewall sieht
+    zwar vielleicht alle Tenants, soll sie aber nicht mit einander verbinden“, Entscheid: der
+    Schalter betrifft nur „die Verbindungen zu gleichen Zonen unterschiedlicher Tenants“, im
+    Grundschema des Namensprofils, Vorgabe aus. Für `behind` (Zonen dahinter bzw. diesseits, Stufe
+    2/3 und ACI Import) ist ein Weg A → Z → B gesperrt, wenn A und B denselben Zonentyp haben und
+    der Zonentyp von Z im Grundschema nicht „verbindet gleiche Zonen“ (`automato_join_same`) hat.
+    Kürzeste Wege mit dieser Sperre (Breitensuche über Paare Zone/Vorgänger); Übergänge zu Zonen
+    anderer Typen und Zonen ohne Zonentyp wie bisher. Die Zonen, die nur ohne Sperre dazu
+    gehörten, stehen in der Begründung (`chain.not_via`). Konfiguration statt Code: ohne Häkchen
+    trennt jede Zone gleiche Zonen – die verbindende (Zonen-Firewall) setzt der Anwender.
+
 Offen: Vergleich im Verlauf des Routings (Änderungen der Filter über die Zeit), Export-Route-Control
 gegen die Zonen diesseits (heute nur gelesen und gezeigt).

@@ -1549,6 +1549,7 @@ export interface SchemaZone {
   description: string | null;
   geometry: [number, number, number, number] | null;
   per_customer?: boolean; // Vorlage je Kunde (0.82.0, `automato_customer`)
+  joins_same?: boolean; // verbindet gleiche Zonen (0.128.0, `automato_join_same`, Vorgabe aus)
 }
 export interface SchemaLink {
   src: string;
@@ -1601,6 +1602,7 @@ export interface SchemaZoneEdit {
   geometry: [number, number, number, number] | null;
   previous: string | null; // bisheriger Name (Umbenennen)
   per_customer?: boolean; // Vorlage je Kunde (0.82.0)
+  joins_same?: boolean; // verbindet gleiche Zonen (0.128.0)
 }
 export interface SchemaLinkEdit {
   src: string;
@@ -3034,6 +3036,7 @@ export interface BgpZoneChain {
   network?: string;
   interface?: string;
   zones: { name: string; hops: number | null }[];
+  not_via?: string[]; // 0.128.0: nur über eine Zone erreichbar, die gleiche Zonen nicht verbindet
 }
 export interface BgpZoneList {
   family: number;

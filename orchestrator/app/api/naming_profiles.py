@@ -205,6 +205,7 @@ class SchemaZoneIn(BaseModel):
     geometry: list[float] | None = Field(default=None, max_length=4)
     previous: str | None = Field(default=None, max_length=200)  # bisheriger Name (Umbenennen)
     per_customer: bool = False  # Vorlage je Kunde (0.82.0)
+    joins_same: bool = False  # verbindet gleiche Zonen (0.128.0, Vorgabe aus)
 
 
 class SchemaLinkIn(BaseModel):

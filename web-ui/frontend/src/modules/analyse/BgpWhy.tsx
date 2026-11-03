@@ -93,6 +93,15 @@ export function ZoneChainLine({ c, out }: { c: BgpZoneChain; out: boolean }) {
     <div className="faint bgp-zone-chain" style={{ margin: "4px 0" }}>
       {L("Zone der Firewall", "Zone of the firewall")}: <b>{c.home}</b> · {L("Zone am Nachbarn", "Zone at the neighbor")}: <b>{c.neighbor}</b>
       {via && ` (${via})`} · {out ? L("Zonen diesseits", "Zones on this side") : L("Zonen dahinter", "Zones behind")}: {zones}
+      {(c.not_via ?? []).length > 0 && (
+        <div className="bgp-not-via">
+          {L(
+            "Nicht dazu (nur über eine Zone, die gleiche Zonen nicht verbindet – Grundschema „verbindet gleiche Zonen“): ",
+            "Not included (only via a zone that does not connect equal zones – base schema “connects equal zones”): ",
+          )}
+          {(c.not_via ?? []).join(", ")}
+        </div>
+      )}
       <div>
         {out
           ? L(
