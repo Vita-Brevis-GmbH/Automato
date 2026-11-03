@@ -411,7 +411,7 @@ export default function ApplicationDocView({
         <button
           className="btn btn-ghost btn-sm"
           onClick={onManage}
-          title={L("Mitglieder (APs, EPGs, Server) ansehen und pflegen", "View and maintain members (APs, EPGs, servers)")}
+          title={L("Mitglieder (APs, EPGs, Server, VMs) ansehen und pflegen", "View and maintain members (APs, EPGs, servers, VMs)")}
         >
           {L("Mitglieder", "Members")}
         </button>

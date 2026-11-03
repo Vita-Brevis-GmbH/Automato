@@ -51,7 +51,9 @@ from app.store import naming_profiles as profile_store
 
 router = APIRouter(prefix="/applications", tags=["applications"])
 
-MemberKind = Literal["ap", "epg", "host", "rule", "norule"]  # rule/norule seit 0.60.0
+MemberKind = Literal[
+    "ap", "epg", "host", "vm", "rule", "norule"
+]  # rule/norule seit 0.60.0, vm 0.124.0
 Criticality = Literal["low", "medium", "high", "critical"]
 Purpose = Literal["dev", "test", "prod"]
 
@@ -324,14 +326,21 @@ class HideIn(BaseModel):
     reason: str = Field(min_length=5, max_length=1000)
 
 
-def _site(session: Session, site_id: int | None) -> SiteRef | None:
+def _site(session: Session, site_id: int | None,
+          index: sites.SiteIndex | None = None) -> SiteRef | None:  # fmt: skip
     site = session.get(Site, site_id) if site_id else None
-    ref = sites.SiteIndex(session, site.tenant_id).ref(site) if site else None
+    if site is None:
+        return None
+    ref = (index or sites.SiteIndex(session, site.tenant_id)).ref(site)
     return SiteRef(**ref) if ref else None
 
 
 def _out(session: Session, app: Application, resolver: store.Resolver,
-         vms: store.VmCounter | None = None) -> ApplicationOut:  # fmt: skip
+         vms: store.VmCounter | None = None,
+         site_index: sites.SiteIndex | None = None) -> ApplicationOut:  # fmt: skip
+    systems, vm_count = store.counts(
+        session, app, resolver, vms or store.VmCounter(session, app.tenant_id)
+    )
     return ApplicationOut(
         id=app.id,
         tenant_id=app.tenant_id,
@@ -342,18 +351,19 @@ def _out(session: Session, app: Application, resolver: store.Resolver,
         code=app.code,
         owner=app.owner,
         criticality=app.criticality,
-        site=_site(session, app.site_id),
+        site=_site(session, app.site_id, site_index),
         description=app.description,
         infrastructure=bool(app.infrastructure),
         member_count=len(app.members),
-        system_count=store.system_count(session, app, resolver),
-        vm_count=(vms or store.VmCounter(session, app.tenant_id)).count(app, resolver),
+        system_count=systems,
+        vm_count=vm_count,
     )
 
 
 def _detail(session: Session, app: Application, editable: bool | None = None
             ) -> ApplicationDetailOut:  # fmt: skip
     res = store.Resolver(session, app.tenant_id)
+    res.prefetch((m.kind, m.ref) for m in app.members)
     members = [
         MemberOut(
             id=m.id,
@@ -417,13 +427,22 @@ def list_applications(
     owner = _owner(session, principal, tenant_id)
     resolvers: dict[int, store.Resolver] = {}
     counters: dict[int, store.VmCounter] = {}
+    site_indexes: dict[int, sites.SiteIndex] = {}
+    apps = [a for a in store.list_applications(session, tenant_id) if mine is None or mine(a)]
+    # 0.124.0: Server, Regeln und VMs aller Mitglieder je Mandant gebuendelt (vorher je Mitglied
+    # eine Abfrage - Anwender: „Das Laden der Applikationen extrem langsam“)
+    for tid in {a.tenant_id for a in apps}:
+        resolvers[tid] = store.Resolver(session, tid)
+        resolvers[tid].prefetch((m.kind, m.ref) for a in apps if a.tenant_id == tid
+                                for m in a.members)  # fmt: skip
     out = []
-    for app in store.list_applications(session, tenant_id):
-        if mine is not None and not mine(app):
-            continue
-        res = resolvers.setdefault(app.tenant_id, store.Resolver(session, app.tenant_id))
+    for app in apps:
+        res = resolvers[app.tenant_id]
         vms = counters.setdefault(app.tenant_id, store.VmCounter(session, app.tenant_id))
-        row = _out(session, app, res, vms)
+        if app.tenant_id not in site_indexes:  # einmal je Mandant (nicht je Applikation)
+            site_indexes[app.tenant_id] = sites.SiteIndex(session, app.tenant_id)
+        index = site_indexes[app.tenant_id]
+        row = _out(session, app, res, vms, index)
         if principal.is_customer:  # feinere Rollen: darf er sie pflegen?
             row.editable = owner is not None and owner.application(app, res)
         out.append(row)
@@ -588,7 +607,7 @@ def list_candidates(
 ):
     """Moegliche Mitglieder (APs, EPGs, Server) mit Projektnummer und bestehender Zuordnung."""
     tid = _require_tenant(principal, tenant_id)
-    items = store.candidates(session, tid)
+    items = store.candidates(session, tid, kinds=(kind,) if kind else None)
     if kind:
         items = [c for c in items if c.kind == kind]
     if q:

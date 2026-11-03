@@ -682,7 +682,8 @@ export interface DocHide {
 }
 
 // Applikationen (ADR 0012): Mitglieder AP (`Tenant/AP`), EPG (DN) und Server (Objektname)
-export type MemberKind = "ap" | "epg" | "host" | "rule" | "norule"; // rule/norule: Regel zugeordnet bzw. ausgeschlossen (0.60.0)
+// rule/norule: Regel zugeordnet bzw. ausgeschlossen (0.60.0); vm: VM aus dem vCenter per Name (0.124.0)
+export type MemberKind = "ap" | "epg" | "host" | "vm" | "rule" | "norule";
 export type Criticality = "low" | "medium" | "high" | "critical";
 export type Purpose = "dev" | "test" | "prod";
 export interface SiteRef {

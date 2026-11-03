@@ -2,7 +2,8 @@
 
 Mitglieder sind Text-Verweise (siehe `app.models.application`). Aufgeloest wird gegen den
 aktuellen Stand: ein Application Profile (`<ACI-Tenant>/<AP>`) umfasst alle seine EPGs, eine
-EPG steht per DN, ein Server per Name des Host-Objekts. Was nicht mehr gelesen wird, bleibt
+EPG steht per DN, ein Server per Name des Host-Objekts, eine VM (seit 0.124.0) per Name aus dem
+vCenter (alle gelesenen VMs dieses Namens, ohne Vorlagen). Was nicht mehr gelesen wird, bleibt
 als Mitglied stehen und wird als „nicht gefunden" gezeigt.
 
 Vorschlaege (ADR 0004 E4, ~90 % automatisch): die 3-stellige Projektnummer aus `AP_<nr>`
@@ -21,7 +22,7 @@ from datetime import UTC, datetime
 from functools import cached_property
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app import naming
 from app.i18n import L, german
@@ -110,11 +111,13 @@ class Resolved:
     epgs: list[Epg] = field(default_factory=list)
     hosts: list[NetworkObject] = field(default_factory=list)
     rules: list[Rule] = field(default_factory=list)
+    vms: list[Vm] = field(default_factory=list)  # Mitglied VM (0.124.0)
 
 
 # Regeln direkt zuordnen bzw. ausschliessen (0.60.0): Verweis `<Quellsystem>|<VDOM>|<ID>` -
 # Regeln werden je Lauf ersetzt, Quellsystem, VDOM und Policy-ID bzw. DN des Contracts bleiben
 RULE_KINDS = ("rule", "norule")
+_CHUNK = 500  # Werte je IN-Abfrage beim Vorladen
 
 
 def rule_ref(rule: Rule) -> str:
@@ -148,6 +151,77 @@ class Resolver:
             if e.ap:
                 self.by_ap[ap_ref(e.aci_tenant, e.ap)].append(e)
         self._hosts: dict[str, NetworkObject | None] = {}
+        self._rules: dict[str, Rule | None] = {}
+        self._vms: dict[str, list[Vm]] = {}
+
+    def prefetch(self, members) -> None:
+        """Server, Regeln und VMs vieler Mitglieder (`(kind, ref)`) gebuendelt laden statt je
+        Mitglied eine Abfrage (0.124.0, Anwender: „Das Laden der Applikationen extrem
+        langsam“ - die Liste fragte je Mitglied einzeln, Regeln sogar doppelt)."""
+        hosts, rules, vms = set(), set(), set()
+        for kind, ref in members:
+            if kind == "host" and ref not in self._hosts:
+                hosts.add(ref)
+            elif kind in RULE_KINDS and ref not in self._rules:
+                rules.add(ref)
+            elif kind == "vm" and ref not in self._vms:
+                vms.add(ref)
+        names = sorted(hosts)
+        for i in range(0, len(names), _CHUNK):
+            for obj in self.session.scalars(
+                select(NetworkObject)
+                .where(
+                    NetworkObject.tenant_id == self.tenant_id,
+                    NetworkObject.object_class == ObjectClass.HOST,
+                    NetworkObject.name.in_(names[i : i + _CHUNK]),
+                )
+                .order_by(NetworkObject.id)
+            ):
+                self._hosts.setdefault(obj.name, obj)
+        self._hosts.update((n, None) for n in hosts if n not in self._hosts)
+        self._prefetch_rules(rules)
+        self._prefetch_vms(vms)
+
+    def _prefetch_rules(self, refs: set[str]) -> None:
+        wanted: dict[int, set[str]] = defaultdict(set)  # Quellsystem -> Policy-IDs
+        for ref in refs:
+            sid, _, rest = ref.partition("|")
+            ext = rest.partition("|")[2]
+            if sid.isdigit() and ext:
+                wanted[int(sid)].add(ext)
+        found: dict[str, Rule] = {}
+        for sid, exts in wanted.items():
+            ids = sorted(exts)
+            for i in range(0, len(ids), _CHUNK):
+                for rule in self.session.scalars(
+                    select(Rule).where(
+                        Rule.tenant_id == self.tenant_id,
+                        Rule.source_system_id == sid,
+                        Rule.external_id.in_(ids[i : i + _CHUNK]),
+                    )
+                ):
+                    key = rule_ref(rule)
+                    if key not in found or rule.id > found[key].id:  # die neuste
+                        found[key] = rule
+        for ref in refs:
+            self._rules[ref] = found.get(ref)
+
+    def _prefetch_vms(self, names: set[str]) -> None:
+        ordered = sorted(names)
+        found: dict[str, list[Vm]] = defaultdict(list)
+        for i in range(0, len(ordered), _CHUNK):
+            for vm in self.session.scalars(
+                select(Vm)
+                .where(
+                    Vm.tenant_id == self.tenant_id,
+                    Vm.template.is_(False),
+                    Vm.name.in_(ordered[i : i + _CHUNK]),
+                )
+                .order_by(Vm.id)
+            ):
+                found[vm.name].append(vm)
+        for name in names:
+            self._vms[name] = found.get(name, [])
 
     def host(self, name: str) -> NetworkObject | None:
         if name not in self._hosts:
@@ -159,6 +233,12 @@ class Resolver:
                 )
             ).first()
         return self._hosts[name]
+
+    def vms(self, name: str) -> list[Vm]:
+        """Gelesene VMs dieses Namens (alle vCenter des Mandanten, ohne Vorlagen)."""
+        if name not in self._vms:
+            self._prefetch_vms({name})
+        return self._vms[name]
 
     def resolve(self, kind: str, ref: str) -> Resolved:
         if kind == "ap":
@@ -174,6 +254,9 @@ class Resolver:
         if kind == "host":
             obj = self.host(ref)
             return Resolved(label=ref, exists=obj is not None, hosts=[obj] if obj else [])
+        if kind == "vm":
+            vms = self.vms(ref)
+            return Resolved(label=ref, exists=bool(vms), vms=list(vms))
         if kind in RULE_KINDS:
             rule = self.rule(ref)
             if rule is None:
@@ -190,6 +273,12 @@ class Resolver:
 
     def rule(self, ref: str) -> Rule | None:
         """Aktuelle Regel zu `<Quellsystem>|<VDOM>|<ID>` (die neuste, falls mehrere)."""
+        if ref in self._rules:
+            return self._rules[ref]
+        self._rules[ref] = self._rule(ref)
+        return self._rules[ref]
+
+    def _rule(self, ref: str) -> Rule | None:
         sid, _, rest = ref.partition("|")
         vdom, _, ext = rest.partition("|")
         if not sid.isdigit() or not ext:
@@ -222,13 +311,18 @@ def _assignments(session: Session, tenant_id: int) -> dict[tuple[str, str], list
 
 
 def candidates(
-    session: Session, tenant_id: int, resolver: Resolver | None = None
+    session: Session,
+    tenant_id: int,
+    resolver: Resolver | None = None,
+    kinds: tuple[str, ...] | None = None,
 ) -> list[Candidate]:
-    """Alles, was Mitglied werden kann: APs, EPGs und Server des Mandanten."""
+    """Alles, was Mitglied werden kann: APs, EPGs, Server und VMs (0.124.0) des Mandanten;
+    `kinds` = nur diese Arten (schneller, z. B. die Auswahl einer Art im Dialog)."""
     res = resolver or Resolver(session, tenant_id)
     assigned = _assignments(session, tenant_id)
     out: list[Candidate] = []
-    for ref, epgs in sorted(res.by_ap.items()):
+    want = set(kinds) if kinds else {"ap", "epg", "host", "vm"}
+    for ref, epgs in sorted(res.by_ap.items()) if "ap" in want else ():
         ap = epgs[0].ap
         out.append(
             Candidate(
@@ -239,7 +333,7 @@ def candidates(
                 project=project_number("ap", ap),
             )
         )
-    for e in res.epgs:
+    for e in res.epgs if "epg" in want else ():
         out.append(
             Candidate(
                 kind="epg",
@@ -256,7 +350,7 @@ def candidates(
             NetworkObject.object_class == ObjectClass.HOST,
         )
         .order_by(NetworkObject.name)
-    )
+    ) if "host" in want else ()  # fmt: skip
     for name, value in hosts:
         out.append(
             Candidate(
@@ -267,8 +361,39 @@ def candidates(
                 project=project_number("host", name),
             )
         )
+    if "vm" in want:
+        out += _vm_candidates(session, tenant_id)
     for c in out:
         c.applications = sorted(assigned.get((c.kind, c.ref), []))
+    return out
+
+
+def _vm_candidates(session: Session, tenant_id: int) -> list[Candidate]:
+    """VMs aus dem vCenter je Name (gleicher Name in mehreren vCentern = ein Kandidat) mit
+    IPs und Cluster als Hinweis; ohne Vorlagen."""
+    ips: dict[int, list[str]] = defaultdict(list)
+    for vid, ip in session.execute(
+        select(VmIp.vm_id, VmIp.ip).where(VmIp.tenant_id == tenant_id).order_by(VmIp.id)
+    ):
+        ips[vid].append(ip)
+    by_name: dict[str, list[tuple[int, str | None]]] = defaultdict(list)
+    for vid, name, cluster in session.execute(
+        select(Vm.id, Vm.name, Vm.cluster)
+        .where(Vm.tenant_id == tenant_id, Vm.template.is_(False))
+        .order_by(Vm.name, Vm.id)
+    ):
+        by_name[name].append((vid, cluster))
+    out = []
+    for name, vms in by_name.items():
+        addrs = list(dict.fromkeys(ip for vid, _c in vms for ip in ips.get(vid, [])))
+        clusters = sorted({c for _v, c in vms if c})
+        detail = ", ".join(addrs[:3]) + (" …" if len(addrs) > 3 else "")
+        if clusters:
+            detail += (" · " if detail else "") + ", ".join(clusters)
+        if len(vms) > 1:
+            detail += (" · " if detail else "") + f"{len(vms)} VMs"
+        out.append(Candidate(kind="vm", ref=name, label=name, detail=detail or None,
+                             project=project_number("host", name)))  # fmt: skip
     return out
 
 
@@ -294,7 +419,7 @@ def suggestions(session: Session, tenant_id: int) -> list[dict]:
     Server ohne Tenant gehoeren zur Gruppe ihrer Nummer, wenn es genau eine gibt, sonst eine
     eigene Gruppe. Schluessel `key` = `<Tenant>|<Nummer>` bzw. die Nummer."""
     groups: dict[tuple[str | None, str], list[Candidate]] = defaultdict(list)
-    for c in candidates(session, tenant_id):
+    for c in candidates(session, tenant_id, kinds=("ap", "host")):
         if c.kind in ("ap", "host") and c.project and not c.applications:
             groups[(_tenant_of(c), c.project)].append(c)
     if not groups:
@@ -345,7 +470,9 @@ def get(session: Session, application_id: int) -> Application | None:
 
 
 def list_applications(session: Session, tenant_id: int | None) -> list[Application]:
-    stmt = select(Application).order_by(Application.name)
+    """Applikationen samt Mitgliedern (eine Abfrage statt je Applikation, 0.124.0)."""
+    stmt = select(Application).options(selectinload(Application.members))
+    stmt = stmt.order_by(Application.name)
     if tenant_id is not None:
         stmt = stmt.where(Application.tenant_id == tenant_id)
     return list(session.scalars(stmt))
@@ -437,16 +564,38 @@ def accept_suggestion(
 def resolved_members(session: Session, app: Application, resolver: Resolver | None = None):
     res = resolver or Resolver(session, app.tenant_id)
     out = []
+    res.prefetch((m.kind, m.ref) for m in app.members)
     for m in app.members:
         r = res.resolve(m.kind, m.ref)
         systems = [h.name for h in r.hosts] + [inventory_label(e) for e in r.epgs]
+        systems += [v.name for v in r.vms]  # je VM (gleicher Name in mehreren vCentern)
         out.append((m, r, systems))
     return out
 
 
 def system_count(session: Session, app: Application, resolver: Resolver | None = None) -> int:
+    res = resolver or Resolver(session, app.tenant_id)
+    hosts, epgs = _systems(session, app, res)
+    return len(hosts) + len(epgs) + len(direct_vms(app, res))
+
+
+def counts(session: Session, app: Application, resolver: Resolver,
+           counter: "VmCounter") -> tuple[int, int]:  # fmt: skip
+    """(Systeme, VMs) einer Applikation fuer die Liste - Mitglieder einmal aufgeloest."""
     hosts, epgs = _systems(session, app, resolver)
-    return len(hosts) + len(epgs)
+    direct = direct_vms(app, resolver)
+    return len(hosts) + len(epgs) + len(direct), counter.count(app, resolver, (hosts, epgs))
+
+
+def direct_vms(app: Application, resolver: Resolver) -> dict[int, tuple[Vm, str]]:
+    """VMs, die als Mitglied „VM“ dazugehoeren (0.124.0), mit dem Mitglied als Grund."""
+    out: dict[int, tuple[Vm, str]] = {}
+    for m in app.members:
+        if m.kind != "vm":
+            continue
+        for vm in resolver.resolve(m.kind, m.ref).vms:
+            out.setdefault(vm.id, (vm, f"{kind_label(m.kind)} {m.ref}"))
+    return out
 
 
 class VmCounter:
@@ -479,10 +628,11 @@ class VmCounter:
             by_ip[ip].add(vid)
         return by_epg, by_ip
 
-    def count(self, app: Application, resolver: Resolver | None = None) -> int:
-        hosts, epgs = _systems(self.session, app, resolver)
+    def count(self, app: Application, resolver: Resolver | None = None, systems=None) -> int:
+        res = resolver or Resolver(self.session, app.tenant_id)
+        hosts, epgs = systems or _systems(self.session, app, res)
         by_epg, by_ip = self._index
-        vms: set[int] = set()
+        vms: set[int] = set(direct_vms(app, res))
         for e in epgs:
             vms |= by_epg.get(e.id, set())
         for h in hosts:
@@ -519,9 +669,12 @@ def systems_by_application(
     ):
         by_ip[ip].add(vid)
     out: dict[int, tuple[set[str], set[str]]] = {}
+    res.prefetch((m.kind, m.ref) for app in apps for m in app.members)
     for app in apps:
         hosts, epgs = _systems(session, app, res)
-        vms: set[int] = set()
+        direct = direct_vms(app, res)
+        names.update((vid, vm.name) for vid, (vm, _w) in direct.items())
+        vms: set[int] = set(direct)
         for e in epgs:
             vms |= by_epg.get(e.id, set())
         ips = {ip for h in hosts if (ip := _ip(h.value))}
@@ -543,13 +696,15 @@ def _systems(session: Session, app: Application, resolver: Resolver | None = Non
     hosts: dict[int, NetworkObject] = {}
     epgs: dict[int, Epg] = {}
     for m in app.members:
+        if m.kind in RULE_KINDS or m.kind == "vm":  # tragen keine Server/EPGs bei
+            continue
         r = res.resolve(m.kind, m.ref)
         hosts.update((h.id, h) for h in r.hosts)
         epgs.update((e.id, e) for e in r.epgs)
     return list(hosts.values()), list(epgs.values())
 
 
-KIND_LABEL = {"ap": "AP", "epg": "EPG", "host": "Server", "rule": "Regel",
+KIND_LABEL = {"ap": "AP", "epg": "EPG", "host": "Server", "vm": "VM", "rule": "Regel",
               "norule": "ohne Regel"}  # fmt: skip
 _KIND_LABEL_EN = {"rule": "Rule", "norule": "excluded rule"}  # Anzeige Englisch (ADR 0028)
 
@@ -569,6 +724,7 @@ def _origins(session: Session, app: Application, res: Resolver):
     """Server und EPGs der Applikation mit dem Mitglied, ueber das sie dazugehoeren."""
     hosts: dict[int, tuple[NetworkObject, str]] = {}
     epgs: dict[int, tuple[Epg, str]] = {}
+    res.prefetch((m.kind, m.ref) for m in app.members)
     for m in app.members:
         r = res.resolve(m.kind, m.ref)
         why = f"{kind_label(m.kind)} {r.label}"
@@ -584,15 +740,24 @@ def _ip(value: str | None) -> str | None:
 
 
 def _app_vms(
-    session: Session, tenant_id: int, epgs: dict, hosts: dict, groups: virtual.PortgroupIndex
+    session: Session,
+    tenant_id: int,
+    epgs: dict,
+    hosts: dict,
+    groups: virtual.PortgroupIndex,
+    direct: dict[int, tuple[Vm, str]] | None = None,
 ) -> dict[int, dict]:
-    """VMs der Applikation: an den Portgruppen ihrer EPGs und hinter ihren Servern (gleiche IP),
-    je VM mit den Gruenden (Portgruppe -> EPG bzw. IP = Server). Die Portgruppe einer NIC ueber
-    Name, Switch und VLAN (`virtual.PortgroupIndex`, Dev-Befund 0.43.0)."""
+    """VMs der Applikation: an den Portgruppen ihrer EPGs, hinter ihren Servern (gleiche IP) und
+    als Mitglied „VM“ (`direct`, 0.124.0), je VM mit den Gruenden (Portgruppe -> EPG, IP = Server
+    bzw. Mitglied). Die Portgruppe einer NIC ueber Name, Switch und VLAN
+    (`virtual.PortgroupIndex`, Dev-Befund 0.43.0)."""
     out: dict[int, dict] = {}
 
     def entry(vm: Vm) -> dict:
         return out.setdefault(vm.id, {"vm": vm, "epg_ids": set(), "hosts": {}, "why": []})
+
+    for vm, why in (direct or {}).values():
+        entry(vm)["why"].append(why)
 
     names = {pg.name for pg in groups.groups if pg.epg_id in epgs}
     if names:
@@ -726,7 +891,7 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
     ctx = references.context(session, tid)
     site_index = sites.SiteIndex(session, tid)
     portgroups = virtual.PortgroupIndex.load(session, tid)
-    vms = _app_vms(session, tid, epgs, hosts, portgroups)
+    vms = _app_vms(session, tid, epgs, hosts, portgroups, direct_vms(app, res))
 
     # VRFs der Applikation: fuer Systeme ohne Portgruppe zaehlen gleiche IPs in anderen
     # ACI-Tenants/VRFs nicht (Dev-Befund 0.42.2, appdoc.fabric_epgs)
@@ -1540,7 +1705,7 @@ def footprint(session: Session, app: Application, res: Resolver,
     hosts, epgs = _origins(session, app, res)
     out = Footprint(epgs=set(epgs))
     out.ips |= {ip for h, _w in hosts.values() if (ip := _ip(h.value))}
-    for e in _app_vms(session, app.tenant_id, epgs, hosts, groups).values():
+    for e in _app_vms(session, app.tenant_id, epgs, hosts, groups, direct_vms(app, res)).values():
         out.ips |= {ip for n in e["vm"].nics for ip in n.ips or []}
     if epgs:
         stmt = select(EpgSubnet.ip).where(

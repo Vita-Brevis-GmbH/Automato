@@ -45,6 +45,7 @@ const KIND: Record<MemberKind, string> = {
   ap: "AP",
   epg: "EPG",
   host: "Server",
+  vm: "VM",
   rule: L("Regel", "Rule"),
   norule: L("ohne Regel", "excluded rule"),
 };
@@ -634,8 +635,8 @@ function AppDrawer({
           {d.members.length === 0 ? (
             <div className="faint">
               {L(
-                "Noch keine Mitglieder – Application Profile, EPG oder Server hinzufügen.",
-                "No members yet – add an Application Profile, EPG or server.",
+                "Noch keine Mitglieder – Application Profile, EPG, Server oder einzelne VMs hinzufügen.",
+                "No members yet – add an Application Profile, EPG, server or individual VMs.",
               )}
             </div>
           ) : (
@@ -661,6 +662,11 @@ function AppDrawer({
                       )}
                       {m.kind === "ap" && m.systems.length > 0 && (
                         <div className="faint">{m.systems.map((s) => s.split("/").pop()).join(", ")}</div>
+                      )}
+                      {m.kind === "vm" && m.systems.length > 1 && (
+                        <div className="faint">
+                          {L(`${m.systems.length} VMs dieses Namens`, `${m.systems.length} VMs with this name`)}
+                        </div>
                       )}
                     </td>
                     <td style={{ width: 30 }}>
@@ -792,6 +798,7 @@ function MemberPicker({
           <option value="ap">Application Profiles</option>
           <option value="epg">EPGs</option>
           <option value="host">Server</option>
+          <option value="vm">{L("VMs (vCenter)", "VMs (vCenter)")}</option>
         </select>
         <div className="search">
           <span className="ico">

@@ -7,6 +7,26 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.124.0 – 2026-11-03
+
+Rückmeldung des Anwenders 2026-11-03: „Das Laden der Applikationen extrem langsam“ und „Bei den
+Applikationen kann ich nicht einzelne VMs zufügen, dies muss möglich sein“. Abnahme bis 0.123.0.
+
+- **Applikationen laden schnell:** die Liste fragte je Mitglied einzeln nach (Server, Regeln – diese
+  sogar zweimal, obwohl die Liste sie nicht braucht), lud die Mitglieder und die Standorte je
+  Applikation. Jetzt gebündelt: gemessen mit 400 Applikationen, 4000 Servern und 3000 VMs von
+  7406 auf 17 Datenbankabfragen und von 5,4 s auf 0,5 s; die Zahl der Abfragen hängt nicht mehr
+  von der Zahl der Applikationen ab. Auch Detail, Doku und NetBox-Sync laden die Mitglieder
+  gebündelt; die Auswahl im Mitglieder-Dialog liest nur die gewählte Art.
+- **Einzelne VMs als Mitglied:** neue Art „VM“ im Mitglieder-Dialog („VMs (vCenter)“, Suche nach
+  Name, IP, Cluster; mit Projektnummer und Hinweis „zugeordnet“). Die VM zählt per Name (gleicher
+  Name in mehreren vCentern = alle, ohne Vorlagen) und steht in der Doku als System mit dem Grund
+  „VM <Name>“ – mit IPs, Regeln, EPGs und Portgruppen wie eine VM über EPG bzw. Server; sie zählt
+  in „Systeme“ und „VMs“ der Liste, in den Verbindungen, Abhängigkeiten und im NetBox-Sync der
+  Applikations-Tags. Nicht mehr gelesene VMs bleiben als Mitglied „nicht mehr gelesen“ stehen.
+- Tests: `orchestrator/tests/test_app_vm_members.py` (auch: Zahl der Abfragen der Liste fest),
+  `e2e/release_0124.spec.ts`.
+
 ## 0.123.0 – 2026-11-03
 
 Auftrag des Anwenders 2026-11-03 („go AD DNS“; vorher: „DNS Geschichten bei dem AD abholen“,
