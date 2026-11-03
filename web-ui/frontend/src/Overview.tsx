@@ -17,7 +17,6 @@ import type { Stats, View, ViewParams } from "./App";
 import type { Me } from "./auth";
 import CollectDialog, { CollectAllDialog } from "./CollectDialog";
 import { DataQualityTile } from "./DataQuality";
-import { RunsTable } from "./Runs";
 import { ErrorBox, Icon, Loading, PageHead } from "./ui";
 import { FoldTitle, useFolds } from "./fold";
 import { L } from "./i18n";
@@ -30,8 +29,10 @@ import {
   RoutingChanges,
   RulesCard,
   RunsChart,
+  RunsList,
   useLayout,
   WIDGETS,
+  ZonesCard,
   type WidgetKey,
   type WidgetMeta,
 } from "./modules/kern/Dashboard";
@@ -61,7 +62,6 @@ export default function Overview({
   const [runs, setRuns] = useState<Run[] | null>(null);
   const { fold } = useFolds("automato_overview_folds"); // 0.75.0: Bereiche zuklappbar
   const runsFold = fold("runs");
-  const zoneFold = fold("zones");
   const [runsTotal, setRunsTotal] = useState(0);
   const [openTotal, setOpenTotal] = useState(0);
   const [runsErr, setRunsErr] = useState<unknown>(null);
@@ -159,8 +159,6 @@ export default function Overview({
   const systemName = (id: number | null) =>
     id == null ? "–" : (systems.find((s) => s.id === id)?.name ?? `#${id}`);
 
-  const zoneRows = (rules?.by_dst_zone ?? []).slice(0, 8);
-  const zoneMax = zoneRows.reduce((m, [, n]) => Math.max(m, n), 1);
   const val = (n: number) => (rules === null ? "…" : n);
 
   // Bereiche der Übersicht (0.117.0): an- und abwählbar, verschiebbar („Ansicht anpassen“)
@@ -170,7 +168,7 @@ export default function Overview({
     switch (k) {
       case "health":
         return health && health.problems > 0 ? (
-          <div className="card">
+          <div className="card" id="dash-health">
             <div className="card-head">
               <h2>{L("Betriebszustand", "Health")}</h2>
               <HealthChip health={health} />
@@ -182,8 +180,9 @@ export default function Overview({
         ) : null;
       case "kpis":
         return (
-          <div className={`kpis${quality ? " five" : ""}`} style={{ marginBottom: 0 }}>
-            <button className="kpi" onClick={() => onGo("regeln")}>
+          <div className="kpis dash-kpis" id="dash-kpis" style={{ marginBottom: 0 }}>
+            {/* 0.122.0: Namen der Quellsysteme im Tooltip statt in der Kachel – sonst wird sie bei vielen Systemen sehr hoch */}
+            <button className="kpi" onClick={() => onGo("regeln")} title={usedSystems.map(systemName).join(", ") || undefined}>
               <div className="k-label">{L("Regeln & Contracts", "Rules & contracts")}</div>
               <div className="k-val">{val(rulesCount)}</div>
               <div className="k-sub">
@@ -192,7 +191,6 @@ export default function Overview({
                   `${usedSystems.length} Quellsystem${usedSystems.length === 1 ? "" : "e"}`,
                   `${usedSystems.length} source system${usedSystems.length === 1 ? "" : "s"}`,
                 )}
-                {usedSystems.length > 0 && ` · ${usedSystems.map(systemName).join(", ")}`}
               </div>
             </button>
             <button className="kpi" onClick={() => onGo("nat")}>
@@ -236,7 +234,7 @@ export default function Overview({
         return <RunsChart tenantId={tenantId} onGo={onGo} refresh={runsTotal} />;
       case "runs":
         return (
-          <div className="card">
+          <div className="card" id="dash-runs">
             <div className="card-head">
               <FoldTitle fold={runsFold}>{L("Letzte Läufe", "Recent runs")}</FoldTitle>
               {openTotal > 0 && (
@@ -256,7 +254,7 @@ export default function Overview({
             </div>
             {runsFold.open && (
             <>
-            <div className="card-body scroll tall">
+            <div className="card-body tall dash-body">
               <ErrorBox error={runsErr} prefix={L("Läufe laden", "Loading runs")} />
               {runs === null ? (
                 <Loading />
@@ -271,7 +269,7 @@ export default function Overview({
                     : L("Ein Operator kann Quellsysteme einlesen.", "An operator can collect source systems.")}
                 </div>
               ) : (
-                <RunsTable
+                <RunsList
                   runs={runs}
                   systemName={systemName}
                   canCancel={me.isOperator}
@@ -308,42 +306,7 @@ export default function Overview({
           </div>
         );
       case "zones":
-        return (
-          <div className="card">
-            <div className="card-head">
-              <FoldTitle fold={zoneFold}>{L("Regeln je Zone (Ziel)", "Rules per zone (destination)")}</FoldTitle>
-            </div>
-            {!zoneFold.open ? null : rules === null ? (
-              <Loading />
-            ) : zoneRows.length === 0 ? (
-              <div className="empty">
-                <div className="big">{L("Keine Regeln", "No rules")}</div>
-                {L(
-                  "Nach dem ersten Lauf erscheinen hier die Ziel-Zonen.",
-                  "The destination zones appear here after the first run.",
-                )}
-              </div>
-            ) : (
-              <>
-                <div className="bars">
-                  {zoneRows.map(([z, n]) => (
-                    <div className="bar" key={z} title={`${z}: ${n}`}>
-                      <span style={{ height: `${(n / zoneMax) * 100}%` }} />
-                      <b style={{ bottom: `calc(${(n / zoneMax) * 100}% + 3px)` }}>{n}</b>
-                    </div>
-                  ))}
-                </div>
-                <div className="bars-x">
-                  {zoneRows.map(([z]) => (
-                    <span key={z} title={z}>
-                      {z}
-                    </span>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
-        );
+        return <ZonesCard rules={stats.rules} onGo={onGo} />;
       case "routing":
         return tenantId !== null ? <RoutingChanges tenantId={tenantId} onGo={onGo} /> : null;
       case "apps":
@@ -387,15 +350,31 @@ export default function Overview({
 
       <ErrorBox error={stats.error} prefix={L("Daten laden", "Loading data")} />
       {editing && <LayoutEditor layout={layout} available={available} onClose={() => setEditing(false)} />}
-      <div className="dash-grid" id="overview-grid">
+      {/* 0.122.0: Raster mit 12 Spalten, Breite je Bereich (⅓, ½, ganz), gleich hohe Bereiche je Zeile; beim Anpassen ziehen */}
+      <div className={`dash-grid${editing ? " editing" : ""}`} id="overview-grid">
         {layout.order
           .filter((k) => !layout.hidden.has(k) && available(WIDGETS.find((w) => w.key === k)!))
           .map((k) => {
             const node = section(k);
             if (!node) return null;
-            const wide = WIDGETS.find((w) => w.key === k)?.wide;
             return (
-              <div key={k} className={`dash-cell${wide ? " wide" : ""}`} data-widget={k}>
+              <div
+                key={k}
+                className={`dash-cell ${layout.size(k)}`}
+                data-widget={k}
+                draggable={editing}
+                onDragStart={editing ? (e) => e.dataTransfer.setData("text/plain", k) : undefined}
+                onDragOver={editing ? (e) => e.preventDefault() : undefined}
+                onDrop={
+                  editing
+                    ? (e) => {
+                        e.preventDefault();
+                        const from = e.dataTransfer.getData("text/plain") as WidgetKey;
+                        if (from) layout.moveTo(from, k);
+                      }
+                    : undefined
+                }
+              >
                 {node}
               </div>
             );

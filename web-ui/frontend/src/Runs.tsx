@@ -10,7 +10,7 @@ import { L } from "./i18n";
 
 const PAGE = 50;
 // Meldung auch bei Erfolg zeigen: Zusammenfassung des Laufs (IPAM, NSX ALB seit 0.78.5)
-const SUMMARY_PLATFORMS = new Set(["infoblox", "netbox", "avi"]);
+export const SUMMARY_PLATFORMS = new Set(["infoblox", "netbox", "avi"]);
 
 function duration(r: Run): string {
   const start = r.started_at ?? r.queued_at;

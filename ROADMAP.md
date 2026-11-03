@@ -441,8 +441,9 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.120.2** | Rückmeldung 2026-11-02 zur Produktiv-Anleitung: SSH mit Passwort-Anmeldung (fail2ban, Schlüssel optional, Rettung über die vCenter-Konsole), 6.2 `.env` Schritt für Schritt |
 | **0.120.3** | Produktiv-Anleitung nach dem Aufsetzen der Produktion (Zertifikate, eigene CA, Keycloak-Issuer und Backchannel, Realm in bestehendem Keycloak, `COMPOSE_PROFILES`, Firewall davor); Entscheide zur Plattform für viele Kunden als ADR 0044 (Entwurf), Roadmap V2 ergänzt |
 | **0.121.0** | NetBox-Host (ADR 0044): eine NetBox je Kunde auf eigener VM hinter einem Proxy, Startseite je Kunde, Tokens für Automato, Sicherung/Wiederherstellung/Update/Löschen mit einem Werkzeug; Entscheide Zonentransfer und Realm je Mandant mit Betriebs-Realm (AD) |
+| **0.122.0** | Rückmeldung 2026-11-03: Übersicht neu – Bereiche je Zeile gleich hoch und ohne Lücke, Breite je Bereich (⅓, ½, ganz), Verschieben per Ziehen, Läufe als Liste ohne Querscrollen, Zonen als waagrechte Balken |
 
-### Nächste Arbeiten (Stand 0.121.0)
+### Nächste Arbeiten (Stand 0.122.0)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
 **0.68.0** (2026-10-26), bis **0.102.0** (2026-10-28: „ich teste nach dem Freigeben der Version
@@ -463,8 +464,8 @@ zu 0.116.0), bis **0.117.0** (2026-10-30, Rückmeldung zum Regelwerk ohne Einwan
 Wunsch nach dem Vergleich ohne Einwand zu 0.119.0), bis **0.120.0** (2026-11-02, Rückmeldung zur
 Produktiv-Anleitung ohne Einwand zu 0.120.0), bis **0.120.1** (2026-11-02, Fragen zu 6.2 und SSH
 ohne Einwand zur Docker-Installation), bis **0.120.2** (2026-11-03, Produktion aufgesetzt ohne
-Einwand zu 0.120.2), bis **0.120.3** (2026-11-03, Entscheide zu ADR 0044 ohne Einwand). Zur Abnahme
-steht 0.121.0. Seit 0.104.0 gilt eine
+Einwand zu 0.120.2), bis **0.120.3** (2026-11-03, Entscheide zu ADR 0044 ohne Einwand), bis **0.121.0** (2026-11-03,
+Wunsch zur Übersicht ohne Einwand). Zur Abnahme steht 0.122.0. Seit 0.104.0 gilt eine
 Version als abgenommen,
 sobald die nächste Rückmeldung des Anwenders keinen Einwand dazu enthält (`CLAUDE.md`, Ablauf).
 

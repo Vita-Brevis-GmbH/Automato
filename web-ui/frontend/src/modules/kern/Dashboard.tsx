@@ -1,6 +1,9 @@
 // Bereiche der Übersicht (0.117.0, Anwender: „Dashboard erweitern mit Schnellansichten, Grafen, eventuell Auswahl an Content
 // wo ich an- und abwählen kann“ – gewählt: Findings & Läufe grafisch, Schnellansichten, Routing-Änderungen, Applikationen &
 // Regeln, Diagramm mit Objekttypen). Jeder Bereich ist an- und abwählbar und verschiebbar; die Auswahl merkt sich der Browser.
+// 0.122.0 (Anwender 2026-11-03: „statische Boxen, welche nicht zueinander passen und zeilenweise seitlich gescrollt werden
+// muss … etwas dynamischer und mit besseren Ansichten“): Raster mit gleich hohen Bereichen je Zeile, Breite je Bereich
+// wählbar (⅓, ½, ganz), Verschieben per Ziehen, Läufe als Liste ohne Querscrollen, Zonen als waagrechte Balken.
 import { useEffect, useState } from "react";
 import {
   fetchApps,
@@ -13,12 +16,14 @@ import {
   type ObjectSummary,
   type RoutingChangeSummary,
   type RuleSummary,
+  type Run,
   type RunsDay,
   type System,
 } from "../../api";
 import { L } from "../../i18n";
 import { FINDING_GROUPS, findingLabel } from "../../refs";
-import { Loading } from "../../ui";
+import { fmtTime, Loading, RunStatusChip } from "../../ui";
+import { SUMMARY_PLATFORMS } from "../../Runs";
 import type { View, ViewParams } from "../types";
 
 type Go = (v: View, p?: ViewParams) => void;
@@ -36,27 +41,35 @@ export type WidgetKey =
   | "rules"
   | "objects";
 
+// Breite im Raster: s = ein Drittel, m = halb, l = ganze Breite (schmale Fenster: s und m werden breiter)
+export type WidgetSize = "s" | "m" | "l";
+export const SIZES: { key: WidgetSize; label: string; title: string }[] = [
+  { key: "s", label: "⅓", title: L("ein Drittel der Breite", "one third of the width") },
+  { key: "m", label: "½", title: L("halbe Breite", "half width") },
+  { key: "l", label: L("ganz", "full"), title: L("ganze Breite", "full width") },
+];
+
 export interface WidgetMeta {
   key: WidgetKey;
   label: string;
   module?: ModuleKey; // nur, wenn das Modul für den Mandanten an ist
   staff?: boolean; // nicht für Kunden-Benutzer (Betrieb)
   tenant?: boolean; // braucht einen gewählten Mandanten
-  wide?: boolean; // ganze Breite
+  size: WidgetSize; // Vorgabe der Breite
 }
 
 export const WIDGETS: WidgetMeta[] = [
-  { key: "health", label: L("Betriebszustand", "Health"), staff: true, wide: true },
-  { key: "kpis", label: L("Kennzahlen", "Key figures"), wide: true },
-  { key: "quick", label: L("Schnellansichten", "Quick views"), wide: true },
-  { key: "findings", label: L("Offene Findings je Gruppe", "Open findings per group"), module: "findings" },
-  { key: "runschart", label: L("Läufe der letzten 14 Tage", "Runs of the last 14 days"), module: "worker", staff: true },
-  { key: "runs", label: L("Letzte Läufe", "Recent runs"), module: "worker", staff: true },
-  { key: "zones", label: L("Regeln je Zone (Ziel)", "Rules per zone (destination)") },
-  { key: "routing", label: L("Routing-Änderungen (7 Tage)", "Routing changes (7 days)"), module: "analyse", staff: true, tenant: true },
-  { key: "apps", label: L("Applikationen", "Applications"), module: "doku", tenant: true },
-  { key: "rules", label: L("Regeln je Firewall und Aktion", "Rules per firewall and action") },
-  { key: "objects", label: L("Objekte nach Typ", "Objects by type"), tenant: true },
+  { key: "health", label: L("Betriebszustand", "Health"), staff: true, size: "l" },
+  { key: "kpis", label: L("Kennzahlen", "Key figures"), size: "l" },
+  { key: "quick", label: L("Schnellansichten", "Quick views"), size: "l" },
+  { key: "findings", label: L("Offene Findings je Gruppe", "Open findings per group"), module: "findings", size: "m" },
+  { key: "runschart", label: L("Läufe der letzten 14 Tage", "Runs of the last 14 days"), module: "worker", staff: true, size: "m" },
+  { key: "runs", label: L("Letzte Läufe", "Recent runs"), module: "worker", staff: true, size: "m" },
+  { key: "zones", label: L("Regeln je Zone (Ziel)", "Rules per zone (destination)"), size: "m" },
+  { key: "routing", label: L("Routing-Änderungen (7 Tage)", "Routing changes (7 days)"), module: "analyse", staff: true, tenant: true, size: "m" },
+  { key: "apps", label: L("Applikationen", "Applications"), module: "doku", tenant: true, size: "m" },
+  { key: "rules", label: L("Regeln je Firewall und Aktion", "Rules per firewall and action"), size: "m" },
+  { key: "objects", label: L("Objekte nach Typ", "Objects by type"), tenant: true, size: "m" },
 ];
 
 const STORE = "automato_overview_layout";
@@ -64,6 +77,7 @@ const STORE = "automato_overview_layout";
 interface Layout {
   order: WidgetKey[];
   hidden: WidgetKey[];
+  sizes: Partial<Record<WidgetKey, WidgetSize>>;
 }
 
 function readLayout(): Layout | null {
@@ -71,7 +85,8 @@ function readLayout(): Layout | null {
     const raw = localStorage.getItem(STORE);
     if (!raw) return null;
     const v = JSON.parse(raw) as Partial<Layout>;
-    return { order: Array.isArray(v.order) ? v.order : [], hidden: Array.isArray(v.hidden) ? v.hidden : [] };
+    const sizes = v.sizes && typeof v.sizes === "object" ? v.sizes : {};
+    return { order: Array.isArray(v.order) ? v.order : [], hidden: Array.isArray(v.hidden) ? v.hidden : [], sizes };
   } catch {
     return null;
   }
@@ -80,7 +95,7 @@ function readLayout(): Layout | null {
 // Reihenfolge und ausgeblendete Bereiche (je Browser); neue Bereiche erscheinen hinten
 export function useLayout() {
   const all = WIDGETS.map((w) => w.key);
-  const [layout, setLayout] = useState<Layout>(() => readLayout() ?? { order: all, hidden: [] });
+  const [layout, setLayout] = useState<Layout>(() => readLayout() ?? { order: all, hidden: [], sizes: {} });
   const order = [...layout.order.filter((k) => all.includes(k)), ...all.filter((k) => !layout.order.includes(k))];
   const save = (next: Layout) => {
     setLayout(next);
@@ -90,20 +105,31 @@ export function useLayout() {
       // ohne Speicher (privates Fenster): nur für diese Sitzung
     }
   };
+  const sizes = layout.sizes ?? {};
   return {
     order,
     hidden: new Set(layout.hidden),
+    size: (k: WidgetKey): WidgetSize => sizes[k] ?? WIDGETS.find((w) => w.key === k)?.size ?? "m",
+    setSize: (k: WidgetKey, sz: WidgetSize) => save({ ...layout, order, sizes: { ...sizes, [k]: sz } }),
     toggle: (k: WidgetKey) =>
-      save({ order, hidden: layout.hidden.includes(k) ? layout.hidden.filter((x) => x !== k) : [...layout.hidden, k] }),
+      save({ ...layout, order, hidden: layout.hidden.includes(k) ? layout.hidden.filter((x) => x !== k) : [...layout.hidden, k] }),
     move: (k: WidgetKey, by: -1 | 1) => {
       const i = order.indexOf(k);
       const j = i + by;
       if (i < 0 || j < 0 || j >= order.length) return;
       const next = [...order];
       [next[i], next[j]] = [next[j], next[i]];
-      save({ order: next, hidden: layout.hidden });
+      save({ ...layout, order: next });
     },
-    reset: () => save({ order: all, hidden: [] }),
+    // per Ziehen: k vor target setzen (auf sich selbst: nichts)
+    moveTo: (k: WidgetKey, target: WidgetKey) => {
+      if (k === target) return;
+      const next = order.filter((x) => x !== k);
+      const at = next.indexOf(target);
+      next.splice(at < 0 ? next.length : at, 0, k);
+      save({ ...layout, order: next });
+    },
+    reset: () => save({ order: all, hidden: [], sizes: {} }),
   };
 }
 
@@ -120,7 +146,12 @@ export function LayoutEditor({
     <div className="card" id="overview-layout" style={{ marginBottom: 16 }}>
       <div className="card-head">
         <h2>{L("Ansicht anpassen", "Customize view")}</h2>
-        <span className="faint">{L("an- und abwählen, verschieben – gilt für diesen Browser", "show/hide, reorder – for this browser")}</span>
+        <span className="faint">
+          {L(
+            "an- und abwählen, Breite wählen, verschieben (ziehen oder ↑ ↓) – gilt für diesen Browser",
+            "show/hide, choose the width, reorder (drag or ↑ ↓) – for this browser",
+          )}
+        </span>
         <div className="spacer" />
         <button className="btn btn-ghost btn-sm" onClick={layout.reset}>
           {L("Vorgabe", "Default")}
@@ -135,12 +166,40 @@ export function LayoutEditor({
             const w = WIDGETS.find((x) => x.key === k)!;
             const off = !available(w);
             return (
-              <li key={k} data-widget={k} className={off ? "faint" : ""}>
+              <li
+                key={k}
+                data-widget={k}
+                className={off ? "faint" : ""}
+                draggable
+                onDragStart={(e) => e.dataTransfer.setData("text/plain", k)}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const from = e.dataTransfer.getData("text/plain") as WidgetKey;
+                  if (from) layout.moveTo(from, k);
+                }}
+              >
+                <span className="drag-grip" aria-hidden>
+                  ⠿
+                </span>
                 <label>
                   <input type="checkbox" checked={!layout.hidden.has(k)} onChange={() => layout.toggle(k)} /> {w.label}
                 </label>
                 {off && <span className="chip">{L("Modul aus bzw. nicht für diese Rolle", "module off or not for this role")}</span>}
                 <span className="spacer" />
+                <span className="seg" role="group" aria-label={L("Breite", "Width")}>
+                  {SIZES.map((sz) => (
+                    <button
+                      key={sz.key}
+                      className={layout.size(k) === sz.key ? "on" : ""}
+                      data-size={sz.key}
+                      title={sz.title}
+                      onClick={() => layout.setSize(k, sz.key)}
+                    >
+                      {sz.label}
+                    </button>
+                  ))}
+                </span>
                 <button className="btn btn-ghost btn-sm" disabled={i === 0} title={L("nach oben", "up")} onClick={() => layout.move(k, -1)}>
                   ↑
                 </button>
@@ -200,7 +259,7 @@ function Card({ id, title, children, foot }: { id: string; title: string; childr
       <div className="card-head">
         <h2>{title}</h2>
       </div>
-      {children}
+      <div className="dash-body">{children}</div>
       {foot && <div className="card-foot">{foot}</div>}
     </div>
   );
@@ -287,8 +346,8 @@ export function RunsChart({ tenantId, onGo, refresh }: { tenantId: number | null
             })}
           </div>
           <div className="bars-x">
-            {days.map((d) => (
-              <span key={d.day}>{`${d.day.slice(8, 10)}.${d.day.slice(5, 7)}`}</span>
+            {days.map((d, i) => (
+              <span key={d.day}>{(days.length - 1 - i) % 2 === 0 ? `${d.day.slice(8, 10)}.${d.day.slice(5, 7)}` : ""}</span>
             ))}
           </div>
         </>
@@ -527,6 +586,87 @@ export function ObjectsCard({ tenantId, onGo }: { tenantId: number; onGo: Go }) 
           <div className="dash-sub">{L("je Präfix der Namenskonvention", "per naming convention prefix")}</div>
           <HBars rows={prefixes} onPick={(p) => onGo("objekte", { tab: data.prefixes[p] === "service" ? "services" : "addr", prefix: p })} />
         </>
+      )}
+    </Card>
+  );
+}
+
+// Letzte Läufe als Liste (0.122.0): Status, System mit Ausführung und Einträgen, Meldung umbrochen, Zeit – kein Querscrollen
+export function RunsList({
+  runs,
+  systemName,
+  canCancel,
+  onCancel,
+}: {
+  runs: Run[];
+  systemName: (id: number | null) => string;
+  canCancel: boolean;
+  onCancel: (id: string) => void;
+}) {
+  return (
+    <ul className="run-list">
+      {runs.map((r) => {
+        const open = r.status === "queued" || r.status === "running";
+        const failed = r.status === "failed";
+        const facts = [
+          r.execution === "external" ? "Agent" : L("zentral", "central"),
+          r.trigger === "schedule" ? L("Zeitplan", "schedule") : "",
+          r.rule_count != null ? L(`${r.rule_count} ${r.rule_count === 1 ? "Eintrag" : "Einträge"}`, `${r.rule_count} ${r.rule_count === 1 ? "entry" : "entries"}`) : "",
+        ].filter(Boolean);
+        return (
+          <li key={r.id} data-run={r.id} title={`#${r.id.slice(0, 8)}${r.message ? ` – ${r.message}` : ""}`}>
+            <RunStatusChip status={r.status} />
+            <div className="run-main">
+              <div className="run-line">
+                <b>{systemName(r.source_system_id)}</b> <span className="faint">· {facts.join(" · ")}</span>
+              </div>
+              {r.message && (failed || open || SUMMARY_PLATFORMS.has(r.platform)) && (
+                <div className={failed ? "run-msg err" : "run-msg"}>{r.message}</div>
+              )}
+            </div>
+            <div className="run-when mono">
+              {fmtTime(r.finished_at ?? r.started_at ?? r.queued_at)}
+              {canCancel && open && (
+                <div>
+                  <button
+                    className="linkbtn"
+                    title={L(
+                      "Lauf beenden (z. B. hängt er nach einem Neustart des Agenten). Liefert der Agent doch noch ab, wird das Ergebnis eingespielt.",
+                      "End the run (e.g. if it hangs after an agent restart). If the agent still delivers, the result is ingested.",
+                    )}
+                    onClick={() => onCancel(r.id)}
+                  >
+                    {L("Abbrechen", "Cancel")}
+                  </button>
+                </div>
+              )}
+            </div>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+// Regeln je Ziel-Zone als waagrechte Balken (0.122.0, vorher senkrecht mit abgeschnittenen Namen); Klick sucht die Zone
+export function ZonesCard({ rules, onGo }: { rules: RuleSummary | null; onGo: Go }) {
+  const rows = (rules?.by_dst_zone ?? []).slice(0, 12).map(([z, n]) => ({ key: z || "-", label: z || "–", value: n }));
+  return (
+    <Card
+      id="dash-zones"
+      title={L("Regeln je Zone (Ziel)", "Rules per zone (destination)")}
+      foot={
+        <button className="linkbtn" onClick={() => onGo("regeln")}>
+          {L("Regeln & Contracts →", "Rules & contracts →")}
+        </button>
+      }
+    >
+      {rules === null ? (
+        <Loading />
+      ) : rows.length === 0 ? (
+        empty(L("Nach dem ersten Lauf erscheinen hier die Ziel-Zonen.", "The destination zones appear here after the first run."))
+      ) : (
+        <HBars rows={rows} onPick={(z) => onGo("regeln", z !== "-" ? { q: z } : undefined)} />
       )}
     </Card>
   );

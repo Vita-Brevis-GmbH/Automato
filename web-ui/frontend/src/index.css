@@ -625,9 +625,34 @@ button.linkchip:hover { text-decoration: underline; }
 
 /* Findings: Übersicht nach Kategorien */
 /* Übersicht mit wählbaren Bereichen (0.117.0) */
-.dash-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 440px), 1fr)); gap: 16px; align-items: start; }
-.dash-cell.wide { grid-column: 1 / -1; }
-.dash-cell > .card { margin: 0; }
+/* 0.122.0: Breite je Bereich (s = ⅓, m = ½, l = ganz) als Grundbreite; die Bereiche einer Zeile teilen sich den Rest
+   (flex-grow), damit keine Lücke bleibt, und sind gleich hoch. Die Breite richtet sich nach dem Platz der Übersicht
+   (Container), nicht nach dem Fenster: schmal werden ⅓ zu ½ und ½ zu ganz. */
+.dash-grid { display: flex; flex-wrap: wrap; gap: 16px; align-items: stretch; container-type: inline-size; container-name: dash; }
+.dash-cell { flex: 1 1 calc(50% - 8px); min-width: 0; display: flex; flex-direction: column; }
+.dash-cell.s { flex-basis: calc(33.333% - 11px); }
+.dash-cell.l { flex-basis: 100%; }
+@container dash (max-width: 1050px) { .dash-cell.s { flex-basis: calc(50% - 8px); } }
+@container dash (max-width: 720px) { .dash-cell.s, .dash-cell.m { flex-basis: 100%; } }
+.dash-body .kpis.wrap { grid-template-columns: repeat(auto-fit, minmax(min(100%, 100px), 1fr)); }
+.dash-cell > .card, .dash-cell > .kpis { margin: 0; flex: 1 1 auto; }
+.dash-cell > .card { display: flex; flex-direction: column; }
+.dash-cell > .card > .dash-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.dash-cell > .card > .card-foot { margin-top: auto; }
+.dash-body > .empty { margin: auto 0; }
+.dash-body > .vstack { flex: 1 1 auto; height: auto; min-height: 120px; }
+.dash-grid.editing .dash-cell { cursor: grab; outline: 2px dashed var(--border-strong); outline-offset: 3px; border-radius: var(--radius); }
+.kpis.dash-kpis { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+.drag-grip { cursor: grab; color: var(--faint); user-select: none; padding: 0 2px; }
+/* Letzte Läufe als Liste (0.122.0): Meldung umbrochen statt Querscrollen */
+.run-list { list-style: none; margin: 0; padding: 0; }
+.run-list li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 2px 12px; align-items: start; padding: 9px 16px;
+  border-bottom: 1px solid var(--border); }
+.run-list li:last-child { border-bottom: 0; }
+.run-main { min-width: 0; }
+.run-line { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run-list .run-msg { max-width: none; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.run-when { font-size: 12px; color: var(--muted); text-align: right; white-space: nowrap; }
 .dash-sub { font-size: 11.5px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .03em; padding: 10px 16px 0; }
 .hbars { display: grid; gap: 4px; padding: 10px 16px 12px; }
 .hbar-row { display: grid; grid-template-columns: minmax(110px, 38%) 1fr 52px; gap: 10px; align-items: center; background: none; border: 0; padding: 2px 0; text-align: left; color: inherit; font: inherit; cursor: pointer; }

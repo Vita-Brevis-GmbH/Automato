@@ -142,7 +142,11 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
 **Dokumentation**
 - **Übersicht:** seit 0.117.0 aus **Bereichen**, die sich über **Ansicht anpassen** an- und
   abwählen und verschieben lassen („Vorgabe“ stellt alles wieder her; die Auswahl merkt sich der
-  Browser): Betriebszustand, Kennzahlen, **Schnellansichten** (Ansichten mit fertigem Filter, z. B.
+  Browser). Seit 0.122.0 je Bereich eine **Breite** (⅓, ½, ganz) und **Verschieben per Ziehen**
+  (in der Liste oder direkt im Raster, solange „Ansicht anpassen“ offen ist); die Bereiche einer
+  Zeile teilen sich die Breite ohne Lücke und sind gleich hoch, in schmalen Fenstern werden sie
+  breiter. Letzte Läufe als Liste (Meldungen umbrochen, kein Querscrollen), Regeln je Zone als
+  waagrechte Balken (Klick sucht die Zone in „Regeln & Contracts“). Bereiche: Betriebszustand, Kennzahlen, **Schnellansichten** (Ansichten mit fertigem Filter, z. B.
   offene Findings, Regel nie auf dem Weg, Applikationen mit Abweichung, VIPs `V-EXT_`, Weg-Suche,
   Routing-Verlauf), **offene Findings je Gruppe** und **Läufe der letzten 14 Tage** als Grafik,
   letzte Läufe, Regeln je Zone, **Routing-Änderungen der letzten 7 Tage**, **Applikationen**,

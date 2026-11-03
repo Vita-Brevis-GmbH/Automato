@@ -7,6 +7,26 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.122.0 – 2026-11-03
+
+Rückmeldung des Anwenders 2026-11-03 („Übersichtsseite besser gestalten … statische Boxen, welche
+nicht zueinander passen und zeilenweise seitlich gescrollt werden muss … etwas dynamischer und mit
+besseren Ansichten, damit man es lesen kann“). Abnahme bis 0.121.0.
+
+- **Raster der Übersicht neu:** die Bereiche einer Zeile sind gleich hoch und teilen sich die Breite
+  ohne Lücke (Fuss unten, Grafik wächst mit); die Breite richtet sich nach dem Platz der Übersicht –
+  in schmalen Fenstern werden die Bereiche breiter, kein Querscrollen mehr.
+- **Ansicht anpassen:** je Bereich eine **Breite** (⅓, ½, ganz) und **Verschieben per Ziehen** – in
+  der Liste oder direkt im Raster (gestrichelt, solange die Anpassung offen ist); ↑ ↓ bleiben,
+  „Vorgabe“ setzt auch die Breiten zurück; alles merkt sich der Browser.
+- **Letzte Läufe** als Liste statt Tabelle: Status, System, Ausführung, Einträge und Zeit in einer
+  Zeile, Meldungen umbrochen (höchstens zwei Zeilen, ganz im Tooltip), Abbrechen bei offenen Läufen.
+- **Regeln je Zone** als waagrechte Balken mit vollen Namen (vorher senkrecht, Namen abgeschnitten);
+  Klick sucht die Zone in „Regeln & Contracts“.
+- **Kennzahlen** passen sich der Breite an; die Namen der Quellsysteme stehen im Tooltip statt in der
+  Kachel (sie wurde bei vielen Systemen sehr hoch). Läufe-Grafik: Datum jeden zweiten Tag.
+- Tests: `e2e/release_0122.spec.ts`.
+
 ## 0.121.0 – 2026-11-03
 
 Entscheide des Anwenders 2026-11-03 (ADR 0044): „1. Eigene VM. 2. Zonentransfer ist ok. 3. Realm
