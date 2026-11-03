@@ -150,7 +150,10 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   offene Findings, Regel nie auf dem Weg, Applikationen mit Abweichung, VIPs `V-EXT_`, Weg-Suche,
   Routing-Verlauf), **offene Findings je Gruppe** und **Läufe der letzten 14 Tage** als Grafik,
   letzte Läufe, Regeln je Zone, **Routing-Änderungen der letzten 7 Tage**, **Applikationen**,
-  **Regeln je Firewall und Aktion**, **Objekte nach Kategorie und Präfix der Namenskonvention**;
+  **Regeln je Firewall und Aktion**, **Objekte nach Kategorie und Präfix der Namenskonvention**,
+  seit 0.129.0 **Stand der Doku** (je Applikation aktuell, veraltet, rechnet gerade, noch nie
+  berechnet; „Vorrechnen läuft“, „Befunde nachziehen“; die nicht aktuellen mit Zustand, letzter
+  Berechnung und Dauer, Klick öffnet die Applikation; neue Bereiche stehen zuerst hinten);
   ein Klick auf einen Balken öffnet die Ansicht mit diesem Filter. Bereiche eines abgeschalteten
   Moduls bzw. des Betriebs (für Kunden-Benutzer) fehlen.
   KPIs (Regeln, NAT/VIPs, offene Findings, Abdeckung gegen die SoT),

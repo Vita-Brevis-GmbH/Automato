@@ -181,3 +181,43 @@ def test_aus_wie_bisher(client, session_factory, monkeypatch):
     assert out["snapshot"]["fresh"] is True and out["tables"]
     assert client.get(f"/applications/{aid}/doc/state").json()["built_at"] is None
     assert _rows(session_factory) == []
+
+
+def test_uebersicht_stand_der_doku(client, monkeypatch, snapshots):
+    """0.129.0 (Anwender: „ein Fenster erstellen, wo man sieht, wie der Stand der
+    Neuberechnungen der Dokumentationen ist“): je Applikation passend, veraltet bzw. noch nie
+    gerechnet, je Art Varianten, letzte Berechnung; nicht fuer Kunden-Benutzer."""
+    monkeypatch.setattr(get_settings(), "doc_warm_days", 0)  # ohne Vorrechnen: bleibt veraltet
+    tid, aid = _app(client)
+    _doc(client, aid)
+    client.post(f"/applications?tenant_id={tid}", json={"name": "Neu", "members": []},
+                headers=OP)  # fmt: skip
+
+    def states():
+        r = client.get("/applications/doc-states", params={"tenant_id": tid})
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    out = states()
+    apps = {a["name"]: a for a in out["apps"]}
+    assert out["enabled"] and out["total"] == 2 and not out["warming"]
+    assert apps["Neu"]["state"] == "never"
+    web = apps["Web"]
+    assert web["state"] == "fresh" and web["stale"] == 0
+    assert (web["kinds"]["doc"]["variants"], web["kinds"]["doc"]["fresh"]) == (1, 1)
+    assert web["kinds"]["connections"]["fresh"] == 1 and web["kinds"]["doc"]["built_at"]
+    assert out["counts"] == {"fresh": 1, "stale": 0, "building": 0, "never": 1}
+    assert out["last_built_at"]
+
+    # Aenderung an der Applikation: beide Staende veraltet (ohne Vorrechnen erst beim Oeffnen)
+    client.patch(f"/applications/{aid}", json={"description": "neu"}, headers=OP)
+    web = {a["name"]: a for a in states()["apps"]}["Web"]
+    assert (web["state"], web["stale"], web["auto"]) == ("stale", 2, False)
+    _doc(client, aid)  # geoeffnet: die Doku passt wieder, die Verbindungen noch nicht
+    web = {a["name"]: a for a in states()["apps"]}["Web"]
+    assert (web["state"], web["stale"]) == ("stale", 1)
+    assert web["kinds"]["doc"]["fresh"] == 1 and web["kinds"]["connections"]["fresh"] == 0
+
+    cust = {"X-Dev-Roles": "customer", "X-Dev-Customers": "1"}
+    r = client.get("/applications/doc-states", params={"tenant_id": tid}, headers=cust)
+    assert r.status_code == 403

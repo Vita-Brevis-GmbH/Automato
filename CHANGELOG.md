@@ -7,6 +7,22 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.129.0 – 2026-11-03
+
+Wunsch des Anwenders 2026-11-03: „Kannst du mir in der Übersicht noch ein Fenster erstellen, wo
+man sieht, wie der Stand der Neuberechnungen der Dokumentationen ist?“ Abnahme bis 0.128.0 (ohne
+Einwand).
+
+- **Übersicht → „Stand der Doku“** (neuer Bereich, Modul Doku, nicht für Kunden-Benutzer): Zahl der
+  Applikationen **aktuell**, **veraltet** (seit der letzten Berechnung geändert – Lauf,
+  Konfiguration, Applikation), **rechnet gerade** und **noch nie berechnet**; Chips „Vorrechnen
+  läuft“ und „Befunde nachziehen“. Darunter die nicht aktuellen Applikationen (bzw. alle) mit
+  Zustand, „wird vorgerechnet“ (in den letzten Tagen geöffnet), aktuelle von allen Ständen je Doku
+  und Verbindungen, letzter Berechnung und Dauer; Klick öffnet die Applikation. Solange etwas
+  rechnet, alle 5 s neu.
+- API `GET /applications/doc-states?tenant_id=` (Abdruck wie beim Öffnen, `doc_snapshots.overview`).
+- Tests: `orchestrator/tests/test_doc_snapshots.py`, `e2e/release_0129.spec.ts`.
+
 ## 0.128.0 – 2026-11-03
 
 Rückmeldung des Anwenders 2026-11-03 zur Frage der Zonenübergänge: „Der Schalter ist ok, er muss

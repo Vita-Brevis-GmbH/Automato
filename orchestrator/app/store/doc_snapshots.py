@@ -18,6 +18,9 @@ grossen Umgebungen je Aufruf Sekunden bis Minuten, nach jedem Speichern erneut.
 - **Vorrechnen** (`warm`): nach Laeufen und Aenderungen die zuletzt angesehenen Staende
   (`doc_warm_days`) neu, in einem Zeitbudget (`doc_warm_seconds`).
 
+- **Uebersicht** (`overview`, 0.129.0): je Applikation des Mandanten, ob ihre Staende passen,
+  veraltet sind, gerade rechnen bzw. noch nie gerechnet wurden, dazu ob das Vorrechnen laeuft.
+
 Je Stand rechnet im Prozess hoechstens ein Durchgang zugleich. Abgeleitete Daten, nur lesend
 gegenueber den Systemen; `doc_snapshots=false` schaltet alles ab (Doku wie bis 0.107.0).
 """
@@ -74,9 +77,8 @@ def variant(names: bool = False, rule_ids: set[int] | None = None) -> str:
     return f"{lang()}|{'n' if names else '-'}|{scope}"
 
 
-def fingerprint(session: Session, app: Application, var: str) -> str:
-    """Abdruck der Eingaben eines Stands (siehe Modul)."""
-    tid = app.tenant_id
+def _tenant_parts(session: Session, tid: int) -> tuple:
+    """Eingaben des Mandanten im Abdruck: letzter Lauf, Quellsysteme, letzte Aenderung."""
     runs = session.scalar(
         select(func.max(CollectorRun.finished_at)).where(CollectorRun.tenant_id == tid)
     )
@@ -87,14 +89,23 @@ def fingerprint(session: Session, app: Application, var: str) -> str:
     quiet = or_(*(AuditLog.action.like(f"{p}%") for p in _QUIET))
     others = and_(AuditLog.action.like(f"{_OWN}%"), AuditLog.action != _ALL_APPS)
     config = session.scalar(select(func.max(AuditLog.id)).where(not_(quiet), not_(others)))
+    return runs, [tuple(s) for s in sources], config
+
+
+def _fp(app: Application, var: str, tenant: tuple, own: int | None) -> str:
+    runs, sources, config = tenant
+    parts = [__version__, app.id, str(app.updated_at), str(runs), sources, config, own, var]
+    return hashlib.sha256(repr(parts).encode()).hexdigest()
+
+
+def fingerprint(session: Session, app: Application, var: str) -> str:
+    """Abdruck der Eingaben eines Stands (siehe Modul)."""
     own = session.scalar(
         select(func.max(AuditLog.id)).where(
             AuditLog.action.like(f"{_OWN}%"), AuditLog.subject == str(app.id)
         )
     )
-    parts = [__version__, app.id, str(app.updated_at), str(runs), [tuple(s) for s in sources],
-             config, own, var]  # fmt: skip
-    return hashlib.sha256(repr(parts).encode()).hexdigest()
+    return _fp(app, var, _tenant_parts(session, app.tenant_id), own)
 
 
 def _pack(obj: dict) -> bytes:
@@ -299,6 +310,78 @@ def state(session: Session, app: Application, kind: str, rule_ids: set[int] | No
 
 def _aware(value: datetime) -> datetime:
     return value if value.tzinfo else value.replace(tzinfo=UTC)
+
+
+def overview(session: Session, tenant_id: int) -> dict:
+    """Stand der Doku je Applikation des Mandanten (0.129.0, Anwender: „ein Fenster erstellen,
+    wo man sieht, wie der Stand der Neuberechnungen der Dokumentationen ist“): je Applikation und
+    Art (Doku, Verbindungen) die Staende (Varianten) mit passend/veraltet, ob gerade einer rechnet,
+    letzte Berechnung und Dauer; Zustand der Applikation `building` (rechnet), `stale` (veraltet -
+    `auto`: wird vorgerechnet, sonst beim naechsten Oeffnen), `never` (noch nie gerechnet), sonst
+    `fresh`. Dazu, ob das Vorrechnen fuer den Mandanten laeuft. Nur lesend."""
+    settings = get_settings()
+    lock = _warm_locks.get(tenant_id)
+    apps = list(session.scalars(
+        select(Application).where(Application.tenant_id == tenant_id).order_by(Application.name)
+    ))  # fmt: skip
+    head = {"enabled": enabled(), "warming": bool(lock and lock.locked()),
+            "warm_days": settings.doc_warm_days}  # fmt: skip
+    counts = dict.fromkeys(("fresh", "stale", "building", "never"), 0)
+    if not enabled() or not apps:
+        return {**head, "counts": counts, "total": len(apps), "last_built_at": None,
+                "apps": []}  # fmt: skip
+    ids = [a.id for a in apps]
+    tenant = _tenant_parts(session, tenant_id)
+    own = dict(session.execute(
+        select(AuditLog.subject, func.max(AuditLog.id))
+        .where(AuditLog.action.like(f"{_OWN}%"), AuditLog.subject.in_([str(i) for i in ids]))
+        .group_by(AuditLog.subject)
+    ).all())  # fmt: skip
+    rows = session.execute(
+        select(DocSnapshot.application_id, DocSnapshot.kind, DocSnapshot.variant,
+               DocSnapshot.fingerprint, DocSnapshot.built_at, DocSnapshot.seconds,
+               DocSnapshot.viewed_at)
+        .where(DocSnapshot.application_id.in_(ids))
+    ).all()  # fmt: skip
+    by_app: dict[int, list] = defaultdict(list)
+    for r in rows:
+        by_app[r.application_id].append(r)
+    with _lock:
+        busy = set(_building)
+    since = datetime.now(UTC) - timedelta(days=settings.doc_warm_days)
+    out, last = [], None
+    for a in apps:
+        kinds, stale, auto = {}, 0, False
+        for kind in KINDS:
+            snaps = [r for r in by_app.get(a.id, []) if r.kind == kind]
+            fresh = [r for r in snaps if r.fingerprint == _fp(a, r.variant, tenant,
+                                                               own.get(str(a.id)))]  # fmt: skip
+            old = [r for r in snaps if r not in fresh]
+            stale += len(old)
+            auto = auto or any(_aware(r.viewed_at) >= since for r in old)
+            built = max((_aware(r.built_at) for r in snaps), default=None)
+            if built and (last is None or built > last):
+                last = built
+            kinds[kind] = {
+                "variants": len(snaps), "fresh": len(fresh),
+                "building": any(k[0] == a.id and k[1] == kind for k in busy),
+                "built_at": built.isoformat() if built else None,
+                "seconds": round(max((r.seconds for r in snaps), default=0.0), 1),
+            }  # fmt: skip
+        if any(k["building"] for k in kinds.values()):
+            state = "building"
+        elif not by_app.get(a.id):
+            state = "never"
+        elif stale:
+            state = "stale"
+        else:
+            state = "fresh"
+        counts[state] += 1
+        out.append({"id": a.id, "name": a.name, "state": state, "stale": stale,
+                    "auto": state == "stale" and auto and settings.doc_warm_days > 0,
+                    "kinds": kinds})  # fmt: skip
+    return {**head, "counts": counts, "total": len(apps),
+            "last_built_at": last.isoformat() if last else None, "apps": out}  # fmt: skip
 
 
 def warm(factory: sessionmaker[Session], tenant_id: int, application_id: int | None = None

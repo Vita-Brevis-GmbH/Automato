@@ -7,10 +7,13 @@
 import { useEffect, useState } from "react";
 import {
   fetchApps,
+  fetchDocStates,
   fetchObjectSummary,
   fetchRoutingChangeSummary,
   fetchRunsDaily,
   type Application,
+  type DocState,
+  type DocStates,
   type FindingSummary,
   type ModuleKey,
   type ObjectSummary,
@@ -39,7 +42,8 @@ export type WidgetKey =
   | "routing"
   | "apps"
   | "rules"
-  | "objects";
+  | "objects"
+  | "docs";
 
 // Breite im Raster: s = ein Drittel, m = halb, l = ganze Breite (schmale Fenster: s und m werden breiter)
 export type WidgetSize = "s" | "m" | "l";
@@ -70,6 +74,8 @@ export const WIDGETS: WidgetMeta[] = [
   { key: "apps", label: L("Applikationen", "Applications"), module: "doku", tenant: true, size: "m" },
   { key: "rules", label: L("Regeln je Firewall und Aktion", "Rules per firewall and action"), size: "m" },
   { key: "objects", label: L("Objekte nach Typ", "Objects by type"), tenant: true, size: "m" },
+  // 0.129.0 (Anwender: „wie der Stand der Neuberechnungen der Dokumentationen ist“)
+  { key: "docs", label: L("Stand der Doku", "Documentation state"), module: "doku", staff: true, tenant: true, size: "m" },
 ];
 
 const STORE = "automato_overview_layout";
@@ -495,6 +501,172 @@ export function AppsCard({ tenantId, summary, onGo }: { tenantId: number; summar
               <div className={`k-val sm ${t.warn ? "warn" : ""}`}>{t.value}</div>
             </button>
           ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+const DOC_STATE: Record<DocState, { label: string; chip: string; title: string }> = {
+  building: {
+    label: L("rechnet gerade", "computing"),
+    chip: "info",
+    title: L("Ein Stand dieser Applikation wird gerade neu berechnet", "A state of this application is being recomputed"),
+  },
+  stale: {
+    label: L("veraltet", "outdated"),
+    chip: "warn",
+    title: L(
+      "Seit der letzten Berechnung hat sich etwas geändert (Lauf, Konfiguration, Applikation) – neu beim Vorrechnen bzw. beim nächsten Öffnen",
+      "Something changed since the last computation (run, configuration, application) – recomputed by the pre-computation or on next opening",
+    ),
+  },
+  never: {
+    label: L("noch nie berechnet", "never computed"),
+    chip: "na",
+    title: L("Noch nie geöffnet – wird beim ersten Öffnen berechnet", "Never opened – computed on first opening"),
+  },
+  fresh: { label: L("aktuell", "current"), chip: "ok", title: L("Alle Stände passen", "All states are current") },
+};
+const DOC_ORDER: DocState[] = ["building", "stale", "never", "fresh"];
+
+// Stand der Doku (0.129.0): je Applikation, ob Doku und Verbindungen aktuell sind, gerade rechnen, veraltet sind bzw. noch
+// nie berechnet wurden – zuerst die, die nicht aktuell sind; solange etwas rechnet, alle 5 s neu
+export function DocsCard({ tenantId, onGo }: { tenantId: number; onGo: Go }) {
+  const [data, setData] = useState<DocStates | null>(null);
+  const [error, setError] = useState(false);
+  const [tick, setTick] = useState(0);
+  const [all, setAll] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    fetchDocStates(tenantId)
+      .then((d) => {
+        if (alive) {
+          setData(d);
+          setError(false);
+        }
+      })
+      .catch(() => alive && setError(true));
+    return () => {
+      alive = false;
+    };
+  }, [tenantId, tick]);
+  const busy = !!data && (data.warming || data.counts.building > 0 || (data.refreshing ?? 0) > 0);
+  useEffect(() => {
+    if (!busy) return;
+    const t = setTimeout(() => setTick((n) => n + 1), 5000);
+    return () => clearTimeout(t);
+  }, [busy, tick]);
+  const title = L("Stand der Doku", "Documentation state");
+  if (error) return <Card id="dash-docs" title={title}>{empty(L("Stand nicht lesbar", "State not readable"))}</Card>;
+  if (data === null) return <Card id="dash-docs" title={title}><Loading /></Card>;
+  if (!data.enabled) {
+    return (
+      <Card id="dash-docs" title={title}>
+        {empty(L("Doku als Stand ist ausgeschaltet – sie wird bei jedem Öffnen berechnet", "Documentation states are off – computed on every opening"))}
+      </Card>
+    );
+  }
+  const rank = (s: DocState) => DOC_ORDER.indexOf(s);
+  const apps = [...data.apps].sort((a, b) => rank(a.state) - rank(b.state) || a.name.localeCompare(b.name));
+  const open = apps.filter((a) => a.state !== "fresh");
+  const shown = all ? apps : open.slice(0, 8);
+  const time = (a: DocStates["apps"][number]) => {
+    const t = [a.kinds.doc.built_at, a.kinds.connections.built_at].filter(Boolean).sort().pop() ?? null;
+    return t ? fmtTime(t) : "–";
+  };
+  return (
+    <Card
+      id="dash-docs"
+      title={title}
+      foot={
+        <span className="faint">
+          {data.last_built_at
+            ? L(`zuletzt berechnet ${fmtTime(data.last_built_at)}`, `last computed ${fmtTime(data.last_built_at)}`)
+            : L("noch nichts berechnet", "nothing computed yet")}
+          {data.warm_days > 0 &&
+            L(
+              ` · vorgerechnet werden die in den letzten ${data.warm_days} Tagen geöffneten`,
+              ` · pre-computed: those opened in the last ${data.warm_days} days`,
+            )}
+        </span>
+      }
+    >
+      <div className="dash-docs-state" style={{ padding: "8px 16px 0", display: "flex", gap: 6, flexWrap: "wrap" }}>
+        {data.warming && <span className="chip info" id="docs-warming">{L("Vorrechnen läuft", "Pre-computing")}</span>}
+        {(data.refreshing ?? 0) > 0 && (
+          <span className="chip info" id="docs-refreshing" title={L("Befunde der Applikationen werden nachgezogen", "Findings of the applications are being updated")}>
+            {L("Befunde nachziehen", "Updating findings")}
+          </span>
+        )}
+        <button className="linkbtn" onClick={() => setTick((n) => n + 1)}>
+          {L("Aktualisieren", "Refresh")}
+        </button>
+      </div>
+      <div className="kpis wrap" style={{ margin: 12 }}>
+        {DOC_ORDER.map((s) => (
+          <div key={s} className="kpi" data-tile={s} title={DOC_STATE[s].title}>
+            <div className="k-label">{DOC_STATE[s].label}</div>
+            <div className={`k-val sm ${s === "stale" && data.counts.stale ? "warn" : ""}`}>{data.counts[s]}</div>
+          </div>
+        ))}
+      </div>
+      {open.length === 0 && !all ? (
+        <div className="empty" style={{ padding: "0 16px 12px" }}>
+          {L(`Alle ${data.total} Applikationen aktuell.`, `All ${data.total} applications current.`)}{" "}
+          {data.total > 0 && (
+            <button className="linkbtn" onClick={() => setAll(true)}>
+              {L("alle zeigen", "show all")}
+            </button>
+          )}
+        </div>
+      ) : (
+        <table className="compact" id="docs-apps" style={{ margin: "0 0 8px" }}>
+          <thead>
+            <tr>
+              <th>{L("Applikation", "Application")}</th>
+              <th>{L("Zustand", "State")}</th>
+              <th title={L("Doku · Verbindungen: aktuelle von allen Ständen", "Documentation · connections: current of all states")}>
+                {L("Doku · Verbindungen", "Doc · connections")}
+              </th>
+              <th>{L("berechnet", "computed")}</th>
+              <th title={L("längste Berechnung", "longest computation")}>{L("Dauer", "Duration")}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {shown.map((a) => (
+              <tr key={a.id} data-app={a.name} data-state={a.state}>
+                <td>
+                  <button className="linkbtn" onClick={() => onGo("apps", { app: String(a.id) })}>
+                    {a.name}
+                  </button>
+                </td>
+                <td>
+                  <span className={`chip ${DOC_STATE[a.state].chip}`} title={DOC_STATE[a.state].title}>
+                    {DOC_STATE[a.state].label}
+                  </span>
+                  {a.auto && (
+                    <span className="faint" title={L("wird im Hintergrund vorgerechnet", "pre-computed in the background")}>
+                      {" "}
+                      {L("· wird vorgerechnet", "· pre-computing")}
+                    </span>
+                  )}
+                </td>
+                <td className="mono">
+                  {(["doc", "connections"] as const).map((k) => `${a.kinds[k].fresh}/${a.kinds[k].variants}`).join(" · ")}
+                </td>
+                <td className="nowrap">{time(a)}</td>
+                <td className="num">{Math.max(a.kinds.doc.seconds, a.kinds.connections.seconds).toFixed(1)} s</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {(all || apps.length > shown.length) && open.length > 0 && (
+        <div style={{ padding: "0 16px 10px" }}>
+          <button className="linkbtn" onClick={() => setAll((v) => !v)}>
+            {all ? L("nur nicht aktuelle", "only not current") : L(`alle ${apps.length} zeigen`, `show all ${apps.length}`)}
+          </button>
         </div>
       )}
     </Card>

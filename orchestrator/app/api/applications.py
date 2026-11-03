@@ -599,6 +599,20 @@ def delete_applications(
     return {"deleted": len(apps)}
 
 
+@router.get("/doc-states")
+def doc_states(
+    tenant_id: int | None = None,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Stand der Doku je Applikation (0.129.0, Uebersicht): passend, veraltet, rechnet bzw. noch
+    nie gerechnet, dazu Vorrechnen und Befunde nachziehen. Nicht fuer Kunden-Benutzer (Betrieb)."""
+    if principal.is_customer:
+        raise HTTPException(status_code=403, detail=L("nur für den Betrieb", "operations only"))
+    tid = _require_tenant(principal, tenant_id)
+    return {**doc_snapshots.overview(session, tid), "refreshing": app_refresh.pending_count(tid)}
+
+
 @router.get("/candidates", response_model=list[CandidateOut])
 def list_candidates(
     response: Response,

@@ -56,6 +56,12 @@ def schedule_tenant(background: BackgroundTasks, factory: sessionmaker[Session],
     return True
 
 
+def pending_count(tenant_id: int) -> int:
+    """Ausstehende Durchgaenge (Befunde nachziehen) des Mandanten - fuer die Uebersicht."""
+    with _lock:  # Schluessel (Mandant, Applikation) bzw. (Art, Mandant)
+        return sum(1 for k in _pending if (k[1] if isinstance(k[0], str) else k[0]) == tenant_id)
+
+
 def _claim(key: tuple) -> bool:
     with _lock:
         if key in _pending:

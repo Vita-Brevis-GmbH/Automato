@@ -22,6 +22,7 @@ import { FoldTitle, useFolds } from "./fold";
 import { L } from "./i18n";
 import {
   AppsCard,
+  DocsCard,
   FindingsChart,
   LayoutEditor,
   ObjectsCard,
@@ -315,6 +316,8 @@ export default function Overview({
         return <RulesCard rules={stats.rules} systems={systems} onGo={onGo} />;
       case "objects":
         return tenantId !== null ? <ObjectsCard tenantId={tenantId} onGo={onGo} /> : null;
+      case "docs":
+        return tenantId !== null && !customer ? <DocsCard tenantId={tenantId} onGo={onGo} /> : null;
     }
   };
 

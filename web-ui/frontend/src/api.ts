@@ -1820,6 +1820,27 @@ export const fetchRoutingChangeSummary = (tenantId: number, days = 7) =>
   getJSON<RoutingChangeSummary>(`/api/routing/changes/summary${cq({ tenant_id: tenantId, days })}`);
 export const fetchApps = (tenantId: number) =>
   getJSON<Application[]>(`/api/applications${cq({ tenant_id: tenantId })}`);
+// Stand der Doku je Applikation (0.129.0, Übersicht): passend, veraltet, rechnet, noch nie gerechnet
+export type DocState = "fresh" | "stale" | "building" | "never";
+export interface DocKindState {
+  variants: number; // Stände (Sprache, Namen, Ausschnitt)
+  fresh: number;
+  building: boolean;
+  built_at: string | null;
+  seconds: number; // längste Berechnung
+}
+export interface DocStates {
+  enabled: boolean;
+  warming: boolean; // Vorrechnen läuft
+  warm_days: number;
+  refreshing?: number; // Befunde nachziehen (ausstehend)
+  total: number;
+  counts: Record<DocState, number>;
+  last_built_at: string | null;
+  apps: { id: number; name: string; state: DocState; stale: number; auto: boolean; kinds: Record<"doc" | "connections", DocKindState> }[];
+}
+export const fetchDocStates = (tenantId: number) =>
+  getJSON<DocStates>(`/api/applications/doc-states${cq({ tenant_id: tenantId })}`);
 export const fetchApp = (id: number) => getJSON<ApplicationDetail>(`/api/applications/${id}`);
 export const createApp = (
   tenantId: number,
