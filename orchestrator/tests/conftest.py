@@ -67,12 +67,15 @@ def _doc_snapshots_off():
     (ohne Lauf bzw. Audit) - `tests/test_doc_snapshots.py` schaltet ihn ein;
     `AUTOMATO_TEST_DOC_SNAPSHOTS=1` laesst alle Tests mit dem Stand laufen (Fingerabdruck)."""
     from app.config import get_settings
+    from app.store import bgp_cache
 
     settings = get_settings()
     previous = settings.doc_snapshots
     settings.doc_snapshots = os.environ.get("AUTOMATO_TEST_DOC_SNAPSHOTS") == "1"
+    bgp_cache.clear()  # 0.131.0: Stand der Routing-Filter je Test neu (gleiche Mandanten-IDs)
     yield
     settings.doc_snapshots = previous
+    bgp_cache.clear()
 
 
 def _worker_url(url: str):

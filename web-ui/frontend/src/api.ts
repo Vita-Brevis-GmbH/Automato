@@ -3083,7 +3083,15 @@ export interface BgpZoneList {
   // Ausgang (0.116.0): heute angekündigte Routen ausserhalb der Zonen diesseits
   announced_outside?: string[];
   announced_outside_total?: number;
+  // Eingang (0.131.0): was heute vom Nachbarn ankommt (z. B. nur die Default-Route)
+  received_total?: number;
+  received_default_only?: boolean;
   cli: string;
+}
+// 0.131.0: Netz von Hand ohne bekanntes Netz darin – nur Rahmen, nicht im Filter
+export interface BgpZoneFrame {
+  prefix: string;
+  zone: string;
 }
 export interface BgpZoneSoll {
   id: number;
@@ -3097,6 +3105,8 @@ export interface BgpZoneSoll {
   way?: "in" | "out"; // 0.116.0: Eingang (Zonen dahinter) bzw. Ausgang (Zonen diesseits)
   public_only?: boolean; // Nachbar in einer Zone ausserhalb: nur öffentliche Netze
   chain?: BgpZoneChain; // 0.127.0
+  families?: number[]; // 0.131.0: Adressfamilien der Sitzung
+  frames?: BgpZoneFrame[]; // 0.131.0
 }
 export const fetchBgpPeerZones = (tenantId: number, peerId: number, way: "in" | "out" = "in") =>
   getJSON<BgpZoneSoll>(`/api/routing/bgp/peers/${peerId}/zones${cq({ tenant_id: tenantId, way })}`);
@@ -3117,6 +3127,8 @@ export interface L3OutZoneSoll {
   excluded_allowed?: string[];
   excluded?: { prefix: string; zones: string[] }[];
   proposal?: string;
+  families?: number[]; // 0.131.0: Adressfamilien der Peers des L3Outs
+  frames?: BgpZoneFrame[]; // 0.131.0
 }
 export const fetchL3OutZones = (tenantId: number, l3outId: number) =>
   getJSON<L3OutZoneSoll>(`/api/routing/bgp/l3outs/${l3outId}/zones${cq({ tenant_id: tenantId })}`);

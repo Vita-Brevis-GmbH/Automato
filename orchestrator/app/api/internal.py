@@ -26,6 +26,7 @@ from app.schemas.collector import CollectorResult, ReferenceBatch
 from app.sot import build_adapter
 from app.store import agents as agent_store
 from app.store import (
+    bgp_cache,
     customers,
     doc_snapshots,
     ingest,
@@ -272,6 +273,7 @@ def submit_result(
     if run is not None and run.tenant_id and run.status is RunStatus.COMPLETED:
         # Doku der zuletzt angesehenen Applikationen vorrechnen (0.108.0, ADR 0037)
         background.add_task(doc_snapshots.warm, factory, run.tenant_id)
+        background.add_task(bgp_cache.warm, factory, run.tenant_id)  # 0.131.0
     shown = runs.show_message(ack.message)
     return ack if shown == ack.message else ack.model_copy(update={"shown": shown})
 

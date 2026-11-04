@@ -164,3 +164,68 @@ export function BgpWhyList({ why, chain, out }: { why: BgpWhy[]; chain?: BgpZone
     </div>
   );
 }
+
+// Betroffene Netze eines Befunds der Routing-Filter (0.131.0, Anwender: „In den Findings, bei den Routingfilters, sehe
+// ich immer noch nicht, welche Netzwerke da betroffen sind“): je Liste, was sie bedeutet, mit Gesamtzahl
+type NetList = { key: string; total?: string; label: string };
+const NET_LISTS: Record<string, NetList[]> = {
+  bgp_expected_missing: [
+    { key: "entries", total: "total", label: L("Vom Filter erlaubt, aber nichts erhalten", "Permitted by the filter, but nothing received") },
+  ],
+  bgp_outside_filter: [
+    { key: "prefixes", total: "total", label: L("Vom Nachbarn erhalten, aber vom Eingangsfilter gesperrt", "Received from the neighbor, but denied by the inbound filter") },
+  ],
+  aci_import_not_enforced: [
+    { key: "entries", total: "total", label: L("Import-Subnetze ohne Wirkung (Import nicht erzwungen)", "Import subnets without effect (import not enforced)") },
+  ],
+  bgp_zone_mismatch: [
+    { key: "missing", total: "missing_total", label: L("Netze der Zonen dahinter, die der Eingangsfilter sperrt", "Networks of the zones behind that the inbound filter denies") },
+    { key: "too_open", total: "too_open_total", label: L("Vom Eingangsfilter erlaubt, aber ausserhalb der Zonen dahinter", "Permitted by the inbound filter, but outside the zones behind") },
+    { key: "excluded_allowed", label: L("Ausschlüsse, die der Filter erlaubt", "Exclusions the filter permits") },
+  ],
+  bgp_zone_out_mismatch: [
+    { key: "missing", total: "missing_total", label: L("Netze der Zonen diesseits, die der Ausgangsfilter sperrt", "Networks of the zones on this side that the outbound filter denies") },
+    { key: "too_open", total: "too_open_total", label: L("Vom Ausgangsfilter erlaubt, aber ausserhalb der Zonen diesseits", "Permitted by the outbound filter, but outside the zones on this side") },
+    { key: "excluded_allowed", label: L("Ausschlüsse, die der Filter erlaubt", "Exclusions the filter permits") },
+    { key: "announced_outside", total: "announced_outside_total", label: L("Heute angekündigt, aber ausserhalb der Zonen", "Announced today, but outside the zones") },
+  ],
+  aci_import_zone_mismatch: [
+    { key: "missing", total: "missing_total", label: L("Netze der Zonen dahinter ohne Import Route Control", "Networks of the zones behind without import route control") },
+    { key: "too_open", label: L("Importiert, aber ausserhalb der Zonen dahinter", "Imported, but outside the zones behind") },
+    { key: "excluded_allowed", label: L("Ausschlüsse, die importiert werden", "Exclusions that are imported") },
+  ],
+};
+export const BGP_FINDING_TYPES = new Set(Object.keys(NET_LISTS));
+// Felder, die die Liste zeigt (nicht noch einmal in den Details)
+export const BGP_NET_KEYS = new Set(Object.values(NET_LISTS).flatMap((ls) => ls.flatMap((x) => [x.key, x.total ?? ""])).filter(Boolean));
+
+export function BgpFindingNets({ type, detail }: { type: string; detail: Record<string, unknown> | null | undefined }) {
+  const lists = NET_LISTS[type] ?? [];
+  const d = detail ?? {};
+  const shown = lists
+    .map((x) => {
+      const nets = (Array.isArray(d[x.key]) ? d[x.key] : []) as string[];
+      const total = x.total && typeof d[x.total] === "number" ? (d[x.total] as number) : nets.length;
+      return { ...x, nets, total };
+    })
+    .filter((x) => x.nets.length > 0);
+  if (!shown.length) return null;
+  return (
+    <div className="bgp-finding-nets" style={{ marginTop: 6 }}>
+      <div className="faint" style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".04em" }}>
+        {L("Betroffene Netze", "Affected networks")}
+      </div>
+      {shown.map((x) => (
+        <div key={x.key} data-list={x.key} style={{ margin: "3px 0" }}>
+          <span className="faint">
+            {x.label} ({x.total}):{" "}
+          </span>
+          <span className="mono">{x.nets.join(", ")}</span>
+          {x.total > x.nets.length && (
+            <span className="faint">{L(` … und ${x.total - x.nets.length} weitere`, ` … and ${x.total - x.nets.length} more`)}</span>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}

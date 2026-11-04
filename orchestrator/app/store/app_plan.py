@@ -39,6 +39,10 @@ from app.store.plan_export import CURVE_STEPS, _bezier, _geometry, _html, _id, _
 NODE_W, NODE_H = 190, 44
 COL_GAP, ROW_GAP, TOP = 160, 26, 34  # 0.113.1: mehr Abstand (vorher 120, 18)
 MAX_SERVICES = 4  # Dienste je Richtung an einer Linie
+MAX_EDGE_RULES = 2  # Contracts an einer Linie direkt zwischen EPGs (0.131.0)
+# Spur links im Rahmen fuer Linien direkt zwischen Kaesten der Applikation (0.131.0): die n-te
+# Linie reicht INNER_REACH + n * INNER_STEP links an den Kaesten vorbei
+INNER_REACH, INNER_STEP, INNER_MAX = 12, 8, 6
 MAX_PORTS = 2  # Interfaces je Ende
 HEAD = 56
 LINE_H = 14  # Zeile: VM in der EPG, Regel im Kasten
@@ -177,6 +181,19 @@ def _chain(c: dict, place: _Place | None = None) -> list[dict]:
     return chain
 
 
+def _direct(chain: list[dict]) -> list[dict] | None:
+    """Zwischen zwei Kaesten der Applikation nur ACI-VRFs ohne L3Out (0.131.0, Anwender: „die
+    Verbindung sollte direkt zwischen den beiden EPGs zu sehen sein, das AP Feld entsprechend
+    vergrössern“): diese Hops - die Linie geht dann direkt von Kasten zu Kasten."""
+    if len(chain) < 3 or chain[0]["role"] != "own" or chain[-1]["role"] != "own":
+        return None
+    mid = chain[1:-1]
+    if all(x["role"] == "hop" and x.get("kind") != "lb" and not x.get("l3out")
+           and x["hop"].get("kind") == "vrf" for x in mid):  # fmt: skip
+        return mid
+    return None
+
+
 def _steps(hops: list[dict]) -> list[dict]:
     """Hops in Verkehrsrichtung; nach einem Hop mit Load Balancer dessen Knoten. Geht der Weg
     danach am selben Knoten weiter, gehoert dieser Hop zum Load Balancer (seine Regeln)."""
@@ -255,6 +272,12 @@ def edge_label(e: dict) -> str:
         parts.append("← " + _services(e["back"]))
     if e["blocked"]:  # vorher gesperrt: erreicht diese Linie nicht
         parts.append("✕ " + _services(e["blocked"]))
+    rules = e.get("rules") or []  # direkt zwischen Kaesten der Applikation (0.131.0)
+    if rules:
+        parts.append(
+            ", ".join(rules[:MAX_EDGE_RULES])
+            + (f" +{len(rules) - MAX_EDGE_RULES}" if len(rules) > MAX_EDGE_RULES else "")
+        )
     return " · ".join(parts)
 
 
@@ -271,6 +294,16 @@ def build(connections: list[dict], keys: set[str] | None = None,
         chain = _chain(c, place)
         opened = _open_segments(c, len(chain))
         behind, block = _after_block(c, chain)
+        via = _direct(chain)
+        rules: list[str] = []
+        if via is not None:  # 0.131.0: direkt von EPG zu EPG, die Contracts an der Linie
+            tmp: dict = {"rules": []}
+            for x in via:
+                _add_rules(tmp, x["hop"])
+            rules = [r["name"] for r in tmp["rules"]]
+            opened = {0} if len(opened) >= len(chain) - 1 else set()  # gestrichelt: ganz offen
+            behind, block = set(), None
+            chain = [chain[0], chain[-1]]
         for i, x in enumerate(chain):
             node = nodes.get(x["id"])
             if node is None:
@@ -290,7 +323,8 @@ def build(connections: list[dict], keys: set[str] | None = None,
                 e = edges[key] = {"id": f"e{len(edges)}", "a": key[0], "b": key[1], "fwd": [],
                                   "back": [], "blocked": [], "verdicts": [], "conns": [],
                                   "ports_a": [], "ports_b": [], "open": True,
-                                  "mismatch": False}  # fmt: skip
+                                  "mismatch": False, "rules": []}  # fmt: skip
+            e["rules"] += [r for r in rules if r not in e["rules"]]
             flip = key != pair
             e["ports_a" if not flip else "ports_b"] += a["right"]
             e["ports_b" if not flip else "ports_a"] += b["left"]
@@ -433,7 +467,8 @@ def _edge_out(e: dict) -> dict:
             "verdict": verdict, "conns": e["conns"],
             "ports_a": list(dict.fromkeys(e["ports_a"])),
             "ports_b": list(dict.fromkeys(e["ports_b"])),
-            "dashed": e["open"], "mismatch": e["mismatch"]}  # fmt: skip
+            "dashed": e["open"], "mismatch": e["mismatch"],
+            "rules": e.get("rules") or []}  # fmt: skip
 
 
 def _sub(n: dict) -> str:
@@ -518,6 +553,12 @@ def _layout(nodes: list[dict], edges: list[dict]) -> dict:
                 left[y["id"]].append(x["id"])
                 right[x["id"]].append(y["id"])
     _order(items, left, right)
+    # 0.131.0: Linien direkt zwischen Kaesten der Applikation laufen links im Rahmen - der
+    # Rahmen wird dafuer links breiter, alle Spalten ruecken nach rechts
+    inner_edges = [e for e in edges if by_id[e["a"]]["role"] == by_id[e["b"]]["role"] == "own"]
+    k = min(len(inner_edges), INNER_MAX)
+    inner = max(0, INNER_REACH + (k - 1) * INNER_STEP + 6 - GROUP_PAD) if k else 0
+    x0 = X0 + inner
     tall, heights = 0.0, {}
     for c, col in items.items():
         heights[c] = (
@@ -531,7 +572,7 @@ def _layout(nodes: list[dict], edges: list[dict]) -> dict:
         for i, x in enumerate(col):
             if i:
                 y += _gap(col[i - 1], x)
-            x["x"], x["y"] = X0 + c * (NODE_W + COL_GAP), y
+            x["x"], x["y"] = x0 + c * (NODE_W + COL_GAP), y
             y += x["stack"]
     boxes = []
     for n in nodes:
@@ -542,20 +583,21 @@ def _layout(nodes: list[dict], edges: list[dict]) -> dict:
                              "h": n["rule_h"]} if n["rule_h"] else None)  # fmt: skip
         boxes.append(box)
     routed = _route(by_id, [{**e, "label": edge_label(e)} for e in edges], lanes)
-    width = X0 + len(order) * (NODE_W + COL_GAP) - COL_GAP + 16 if order else 400
+    width = x0 + len(order) * (NODE_W + COL_GAP) - COL_GAP + 16 if order else 400
     width = max([width] + [x + 60 for e in routed for x, _ in e["points"]])
     columns = []
     for ci, c in enumerate(order):  # Kopf je Spalte (der Weg nur ueber der ersten)
         title = (L("Applikation", "Application") if c == 0
                  else L("Gegenstellen", "Peers") if ci == len(order) - 1
                  else L("Weg", "Path") if ci == 1 else "")  # fmt: skip
-        columns.append({"x": X0 + ci * (NODE_W + COL_GAP), "title": title})
+        columns.append({"x": x0 + ci * (NODE_W + COL_GAP), "title": title})
     return {"width": width, "height": TOP + tall + 24, "nodes": boxes, "edges": routed,
-            "columns": columns, "groups": _groups(nodes)}  # fmt: skip
+            "columns": columns, "groups": _groups(nodes, inner)}  # fmt: skip
 
 
-def _groups(nodes: list[dict]) -> list[dict]:
-    """Rahmen je AP (bzw. „ohne EPG“) um die Kaesten der Applikation."""
+def _groups(nodes: list[dict], inner: float = 0) -> list[dict]:
+    """Rahmen je AP (bzw. „ohne EPG“) um die Kaesten der Applikation; `inner` = Spur links fuer
+    Linien direkt zwischen den Kaesten (0.131.0)."""
     by: dict[str, list[dict]] = defaultdict(list)
     for n in nodes:
         if n["role"] == "own" and n.get("group"):
@@ -566,8 +608,8 @@ def _groups(nodes: list[dict]) -> list[dict]:
         top = min(n["y"] for n in members)
         bottom = max(n["y"] + n["stack"] for n in members)
         shown = L(NO_EPG, "without EPG") if title == NO_EPG else title  # NO_EPG bleibt Schluessel
-        out.append({"title": shown, "x": members[0]["x"] - GROUP_PAD,
-                    "y": top - GROUP_HEAD - GROUP_PAD, "w": NODE_W + 2 * GROUP_PAD,
+        out.append({"title": shown, "x": members[0]["x"] - GROUP_PAD - inner,
+                    "y": top - GROUP_HEAD - GROUP_PAD, "w": NODE_W + 2 * GROUP_PAD + inner,
                     "h": bottom - top + GROUP_HEAD + 2 * GROUP_PAD,
                     "nodes": [n["id"] for n in members]})  # fmt: skip
     return out
@@ -624,20 +666,26 @@ def _order(items: dict[int, list[dict]], left: dict, right: dict) -> None:
 
 def _route(by_id: dict, edges: list[dict], lanes: dict[str, list[dict]]) -> list[dict]:
     """Linien von rechts am linken Knoten durch ihre Spuren nach links am rechten Knoten; in
-    derselben Spalte rechts herum. Anschluesse je Seite nach der Lage der Gegenseite."""
+    derselben Spalte rechts herum, zwischen Kaesten der Applikation links im Rahmen (0.131.0).
+    Anschluesse je Seite nach der Lage der Gegenseite."""
 
     def cy(x: dict) -> float:
         return x["y"] + x["h"] / 2
 
     ends: dict[tuple, list] = defaultdict(list)
     plans = []
+    inner: list[str] = []  # direkt zwischen Kaesten der Applikation (0.131.0): links im Rahmen
     for e in edges:
         a, b = by_id[e["a"]], by_id[e["b"]]
         via = lanes[e["id"]]
         if a["vc"] == b["vc"]:
-            plans.append((e, a, b, "r", "r"))
-            ends[(a["id"], "r")].append((cy(b), e["id"]))
-            ends[(b["id"], "r")].append((cy(a), e["id"]))
+            side = "l" if a["role"] == b["role"] == "own" else "r"
+            lo, hi = (a, b) if a["y"] <= b["y"] else (b, a)
+            plans.append((e, lo, hi, side, side))
+            ends[(a["id"], side)].append((cy(b), e["id"]))
+            ends[(b["id"], side)].append((cy(a), e["id"]))
+            if side == "l":
+                inner.append(e["id"])
             continue
         lo, hi = (a, b) if a["vc"] < b["vc"] else (b, a)
         ends[(lo["id"], "r")].append((cy(via[0]) if via else cy(hi), e["id"]))
@@ -650,10 +698,25 @@ def _route(by_id: dict, edges: list[dict], lanes: dict[str, list[dict]]) -> list
         y = box["y"] + 8 + (box["h"] - 16) * (ids.index(eid) + 1) / (len(ids) + 1)
         return (box["x"] + NODE_W if side == "r" else box["x"]), round(y, 1)
 
+    # kurze Linien innen, lange aussen (weniger Kreuzungen)
+    span = {eid: abs(cy(by_id[e["a"]]) - cy(by_id[e["b"]])) for e in edges
+            if (eid := e["id"]) in inner}  # fmt: skip
+    rank = {eid: i for i, eid in enumerate(sorted(inner, key=lambda x: (span[x], x)))}
+    labels_below: dict[str, int] = defaultdict(int)
     out = []
     for n, (e, lo, hi, s1, s2) in enumerate(plans):
         p0, p3 = at(lo, s1, e["id"]), at(hi, s2, e["id"])
-        if s1 == s2:  # dieselbe Spalte: rechts herum
+        if s1 == s2 == "l":  # direkt zwischen Kaesten der Applikation: links im Rahmen
+            reach = INNER_REACH + min(rank[e["id"]], INNER_MAX - 1) * INNER_STEP
+            pull = reach / 0.75  # Bezier: groesste Auslenkung = 3/4 des Abstands der Stuetzen
+            c1, c2 = (p0[0] - pull, p0[1]), (p3[0] - pull, p3[1])
+            points = [_bezier(p0, c1, c2, p3, i / CURVE_STEPS) for i in range(CURVE_STEPS + 1)]
+            # Beschriftung im Abstand unter dem oberen Kasten
+            k = labels_below[lo["id"]]
+            labels_below[lo["id"]] += 1
+            label = (lo["x"] + 6, lo["y"] + lo["stack"] + ROW_GAP / 2 + 4 + k * 11, "start")
+            via = [(p0[0] - reach, p0[1]), (p3[0] - reach, p3[1])]
+        elif s1 == s2:  # dieselbe Spalte: rechts herum
             reach = 40 + (n % 4) * 10 + abs(p3[1] - p0[1]) * 0.12
             c1, c2 = (p0[0] + reach, p0[1]), (p3[0] + reach, p3[1])
             points = [_bezier(p0, c1, c2, p3, i / CURVE_STEPS) for i in range(CURVE_STEPS + 1)]
@@ -679,9 +742,13 @@ def _route(by_id: dict, edges: list[dict], lanes: dict[str, list[dict]]) -> list
         (x1, y1), (x2, y2) = (p3, p0) if flip else (p0, p3)
         sa, sb = (s2, s1) if flip else (s1, s2)
         lx, ly, anchor = label
+        if s1 == s2 == "l":  # Stuetzpunkte der Spur selbst (draw.io)
+            mid = [[round(x, 1), y] for x, y in (via[::-1] if flip else via)]
+        else:
+            mid = [[x + NODE_W / 2, y] for x, y in (via[::-1] if flip else via)]
         out.append({**e, "points": points, "x1": x1, "y1": y1, "x2": x2, "y2": y2,
                     "lx": lx, "ly": ly, "anchor": anchor, "sides": [sa, sb],
-                    "via": [[x + NODE_W / 2, y] for x, y in (via[::-1] if flip else via)],
+                    "via": mid,
                     "port_a": _port_label(x1, y1, sa, _ports(e["ports_a"])),
                     "port_b": _port_label(x2, y2, sb, _ports(e["ports_b"]))})  # fmt: skip
     return out

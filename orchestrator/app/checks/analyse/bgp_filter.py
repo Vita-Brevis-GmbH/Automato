@@ -12,7 +12,7 @@ from app.checks import Check, Context
 from app.models import FindingType, Severity, SubjectKind, TopoL3Out
 from app.store.reconcile import Issue
 
-SHOWN = 10  # Netze im Detail
+SHOWN = 50  # Netze im Detail (0.131.0, vorher 10: „welche Netzwerke da betroffen sind“)
 
 
 def _label(cx: Context, session: Session, tenant_id: int, sid: int, node: str, ctx: str) -> str:

@@ -14,7 +14,7 @@ import {
 import type { View, ViewParams } from "./App";
 import { customerCan, type Me } from "./auth";
 import FindingDialog from "./FindingDialog";
-import { BgpWhyList } from "./modules/analyse/BgpWhy";
+import { BGP_FINDING_TYPES, BGP_NET_KEYS, BgpFindingNets, BgpWhyList } from "./modules/analyse/BgpWhy";
 import Checks from "./modules/findings/Checks";
 import { NetAssignDialog } from "./modules/wege/NetAssign";
 import type { BgpWhy, BgpZoneChain } from "./api";
@@ -130,6 +130,12 @@ const DETAIL_LABEL: Record<string, string | null> = {
   received: L("erhalten", "received"),
   l3out: "L3Out",
   aci_tenant: L("ACI-Tenant", "ACI tenant"),
+  // 0.131.0: Felder der BGP-Befunde gegen die Zonen
+  neighbor_zone: L("Zone am Nachbarn", "Zone at the neighbor"),
+  open: L("ohne Filter", "no filter"),
+  public_only: L("nur öffentliche Netze", "public networks only"),
+  not_enforced: L("Import nicht erzwungen", "import not enforced"),
+  l3out_id: null,
 };
 
 // Routing-Befund im Verbund (0.72.0): je Präfix, was auf der führenden bzw. dieser Firewall steht
@@ -219,6 +225,7 @@ const SIDE: Record<string, string> = {
 const fmtValue = (k: string, v: unknown): string => {
   if (k === "missing" && Array.isArray(v)) return v.map((x) => SIDE[x] ?? x).join(", ");
   if (Array.isArray(v)) return v.join(k === "compared" ? " ≠ " : ", ");
+  if (typeof v === "boolean") return v ? L("ja", "yes") : L("nein", "no");
   // Abweichung im Verbund: {Feld: [hier, dort]}
   if (k === "values" && v && typeof v === "object")
     return Object.entries(v as Record<string, unknown>)
@@ -248,6 +255,14 @@ function viewLinks(f: Finding): { label: string; view: View; params: ViewParams 
   if (f.subject_kind === "device_object" && (d.category === "vip" || d.category === "ippool") && d.name)
     return [{ label: L(`${String(d.name)} in NAT / VIPs`, `${String(d.name)} in NAT / VIPs`), view: "nat",
               params: { q: String(d.name) } }];
+  // 0.131.0 (Anwender: „per Link zu der Info gelangen“): Soll/Ist des BGP-Nachbarn bzw. die L3Outs
+  if (BGP_FINDING_TYPES.has(f.type) && d.peer)
+    return [{ label: L(`BGP-Nachbar ${String(d.peer)} öffnen`, `Open BGP neighbor ${String(d.peer)}`), view: "routing",
+              params: { tab: "peers", peer: String(d.peer), ...(sid != null ? { system: String(sid) } : {}),
+                        ...(d.context ? { context: String(d.context) } : {}) } }];
+  if (BGP_FINDING_TYPES.has(f.type) && d.l3out)
+    return [{ label: L(`L3Out ${String(d.l3out)} öffnen`, `Open L3Out ${String(d.l3out)}`), view: "routing",
+              params: { tab: "l3out", q: String(d.l3out) } }];
   // Datenqualität (ADR 0029): Läufe des Quellsystems, nicht lesbarer Routing-Kontext
   if ((f.type === "source_stale" || f.type === "source_partial") && sid != null) {
     const out: { label: string; view: View; params: ViewParams }[] = [
@@ -697,6 +712,7 @@ export default function Findings({
                                 <dl className="kv tight">
                                   {Object.entries(f.detail ?? {})
                                     .filter(([k, v]) => DETAIL_LABEL[k] !== null && v !== null && v !== "")
+                                    .filter(([k]) => !(BGP_FINDING_TYPES.has(f.type) && BGP_NET_KEYS.has(k)))
                                     .map(([k, v]) => (
                                       <Fragment key={k}>
                                         <dt>{DETAIL_LABEL[k] ?? k}</dt>
@@ -706,7 +722,11 @@ export default function Findings({
                                   <dt>{L("erstmals gesehen", "first seen")}</dt>
                                   <dd className="mono">{fmtTime(f.first_seen)}</dd>
                                 </dl>
-                                <RouteEntries f={f} />
+                                {BGP_FINDING_TYPES.has(f.type) ? (
+                                  <BgpFindingNets type={f.type} detail={f.detail as Record<string, unknown> | null} />
+                                ) : (
+                                  <RouteEntries f={f} />
+                                )}
                                 {(f.type === "bgp_zone_mismatch" || f.type === "bgp_zone_out_mismatch") && (
                                   <BgpWhyList
                                     why={(Array.isArray(f.detail?.why) ? f.detail!.why : []) as BgpWhy[]}

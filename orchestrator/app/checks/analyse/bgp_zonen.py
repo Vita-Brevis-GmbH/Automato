@@ -38,7 +38,9 @@ def _run(session: Session, tenant_id: int, cx: Context) -> list[Issue]:
                   "neighbor_zone": r["neighbor_zone"]["name"],
                   "open": any(x["open"] for x in lists),
                   "missing": [n for x in lists for n in x["missing"]][:SHOWN],
+                  "missing_total": sum(x.get("missing_total", len(x["missing"])) for x in lists),
                   "too_open": [t["prefix"] for x in lists for t in x["too_open"]][:SHOWN],
+                  "too_open_total": sum(len(x["too_open"]) for x in lists),
                   "excluded_allowed": [n for x in lists
                                        for n in x["excluded_allowed"]][:SHOWN],
                   # 0.127.0 (Anwender: „ich sehe keine Details, weshalb“): je Abweichung Netz,

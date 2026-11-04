@@ -287,3 +287,37 @@ def test_default_originate_und_keine_routen_zurueck_ins_selbe_as(client, session
     assert out["0.0.0.0/0"]["origin"] == "default-originate"
     assert "10.50.0.0/16" not in out  # AS 65010 im AS-Pfad
     assert r["out"]["counts"]["loop"] == 1
+
+
+def test_default_originate_blendet_unbekannte_aus(client, session_factory):
+    """0.131.0 (Anwender: „Im BGP Filter werden immer noch alle Netwerke der Firewall als
+    unbekannt angezeigt, wenn default-originate vorhanden ist … Somit können diese hier
+    verschwinden“): mit default-originate und einem Ausgangsfilter, den die Plattform nicht
+    auswertet (AS-Path), stehen nur die Default-Route und die Anzahl der ausgeblendeten Routen
+    im Bericht; ohne default-originate bleiben sie „unbekannt“ gelistet."""
+    import copy
+
+    fw = copy.deepcopy(FW)
+    leaf = "10.255.0.2"
+    conf = {**_neighbor({"out": {"filter_list": "AS_ONLY"}}, 65010),
+            "capability-default-originate": "enable"}  # fmt: skip
+    fw["routing"]["peers"].append({"node": "fw-01", "context": "root", "peer_ip": leaf,
+                                   "remote_as": 65010, "state": "Established",
+                                   "attrs": {"config": conf}})  # fmt: skip
+    tid = client.post("/tenants", json={"name": "Kunde A"}, headers=ADMIN).json()["id"]
+    body = {"tenant_id": tid, "name": "fw-01", "platform": "fortigate", "base_url": "https://x"}
+    sid = client.post("/systems", json=body, headers=ADMIN).json()["id"]
+    _deliver(client, tid, sid, "fortigate", fw)
+    from app.models import TopoPeer
+
+    s = session_factory()
+    p = s.query(TopoPeer).filter_by(peer_ip=leaf).one()
+    r = bgp_filters.Filters(s, tid).report(p)
+    assert [a["prefix"] for a in r["out"]["announced"]] == ["0.0.0.0/0"]
+    assert r["out"]["counts"]["originate_only"] >= 2 and "unknown" not in r["out"]["counts"]
+    p.attrs = {"config": {k: v for k, v in conf.items()
+                          if k != "capability-default-originate"}}  # fmt: skip
+    s.commit()
+    r = bgp_filters.Filters(s, tid).report(p)
+    s.close()
+    assert r["out"]["counts"].get("unknown", 0) >= 2 and "originate_only" not in r["out"]["counts"]

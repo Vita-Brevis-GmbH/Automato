@@ -709,17 +709,32 @@ function RowFilter({
 
 const labelOf = (x: Labeled) => x.label || `${x.source ?? x.node} · ${x.context}`;
 
-function PeersTab({ tenantId }: { tenantId: number }) {
+// 0.131.0 (Anwender: „bei den Routingfilters … per Link zu der Info gelangen“): aus einem Befund mit `peer`
+// (IP des Nachbarn), `system` und `context` öffnet sich Soll/Ist dieses Nachbarn
+function PeersTab({ tenantId, initial = {} }: { tenantId: number; initial?: Record<string, string> }) {
   const { rows: all, error } = useList<TopoPeer>(() => fetchPeers(tenantId), [tenantId]);
   const [state, setState] = useState("");
   const f = useRowFilter(
     all,
     (p) => [labelOf(p), p.peer_ip, p.peer, p.peer_node, p.local_ip, p.remote_as, p.state],
     labelOf,
+    initial.peer ?? "",
   );
   const up = (p: TopoPeer) => (p.state ?? "").toLowerCase() === "established";
   const rows = f.shown?.filter((p) => !state || (state === "up") === up(p)) ?? null;
   const [open, setOpen] = useState<number | null>(null); // Soll/Ist eines Nachbarn (0.113.0)
+  const [linked, setLinked] = useState(false);
+  useEffect(() => {
+    if (linked || !all || !initial.peer) return;
+    const hit = all.find(
+      (p) =>
+        p.peer_ip === initial.peer &&
+        (!initial.system || String(p.source_system_id) === initial.system) &&
+        (!initial.context || p.context === initial.context),
+    );
+    setLinked(true);
+    if (hit?.attrs?.config) setOpen(hit.id);
+  }, [all, initial, linked]);
   const configured = (all ?? []).some((p) => p.attrs?.config);
   return (
     <>
@@ -1028,7 +1043,7 @@ function PolicyTab({ tenantId, initialQ = "" }: { tenantId: number; initialQ?: s
   );
 }
 
-function L3OutTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean }) {
+function L3OutTab({ tenantId, canEdit, initialQ = "" }: { tenantId: number; canEdit: boolean; initialQ?: string }) {
   const [tick, setTick] = useState(0); // neu laden nach einer Zuordnung von Hand (ADR 0034)
   const { rows: all, error } = useList<TopoL3Out>(() => fetchL3Outs(tenantId), [tenantId, tick]);
   const [choices, setChoices] = useState<FirewallChoice[] | null>(null);
@@ -1042,6 +1057,7 @@ function L3OutTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean })
     all,
     (o) => [o.name, o.aci_tenant, o.vrf, o.ext_epgs, o.nodes, o.paths, o.peers, o.behind?.firewalls],
     (o) => `Tenant ${o.aci_tenant}`,
+    initialQ, // 0.131.0: aus einem Befund
   );
   const rows = f.shown;
   const [rcOpen, setRcOpen] = useState<number | null>(null); // Route Control Soll/Ist (0.113.0)
@@ -2515,11 +2531,11 @@ export default function Routing({
       {tab === "changes" && (
         <ChangesTab key={JSON.stringify(history)} tenantId={tenantId} nodes={nodes} initial={history} />
       )}
-      {tab === "peers" && <PeersTab tenantId={tenantId} />}
+      {tab === "peers" && <PeersTab tenantId={tenantId} initial={params.tab === "peers" ? params : {}} />}
       {tab === "ha" && <HaTab tenantId={tenantId} />}
       {tab === "parallel" && <ParallelTab tenantId={tenantId} />}
       {tab === "policy" && <PolicyTab tenantId={tenantId} initialQ={params.tab === "policy" ? params.q : ""} />}
-      {tab === "l3out" && <L3OutTab tenantId={tenantId} canEdit={canEdit} />}
+      {tab === "l3out" && <L3OutTab tenantId={tenantId} canEdit={canEdit} initialQ={params.tab === "l3out" ? (params.q ?? "") : ""} />}
       {tab === "topology" && <TopologyTab tenantId={tenantId} />}
       {tab === "exits" && (
         <ExitsTab

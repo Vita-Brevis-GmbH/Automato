@@ -168,5 +168,39 @@ Anwender 2026-10-30 („go 116“, Roadmap Version 1 Nr. 3 Rest):
     Netz mit seiner Adresse, `more` = weitere Netze desselben Übergangs) – sichtbar, welcher
     Übergang eine Zone hereinbringt; in Oberfläche („Weg je Zone“) und Befund.
 
+## Ergänzung 0.131.0 (2026-11-04)
+
+19. **Netze von Hand nur als Rahmen:** Anwender: „in dem Netzwerk design Kategorien habe ich den
+    groben Filter angewendet, der sollte aber nicht auf die Routing Filter angesetzt werden sondern
+    nur Filtern, welche Netzwerke dort dahinter sein könnten“. Ein Selektor „Netz“ einer Zone ist
+    für das BGP-Soll kein Eintrag mehr, sondern der Rahmen: im Soll stehen die bekannten Netze darin
+    (Routen der RIBs des Mandanten, ohne lokale Adressen und Host-Routen, gleich oder genauer als
+    der Rahmen), die dieser Zone gehören – genauestes Netz von Hand bzw. abgeleitetes Netz bzw. Netz
+    an einem Gerät einer Zone entscheidet; ohne Transfernetze und ohne Sammelrouten über Netze einer
+    anderen Zone. Ein Netz an Interfaces gelesener Geräte, von denen keines in der Zone steht (die
+    Zone hat selbst Geräte), gehört nicht zu ihr, auch wenn ihr Rahmen es umfasst. Ohne bekanntes
+    Netz im Rahmen: Hinweis (`frames`), kein Eintrag; 0.0.0.0/0 bzw. ::/0 gilt als Ganzes. Eine
+    Filterregel im Rahmen ist nicht „zu offen“. Die Zonen selbst (Zonenplan, Kategorien) bleiben wie
+    bisher.
+20. **Transfernetze nicht im Soll:** Anwender: „die Transfer Netzwerke nicht mit eingerechnet …
+    (oder ist dies nach Technischem Standard ein Fehler, von dem ich nichts weiss?)“ – üblich ist,
+    Transfernetze nicht zu verteilen (der Next Hop liegt im direkt angeschlossenen Netz; nur für
+    Überwachung bzw. Management nötig). Transfernetz = Übergang zwischen Zonen, Session-Sync bzw.
+    Netz einer Zone mit zwei Geräten oder einem L3Out daran bis /27 (IPv4) bzw. /64 (IPv6) –
+    grössere Netze mit zwei Routern sind eher ein LAN mit VRRP/HSRP (`zone_struct.transfer_nets`).
+    Nicht im Soll; erlaubt bzw. angekündigt ist keine Abweichung.
+21. **Adressfamilien der Sitzung:** die Familien wie bisher (`_families`), ohne die am Nachbarn
+    ausgeschalteten (`activate`/`activate6` = disable, `session_families`); je Familie der Sitzung
+    eine Liste. Je L3Out die Familien der Adressen seiner BGP-Peers (ohne Adresse beide).
+22. **default-originate:** mit `capability-default-originate` zählt eine Route, deren Ausgangsfilter
+    sich nicht auswerten lässt (Urteil unbekannt), nicht mehr als angekündigt (`originate_only`) –
+    technisch kündigt die FortiGate mit default-originate zusätzlich die Default-Route an; ob
+    weitere Routen gehen, entscheidet der Ausgangsfilter. Ohne Eingangsfilter nennt das Soll, was
+    heute vom Nachbarn ankommt (`received_total`, `received_default_only`) – default-originate an
+    der Firewall wirkt nur im Ausgang.
+23. **Vorab berechnet** (`bgp_cache`, wie ADR 0037): je Mandant und Sprache im Prozess, Abdruck wie
+    die Doku; Vorrechnen nach Läufen und nach Änderungen an Zonen, Verbund und L3Outs, Anfragen
+    ohne passenden Stand einzeln wie bisher.
+
 Offen: Vergleich im Verlauf des Routings (Änderungen der Filter über die Zeit), Export-Route-Control
 gegen die Zonen diesseits (heute nur gelesen und gezeigt).

@@ -96,6 +96,11 @@ class Structure:
     segments: list[tuple[set[str], set]] = field(default_factory=list)
     # Session-Sync-Netze (FGSP, 0.130.0): kein Uebergang, kein Netz einer Zone
     sync_links: list[dict] = field(default_factory=list)
+    # Transfernetze (0.131.0): Netze der Zone zwischen zwei Knoten bzw. an einem L3Out - fuer
+    # die BGP-Filter kein Netz der Zone (Anwender: „diese braucht es nicht in den Routingplänen“)
+    transfer_nets: set = field(default_factory=set)
+    # Knoten je Netz an Interfaces gelesener Geraete (0.131.0: woran ein Netz haengt)
+    net_nodes: dict = field(default_factory=dict)
 
     def zone_nodes(self) -> dict[int, list[Key]]:
         out: dict[int, list[Key]] = defaultdict(list)
@@ -260,6 +265,7 @@ def build(session: Session, tenant_id: int, items: list[LogicalZone],
                  "address": f"{a.ip}/{a.net.prefixlen}",
                  "l3out": any(a.net == n for n in m.l3out_nets.get(a.key, []))}
                 for a in ordered_addrs]  # fmt: skip
+        st.net_nodes[net] = {x["node"] for x in legs}
         info = {"network": text, "legs": legs,
                 "routers": [{"ip": ip, "names": names}
                             for ip, names in sorted(routers.get(i, {}).items())]}  # fmt: skip
@@ -268,6 +274,7 @@ def build(session: Session, tenant_id: int, items: list[LogicalZone],
                               for zid, p in sorted(routed[i].items())]  # fmt: skip
         if i in sync:  # Session-Sync (0.130.0): traegt keine Daten
             st.sync_links.append(info)
+            st.transfer_nets.add(net)
             continue
         st.segments.append(({x["node"] for x in legs}, assigned | explicit))
         pairs: set[tuple[Side, Side]] = set()
@@ -281,6 +288,8 @@ def build(session: Session, tenant_id: int, items: list[LogicalZone],
             if not pairs or not (routers.get(i) or assigned & explicit or behind.get(i)):
                 for z in explicit:
                     st.internal[z].setdefault(net, _reason(legs))
+                if _transfer(net, legs):
+                    st.transfer_nets.add(net)
                 for a, b in pairs:
                     key = tuple(sorted((a, b), key=_side_order))
                     st.transitions.setdefault(key, Transition(*key)).networks.append(info)
@@ -298,10 +307,13 @@ def build(session: Session, tenant_id: int, items: list[LogicalZone],
                 sides.add(OUTSIDE)
             if len(sides) == 1:
                 st.internal[next(iter(assigned))].setdefault(net, _reason(legs))
+                if _transfer(net, legs):
+                    st.transfer_nets.add(net)
                 continue
             ordered = sorted(sides, key=_side_order)
             pairs = {(a, b) for n, a in enumerate(ordered) for b in ordered[n + 1 :]}
         st.transition_nets.add(net)
+        st.transfer_nets.add(net)
         for a, b in pairs:
             key = tuple(sorted((a, b), key=_side_order))
             t = st.transitions.setdefault(key, Transition(*key))
@@ -462,6 +474,18 @@ def _side_order(s: Side) -> tuple:
 
 def _where(leg: dict) -> str:
     return f"{'L3Out' if leg['l3out'] else 'Interface'} {leg['interface'] or '?'}"
+
+
+# kleinstes Praefix eines Transfernetzes in einer Zone (groessere Netze mit zwei Routern sind
+# eher ein LAN mit VRRP/HSRP)
+TRANSFER_LEN = {4: 27, 6: 64}
+
+
+def _transfer(net, legs: list[dict]) -> bool:
+    """Transfernetz in einer Zone (0.131.0): klein und zwei Knoten bzw. ein L3Out daran."""
+    if net.prefixlen < TRANSFER_LEN[net.version]:
+        return False
+    return len({leg["node"] for leg in legs}) > 1 or any(leg["l3out"] for leg in legs)
 
 
 def _reason(legs: list[dict]) -> str:

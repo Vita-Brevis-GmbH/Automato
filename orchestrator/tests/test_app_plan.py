@@ -337,8 +337,16 @@ def test_verbindung_zwischen_epgs_der_applikation(client):
     assert (web["role"], dbn["role"]) == ("own", "own")
     assert not [n for n in plan["nodes"] if n["id"] == "peer:10.50.1.10"]  # keine Gegenstelle
     pairs = {frozenset((e["a"], e["b"])): e for e in plan["edges"]}
+    # 0.131.0 (Anwender: „die Verbindung sollte direkt zwischen den beiden EPGs zu sehen sein,
+    # das AP Feld entsprechend vergrössern“): nur die VRF dazwischen - die Linie geht direkt von
+    # EPG zu EPG, der Contract steht an der Linie, sie laeuft links im (breiteren) Rahmen
     vrf = "hop:4|TE:VRF1"
-    assert frozenset((dbn["id"], vrf)) in pairs and frozenset((vrf, web["id"])) in pairs
-    assert "tcp/3306" in pairs[frozenset((vrf, web["id"]))]["label"]
+    assert frozenset((dbn["id"], vrf)) not in pairs and frozenset((vrf, web["id"])) not in pairs
+    edge = pairs[frozenset((web["id"], dbn["id"]))]
+    assert "tcp/3306" in edge["label"] and "CT_db" in edge["label"], edge["label"]
+    assert edge["rules"] and edge["sides"] == ["l", "l"]
     (frame,) = plan["groups"]
     assert set(frame["nodes"]) == {web["id"], dbn["id"]}
+    left = min(x for x, _ in edge["points"])
+    assert frame["x"] < left < web["x"] and frame["w"] > web["w"] + 16
+    assert len(edge["via"]) == 2  # Stuetzpunkte fuer draw.io

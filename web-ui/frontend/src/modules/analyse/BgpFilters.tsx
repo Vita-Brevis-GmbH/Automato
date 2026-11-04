@@ -8,6 +8,7 @@ import {
   BgpPeerReport,
   BgpProcess,
   BgpVerdict,
+  BgpZoneFrame,
   BgpZoneSoll,
   fetchBgpConfig,
   fetchBgpPeer,
@@ -228,6 +229,16 @@ export function BgpPeerDrawer({ tenantId, peerId, onClose }: { tenantId: number;
                     ` ${r.out.counts.loop} not announced: the neighbor's AS is in the AS path (it would discard them).`,
                   )
                 : ""}
+              {r.out.counts.originate_only ? (
+                <span id="bgp-out-originate-only">
+                  {L(
+                    ` ${r.out.counts.originate_only} Routen mit nicht auswertbarem Ausgangsfilter ausgeblendet – mit default-originate wird nur die Default-Route erwartet.`,
+                    ` ${r.out.counts.originate_only} routes with an outbound filter that cannot be evaluated hidden – with default-originate only the default route is expected.`,
+                  )}
+                </span>
+              ) : (
+                ""
+              )}
             </div>
             {r.out.announced.length === 0 ? (
               <div className="faint">{L("Nichts.", "Nothing.")}</div>
@@ -332,14 +343,31 @@ function ZoneSoll({ tenantId, peerId }: { tenantId: number; peerId: number }) {
               )}
             </div>
           )}
+          {z.families && (z.lists ?? []).length > 0 && (
+            <span className="chip" id="bgp-zones-families" title={L("activate/activate6 am Nachbarn", "activate/activate6 at the neighbor")}>
+              {L("Adressfamilien der Sitzung", "Address families of the session")}: {z.families.map((f) => `IPv${f}`).join(", ") || "–"}
+            </span>
+          )}
+          <Frames frames={z.frames} />
           {(z.lists ?? []).map((x) => (
             <div key={x.family} className="bgp-zone-list" data-family={x.family}>
               <div className="faint" style={{ margin: "6px 0 4px" }}>
                 {x.open
                   ? out
                     ? L("Heute ohne Ausgangsfilter – kündigt alles an.", "No outbound filter today – announces everything.")
-                    : L("Heute ohne Eingangsfilter – erlaubt alles.", "No inbound filter today – permits everything.")
+                    : L(
+                        "Heute ohne Eingangsfilter – die Firewall übernimmt alles, was der Nachbar ankündigt.",
+                        "No inbound filter today – the firewall accepts everything the neighbor announces.",
+                      )
                   : `${L("Heute", "Today")}: ${Object.entries(x.filters).map(([k, v]) => `${kindOf(k)} ${v}`).join(" · ")}`}
+                {!out && x.received_total != null && (
+                  <span className="bgp-zone-received" data-default-only={x.received_default_only ? "1" : "0"}>
+                    {" "}
+                    {x.received_default_only
+                      ? L("Heute erhalten: nur die Default-Route.", "Received today: only the default route.")
+                      : L(`Heute erhalten: ${x.received_total} Netze.`, `Received today: ${x.received_total} networks.`)}
+                  </span>
+                )}
               </div>
               <table className="compact">
                 <thead>
@@ -407,6 +435,21 @@ function ZoneSoll({ tenantId, peerId }: { tenantId: number; peerId: number }) {
           ))}
         </>
       )}
+    </div>
+  );
+}
+
+// Netze von Hand ohne bekanntes Netz darin (0.131.0, Anwender: „der sollte aber nicht auf die
+// Routing Filter angesetzt werden sondern nur Filtern, welche Netzwerke dort dahinter sein könnten“)
+function Frames({ frames }: { frames?: BgpZoneFrame[] }) {
+  if (!frames?.length) return null;
+  return (
+    <div className="faint bgp-zone-frames" style={{ margin: "4px 0" }}>
+      {L(
+        "Netze von Hand nur als Rahmen, darin kein bekanntes Netz (nicht im Filter): ",
+        "Networks entered by hand only as a frame, no known network inside (not in the filter): ",
+      )}
+      <span className="mono">{frames.map((f) => `${f.prefix} (${f.zone})`).join(", ")}</span>
     </div>
   );
 }
@@ -626,6 +669,7 @@ function L3OutZones({ tenantId, l3outId }: { tenantId: number; l3outId: number }
               <b>{z.neighbor_zone.name}</b> · {L("Zonen dahinter", "Zones behind")}: {(z.zones ?? []).map((x) => x.name).join(", ")}
             </div>
           )}
+          <Frames frames={z.frames} />
           {z.import_enforced === false && (
             <div className="note warn">
               {L(

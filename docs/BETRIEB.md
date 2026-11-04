@@ -645,7 +645,17 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     dem Netz jedes Übergangs, z. B. „DC FW → Lan (über 10.70.0.0/30) → Aussen (über …)“ – so ist
     sichtbar, welcher Übergang eine Zone hereinbringt. Netze des Session-Sync (FGSP: Netz mit der
     Adresse des Sync-Partners, nur die beiden Partner daran) sind seit 0.130.0 kein Übergang und
-    kein Netz einer Zone mehr), **HA &
+    kein Netz einer Zone mehr. Seit 0.131.0: die **Netze von Hand** einer Zone (Selektor „Netz“,
+    auch aus Netzwerkdesign → Kategorien) sind nur der **Rahmen** – im Soll stehen die bekannten
+    Netze darin aus den Routing-Tabellen; ein Rahmen ohne bekanntes Netz steht als Hinweis, nicht
+    im Filter, und eine Regel im Rahmen ist nicht „zu offen“. **Transfernetze** zählen nicht zum
+    Soll. Vorschläge nur für die **Adressfamilien der Sitzung** (`activate6 disable` = kein IPv6).
+    Mit `default-originate` stehen Routen mit nicht auswertbarem Ausgangsfilter nicht mehr als
+    „unbekannt“ unter „angekündigt“ (nur gezählt); ohne Eingangsfilter nennt das Soll, was heute
+    ankommt („nur die Default-Route“). Nachbar und Soll kommen aus dem **vorab berechneten Stand**
+    (nach jedem Lauf und jeder Änderung an Zonen, Verbund und L3Outs im Hintergrund; passt er
+    nicht, wird einzeln gerechnet). Im Befund stehen die **betroffenen Netze** mit Bedeutung und
+    Gesamtzahl und der Link „BGP-Nachbar … öffnen“), **HA &
     Session-Sync** (Modus, Gruppe, Mitglieder mit Rolle, FGSP-Peers), **Policy-Routen &
     SD-WAN** (Bedingung, Weg, Mitglieder nach Vorrang), **L3Outs (ACI)** (VRF, Border-Leafs mit
     Namen, Router-ID und statischen Routen, Interfaces/SVIs mit VLAN und Adressen, BGP-Peers

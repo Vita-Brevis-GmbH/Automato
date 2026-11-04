@@ -422,7 +422,7 @@ class Filters:
         ebgp = None if local_as is None or remote_as is None else local_as != remote_as
         established = (p.state or "").lower() == "established"
         received = self.received(key, p.peer_ip)
-        families = _families(p.peer_ip, conf, received)
+        families = session_families(p.peer_ip, conf, received)
         inbound = _side()
         outbound = _side()
         for family in families:
@@ -475,6 +475,11 @@ class Filters:
                 if verdict == DENY:
                     outbound["counts"]["deny"] += 1
                     continue
+                if verdict is None and originate == "enable":
+                    # 0.131.0 (Anwender: „wenn default-originate vorhanden ist … können diese
+                    # hier verschwinden“): nur gezaehlt, nicht als angekuendigt gelistet
+                    outbound["counts"]["originate_only"] += 1
+                    continue
                 outbound["counts"][verdict or "unknown"] += 1
                 outbound["announced"].append({"prefix": prefix, "origin": origin,
                                               "verdict": verdict})  # fmt: skip
@@ -510,6 +515,14 @@ def _as_numbers(value) -> set[int]:
         if n is not None:
             out.add(n)
     return out
+
+
+def session_families(ip: str, conf: dict, received: list[tuple[str, bool]]) -> list[int]:
+    """Adressfamilien der Sitzung (0.131.0, Anwender: „In BGP Verbindungen sind die erlaubten
+    Protokolle hinterlegt, IPv6 oder IPv4 … ich habe in IPv6 Rules Vorschläge von IPv4“): wie
+    `_families`, ohne die am Nachbarn ausgeschalteten (`activate`/`activate6` = disable)."""
+    off = {fam for fam, key in ((4, "activate"), (6, "activate6")) if conf.get(key) == "disable"}
+    return [f for f in _families(ip, conf, received) if f not in off]
 
 
 def _families(ip: str, conf: dict, received: list[tuple[str, bool]]) -> list[int]:

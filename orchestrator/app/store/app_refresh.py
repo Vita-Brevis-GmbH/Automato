@@ -13,7 +13,8 @@ laeuft hoechstens ein Durchgang zugleich (im Prozess), damit sich die Befunde ni
 Seit 0.108.0 (Anwender: „das Speichern dauert zu lange“) ebenso die Befunde der Zonen nach dem
 Speichern einer Zone, des Netzwerkdesigns bzw. des Grundschemas (`schedule_zones`) und die
 Befunde nach einem geaenderten Verbund paralleler Firewalls (`schedule_regroup`); danach rechnet
-`doc_snapshots` die Doku der zuletzt angesehenen Applikationen vor.
+`doc_snapshots` die Doku der zuletzt angesehenen Applikationen vor - seit 0.131.0 auch die
+Routing-Filter (`bgp_cache`).
 """
 
 import logging
@@ -85,7 +86,7 @@ def schedule_zones(background: BackgroundTasks, factory: sessionmaker[Session],
 
 
 def run_zones(factory: sessionmaker[Session], tenant_id: int) -> None:
-    from app.store import doc_snapshots, reconcile  # spaet: reconcile -> zones -> ...
+    from app.store import bgp_cache, doc_snapshots, reconcile  # spaet: reconcile -> zones
 
     with _tenant_locks[tenant_id]:
         _release(("zones", tenant_id))
@@ -99,6 +100,7 @@ def run_zones(factory: sessionmaker[Session], tenant_id: int) -> None:
         finally:
             session.close()
     doc_snapshots.warm(factory, tenant_id)
+    bgp_cache.warm(factory, tenant_id)  # 0.131.0: Routing-Filter
 
 
 def schedule_regroup(background: BackgroundTasks, factory: sessionmaker[Session],
@@ -113,7 +115,7 @@ def schedule_regroup(background: BackgroundTasks, factory: sessionmaker[Session]
 
 
 def run_regroup(factory: sessionmaker[Session], tenant_id: int) -> None:
-    from app.store import doc_snapshots, reconcile  # spaet: reconcile -> app_paths -> ...
+    from app.store import bgp_cache, doc_snapshots, reconcile  # spaet: reconcile -> app_paths
 
     with _tenant_locks[tenant_id]:
         _release(("regroup", tenant_id))
@@ -128,10 +130,12 @@ def run_regroup(factory: sessionmaker[Session], tenant_id: int) -> None:
         finally:
             session.close()
     doc_snapshots.warm(factory, tenant_id)
+    bgp_cache.warm(factory, tenant_id)  # 0.131.0: Routing-Filter
 
 
 def run_tenant(factory: sessionmaker[Session], tenant_id: int) -> None:
-    from app.store import customers, doc_snapshots, reconcile  # spaet: reconcile -> app_paths
+    # spaet: reconcile -> app_paths
+    from app.store import bgp_cache, customers, doc_snapshots, reconcile
 
     with _tenant_locks[tenant_id]:
         with _lock:
@@ -148,6 +152,7 @@ def run_tenant(factory: sessionmaker[Session], tenant_id: int) -> None:
         finally:
             session.close()
     doc_snapshots.warm(factory, tenant_id)
+    bgp_cache.warm(factory, tenant_id)  # 0.131.0: Routing-Filter
 
 
 def pending(tenant_id: int, application_id: int) -> bool:

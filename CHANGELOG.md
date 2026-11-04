@@ -7,6 +7,56 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.131.0 – 2026-11-04
+
+Rückmeldung des Anwenders 2026-11-04: „Das Laden der Routingfilter dauert lange, kann man dies
+nicht wie bei der Doku machen und vorab berechnen?“, „In den FIndings, bei den Routingfilters,
+sehe ich immer noch nicht, welche Netzwerke da betroffen sind … oder per Link zu der Info
+gelangen“, „Im BGP Filter werden immer noch alle Netwerke der Firewall als unbekannt angezeigt,
+wenn default-originate vorhanden ist … Somit können diese hier verschwinden“, „Bei dem BGP Filter
+sollten ebenso die Transfer Netzwerke nicht mit eingerechnet werden“, „Lediglich in dem Netzwerk
+design Kategorien habe ich den groben Filter angewendet, der sollte aber nicht auf die Routing
+Filter angesetzt werden sondern nur Filtern, welche Netzwerke dort dahinter sein könnten“, „Im
+Netzwerk Plan wird die Verbindung zwischen den EPGs innerhalb der AP immer noch nicht angezeigt“,
+„In BGP Verbindungen sind die erlaubten Protokolle hinterlegt, IPv6 oder IPv4 … ich habe in IPv6
+Rules Vorschläge von IPv4“ und „Obwohl ich default-originate habe sagt es Heute ohne
+Eingangsfilter – erlaubt alles“. Kategorien bestätigt; zu 0.130.0 Einwand (Linie zwischen den
+EPGs im AP) – Abnahme bleibt bis 0.129.0.
+
+- **Routing-Filter vorab berechnet** (`store/bgp_cache.py`, wie die Doku): je Mandant und Sprache
+  Soll/Ist je BGP-Nachbar, Soll aus den Zonen (Eingang und Ausgang) und Soll je L3Out in einem
+  Durchgang mit gemeinsamem Zonenplan – nach jedem Lauf und nach Änderungen an Zonen, Verbund und
+  L3Outs im Hintergrund. Passt der Stand (Fingerabdruck wie die Doku), kommt die Antwort sofort,
+  sonst wie bisher einzeln und der Stand rechnet hinter der Antwort neu. `AUTOMATO_DOC_SNAPSHOTS`
+  schaltet auch dies ab.
+- **Befunde der Routing-Filter:** „Betroffene Netze“ je Liste mit ihrer Bedeutung (z. B. „Netze
+  der Zonen dahinter, die der Eingangsfilter sperrt“) und Gesamtzahl (bis 50 gezeigt, vorher 10
+  bzw. 20), dazu der Link „BGP-Nachbar … öffnen“ (Routing → BGP-Nachbarn mit Soll/Ist) bzw.
+  „L3Out … öffnen“.
+- **Netze von Hand sind nur der Rahmen:** die Netze einer Zone aus Netzwerkdesign → Zonen bzw.
+  Kategorien (Selektor „Netz“) stehen nicht mehr selbst im BGP-Soll, sondern die bekannten Netze
+  darin aus den Routing-Tabellen – ohne Transfernetze, ohne Netze an Geräten bzw. Kontexten einer
+  anderen Zone und ohne Sammelrouten über Netze einer anderen Zone. Ist im Rahmen kein Netz
+  bekannt, steht er als Hinweis („Netze von Hand nur als Rahmen, darin kein bekanntes Netz“), nicht
+  im Filter. 0.0.0.0/0 von Hand gilt als Ganzes. Regeln eines Filters im Rahmen sind nicht „zu
+  offen“.
+- **Transfernetze** (zwischen zwei Geräten bzw. am L3Out, bis /27 bzw. /64, Übergänge zwischen
+  Zonen und Session-Sync) zählen nicht zum Soll; eine Filterregel dafür ist nicht „zu offen“, eine
+  Ankündigung nicht „ausserhalb der Zonen“.
+- **Adressfamilien der Sitzung:** Vorschläge nur für die Familien der Sitzung (`activate`/
+  `activate6 disable` am Nachbarn nimmt sie weg) – keine IPv6-Liste mit IPv4-Netzen bzw.
+  umgekehrt; je L3Out die Familien seiner BGP-Peers. Chip „Adressfamilien der Sitzung“.
+- **default-originate:** Routen, deren Ausgangsfilter sich nicht auswerten lässt, stehen nicht mehr
+  als „unbekannt“ in „Ausgang – angekündigt“, nur ihre Zahl („mit default-originate wird nur die
+  Default-Route erwartet“). Im Soll aus den Zonen ohne Eingangsfilter: „die Firewall übernimmt
+  alles, was der Nachbar ankündigt“ mit dem, was heute ankommt („Heute erhalten: nur die
+  Default-Route“).
+- **Netzwerkplan:** eine Verbindung zwischen zwei EPGs bzw. Systemen der Applikation, die nur über
+  die ACI-VRF läuft, geht direkt von Kasten zu Kasten – links im dafür breiteren AP-Rahmen, der
+  Contract an der Linie (Plan, SVG, draw.io).
+- ADR 0041 Ergänzung (Nr. 19–23). Tests: `test_bgp_zones.py`, `test_bgp_filters.py`,
+  `test_app_plan.py`, `e2e/release_0131.spec.ts`, `e2e/bgp_filters.spec.ts`.
+
 ## 0.130.0 – 2026-11-03
 
 Rückmeldung des Anwenders 2026-11-03: „Der Fehler mit ein und Ausgangsfilter habe ich nicht mehr
