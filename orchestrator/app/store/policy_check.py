@@ -104,6 +104,9 @@ class _Policy:
     snat: list[str] | None = None  # None = kein NAT, [] = IP des Ausgangs, sonst IP-Pools
     snat6: list[str] | None = None  # dasselbe fuer IPv6 (nat6/poolname6, 0.47.0)
     names: list[str] = field(default_factory=list)  # Service-Objekte wie auf der Firewall
+    # Sperre auch fuer Verkehr zu einer VIP (0.132.1, FortiOS `match-vip`, Vorgabe aus): ohne
+    # greift eine deny-Policy nicht fuer Verkehr, dessen Ziel eine VIP umschreibt
+    match_vip: bool = False
 
 
 def _names(raw: dict, key: str) -> list[str]:
@@ -121,6 +124,11 @@ class Checker:
         self._ifaces: dict[int, dict[str, list[str]]] = {}
         self._pool_cache: dict[tuple[int, str], dict[str, NatRule]] = {}
         self._vip_cache: dict[tuple[int, str], list[NatRule]] = {}
+        # 0.132.1 (Anwender: „Das Berechnen einer Applikation dauert sehr lange mehrere
+        # Stunden“): je Firewall/VDOM und Ein-/Ausgang die Policies, deren Interfaces passen
+        # koennen, mit dem Ergebnis der Interface-Pruefung - statt je Hop alle Policies
+        self._by_ports: dict[tuple, list[tuple[_Policy, bool | None, bool | None]]] = {}
+        self._index: dict[tuple, tuple[_AddrIndex, _AddrIndex]] = {}
 
     # -- Laden -------------------------------------------------------------------
 
@@ -173,6 +181,7 @@ class Checker:
                                  for k in ("custom", "custom-group"))  # fmt: skip
                     p.isdb[side] = not custom
             p.identity = any(raw.get(k) for k in ("users", "groups", "fsso-groups"))
+            p.match_vip = raw.get("match-vip") == "enable"
             p.schedule = str(raw.get("schedule") or "") or None
             p.snat = rule_view.snat_pools(r, "v4")  # SNAT je Familie (0.47.0)
             p.snat6 = rule_view.snat_pools(r, "v6")
@@ -361,28 +370,61 @@ class Checker:
 
     # -- Pruefen -----------------------------------------------------------------
 
+    def _for_ports(self, sid: int, vdom: str, ingress: dict | None,
+                   egress: dict | None) -> list[tuple]:  # fmt: skip
+        """Aktive Policies in Reihenfolge, deren Ein- und Ausgang zum Hop passen koennen, mit
+        dem Ergebnis je Seite (True bzw. None = nicht pruefbar) - je Ein-/Ausgang einmal."""
+        i, e = ingress or {}, egress or {}
+        key = (sid, vdom, i.get("interface"), i.get("zone"), e.get("interface"), e.get("zone"))
+        if key not in self._by_ports:
+            known = self.known(sid)
+            out = []
+            for p in self.policies(sid, vdom):
+                if not p.enabled:
+                    continue
+                in_ok = _ports(p.srcintf, ingress, known)
+                if in_ok is False:
+                    continue
+                out_ok = _ports(p.dstintf, egress, known)
+                if out_ok is not False:
+                    out.append((p, in_ok, out_ok))
+            self._by_ports[key] = out
+        return self._by_ports[key]
+
     def check(self, sid: int, vdom: str, ingress: dict | None, egress: dict | None, src, dst,
-              service: tuple[str, int | None] | None, after: int = 0) -> dict:  # fmt: skip
+              service: tuple[str, int | None] | None, after: int = 0,
+              vip: str | None = None) -> dict:  # fmt: skip
         """Urteil je Hop: allow | deny | implicit_deny | depends | unknown, mit der
         entscheidenden Policy und den moeglichen davor; mit `after` bis zu so viele passende
-        Policies dahinter (`after`, greifen nicht mehr - z. B. hinter einer Sperre zuoberst)."""
+        Policies dahinter (`after`, greifen nicht mehr - z. B. hinter einer Sperre zuoberst).
+
+        `vip` (0.132.1, Anwender: „vorher einen Deny Regel …, welche Schadhafte Ziele / Sourcen
+        blockiert, nimmt er diese Regel und schmeisst ein Abhängig dahinter, anstelle der Regel
+        mit dem NAT“): an diesem Hop schreibt die VIP das Ziel um - wie auf der FortiGate greift
+        eine deny-Policy dann nur mit `match-vip enable` bzw. mit der VIP selbst als Ziel."""
         policies = self.policies(sid, vdom)
         if not policies:
             return {"verdict": "unknown", "text": L("keine Policies gelesen", "no policies read"),
                     "rules": []}  # fmt: skip
-        known = self.known(sid)
         shown: list[dict] = []
         later: list[dict] = []
+        skipped: list[dict] = []  # deny ohne match-vip am VIP-Hop (0.132.1)
         decisive = None
         # Bedingungen (Anzeige in `unsure`): Bezeichnung in der Sprache der Anfrage
         words = {k: L(*v) for k, v in _CHECKS.items()}
-        for p in policies:
-            if not p.enabled:
+        candidates = self._for_ports(sid, vdom, ingress, egress)
+        i, e = ingress or {}, egress or {}
+        key = (sid, vdom, i.get("interface"), i.get("zone"), e.get("interface"), e.get("zone"))
+        if key not in self._index:
+            self._index[key] = (_AddrIndex(candidates, "src"), _AddrIndex(candidates, "dst"))
+        by_src, by_dst = self._index[key]
+        # nur Policies, deren Quelle bzw. Ziel die Adresse treffen kann (0.132.1)
+        maybe_src, maybe_dst = by_src.possible(src), by_dst.possible(dst)
+        for p, in_ok, out_ok in candidates:
+            if (maybe_src is not None and p.id not in maybe_src) or (
+                    maybe_dst is not None and p.id not in maybe_dst):  # fmt: skip
                 continue
-            checks = {
-                words["in"]: _ports(p.srcintf, ingress, known),
-                words["out"]: _ports(p.dstintf, egress, known),
-            }
+            checks = {words["in"]: in_ok, words["out"]: out_ok}
             src_ok, src_via, src_part = _address(p, "src", src)
             dst_ok, dst_via, dst_part = _address(p, "dst", dst)
             # Netz (0.39.0): erfasst die Policy nur einen Teil, ist sie nur „moeglich“
@@ -394,6 +436,11 @@ class Checker:
                 None if (p.schedule or "").lower() not in _OPEN else True
             )
             if False in checks.values():
+                continue
+            if vip and not p.allow and not p.match_vip and not _is_vip(dst_via, vip):
+                if len(skipped) < SHOWN:
+                    skipped.append({"rule_id": p.id, "external_id": p.external_id,
+                                    "name": p.name, "action": "deny"})  # fmt: skip
                 continue
             unsure = [k for k, v in checks.items() if v is None]
             entry = {
@@ -424,6 +471,14 @@ class Checker:
             if not after:
                 break
         result = _verdict(decisive, shown)
+        if skipped:
+            result["vip_skipped"] = skipped
+            names = ", ".join(_label(e) for e in skipped[:3])
+            more = f" +{len(skipped) - 3}" if len(skipped) > 3 else ""
+            result["text"] += L(
+                f" – {names}{more} sperrt Verkehr zur VIP {vip} nicht (match-vip aus)",
+                f" – {names}{more} does not block traffic to the VIP {vip} (match-vip off)",
+            )
         if later:
             result["after"] = later
             # Sperre zuoberst (z. B. „Default Block …“): die erlaubende dahinter nennen
@@ -448,6 +503,58 @@ _CHECKS = {
     "identity": ("Benutzer/Gruppen", "Users/groups"),
     "schedule": ("Zeitplan", "Schedule"),
 }
+
+
+class _AddrIndex:
+    """Adressen einer Seite (Quelle bzw. Ziel) der Policies eines Ein-/Ausgangs nach Bereichen
+    (0.132.1): welche Policies eine Adresse treffen koennen - die uebrigen sicher nicht (ihr
+    `_address` waere False). Negierte, nicht als IP pruefbare (FQDN, ISDB, Land) und Policies
+    ohne Endpunkte dieser Seite bleiben immer drin."""
+
+    SHIFT = {4: 16, 6: 112}  # Faecher je /16
+    MAX_SPAN = 256  # breitere Abfragen (grosse Netze): alle Policies pruefen
+
+    def __init__(self, entries: list, role: str):
+        self.always: set[int] = set()
+        self.wide: dict[int, list[tuple[int, int, int]]] = {4: [], 6: []}
+        self.buckets: dict[int, dict[int, list[tuple[int, int, int]]]] = {
+            4: defaultdict(list), 6: defaultdict(list)}  # fmt: skip
+        for p, *_ in entries:
+            if (p.negate.get(role) or p.unresolved.get(role) or p.public_only.get(role)
+                    or not p.endpoints.get(role)):  # fmt: skip
+                self.always.add(p.id)
+                continue
+            for fam, lo, hi, _any, _via in p.ranges.get(role, []):
+                shift = self.SHIFT.get(fam)
+                if shift is None:
+                    self.always.add(p.id)
+                elif lo >> shift == hi >> shift:
+                    self.buckets[fam][lo >> shift].append((lo, hi, p.id))
+                else:
+                    self.wide[fam].append((lo, hi, p.id))
+
+    def possible(self, ip) -> set[int] | None:
+        """IDs der Policies, die die Adresse treffen koennen; None = alle pruefen."""
+        if ip is None:
+            return None
+        lo, hi = span(ip)
+        fam = ip.version
+        shift = self.SHIFT[fam]
+        first, last = lo >> shift, hi >> shift
+        if last - first > self.MAX_SPAN:
+            return None
+        out = set(self.always)
+        out.update(pid for a, b, pid in self.wide[fam] if a <= hi and lo <= b)
+        buckets = self.buckets[fam]
+        for bucket in range(first, last + 1):
+            out.update(pid for a, b, pid in buckets.get(bucket, ()) if a <= hi and lo <= b)
+        return out
+
+
+def _is_vip(via: str | None, vip: str) -> bool:
+    """Ziel der Policy ist die VIP selbst (Objekt der Regel, ggf. mit der Kette dahinter)."""
+    name = str(via or "").split(" › ")[0].strip().lower()
+    return bool(name) and name == vip.lower()
 
 
 def _family_of(n: NatRule) -> int:
@@ -640,10 +747,11 @@ def check_paths(session: Session, tenant_id: int, paths: list[dict], src, dst, s
             sid, vdom = hop["source_system_id"], hop["context"]
             ports = (ingress.get("interface"), ingress.get("zone"),
                      egress.get("interface"), egress.get("zone"))  # fmt: skip
-            key = (sid, vdom, *ports, cur_src, hop_dst, cur_svc)
+            vip = (hop.get("nat") or {}).get("name")  # VIP an diesem Hop (0.132.1)
+            key = (sid, vdom, *ports, cur_src, hop_dst, cur_svc, vip)
             if key not in cache:
                 cache[key] = checker.check(sid, vdom, ingress, egress, cur_src, hop_dst, cur_svc,
-                                           checks.after)  # fmt: skip
+                                           checks.after, vip)  # fmt: skip
             result = hop["rules"] = cache[key]
             verdicts.append((hop["label"], result["verdict"], kind, result["text"]))
             decisive = next((r for r in result["rules"] if r["decides"]), None)

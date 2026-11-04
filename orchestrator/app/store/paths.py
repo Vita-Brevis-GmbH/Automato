@@ -241,6 +241,10 @@ class Graph:
         self._owners: dict[str, list[tuple[Key, str | None, str | None]]] | None = None
         self._zones: dict[tuple[int, str], str] = {}
         self._tables: dict[Key, dict[str, Table]] = {}
+        # 0.132.1 (viele Wege einer Applikation): Subnetze des Fabrics und Policy-Routen je
+        # Knoten einmal lesen statt je Hop
+        self._fabric_rows: list[tuple] | None = None
+        self._policy_routes: dict[Key, list] = {}
         self._vips: dict[Key, list[NatRule]] = {}
         self._lbs: list[tuple[NatRule, str]] | None = None  # NSX ALB (ADR 0027), bei Bedarf
         self._vlinks: dict[int, dict[tuple[str, str], tuple[str, str]]] = {}
@@ -638,25 +642,29 @@ class Graph:
         """ACI-VRF-Knoten, deren EPG- bzw. BD-Subnetz die IP bzw. das ganze Netz enthaelt, mit
         dem Ort im Fabric (`Tenant|AP|EPG` bzw. BD); laengstes Subnetz je Knoten."""
         best: dict[Key, tuple[int, str]] = {}
-        stmt = select(InvSubnet).where(
-            InvSubnet.tenant_id == self.tenant_id, InvSubnet.context.in_(("bd", "epg"))
-        )
-        if key is not None:
-            stmt = stmt.where(InvSubnet.source_system_id == key[0])
-        for s in self.session.scalars(stmt):
-            try:
-                net = ipaddress.ip_network(s.prefix, strict=False)
-            except ValueError:
-                continue
-            nkey = (s.source_system_id, aci_vrf(s.vrf, s.source_system_id, self.nodes))
-            if not within(ip, net) or nkey not in self.nodes or key not in (None, nkey):
-                continue
-            where = (
-                f"EPG {s.aci_tenant}|{s.ap}|{s.epg}"
-                if s.epg and s.ap
-                else f"BD {s.aci_tenant}|{s.bd or s.context_name}"
+        if self._fabric_rows is None:
+            rows = []
+            stmt = select(InvSubnet).where(
+                InvSubnet.tenant_id == self.tenant_id, InvSubnet.context.in_(("bd", "epg"))
             )
-            text = f"{where} ({s.prefix})"
+            for s in self.session.scalars(stmt):
+                try:
+                    net = ipaddress.ip_network(s.prefix, strict=False)
+                except ValueError:
+                    continue
+                nkey = (s.source_system_id, aci_vrf(s.vrf, s.source_system_id, self.nodes))
+                if nkey not in self.nodes:
+                    continue
+                where = (
+                    f"EPG {s.aci_tenant}|{s.ap}|{s.epg}"
+                    if s.epg and s.ap
+                    else f"BD {s.aci_tenant}|{s.bd or s.context_name}"
+                )
+                rows.append((net, nkey, f"{where} ({s.prefix})"))
+            self._fabric_rows = rows
+        for net, nkey, text in self._fabric_rows:
+            if key not in (None, nkey) or not within(ip, net):
+                continue
             if nkey not in best or net.prefixlen > best[nkey][0]:
                 best[nkey] = (net.prefixlen, text)
         return [(k, v[1]) for k, v in best.items()]
@@ -879,15 +887,17 @@ class Graph:
         """Policy-Routen bzw. SD-WAN-Regeln des Knotens, die fuer den Verkehr gelten (koennen):
         `certain` = Quelle, Ziel und Eingangs-Interface passen sicher."""
         out = []
-        for p in self.session.scalars(
-            select(TopoPolicyRoute)
-            .where(
-                TopoPolicyRoute.source_system_id == key[0],
-                TopoPolicyRoute.context == key[1],
-                TopoPolicyRoute.enabled.is_(True),
-            )
-            .order_by(TopoPolicyRoute.kind, TopoPolicyRoute.seq)
-        ):
+        if key not in self._policy_routes:
+            self._policy_routes[key] = list(self.session.scalars(
+                select(TopoPolicyRoute)
+                .where(
+                    TopoPolicyRoute.source_system_id == key[0],
+                    TopoPolicyRoute.context == key[1],
+                    TopoPolicyRoute.enabled.is_(True),
+                )
+                .order_by(TopoPolicyRoute.kind, TopoPolicyRoute.seq)
+            ))  # fmt: skip
+        for p in self._policy_routes[key]:
             m = p.match or {}
             devices = m.get("input_device") or []
             checks = [

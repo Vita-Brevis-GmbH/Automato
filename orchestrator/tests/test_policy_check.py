@@ -419,3 +419,47 @@ def test_regel_in_der_weg_suche(client):
     trace = client.get("/routing/trace", params=params).json()
     (path,) = trace["paths"]
     assert path["policy"]["verdict"] == "allow"
+
+
+def test_sperre_ohne_match_vip_greift_nicht_fuer_die_vip(client):
+    """0.132.1 (Anwender: „vorher einen Deny Regel …, welche Schadhafte Ziele / Sourcen
+    blockiert, nimmt er diese Regel und schmeisst ein Abhängig dahinter, anstelle der Regel mit
+    dem NAT und auf den Loadbalancer“): wie auf der FortiGate greift eine deny-Policy für
+    Verkehr zu einer VIP nur mit `match-vip enable` - ohne entscheidet die VIP-Policy (erlaubt),
+    mit match-vip bleibt die Sperrliste davor möglich (abhängig)."""
+    import copy
+
+    def run(match_vip: bool) -> tuple[dict, dict]:
+        edge = copy.deepcopy(EDGE)
+        block = _policy(5, "block-bad", "internet", "any", ["isdb:Malicious-IPs"], ["all"],
+                        ["all"], "deny", **{"internet-service-src": "enable",
+                                            "internet-service-src-name":
+                                                [{"name": "Malicious-IPs"}]})  # fmt: skip
+        if match_vip:
+            block["raw"]["match-vip"] = "enable"
+        edge["rules"].insert(0, block)
+        tid = client.post("/tenants", json={"name": f"Kunde {match_vip}"},
+                          headers=ADMIN).json()["id"]  # fmt: skip
+        for name, result in (("fw-e", edge), ("fw-i", INNER)):
+            body = {"tenant_id": tid, "name": name, "platform": "fortigate",
+                    "base_url": "https://x"}  # fmt: skip
+            sid = client.post("/systems", json=body, headers=ADMIN).json()["id"]
+            job = {"platform": "fortigate", "tenant_id": tid, "source_system_id": sid}
+            run_id = client.post("/jobs/collect", json=job).json()["run_id"]
+            r = client.post(f"/internal/collector-runs/{run_id}/result", headers=TOKEN,
+                            json=result)  # fmt: skip
+            assert r.status_code == 200, r.text
+        params = {"tenant_id": tid, "src": "203.0.113.50", "dst": "198.51.100.80",
+                  "service": "tcp/443"}  # fmt: skip
+        (path,) = client.get("/routing/trace", params=params).json()["paths"]
+        return path["hops"][0]["rules"], path["policy"]
+
+    rules, policy = run(match_vip=False)
+    assert rules["verdict"] == "allow", rules
+    assert "Policy 5 „block-bad“ sperrt Verkehr zur VIP VIP_app nicht (match-vip aus)" in (
+        rules["text"])  # fmt: skip
+    assert [x["external_id"] for x in rules["vip_skipped"]] == ["5"]
+    assert policy["verdict"] == "allow"
+    # mit match-vip bleibt die Sperrliste davor moeglich: an der Firewall der VIP abhaengig
+    rules, _ = run(match_vip=True)
+    assert rules["verdict"] == "depends" and "vip_skipped" not in rules, rules

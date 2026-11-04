@@ -103,6 +103,10 @@ class AciChecker:
         self._contracts: dict[int, list[_Contract]] = {}
         self._servers: dict[str, set[int]] = {}
         self._unknown: set[str] = set()  # Texte „im Fabric, EPG nicht bekannt“ (Merkmal)
+        # 0.132.1: nach einigen Abfragen je IP Endpunkte und Server einmal ganz lesen (viele
+        # Wege einer Applikation); eine einzelne Weg-Suche fragt weiter je IP
+        self._lookups = 0
+        self._endpoints: dict[str, list[int]] | None = None
 
     # -- Laden -------------------------------------------------------------------
 
@@ -194,9 +198,20 @@ class AciChecker:
     # -- Zuordnung ---------------------------------------------------------------
 
     def members(self, sid: int, vrf: str, ip) -> tuple[list[Member], str]:
-        """EPG(s) der IP in der VRF und eine Beschreibung; leer = keine EPG erfasst sie."""
+        """EPG(s) der IP in der VRF und eine Beschreibung; leer = keine EPG erfasst sie. Je
+        IP, VRF und Sprache einmal (0.132.1: viele Wege einer Applikation)."""
         if ip is None:
             return [], L("Quelle unbekannt", "source unknown")
+        from app.i18n import lang
+
+        cache = self.__dict__.setdefault("_members_cache", {})
+        key = (sid, vrf, str(ip), lang())
+        if key not in cache:
+            cache[key] = self._members(sid, vrf, ip)
+        found, text = cache[key]
+        return list(found), text
+
+    def _members(self, sid: int, vrf: str, ip) -> tuple[list[Member], str]:
         inside = self._inside(sid, vrf, ip)
         if inside is not None:
             return inside
@@ -264,13 +279,7 @@ class AciChecker:
             members = [Member(e, sure, f"EPG {epg_store.inventory_label(e)} ({why})")
                        for e, why in conf]  # fmt: skip
             return members, _either(m.text for m in members)
-        own = [
-            self.epgs[i]
-            for i in self.session.scalars(
-                select(EpgEndpoint.epg_id).where(EpgEndpoint.ip == str(ip))
-            )
-            if i in self.epgs
-        ]
+        own = [self.epgs[i] for i in self._endpoint_epgs(str(ip)) if i in self.epgs]
         own += [
             e
             for e in self.epgs.values()
@@ -318,7 +327,36 @@ class AciChecker:
                 )
         return None
 
+    BULK_AFTER = 20  # Abfragen je IP, danach alles einmal lesen
+
+    def _endpoint_epgs(self, ip: str) -> list[int]:
+        """EPGs mit diesem gelernten Endpunkt."""
+        self._lookups += 1
+        if self._endpoints is None and self._lookups > self.BULK_AFTER:
+            found: dict[str, list[int]] = defaultdict(list)
+            for epg_id, addr in self.session.execute(
+                select(EpgEndpoint.epg_id, EpgEndpoint.ip)
+                .join(Epg, Epg.id == EpgEndpoint.epg_id)
+                .where(Epg.tenant_id == self.tenant_id)
+            ):  # fmt: skip
+                found[str(addr)].append(epg_id)
+            self._endpoints = found
+            servers: dict[str, set[int]] = defaultdict(set)
+            for oid, value in self.session.execute(
+                select(NetworkObject.id, NetworkObject.value).where(
+                    NetworkObject.tenant_id == self.tenant_id, NetworkObject.value.is_not(None))
+            ):  # fmt: skip
+                host = str(value).removesuffix("/32").removesuffix("/128")
+                if "/" not in host:
+                    servers[host].add(oid)
+            self._servers = servers
+        if self._endpoints is not None:
+            return self._endpoints.get(ip, [])
+        return list(self.session.scalars(select(EpgEndpoint.epg_id).where(EpgEndpoint.ip == ip)))
+
     def _server_ids(self, ip: str) -> set[int]:
+        if isinstance(self._servers, defaultdict):  # alles gelesen
+            return self._servers.get(ip, set())
         if ip not in self._servers:
             self._servers[ip] = set(
                 self.session.scalars(

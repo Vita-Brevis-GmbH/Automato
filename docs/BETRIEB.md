@@ -531,6 +531,11 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
         - Länder (Geografie-Objekte) und Internet Services (FortiGuard) treffen keine private
           Adresse – eine Sperre „Land X“ zuoberst macht internen Verkehr nicht „abhängig“;
           eigene Internet Services bleiben „möglich“.
+        - **VIP und Sperren (0.132.1):** Wie auf der FortiGate greift eine sperrende Policy für
+          Verkehr zu einer VIP (DNAT) nur mit `set match-vip enable` bzw. wenn die VIP selbst ihr
+          Ziel ist. Ohne match-vip entscheidet die Policy mit der VIP („Policy 5 „block-bad“
+          sperrt Verkehr zur VIP VIP_app nicht (match-vip aus)“); mit match-vip kann die Sperre
+          (z. B. eine Sperrliste mit Internet Services) davor greifen – der Hop bleibt „abhängig“.
         - Startpunkt gewählt und die Quelle hängt dort nicht an: der Eingang ist das Interface
           der Route zur Quelle („gewählt, Eingang lan nach der Route zur Quelle“).
       - Seit 0.78.4 steht je Policy, **über welches Objekt** Quelle und Ziel passen
@@ -1310,6 +1315,11 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     0.107.0), `AUTOMATO_DOC_STALE_SECONDS` (1,5 – kürzere Berechnungen wartet die Seite ab),
     `AUTOMATO_DOC_WARM_DAYS` (7 – so lange angesehene Stände werden vorgerechnet, `0` = nie),
     `AUTOMATO_DOC_WARM_SECONDS` (600 – Zeitbudget je Durchgang, `0` = ohne Grenze).
+    **Dauer der Berechnung (0.132.1):** unter den Verbindungen „Berechnet in … s: n Wege in … s“ –
+    aufgeklappt je Teil (Doku, Verbindungen bilden, Vorbereitung, Plan) und die langsamsten Wege;
+    dieselben Zahlen schreibt der Orchestrator ins Log („Applikation 12: Verbindungen in …“).
+    Eine Applikation rechnet in einem Prozess nacheinander – mehr RAM bringt nichts, mehr CPU nur
+    für mehrere Applikationen bzw. Mandanten zugleich.
   - **Kategorien nach Zonentyp (seit 0.106.0, ADR 0035):** jede Firewall-Regel bzw. jeder
     Contract steht in der Kategorie seiner **Richtung** Zonentyp der Quelle → Zonentyp des Ziels.
     In drei Schritten einrichten:

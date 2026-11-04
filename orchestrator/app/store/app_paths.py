@@ -40,6 +40,7 @@ Infrastruktur (ADR 0018).
 """
 
 import ipaddress
+import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 
@@ -114,7 +115,9 @@ def build(session: Session, app: Application, doc: dict | None = None,
 
     limit = get_settings().app_traces_max if limit is None else limit
     tid = app.tenant_id
+    started = time.monotonic()  # Zeit je Teil (0.132.1: „dauert sehr lange mehrere Stunden“)
     doc = doc or applications.build_doc(session, app)
+    t_doc = time.monotonic()
     data = appdoc.TenantData(session, tid)
     rule_ids = {h["rule_id"] for h in doc["hits"]}
     rules = {
@@ -124,6 +127,7 @@ def build(session: Session, app: Application, doc: dict | None = None,
         )
     }
     conns, notes, without = _candidates(session, data, doc, rules, limit)
+    t_cand = time.monotonic()
     graph = graph or paths.Graph(session, tid)
     checks = checks or policy_check.Checks.load(session, tid)
     out: list[dict] = []
@@ -143,8 +147,14 @@ def build(session: Session, app: Application, doc: dict | None = None,
                       for x in conn["unused"])  # fmt: skip
         return bool(conn["rules"]) or not conn["unused"]
 
+    t_setup = time.monotonic()
+    slow: list[tuple[float, str]] = []
+    traced = 0
     for c in list(conns.values())[: limit or None]:
+        t_one = time.monotonic()
         conn = _connection(session, tid, graph, checks, data, rules, c, l3, zctx, assigner)
+        traced += 1
+        slow.append((time.monotonic() - t_one, conn["key"]))
         if c.probe:  # any: Firewall nicht auf dem Weg nach dem Routing - kein Befund (0.127.0)
             for x in conn["unused"]:
                 without[x["rule_id"]].add(_why("probe_off_path"))
@@ -187,6 +197,7 @@ def build(session: Session, app: Application, doc: dict | None = None,
                 f"{', '.join(labels[:3])}{more}",
             )
         )
+    t_traces = time.monotonic()
     order = {"deny": 0, "depends": 1, "unknown": 2, "allow": 3}
     out.sort(key=lambda c: (not c["mismatch"], order.get(c["verdict"], 2)))
     # Regeln ohne Verbindung (0.127.0, Anwender: „in der Tabelle der Verbindungen … keine Rules
@@ -216,6 +227,18 @@ def build(session: Session, app: Application, doc: dict | None = None,
         "members": members(doc),
         # 0.78.2: L3Out-Contracts, die weniger oeffnen als die Firewall (Befund)
         "narrower": doc.get("narrower") or [],
+        # 0.132.1: Dauer je Teil und die langsamsten Wege (Sekunden)
+        "timing": {
+            "doc": round(t_doc - started, 2),
+            "candidates": round(t_cand - t_doc, 2),
+            "setup": round(t_setup - t_cand, 2),
+            "traces": round(t_traces - t_setup, 2),
+            "count": traced,
+            "total": round(time.monotonic() - started, 2),
+            "slowest": [
+                {"key": k, "seconds": round(d, 2)} for d, k in sorted(slow, reverse=True)[:5]
+            ],
+        },  # fmt: skip
     }
 
 

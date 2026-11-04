@@ -7,6 +7,27 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.132.1 – 2026-11-04
+
+Rückmeldung des Anwenders 2026-11-04: „Das Berechnen einer Applikation dauert sehr lange mehrere
+Stunden, wenn es 800 Firewall Regeln sind. Können wir dies beschleunigen?“ und „Ein Weg vom
+Internet über den LBA auf die VM wird nicht mehr sauber erkannt, wahrscheinlich, weil vorher eine
+Deny Regel ist, welche Schadhafte Ziele / Sourcen blockiert“. Abnahme bis 0.132.0 (ohne Einwand).
+
+- **Verbindungen schneller:** je Hop prüft die Weg-Suche nur noch Policies, deren Ein- und
+  Ausgang zum Hop passen können, und nur die, deren Quelle bzw. Ziel die Adresse enthalten kann
+  (Index der Adressbereiche je Firewall/VDOM; negierte, nicht auflösbare und FQDN/ISDB-Objekte
+  immer geprüft) – Urteile unverändert. Dazu einmal je Berechnung: Netze des ACI-Fabrics,
+  Policy-Routen, Endpunkte der EPGs (ab 20 Abfragen gesammelt) und Mitglieder je VRF/IP. Im Test
+  mit 800 Regeln der Applikation und 2300 Policies: 757 Verbindungen in 6 s statt 31 s.
+- **Dauer sichtbar:** unter den Verbindungen „Berechnet in … s: n Wege in … s (Ø …)“, aufgeklappt
+  je Teil und die fünf langsamsten Wege; dieselben Zahlen im Log des Orchestrators.
+- **Sperre vor der VIP:** eine sperrende Policy greift für Verkehr zu einer VIP nur mit
+  `match-vip enable` (bzw. mit der VIP als Ziel) – wie auf der FortiGate. Ohne match-vip
+  entscheidet die Policy mit der VIP und der Weg geht über DNAT und Load Balancer weiter; das
+  Urteil nennt die übergangene Sperre („… sperrt Verkehr zur VIP … nicht (match-vip aus)“).
+- Tests: `test_policy_check.py`, `e2e/release_0132_1.spec.ts`.
+
 ## 0.132.0 – 2026-11-04
 
 Antwort des Anwenders 2026-11-04: „Generell Filtere ich lediglich die Ausgänge bei Geräten, welche

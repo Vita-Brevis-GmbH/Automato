@@ -1098,6 +1098,7 @@ export default function ConnectionsCard({
           <Note>{n}</Note>
         </div>
       ))}
+      {data?.timing && <Timing t={data.timing} />}
       {view === "plan" && data && data.plan && data.plan.nodes.length > 0 ? (
         <div className="card-body pad">
           <PlanView
@@ -1266,5 +1267,35 @@ export default function ConnectionsCard({
         />
       )}
     </div>
+  );
+}
+
+// Dauer der Berechnung (0.132.1, Anwender: „Das Berechnen einer Applikation dauert sehr lange“): je Teil und die
+// langsamsten Wege – zeigt, wo die Zeit hingeht
+function Timing({ t }: { t: NonNullable<AppConnections["timing"]> }) {
+  const s = (x: number | undefined) => `${(x ?? 0).toLocaleString(undefined, { maximumFractionDigits: 1 })} s`;
+  const total = t.total + (t.plan ?? 0);
+  const each = t.count ? t.traces / t.count : 0;
+  return (
+    <details className="pad faint" id="app-conn-timing" style={{ fontSize: 12 }}>
+      <summary>
+        {L(
+          `Berechnet in ${s(total)}: ${t.count} Wege in ${s(t.traces)} (Ø ${s(each)})`,
+          `Computed in ${s(total)}: ${t.count} paths in ${s(t.traces)} (avg ${s(each)})`,
+        )}
+      </summary>
+      <div>
+        {L(
+          `Doku ${s(t.doc)} · Verbindungen bilden ${s(t.candidates)} · Vorbereitung ${s(t.setup)} · Plan ${s(t.plan)}`,
+          `Documentation ${s(t.doc)} · building connections ${s(t.candidates)} · setup ${s(t.setup)} · plan ${s(t.plan)}`,
+        )}
+      </div>
+      {t.slowest.length > 0 && (
+        <div>
+          {L("Langsamste Wege: ", "Slowest paths: ")}
+          <span className="mono">{t.slowest.map((x) => `${x.key} (${s(x.seconds)})`).join(" · ")}</span>
+        </div>
+      )}
+    </details>
   );
 }

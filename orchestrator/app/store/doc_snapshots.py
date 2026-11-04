@@ -138,7 +138,13 @@ def compute(session: Session, app: Application, kind: str, params: Params) -> di
         return jsonable_encoder(store.build_doc(session, app, ids, names=params.names))
     out = app_paths.build(session, app)
     # Netzwerkplan (0.67.0), kompakt nach AP/EPG (0.74.0)
+    started = time.monotonic()
     out["plan"] = app_plan.build(out["connections"], members=out["members"])
+    timing = out.get("timing") or {}
+    timing["plan"] = round(time.monotonic() - started, 2)
+    log.info("Applikation %s: Verbindungen in %.1f s (%s Wege %.1f s, Doku %.1f s, Plan %.1f s)",
+             app.id, timing.get("total", 0) + timing["plan"], timing.get("count"),
+             timing.get("traces", 0), timing.get("doc", 0), timing["plan"])  # fmt: skip
     return jsonable_encoder(out)
 
 

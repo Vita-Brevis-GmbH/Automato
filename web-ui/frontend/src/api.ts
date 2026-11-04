@@ -2095,6 +2095,17 @@ export interface AppConnections {
   summary: { total: number; allow: number; blocked: number; open: number; mismatch: number; inconsistent?: number; zone_violations?: number; unused?: number };
   plan?: AppPlan;
   snapshot?: DocSnapshot; // 0.108.0
+  // 0.132.1: Dauer je Teil (Sekunden) und die langsamsten Wege
+  timing?: {
+    doc: number;
+    candidates: number;
+    setup: number;
+    traces: number;
+    plan?: number;
+    count: number;
+    total: number;
+    slowest: { key: string; seconds: number }[];
+  };
 }
 export const fetchAppConnections = (id: number, fresh = false) =>
   getJSON<AppConnections>(`/api/applications/${id}/connections${fresh ? "?fresh=true" : ""}`);
