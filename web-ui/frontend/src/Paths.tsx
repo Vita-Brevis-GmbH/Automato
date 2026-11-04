@@ -265,7 +265,15 @@ function HopRuleLine({ p }: { p: HopRule }) {
       {!p.label && p.name ? ` „${p.name}“` : ""} · {p.action === "allow" ? L("erlauben", "accept") : L("sperren", "deny")}
       {matchedVia(p)}
       {p.services.length ? ` · ${p.services.join(", ")}` : ""}
-      {p.unsure.length ? L(` · möglich (${p.unsure.join(", ")})`, ` · possible (${p.unsure.join(", ")})`) : ""}
+      {p.blocklist ? (
+        <span className="hop-blocklist" title={L("Sperrliste: sperrt nur die Adressen ihres Internet Service bzw. Landes – alles andere entscheidet die Policy dahinter", "Blocklist: blocks only the addresses of its internet service or country – the policy behind decides everything else")}>
+          {L(` · Sperrliste (${p.unsure.join(", ")})`, ` · blocklist (${p.unsure.join(", ")})`)}
+        </span>
+      ) : p.unsure.length ? (
+        L(` · möglich (${p.unsure.join(", ")})`, ` · possible (${p.unsure.join(", ")})`)
+      ) : (
+        ""
+      )}
       {p.closed ? (
         <span className="aci-note aci-closed">{L(" · öffnet den Dienst nicht", " · does not open the service")}</span>
       ) : null}

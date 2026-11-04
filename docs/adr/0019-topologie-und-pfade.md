@@ -250,6 +250,17 @@ Rahmen laut Anwender (2026-10-22):
      - Nicht prüfbare Bedingungen machen eine Policy „möglich“: Quelle/Interface unbekannt,
        FQDN/ISDB/Geo, Benutzer/Gruppen, Zeitplan, Dienst offen. Mögliche Policies mit anderer
        Aktion davor machen den Hop „abhängig“.
+     - **Sperrlisten (0.132.2, Anwender: „die Regel mit Deny beinhaltet Botnet-C&C.Server usw.
+       als Source … was aber ja bereits bei sich sperren ist“):** eine sperrende Policy, deren
+       einzige offene Bedingung Quelle bzw. Ziel über einen Internet Service von FortiGuard
+       bzw. ein Land ist, macht den Hop nicht „abhängig“ – „erlaubt durch … – ausser Sperrliste
+       …“. Eigene Internet Services, FQDN und dynamische Objekte bleiben „möglich“. Kommen nur
+       sperrende Policies in Frage, ist der Hop gesperrt (so oder so), nicht „abhängig“.
+     - **match-vip (0.132.1):** Verkehr zu einer VIP sperrt eine Policy nur mit
+       `match-vip enable` bzw. mit der VIP als Ziel – wie FortiOS.
+     - **Weiter nach „abhängig“ (0.132.2):** gibt es unter den möglichen bzw. der
+       entscheidenden Policy genau eine erlaubende, geht der Weg mit ihrem NAT weiter (was
+       weitergeht, erlaubt sie) – sonst ohne SNAT wie bisher.
      - Je Weg das Gesamturteil (gesperrt am ersten sperrenden Hop).
      - Noch nicht: ACI-Contracts je Hop, Relevanz in Regel-Liste und Applikations-Doku.
    - **NAT auf dem Weg (0.23.0):**

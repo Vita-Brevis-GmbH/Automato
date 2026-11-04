@@ -1941,6 +1941,7 @@ export interface AppConnRule {
   reverse?: boolean; // ACI (0.69.1): Contract in der Rückrichtung (zustandslos)
   note?: string; // ACI (0.72.1): greift nicht, z. B. nur Antworten (Filter nur mit Quellport)
   closed?: boolean; // ACI (0.111.0): verbindet die EPGs, öffnet den Dienst nicht
+  blocklist?: boolean; // 0.132.2: Sperrliste (Internet Service bzw. Land)
 }
 export interface AppConnCheck {
   label: string; // Firewall bzw. VRF (im Verbund je Firewall)
@@ -2610,6 +2611,7 @@ export interface HopRule {
   note?: string; // ACI (0.72.1): greift nicht, z. B. nur Antworten (Filter nur mit Quellport)
   closed?: boolean; // ACI (0.111.0): verbindet die EPGs, öffnet den Dienst nicht
   after?: boolean; // 0.78.4: passt, liegt aber hinter der entscheidenden Policy
+  blocklist?: boolean; // 0.132.2: Sperrliste (Internet Service bzw. Land) – kein Grund für „abhängig“
 }
 export type PolicyVerdict = "allow" | "deny" | "implicit_deny" | "depends" | "unknown";
 export interface HopRules {
@@ -2617,6 +2619,8 @@ export interface HopRules {
   text: string;
   rules: HopRule[];
   after?: HopRule[]; // Weg-Suche (0.78.4): passende Policies dahinter, nicht erreicht
+  blocklists?: HopRule[]; // 0.132.2: Sperrlisten vor der erlaubenden Policy („ausser Sperrliste“)
+  vip_skipped?: { rule_id: number; external_id: string; name: string; action: "deny" }[]; // 0.132.1: ohne match-vip
   src_epg?: string; // ACI-VRF-Hop (0.35.0): Zuordnung der Quelle bzw. des Ziels
   dst_epg?: string;
 }

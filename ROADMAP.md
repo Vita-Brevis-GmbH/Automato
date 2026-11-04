@@ -454,8 +454,9 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.131.0** | Rückmeldung 2026-11-04: Routing-Filter vorab berechnet, betroffene Netze mit Link im Befund, Netze von Hand nur als Rahmen (bekannte Netze darin), ohne Transfernetze, Adressfamilien der Sitzung, default-originate ohne „unbekannt“, Plan mit Linie direkt zwischen den EPGs im AP-Rahmen |
 | **0.132.0** | Antwort 2026-11-04: Zone „fremd verwaltet“ (Vorgabe selbst verwaltet), Eingangsfilter bzw. ACI Import nur zu fremd verwalteten Zonen eine Abweichung, default-originate = nur die Default-Route im Ausgang |
 | **0.132.1** | Rückmeldung 2026-11-04: Verbindungen einer Applikation schneller (Vorfilter je Ein-/Ausgang und Adresse, Caches), Dauer je Teil sichtbar; Sperre vor einer VIP nur mit match-vip |
+| **0.132.2** | Einwand 2026-11-04 zu 0.132.1: Sperrliste (Internet Service, Land) vor der VIP-Policy = erlaubt ausser der Liste, Weg mit dem NAT der erlaubenden Policy weiter, nur Sperren möglich = gesperrt |
 
-### Nächste Arbeiten (Stand 0.132.1)
+### Nächste Arbeiten (Stand 0.132.2)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
 **0.68.0** (2026-10-26), bis **0.102.0** (2026-10-28: „ich teste nach dem Freigeben der Version
@@ -488,7 +489,8 @@ Rückmeldung zu Plan, BGP und Kategorien ohne Einwand; „Eingang zeigt den Ausg
 gesehen, erledigt). Zu 0.130.0 Einwand (2026-11-04: Linie zwischen den EPGs im AP noch nicht
 direkt; Kategorien bestätigt) – korrigiert in 0.131.0, bis **0.131.0** (2026-11-04, Antwort zu
 Eingangsfiltern und default-originate ohne Einwand), bis **0.132.0** (2026-11-04, Rückmeldung zu
-Dauer und VIP-Weg ohne Einwand zu 0.132.0). Zur Abnahme steht 0.132.1. Seit 0.104.0 gilt eine
+Dauer und VIP-Weg ohne Einwand zu 0.132.0). Zu 0.132.1 Einwand (2026-11-04: Weg über die VIP mit
+Sperrliste davor weiter als gesperrt gezeigt) – korrigiert in 0.132.2. Zur Abnahme steht 0.132.2. Seit 0.104.0 gilt eine
 Version als abgenommen,
 sobald die nächste Rückmeldung des Anwenders keinen Einwand dazu enthält (`CLAUDE.md`, Ablauf).
 

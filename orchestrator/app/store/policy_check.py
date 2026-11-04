@@ -457,6 +457,8 @@ class Checker:
                 "decides": not unsure,
                 "snat": p.snat6 if getattr(src, "version", 4) == 6 else p.snat,
             }
+            if not p.allow and _blocklist(p, unsure, words):
+                entry["blocklist"] = True  # Sperrliste (0.132.2): Internet Service bzw. Land
             if decisive is not None:  # dahinter (0.78.4): passt, wird aber nicht erreicht
                 later.append(entry | {"decides": False, "after": True})
                 if len(later) >= after:
@@ -551,6 +553,16 @@ class _AddrIndex:
         return out
 
 
+def _blocklist(p: _Policy, unsure: list[str], words: dict[str, str]) -> bool:
+    """Sperrliste (0.132.2): offen ist nur Quelle bzw. Ziel, und dort steht ein Internet Service
+    von FortiGuard (Botnet-C&C, Malicious …) bzw. ein Land - kein FQDN, keine eigene Liste."""
+    sides = {words["src"]: "src", words["dst"]: "dst"}
+    return bool(unsure) and all(
+        k in sides and p.public_only.get(sides[k]) and not p.unresolved.get(sides[k])
+        and not p.negate.get(sides[k]) for k in unsure
+    )  # fmt: skip
+
+
 def _is_vip(via: str | None, vip: str) -> bool:
     """Ziel der Policy ist die VIP selbst (Objekt der Regel, ggf. mit der Kette dahinter)."""
     name = str(via or "").split(" › ")[0].strip().lower()
@@ -587,12 +599,18 @@ def _fixed(src, source: str | None, first, last):
 
 def _verdict(decisive: dict | None, shown: list[dict]) -> dict:
     before = [e for e in shown if not e["decides"]]
-    reasons = sorted({u for e in before for u in e["unsure"]})
+    # Sperrliste vor einer erlaubenden Policy (0.132.2, Anwender: „die Regel mit Deny beinhaltet
+    # Botnet-C&C.Server usw. als Source … was aber ja bereits bei sich sperren ist“): sperrt nur
+    # die Adressen ihrer Liste, alles andere erlaubt die Policy dahinter - nicht „abhaengig“
+    lists = [e for e in before if e.get("blocklist")] if (
+        decisive is not None and decisive["action"] == "allow") else []  # fmt: skip
+    open_ = [e for e in before if e not in lists]
+    reasons = sorted({u for e in open_ for u in e["unsure"]})
     listed = ", ".join(reasons)
     why = L(f" – abhängig von: {listed}", f" – depends on: {listed}") if reasons else ""
     if decisive is not None:
         name = _label(decisive)
-        other = [e for e in before if e["action"] != decisive["action"]]
+        other = [e for e in open_ if e["action"] != decisive["action"]]
         if other:
             first = _label(other[0])
             text = L(
@@ -603,7 +621,21 @@ def _verdict(decisive: dict | None, shown: list[dict]) -> dict:
             text = L(f"erlaubt durch {name}", f"allowed by {name}")
         else:
             text = L(f"gesperrt durch {name}", f"blocked by {name}")
-        return {"verdict": decisive["action"], "rules": shown, "text": text}
+        out = {"verdict": decisive["action"], "rules": shown, "text": text}
+        if lists:
+            names = ", ".join(_label(e) for e in lists[:3])
+            more = f" +{len(lists) - 3}" if len(lists) > 3 else ""
+            out["text"] += L(f" – ausser Sperrliste {names}{more} (Internet Service bzw. Land)",
+                             f" – except blocklist {names}{more} (internet service or "
+                             "country)")  # fmt: skip
+            out["blocklists"] = lists
+        return out
+    if before and all(e["action"] == "deny" for e in before):
+        # nur sperrende Policies moeglich (0.132.2): so oder so gesperrt, nicht „abhaengig“
+        first = _label(before[0])
+        text = L(f"gesperrt – {first} bzw. implizit (keine erlaubende Policy)",
+                 f"blocked – {first} or implicitly (no allowing policy)")  # fmt: skip
+        return {"verdict": "implicit_deny", "rules": shown, "text": text}
     if before:
         text = L(f"nur mögliche Policies, sonst implizit gesperrt{why}",
                  f"only possible policies, otherwise implicitly denied{why}")  # fmt: skip
@@ -754,19 +786,31 @@ def check_paths(session: Session, tenant_id: int, paths: list[dict], src, dst, s
                                            checks.after, vip)  # fmt: skip
             result = hop["rules"] = cache[key]
             verdicts.append((hop["label"], result["verdict"], kind, result["text"]))
-            decisive = next((r for r in result["rules"] if r["decides"]), None)
-            if result["verdict"] == "allow" and decisive:
+            passing = _passing(result)
+            if passing is not None:
                 # Quelle danach (0.47.0): VIP mit nat-source-vip, sonst das NAT der Policy
                 snat = None
                 if cur_src is not None:
                     snat = checker._vip_source(sid, vdom, cur_src, egress)
-                if snat is None and decisive.get("snat") is not None:
-                    snat = checker.snat(sid, vdom, decisive["snat"], egress, cur_src)
+                if snat is None and passing.get("snat") is not None:
+                    snat = checker.snat(sid, vdom, passing["snat"], egress, cur_src)
                 if snat is not None:
                     hop["snat"] = snat
                     to = snat.get("to")
                     cur_src = endpoint(to) if to else None  # unbekannt: nur moeglich
         path["policy"] = _overall(verdicts)
+
+
+def _passing(result: dict) -> dict | None:
+    """Policy, mit der der Verkehr weitergeht: bei „erlaubt“ die entscheidende; bei „abhaengig“
+    (0.132.2, Anwender: „er zeigt nur den Weg, welches die gesperrte Regel hätte“) die einzige
+    erlaubende - was weitergeht, erlaubt sie, mit ihrem NAT (z. B. SNAT der VIP-Policy)."""
+    if result["verdict"] == "allow":
+        return next((r for r in result["rules"] if r["decides"]), None)
+    if result["verdict"] == "depends":
+        allows = [r for r in result["rules"] if r["action"] == "allow"]
+        return allows[0] if len(allows) == 1 else None
+    return None
 
 
 def _behind_balancer(lb: dict, src, service):

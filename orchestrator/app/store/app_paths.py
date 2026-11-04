@@ -1091,7 +1091,8 @@ def _hop(h: dict, l3: L3Outs | None = None) -> dict:
                             )
                         },
                         # ACI: greift nicht (nur Antworten) bzw. oeffnet den Dienst nicht (0.111.0)
-                        **{k: e[k] for k in ("note", "closed") if e.get(k)},
+                        # Sperrliste (0.132.2): Internet Service bzw. Land, nicht „abhaengig“
+                        **{k: e[k] for k in ("note", "closed", "blocklist") if e.get(k)},
                     }  # fmt: skip
                     for e in r["rules"]
                 ],

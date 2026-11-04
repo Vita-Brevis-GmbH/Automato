@@ -534,8 +534,14 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
         - **VIP und Sperren (0.132.1):** Wie auf der FortiGate greift eine sperrende Policy für
           Verkehr zu einer VIP (DNAT) nur mit `set match-vip enable` bzw. wenn die VIP selbst ihr
           Ziel ist. Ohne match-vip entscheidet die Policy mit der VIP („Policy 5 „block-bad“
-          sperrt Verkehr zur VIP VIP_app nicht (match-vip aus)“); mit match-vip kann die Sperre
-          (z. B. eine Sperrliste mit Internet Services) davor greifen – der Hop bleibt „abhängig“.
+          sperrt Verkehr zur VIP VIP_app nicht (match-vip aus)“).
+        - **Sperrlisten (0.132.2):** Eine sperrende Policy mit Internet Service von FortiGuard
+          (Botnet-C&C, Malicious …) bzw. Land als Quelle oder Ziel macht den Hop nicht
+          „abhängig“: „erlaubt durch Policy 10 … – ausser Sperrliste Policy 5 …“, in der Zeile
+          der Policy „Sperrliste (Quelle)“. Eigene Internet Services, FQDN und dynamische Objekte
+          bleiben „möglich“. Kommen nur Sperren in Frage, ist der Hop „gesperrt … bzw. implizit“.
+          Ist ein Hop „abhängig“ und gibt es dort genau eine erlaubende Policy, geht der Weg mit
+          ihrem NAT weiter (z. B. SNAT der VIP-Policy bis zum Server).
         - Startpunkt gewählt und die Quelle hängt dort nicht an: der Eingang ist das Interface
           der Route zur Quelle („gewählt, Eingang lan nach der Route zur Quelle“).
       - Seit 0.78.4 steht je Policy, **über welches Objekt** Quelle und Ziel passen

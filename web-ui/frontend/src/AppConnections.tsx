@@ -471,7 +471,11 @@ function ConnDetail({ c, onRule, onExplain }: { c: AppConnection; onRule: (id: n
                           )}
                           {!r.label && r.name ? L(` „${r.name}“`, ` “${r.name}”`) : ""} ·{" "}
                           {r.action === "allow" ? L("erlauben", "accept") : L("sperren", "deny")}
-                          {r.unsure.length ? L(` · möglich (${r.unsure.join(", ")})`, ` · possible (${r.unsure.join(", ")})`) : ""}
+                          {r.blocklist
+                            ? L(` · Sperrliste (${r.unsure.join(", ")})`, ` · blocklist (${r.unsure.join(", ")})`)
+                            : r.unsure.length
+                              ? L(` · möglich (${r.unsure.join(", ")})`, ` · possible (${r.unsure.join(", ")})`)
+                              : ""}
                           {r.closed ? L(" · öffnet den Dienst nicht", " · does not open the service") : ""}
                           {r.note ? L(` · greift nicht: ${r.note}`, ` · does not apply: ${r.note}`) : ""}
                         </div>

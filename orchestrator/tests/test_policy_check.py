@@ -353,19 +353,22 @@ def test_abhaengig_mit_grund_geo_isdb_und_eingang_nach_der_route(client):
     assert [x["external_id"] for x in rules["rules"]] == ["4"]
     assert policy == {"verdict": "allow", "text": "erlaubt"}
 
-    # öffentliches Ziel: Land und Internet Service möglich - abhängig, mit Grund im Weg
+    # öffentliches Ziel: Land und Internet Service möglich - abhängig, mit Grund im Weg; seit
+    # 0.132.2 sind Land und Internet Service von FortiGuard Sperrlisten (kein Grund für
+    # „abhängig“), der eigene Internet Service (Policy 3) bleibt einer
     rules, policy = _hop(client, tid, src="10.10.0.5", dst="203.0.113.10", service="tcp/443")
-    assert [(x["external_id"], x["unsure"]) for x in rules["rules"]] == [
-        ("1", ["Ziel"]), ("2", ["Ziel"]), ("3", ["Ziel"]), ("5", [])]  # fmt: skip
+    assert [(x["external_id"], x["unsure"], x.get("blocklist", False)) for x in rules["rules"]] == [
+        ("1", ["Ziel"], True), ("2", ["Ziel"], True), ("3", ["Ziel"], False),
+        ("5", [], False)]  # fmt: skip
     assert policy == {
         "verdict": "depends",
-        "text": "abhängig an fw-g (Policy 1 „block-geo“ kann vor Policy 5 „lan-to-inet“ greifen "
-        "– abhängig von: Ziel)",
+        "text": "abhängig an fw-g (Policy 3 „block-custom“ kann vor Policy 5 „lan-to-inet“ "
+        "greifen – abhängig von: Ziel)",
     }
     en = client.get("/routing/trace", headers={"Accept-Language": "en"},
                     params={"tenant_id": tid, "src": "10.10.0.5", "dst": "203.0.113.10",
                             "service": "tcp/443"}).json()  # fmt: skip
-    assert en["paths"][0]["policy"]["text"].startswith("depends at fw-g (Policy 1 “block-geo”")
+    assert en["paths"][0]["policy"]["text"].startswith("depends at fw-g (Policy 3 “block-custom”")
 
     # eigener Internet Service: kann private Adressen enthalten - bleibt möglich
     rules, _ = _hop(client, tid, src="10.10.0.5", dst="10.99.0.5", service="tcp/443")
@@ -425,20 +428,25 @@ def test_sperre_ohne_match_vip_greift_nicht_fuer_die_vip(client):
     """0.132.1 (Anwender: „vorher einen Deny Regel …, welche Schadhafte Ziele / Sourcen
     blockiert, nimmt er diese Regel und schmeisst ein Abhängig dahinter, anstelle der Regel mit
     dem NAT und auf den Loadbalancer“): wie auf der FortiGate greift eine deny-Policy für
-    Verkehr zu einer VIP nur mit `match-vip enable` - ohne entscheidet die VIP-Policy (erlaubt),
-    mit match-vip bleibt die Sperrliste davor möglich (abhängig)."""
+    Verkehr zu einer VIP nur mit `match-vip enable` - ohne entscheidet die VIP-Policy (erlaubt).
+
+    0.132.2 (Anwender: „die Regel mit Deny beinhaltet Botnet-C&C.Server usw. als Source … er
+    zeigt nur den Weg, welches die gesperrte Regel hätte, was aber ja bereits bei sich sperren
+    ist“): mit match-vip ist die Sperre mit Internet Service eine Sperrliste - erlaubt ausser
+    der Liste; auch ab der Anbindung Internet. Eine andere mögliche Sperre (FQDN) bleibt
+    abhängig, der Weg geht aber mit dem NAT der erlaubenden Policy weiter (nicht gesperrt innen)."""
     import copy
 
-    def run(match_vip: bool) -> tuple[dict, dict]:
+    isdb = {"internet-service-src": "enable",
+            "internet-service-src-name": [{"name": "Botnet-C&C.Server"}]}  # fmt: skip
+
+    def seed(src: str, match_vip: bool, **raw) -> int:
         edge = copy.deepcopy(EDGE)
-        block = _policy(5, "block-bad", "internet", "any", ["isdb:Malicious-IPs"], ["all"],
-                        ["all"], "deny", **{"internet-service-src": "enable",
-                                            "internet-service-src-name":
-                                                [{"name": "Malicious-IPs"}]})  # fmt: skip
+        block = _policy(5, "block-bad", "internet", "any", [src], ["all"], ["all"], "deny", **raw)
         if match_vip:
             block["raw"]["match-vip"] = "enable"
         edge["rules"].insert(0, block)
-        tid = client.post("/tenants", json={"name": f"Kunde {match_vip}"},
+        tid = client.post("/tenants", json={"name": f"Kunde {src} {match_vip}"},
                           headers=ADMIN).json()["id"]  # fmt: skip
         for name, result in (("fw-e", edge), ("fw-i", INNER)):
             body = {"tenant_id": tid, "name": name, "platform": "fortigate",
@@ -449,17 +457,48 @@ def test_sperre_ohne_match_vip_greift_nicht_fuer_die_vip(client):
             r = client.post(f"/internal/collector-runs/{run_id}/result", headers=TOKEN,
                             json=result)  # fmt: skip
             assert r.status_code == 200, r.text
-        params = {"tenant_id": tid, "src": "203.0.113.50", "dst": "198.51.100.80",
-                  "service": "tcp/443"}  # fmt: skip
-        (path,) = client.get("/routing/trace", params=params).json()["paths"]
-        return path["hops"][0]["rules"], path["policy"]
+        return tid
 
-    rules, policy = run(match_vip=False)
+    def trace(tid: int, **params) -> dict:
+        params = {"tenant_id": tid, "dst": "198.51.100.80", "service": "tcp/443", **params}
+        (path,) = client.get("/routing/trace", params=params).json()["paths"]
+        return path
+
+    tid = seed("isdb:Botnet-C&C.Server", match_vip=False, **isdb)
+    path = trace(tid, src="203.0.113.50")
+    rules = path["hops"][0]["rules"]
     assert rules["verdict"] == "allow", rules
     assert "Policy 5 „block-bad“ sperrt Verkehr zur VIP VIP_app nicht (match-vip aus)" in (
         rules["text"])  # fmt: skip
     assert [x["external_id"] for x in rules["vip_skipped"]] == ["5"]
-    assert policy["verdict"] == "allow"
-    # mit match-vip bleibt die Sperrliste davor moeglich: an der Firewall der VIP abhaengig
-    rules, _ = run(match_vip=True)
-    assert rules["verdict"] == "depends" and "vip_skipped" not in rules, rules
+    assert path["policy"]["verdict"] == "allow"
+
+    # mit match-vip: Sperrliste - erlaubt ausser ihren Quellen, weiter über SNAT zum Server
+    tid = seed("isdb:Botnet-C&C.Server", match_vip=True, **isdb)
+    body = {"tenant_id": tid, "name": "Internet Gateway", "kind": "internet",
+            "interfaces": ["wan"]}  # fmt: skip
+    exit_id = client.post("/routing/exits", json=body, headers=ADMIN).json()["id"]
+    for params in ({"src": "203.0.113.50"}, {"src_exit": f"exit:{exit_id}"}):
+        path = trace(tid, **params)
+        edge, inner = path["hops"]
+        assert edge["rules"]["verdict"] == "allow", edge["rules"]
+        assert edge["rules"]["text"] == ("erlaubt durch Policy 10 „inet-to-app“ – ausser "
+                                         "Sperrliste Policy 5 „block-bad“ (Internet Service bzw. "
+                                         "Land)")  # fmt: skip
+        assert [x["external_id"] for x in edge["rules"]["blocklists"]] == ["5"]
+        assert edge["rules"]["rules"][0]["blocklist"] is True
+        assert edge["snat"]["pool"] == "IPP_e" and inner["rules"]["verdict"] == "allow"
+        assert path["policy"] == {"verdict": "allow", "text": "erlaubt an allen 2 Firewalls"}
+    # nur die Sperrliste und sonst nichts (direkt zur internen Adresse): gesperrt, nicht abhängig
+    path = trace(tid, src_exit=f"exit:{exit_id}", dst="10.40.0.80")
+    assert path["hops"][0]["rules"]["verdict"] == "implicit_deny", path["hops"][0]["rules"]
+    assert path["hops"][0]["rules"]["text"].startswith("gesperrt – Policy 5 „block-bad“ bzw. "
+                                                       "implizit")  # fmt: skip
+
+    # andere mögliche Sperre (FQDN): abhängig, der Weg geht mit dem SNAT der VIP-Policy weiter
+    tid = seed("fqdn:bad.example.ch", match_vip=True)
+    path = trace(tid, src="203.0.113.50")
+    edge, inner = path["hops"]
+    assert edge["rules"]["verdict"] == "depends" and "blocklists" not in edge["rules"]
+    assert edge["snat"]["pool"] == "IPP_e" and inner["rules"]["verdict"] == "allow"
+    assert path["policy"]["verdict"] == "depends", path["policy"]

@@ -7,6 +7,27 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.132.2 – 2026-11-04
+
+Rückmeldung des Anwenders 2026-11-04 zu 0.132.1: „Er erkennt, dass es einen Pfad [gibt], aber er
+zeigt nur den Pfad an, welcher gesperrt ist … die Regel mit Deny beinhaltet Botnet-C&C.Server usw.
+als Source. Mein Suchfilter geht nur von der Quelle aus dem Internet Gateway … er zeigt nur den
+Weg, welches die gesperrte Regel hätte, was aber ja bereits bei sich sperren ist.“
+
+- **Sperrlisten:** eine sperrende Policy mit Internet Service von FortiGuard bzw. Land als Quelle
+  oder Ziel vor der erlaubenden macht den Hop nicht mehr „abhängig“ – „erlaubt durch Policy 10 …
+  – ausser Sperrliste Policy 5 …“, in der Zeile der Policy „Sperrliste (Quelle)“ (Weg-Suche und
+  Verbindungen Ende zu Ende). Eigene Internet Services, FQDN und dynamische Objekte bleiben
+  „möglich“.
+- **Weg geht mit dem NAT der erlaubenden Policy weiter:** war der Hop „abhängig“, ging der Weg
+  ohne SNAT weiter – die Firewall dahinter sah die falsche Quelle und der Weg stand auf
+  „gesperrt“. Gibt es am Hop genau eine erlaubende Policy, gilt ihr NAT (z. B. SNAT der
+  VIP-Policy bis zum Load Balancer bzw. Server).
+- **Nur Sperren möglich:** kommen an einem Hop nur sperrende Policies in Frage, ist er
+  gesperrt („gesperrt – Policy 5 … bzw. implizit“), nicht „abhängig“.
+- ADR 0019 Ergänzung (Regeln auf dem Weg). Tests: `test_policy_check.py`,
+  `e2e/release_0132_2.spec.ts`.
+
 ## 0.132.1 – 2026-11-04
 
 Rückmeldung des Anwenders 2026-11-04: „Das Berechnen einer Applikation dauert sehr lange mehrere
