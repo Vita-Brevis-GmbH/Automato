@@ -7,6 +7,27 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.133.1 – 2026-11-04
+
+Rückmeldung des Anwenders 2026-11-04: „Das Berechnen hat immer noch über eine Stunde für eine
+riesige App und ich habe 83 wartende … VM hat 4 vCPUs, 8G Ram aber eine sehr kleine Auslastung 30%
+… woran kann es liegen, dass bei mir es ewig dauert und bei dir Sekunden?“ und „dass der "rechnet
+gerade" immer wieder im Dashboard verschwindet und wieder kommt … er aktuell bei den Verbindungen
+am Messen ist“. Abnahme bis 0.133.0 (ohne Einwand).
+
+- **Datenbank statt Rechenzeit:** gemessen gegen Postgres statt der Test-Datenbank im Speicher -
+  je Verbindung und Hop fragte die Weg-Suche die BGP- bzw. statischen Routen gleichen Präfixes ab
+  (Backup-Wege), ohne passenden Index: Postgres las dafür jedes Mal alle Routen des Geräts (mit
+  60 000 BGP-Routen 11,5 ms je Abfrage, mit einer vollen BGP-Tabelle ein Vielfaches). Neu je
+  Knoten und Präfix einmal, mit Index (0,04 ms); ebenso die genaueren Routen in einem Netz (z. B.
+  zu any) und die gelernten ACI-Endpunkte je IP. Migration `0073` (Indizes).
+- **Abfragen sichtbar:** unter den Verbindungen „· n Abfragen an die Datenbank“, im Log dazu.
+- **Fortschritt:** „rechnet gerade“ in der Übersicht mit „· 340 von 2000 Wegen · seit 12 min“;
+  lange Berechnungen schreiben jede Minute den Fortschritt ins Log.
+- **Vorrechnen:** die schnellen Stände zuerst - die wartenden kommen nicht mehr hinter einer
+  riesigen Applikation erst beim nächsten Durchgang dran.
+- Tests: `test_doc_snapshots.py`, `e2e/release_0133_1.spec.ts`.
+
 ## 0.133.0 – 2026-11-04
 
 Rückmeldung des Anwenders 2026-11-04: „Ich sehe nun bei den BGP Filter, das es viel besser ist,

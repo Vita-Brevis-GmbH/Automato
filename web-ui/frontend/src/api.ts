@@ -1830,6 +1830,7 @@ export interface DocKindState {
   building: boolean;
   built_at: string | null;
   seconds: number; // längste Berechnung
+  progress?: { done: number; total: number; seconds: number }; // 0.133.1: Wege fertig von allen, seit (s)
 }
 export interface DocStates {
   enabled: boolean;
@@ -2105,6 +2106,7 @@ export interface AppConnections {
     plan?: number;
     count: number;
     total: number;
+    queries?: number; // 0.133.1: Abfragen an die Datenbank
     slowest: { key: string; seconds: number }[];
   };
 }

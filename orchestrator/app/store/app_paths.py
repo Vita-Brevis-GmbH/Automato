@@ -40,6 +40,7 @@ Infrastruktur (ADR 0018).
 """
 
 import ipaddress
+import logging
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -71,6 +72,8 @@ MAX_SYSTEMS = 12  # genannte Systeme je Seite
 _SKIP = ("any", "vzany", "pref_group")  # unspezifisch: Regel ohne Verbindung
 _BLOCK = ("deny", "implicit_deny")
 
+log = logging.getLogger(__name__)
+
 
 @dataclass
 class _Side:
@@ -98,15 +101,42 @@ class _Conn:
     probe: bool = False
 
 
+PROGRESS_SECONDS = 60  # Fortschritt im Log hoechstens so oft (0.133.1)
+
+
 def build(session: Session, app: Application, doc: dict | None = None,
           graph: paths.Graph | None = None,
           checks: policy_check.Checks | None = None, zones: bool = True,
-          limit: int | None = None) -> dict:  # fmt: skip
+          limit: int | None = None, progress=None) -> dict:  # fmt: skip
     """Verbindungen der Applikation mit Weg, Urteil je Hop und Abgleich mit den Regeln. Graph
     und Policies lassen sich fuer mehrere Applikationen teilen (Befunde, 0.59.0); `zones`:
     logische Zonen je Verbindung und Hop mit der Absicht (0.78.0, ADR 0024) - die Befunde
     brauchen sie nicht. `limit`: so viele Wege (Vorgabe `app_traces_max`, 0 = alle, 0.130.0) -
-    Verbindungen zu any zuletzt."""
+    Verbindungen zu any zuletzt. `progress(fertig, alle)` je Weg (Stand der Doku, 0.133.1).
+
+    0.133.1 (Anwender: „woran kann es liegen, dass bei mir es ewig dauert und bei dir
+    Sekunden?“): `timing.queries` = Abfragen an die Datenbank waehrend der Berechnung."""
+    from sqlalchemy import event
+
+    conn = session.connection()
+    queries = [0]
+
+    def count(*_args) -> None:
+        queries[0] += 1
+
+    event.listen(conn, "before_cursor_execute", count)
+    try:
+        out = _build(session, app, doc, graph, checks, zones, limit, progress)
+    finally:
+        event.remove(conn, "before_cursor_execute", count)
+    if "timing" in out:
+        out["timing"]["queries"] = queries[0]
+    return out
+
+
+def _build(session: Session, app: Application, doc: dict | None, graph: paths.Graph | None,
+           checks: policy_check.Checks | None, zones: bool, limit: int | None,
+           progress) -> dict:  # fmt: skip
     from app.config import get_settings
     from app.store import (
         applications,  # spaet: applications nutzt appdoc wie dieses Modul
@@ -150,11 +180,19 @@ def build(session: Session, app: Application, doc: dict | None = None,
     t_setup = time.monotonic()
     slow: list[tuple[float, str]] = []
     traced = 0
-    for c in list(conns.values())[: limit or None]:
+    todo = list(conns.values())[: limit or None]
+    logged = t_setup
+    for c in todo:
         t_one = time.monotonic()
         conn = _connection(session, tid, graph, checks, data, rules, c, l3, zctx, assigner)
         traced += 1
         slow.append((time.monotonic() - t_one, conn["key"]))
+        if progress is not None:
+            progress(traced, len(todo))
+        if time.monotonic() - logged > PROGRESS_SECONDS:  # lange Berechnung: Fortschritt im Log
+            logged = time.monotonic()
+            log.info("Applikation %s: %d von %d Wegen in %.0f s", app.id, traced, len(todo),
+                     logged - t_setup)  # fmt: skip
         if c.probe:  # any: Firewall nicht auf dem Weg nach dem Routing - kein Befund (0.127.0)
             for x in conn["unused"]:
                 without[x["rule_id"]].add(_why("probe_off_path"))

@@ -245,6 +245,11 @@ class Graph:
         # Knoten einmal lesen statt je Hop
         self._fabric_rows: list[tuple] | None = None
         self._policy_routes: dict[Key, list] = {}
+        # 0.133.1 (Anwender: „Das Berechnen hat immer noch über eine Stunde für eine riesige
+        # App“): BGP-/statische Routen je Praefix und genauere Routen in einem Netz einmal je
+        # Knoten - je Verbindung und Hop eine Abfrage las bei grossen BGP-Tabellen alle Routen
+        self._backup_rows: dict[tuple, list] = {}
+        self._inner_rows: dict[tuple, list] = {}
         self._vips: dict[Key, list[NatRule]] = {}
         self._lbs: list[tuple[NatRule, str]] | None = None  # NSX ALB (ADR 0027), bei Bedarf
         self._vlinks: dict[int, dict[tuple[str, str], tuple[str, str]]] = {}
@@ -460,31 +465,38 @@ class Graph:
     def _inner(self, key: Key, net, table: Table, hops: list[dict]) -> dict:
         """Genauere Routen innerhalb des Netzes mit anderem Next-Hop bzw. Interface: der Teil
         geht einen anderen Weg (`inner`, hoechstens INNER, `inner_total`)."""
-        lo, hi = (ip_hex(v) for v in span(net))
         mine = {(h.get("ip"), h.get("interface")) for h in hops}
-        rows = self.session.scalars(
-            select(TopoRoute)
-            .where(
-                TopoRoute.source_system_id == key[0],
-                TopoRoute.context == key[1],
-                TopoRoute.family == net.version,
-                TopoRoute.table == "rib",
-                TopoRoute.best.is_(True),
-                TopoRoute.prefix_len > net.prefixlen,
-                TopoRoute.lo >= lo,
-                TopoRoute.hi <= hi,
-            )
-            .order_by(TopoRoute.lo, TopoRoute.prefix_len)
-        )
+        cache = (key, str(net))
+        if cache not in self._inner_rows:
+            lo, hi = (ip_hex(v) for v in span(net))
+            self._inner_rows[cache] = [
+                (r.prefix, r.protocol, table_of(r), r.next_hops)
+                for r in self.session.execute(
+                    select(TopoRoute.prefix, TopoRoute.protocol, TopoRoute.attrs,
+                           TopoRoute.next_hops)
+                    .where(
+                        TopoRoute.source_system_id == key[0],
+                        TopoRoute.context == key[1],
+                        TopoRoute.family == net.version,
+                        TopoRoute.table == "rib",
+                        TopoRoute.best.is_(True),
+                        TopoRoute.prefix_len > net.prefixlen,
+                        TopoRoute.lo >= lo,
+                        TopoRoute.hi <= hi,
+                    )
+                    .order_by(TopoRoute.lo, TopoRoute.prefix_len)
+                )
+            ]  # fmt: skip
+        rows = self._inner_rows[cache]
         other: dict[str, dict] = {}
-        for r in rows:
-            if table_of(r) != table:
+        for prefix, protocol, rtable, next_hops in rows:
+            if rtable != table:
                 continue
-            nhs = r.next_hops or []
+            nhs = next_hops or []
             if {(h.get("ip"), h.get("interface")) for h in nhs} <= mine:
                 continue
             via = ", ".join(h.get("ip") or h.get("interface") or "?" for h in nhs) or "?"
-            other.setdefault(r.prefix, {"prefix": r.prefix, "protocol": r.protocol, "via": via})
+            other.setdefault(prefix, {"prefix": prefix, "protocol": protocol, "via": via})
         if not other:
             return {}
         return {"inner": list(other.values())[:INNER], "inner_total": len(other)}
@@ -525,22 +537,22 @@ class Graph:
         bzw. eine SD-WAN-Zone (als 0.0.0.0/0 gespeichert, das wirkliche Ziel ist unbekannt)."""
         if route.get("prefix_len") == 0 and is_private(ip):
             return []
-        lo, hi = (ip_hex(v) for v in span(ip))
         active = {h.get("ip") for h in route.get("next_hops") or []}
         out: list[dict] = []
-        for r in self.session.scalars(
-            select(TopoRoute)
-            .where(
-                TopoRoute.source_system_id == key[0],
-                TopoRoute.context == key[1],
-                TopoRoute.family == ip.version,
-                TopoRoute.table.in_(("bgp", "static")),
-                TopoRoute.prefix == route["prefix"],
-                TopoRoute.lo <= lo,
-                TopoRoute.hi >= hi,
-            )
-            .order_by(TopoRoute.table, TopoRoute.distance, TopoRoute.id)
-        ):
+        cache = (key, ip.version, route["prefix"])  # gleiches Praefix = gleiche Zeilen
+        if cache not in self._backup_rows:
+            self._backup_rows[cache] = list(self.session.scalars(
+                select(TopoRoute)
+                .where(
+                    TopoRoute.source_system_id == key[0],
+                    TopoRoute.context == key[1],
+                    TopoRoute.family == ip.version,
+                    TopoRoute.table.in_(("bgp", "static")),
+                    TopoRoute.prefix == route["prefix"],
+                )
+                .order_by(TopoRoute.table, TopoRoute.distance, TopoRoute.id)
+            ))  # fmt: skip
+        for r in self._backup_rows[cache]:
             if table_of(r) != table or (r.table == "static" and not r.best):
                 continue  # andere VRF bzw. abgeschaltete statische Route
             if r.table == "bgp" and r.best:

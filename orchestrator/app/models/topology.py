@@ -60,7 +60,11 @@ class TopoContext(_TopoRow, Base):
 
 class TopoRoute(_TopoRow, Base):
     __tablename__ = "topo_route"
-    __table_args__ = (Index("ix_topo_route_lookup", "tenant_id", "family", "lo"),)
+    __table_args__ = (
+        Index("ix_topo_route_lookup", "tenant_id", "family", "lo"),
+        # Backup-Wege je Knoten und Praefix (0.133.1, Migration 0073)
+        Index("ix_topo_route_node_prefix", "source_system_id", "context", "prefix"),
+    )
 
     node: Mapped[str] = mapped_column(String(200))
     context: Mapped[str] = mapped_column(String(200))

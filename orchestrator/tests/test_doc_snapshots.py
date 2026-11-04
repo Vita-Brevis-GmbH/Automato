@@ -9,6 +9,8 @@
 - nach einer Aenderung rechnet der Hintergrund die angesehenen Staende vor.
 """
 
+import time
+
 import pytest
 import test_paths as tp
 from app.config import get_settings
@@ -217,6 +219,22 @@ def test_uebersicht_stand_der_doku(client, monkeypatch, snapshots):
     web = {a["name"]: a for a in states()["apps"]}["Web"]
     assert (web["state"], web["stale"]) == ("stale", 1)
     assert web["kinds"]["doc"]["fresh"] == 1 and web["kinds"]["connections"]["fresh"] == 0
+
+    # 0.133.1 (Anwender: „der "rechnet gerade" verschwindet immer wieder … er aktuell bei den
+    # Verbindungen am Messen ist“): waehrend die Verbindungen rechnen, wie weit und seit wann
+    key = (aid, doc_snapshots.CONNECTIONS, "de|connections")
+    assert doc_snapshots._claim(key)
+    with doc_snapshots._lock:
+        doc_snapshots._progress[aid] = {"since": time.time() - 125, "done": 340, "total": 2000}
+    try:
+        web = {a["name"]: a for a in states()["apps"]}["Web"]
+        assert web["state"] == "building"
+        p = web["kinds"]["connections"]["progress"]
+        assert (p["done"], p["total"]) == (340, 2000) and p["seconds"] >= 125
+    finally:
+        doc_snapshots._release(key)
+    assert doc_snapshots.progress_of(aid) is None  # fertig: kein Fortschritt mehr
+    assert "progress" not in {a["name"]: a for a in states()["apps"]}["Web"]["kinds"]["connections"]
 
     cust = {"X-Dev-Roles": "customer", "X-Dev-Customers": "1"}
     r = client.get("/applications/doc-states", params={"tenant_id": tid}, headers=cust)

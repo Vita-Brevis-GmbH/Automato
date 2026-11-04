@@ -1284,8 +1284,10 @@ function Timing({ t }: { t: NonNullable<AppConnections["timing"]> }) {
     <details className="pad faint" id="app-conn-timing" style={{ fontSize: 12 }}>
       <summary>
         {L(
-          `Berechnet in ${s(total)}: ${t.count} Wege in ${s(t.traces)} (Ø ${s(each)})`,
-          `Computed in ${s(total)}: ${t.count} paths in ${s(t.traces)} (avg ${s(each)})`,
+          `Berechnet in ${s(total)}: ${t.count} Wege in ${s(t.traces)} (Ø ${s(each)})` +
+            (t.queries != null ? ` · ${t.queries} Abfragen an die Datenbank` : ""),
+          `Computed in ${s(total)}: ${t.count} paths in ${s(t.traces)} (avg ${s(each)})` +
+            (t.queries != null ? ` · ${t.queries} database queries` : ""),
         )}
       </summary>
       <div>

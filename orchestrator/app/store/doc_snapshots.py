@@ -61,6 +61,9 @@ _OWN, _ALL_APPS = "application.", "application.imported"
 
 _lock = threading.Lock()
 _building: set[tuple[int, str, str]] = set()  # (Applikation, Art, Variante)
+# 0.133.1 (Anwender: „der "rechnet gerade" verschwindet immer wieder … er aktuell bei den
+# Verbindungen am Messen ist“): je Applikation seit wann und wie weit (Wege fertig von allen)
+_progress: dict[int, dict] = {}
 _warm_locks: dict[int, threading.Lock] = defaultdict(threading.Lock)
 
 
@@ -136,15 +139,27 @@ def compute(session: Session, app: Application, kind: str, params: Params) -> di
     if kind == DOC:
         ids = set(params.rule_ids) if params.rule_ids is not None else None
         return jsonable_encoder(store.build_doc(session, app, ids, names=params.names))
-    out = app_paths.build(session, app)
+
+    since = time.time()
+
+    def progress(done: int, total: int) -> None:
+        with _lock:
+            _progress[app.id] = {"since": since, "done": done, "total": total}
+
+    try:
+        out = app_paths.build(session, app, progress=progress)
+    finally:
+        with _lock:
+            _progress.pop(app.id, None)
     # Netzwerkplan (0.67.0), kompakt nach AP/EPG (0.74.0)
     started = time.monotonic()
     out["plan"] = app_plan.build(out["connections"], members=out["members"])
     timing = out.get("timing") or {}
     timing["plan"] = round(time.monotonic() - started, 2)
-    log.info("Applikation %s: Verbindungen in %.1f s (%s Wege %.1f s, Doku %.1f s, Plan %.1f s)",
-             app.id, timing.get("total", 0) + timing["plan"], timing.get("count"),
-             timing.get("traces", 0), timing.get("doc", 0), timing["plan"])  # fmt: skip
+    log.info("Applikation %s: Verbindungen in %.1f s (%s Wege %.1f s, Doku %.1f s, Plan %.1f s, "
+             "%s Abfragen)", app.id, timing.get("total", 0) + timing["plan"], timing.get("count"),
+             timing.get("traces", 0), timing.get("doc", 0), timing["plan"],
+             timing.get("queries"))  # fmt: skip
     return jsonable_encoder(out)
 
 
@@ -222,6 +237,15 @@ def _claim(key: tuple[int, str, str]) -> bool:
 def _release(key: tuple[int, str, str]) -> None:
     with _lock:
         _building.discard(key)
+        if not any(k[0] == key[0] for k in _building):
+            _progress.pop(key[0], None)
+
+
+def progress_of(app_id: int) -> dict | None:
+    """Wie weit die Verbindungen der Applikation gerade sind (Wege fertig von allen, seit)."""
+    with _lock:
+        p = _progress.get(app_id)
+        return dict(p) if p else None
 
 
 def rebuild(factory: sessionmaker[Session], app_id: int, kind: str, var: str, params: Params,
@@ -377,6 +401,11 @@ def overview(session: Session, tenant_id: int) -> dict:
             }  # fmt: skip
         if any(k["building"] for k in kinds.values()):
             state = "building"
+            if (p := progress_of(a.id)) and p.get("total"):  # 0.133.1: wie weit
+                kinds[CONNECTIONS]["progress"] = {
+                    "done": p["done"], "total": p["total"],
+                    "seconds": round(time.time() - p["since"]),
+                }  # fmt: skip
         elif not by_app.get(a.id):
             state = "never"
         elif stale:
@@ -406,12 +435,14 @@ def warm(factory: sessionmaker[Session], tenant_id: int, application_id: int | N
             if not modules.enabled(session, tenant_id, "doku"):  # Modul aus (ADR 0036)
                 return 0
             since = datetime.now(UTC) - timedelta(days=settings.doc_warm_days)
+            # 0.133.1 (Anwender: „ich habe 83 wartende“): schnelle Staende zuerst - eine
+            # riesige Applikation haelt die uebrigen nicht mehr bis zum naechsten Durchgang auf
             stmt = (
                 select(DocSnapshot.id, DocSnapshot.application_id, DocSnapshot.kind,
                        DocSnapshot.variant, DocSnapshot.fingerprint)
                 .join(Application, Application.id == DocSnapshot.application_id)
                 .where(Application.tenant_id == tenant_id, DocSnapshot.viewed_at >= since)
-                .order_by(DocSnapshot.viewed_at.desc())
+                .order_by(DocSnapshot.seconds, DocSnapshot.viewed_at.desc())
             )  # fmt: skip
             if application_id is not None:
                 stmt = stmt.where(DocSnapshot.application_id == application_id)

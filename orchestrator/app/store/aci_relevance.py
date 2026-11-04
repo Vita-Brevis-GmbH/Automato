@@ -84,6 +84,8 @@ class Classifier:
         self._graph_of = graph  # Graph der Wege teilen (Doku: einmal je Mandant)
         self._graph: Graph | None = None
         self._cache: dict[tuple, tuple[str, str] | None] = {}
+        # gelernte Endpunkte je IP (0.133.1: je Verbindung eine Abfrage ueber alle Endpunkte)
+        self._endpoint_epgs: dict[str, list] = {}
 
     @property
     def graph(self) -> Graph:
@@ -396,11 +398,14 @@ class Classifier:
         if not is_net(ip):
             for epg, how in self.locator.configured(str(ip), sid, vrf):
                 return f"{how}, EPG {epg_store.inventory_label(epg).replace('/', '|')}"
-        for epg in self.session.scalars(
-            select(Epg)
-            .join(EpgEndpoint, EpgEndpoint.epg_id == Epg.id)
-            .where(Epg.tenant_id == self.tenant_id, Epg.kind == "epg", EpgEndpoint.ip == str(ip))
-        ):
+        key = str(ip)
+        if key not in self._endpoint_epgs:
+            self._endpoint_epgs[key] = list(self.session.scalars(
+                select(Epg)
+                .join(EpgEndpoint, EpgEndpoint.epg_id == Epg.id)
+                .where(Epg.tenant_id == self.tenant_id, Epg.kind == "epg", EpgEndpoint.ip == key)
+            ))  # fmt: skip
+        for epg in self._endpoint_epgs[key]:
             if epg.source_system_id == sid and self.vrf_of(epg) == vrf:
                 name = epg_store.inventory_label(epg).replace("/", "|")
                 return L(f"Endpunkt der EPG {name}", f"endpoint of EPG {name}")

@@ -1331,6 +1331,16 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     dieselben Zahlen schreibt der Orchestrator ins Log („Applikation 12: Verbindungen in …“).
     Eine Applikation rechnet in einem Prozess nacheinander – mehr RAM bringt nichts, mehr CPU nur
     für mehrere Applikationen bzw. Mandanten zugleich.
+    **Seit 0.133.1:** dazu die Zahl der **Abfragen an die Datenbank** („· 998 Abfragen an die
+    Datenbank“, im Log „… n Abfragen“); viele Abfragen je Weg zeigen, dass die Zeit in Postgres
+    steckt. Lange Berechnungen schreiben jede Minute den Fortschritt ins Log („Applikation 12: 340
+    von 2000 Wegen in 754 s“), die Übersicht zeigt bei „rechnet gerade“ „· 340 von 2000 Wegen ·
+    seit 12 min“. „rechnet gerade“ gilt je Stand (Doku bzw. Verbindungen, je Sprache) – zwischen
+    zwei Ständen kann es kurz fehlen. Das Vorrechnen nimmt die **schnellen Stände zuerst**; eine
+    riesige Applikation hält die übrigen nicht mehr bis zum nächsten Durchgang auf. Backup-Routen
+    je Präfix, genauere Routen in einem Netz und gelernte ACI-Endpunkte je IP holt die Berechnung
+    nur noch einmal (Migration `0073`: Indizes `topo_route` Knoten + Präfix, `epg_endpoint.ip`) –
+    vorher las Postgres dafür je Verbindung und Hop alle Routen des Geräts (grosse BGP-Tabellen).
   - **Kategorien nach Zonentyp (seit 0.106.0, ADR 0035):** jede Firewall-Regel bzw. jeder
     Contract steht in der Kategorie seiner **Richtung** Zonentyp der Quelle → Zonentyp des Ziels.
     In drei Schritten einrichten:

@@ -456,8 +456,9 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.132.1** | Rückmeldung 2026-11-04: Verbindungen einer Applikation schneller (Vorfilter je Ein-/Ausgang und Adresse, Caches), Dauer je Teil sichtbar; Sperre vor einer VIP nur mit match-vip |
 | **0.132.2** | Einwand 2026-11-04 zu 0.132.1: Sperrliste (Internet Service, Land) vor der VIP-Policy = erlaubt ausser der Liste, Weg mit dem NAT der erlaubenden Policy weiter, nur Sperren möglich = gesperrt |
 | **0.133.0** | Rückmeldung 2026-11-04: Befunde nach einem Update einmal neu (gleich die Zahl der neuen Version), BGP-Nachbarn mit Prüfung ✓/⚠ je Nachbar, Verbund im Netzwerkplan nur einmal |
+| **0.133.1** | Rückmeldung 2026-11-04: Berechnung grosser Applikationen – Backup-Routen, Routen in Netzen und ACI-Endpunkte einmal je Knoten bzw. IP mit Index (Migration 0073), Abfragen und Fortschritt sichtbar, schnelle Stände zuerst |
 
-### Nächste Arbeiten (Stand 0.133.0)
+### Nächste Arbeiten (Stand 0.133.1)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
 **0.68.0** (2026-10-26), bis **0.102.0** (2026-10-28: „ich teste nach dem Freigeben der Version
@@ -492,7 +493,8 @@ direkt; Kategorien bestätigt) – korrigiert in 0.131.0, bis **0.131.0** (2026-
 Eingangsfiltern und default-originate ohne Einwand), bis **0.132.0** (2026-11-04, Rückmeldung zu
 Dauer und VIP-Weg ohne Einwand zu 0.132.0). Zu 0.132.1 Einwand (2026-11-04: Weg über die VIP mit
 Sperrliste davor weiter als gesperrt gezeigt) – korrigiert in 0.132.2, bis **0.132.2** (2026-11-04,
-Rückmeldung zu BGP-Befunden und Netzwerkplan ohne Einwand zu 0.132.2). Zur Abnahme steht 0.133.0. Seit 0.104.0 gilt eine
+Rückmeldung zu BGP-Befunden und Netzwerkplan ohne Einwand zu 0.132.2), bis **0.133.0** (2026-11-04,
+Rückmeldung zur Dauer ohne Einwand zu 0.133.0). Zur Abnahme steht 0.133.1. Seit 0.104.0 gilt eine
 Version als abgenommen,
 sobald die nächste Rückmeldung des Anwenders keinen Einwand dazu enthält (`CLAUDE.md`, Ablauf).
 

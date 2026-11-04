@@ -9,7 +9,7 @@ BD- bzw. externe Subnetze, dual-stack), `epg_endpoint` die gelernten Endpunkte
 (`fvCEp`/`fvIp`). `epg.network_object_id` verknuepft die EPG mit dem Server (Host-Objekt).
 """
 
-from sqlalchemy import JSON, Boolean, ForeignKey, String, UniqueConstraint, false, text
+from sqlalchemy import JSON, Boolean, ForeignKey, Index, String, UniqueConstraint, false, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -69,7 +69,10 @@ class EpgEndpoint(Base):
     """Endpunkt einer EPG (fvCEp/fvIp gelernt, fvStCEp statisch) - je Lauf ersetzt."""
 
     __tablename__ = "epg_endpoint"
-    __table_args__ = (UniqueConstraint("epg_id", "ip", name="uq_epg_endpoint_epg_ip"),)
+    __table_args__ = (
+        UniqueConstraint("epg_id", "ip", name="uq_epg_endpoint_epg_ip"),
+        Index("ix_epg_endpoint_ip", "ip"),  # EPG einer IP (0.133.1, Migration 0073)
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     epg_id: Mapped[int] = mapped_column(ForeignKey("epg.id"), index=True)

@@ -530,6 +530,18 @@ const DOC_STATE: Record<DocState, { label: string; chip: string; title: string }
 };
 const DOC_ORDER: DocState[] = ["building", "stale", "never", "fresh"];
 
+// Fortschritt einer Berechnung (0.133.1, Anwender: „der "rechnet gerade" verschwindet immer wieder … er aktuell bei den
+// Verbindungen am Messen ist“): Wege fertig von allen und seit wann
+function DocProgress({ p }: { p: { done: number; total: number; seconds: number } }) {
+  const min = Math.floor(p.seconds / 60);
+  const since = min >= 1 ? `${min} min` : `${p.seconds} s`;
+  return (
+    <span className="faint doc-progress" title={L("Verbindungen: Wege fertig von allen", "Connections: paths done of all")}>
+      {L(` · ${p.done} von ${p.total} Wegen · seit ${since}`, ` · ${p.done} of ${p.total} paths · for ${since}`)}
+    </span>
+  );
+}
+
 // Stand der Doku (0.129.0): je Applikation, ob Doku und Verbindungen aktuell sind, gerade rechnen, veraltet sind bzw. noch
 // nie berechnet wurden – zuerst die, die nicht aktuell sind; solange etwas rechnet, alle 5 s neu
 export function DocsCard({ tenantId, onGo }: { tenantId: number; onGo: Go }) {
@@ -645,6 +657,7 @@ export function DocsCard({ tenantId, onGo }: { tenantId: number; onGo: Go }) {
                   <span className={`chip ${DOC_STATE[a.state].chip}`} title={DOC_STATE[a.state].title}>
                     {DOC_STATE[a.state].label}
                   </span>
+                  {a.kinds.connections.progress && <DocProgress p={a.kinds.connections.progress} />}
                   {a.auto && (
                     <span className="faint" title={L("wird im Hintergrund vorgerechnet", "pre-computed in the background")}>
                       {" "}
