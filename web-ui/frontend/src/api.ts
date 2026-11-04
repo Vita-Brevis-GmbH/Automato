@@ -2743,6 +2743,7 @@ export interface TopoPeer extends Labeled {
   peer?: Resolved;
   peer_node?: string | null; // gelesener Knoten hinter der Adresse
   attrs?: { config?: BgpNeighborConfig } | null; // BGP-Konfiguration (0.113.0, ADR 0041)
+  findings?: { id: number; type: string; status: string }[]; // 0.133.0: offene Befunde der Routing-Filter
 }
 export interface TopoHa {
   id: number;

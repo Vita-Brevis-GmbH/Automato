@@ -191,6 +191,7 @@ MODULES: tuple[Module, ...] = (
             "reconcile",
             "topo_changes",
             "topo_model",
+            "version_refresh",  # Befunde nach einem Update neu (0.133.0)
         ),
         views=("routing", "verkabelung", "abgleich"),
     ),  # fmt: skip

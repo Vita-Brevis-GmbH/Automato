@@ -195,6 +195,17 @@ def test_soll_ist_je_nachbar_befunde_und_vorschlag(client):
     assert "10.61.0.0/16" in missing["message"] and "PL_SITES" in missing["message"]
     outside = found["bgp_outside_filter"][0]
     assert outside["detail"]["prefixes"] == ["10.5.0.0/16"]
+    # 0.133.0 (Anwender: „sehe ich den BGP Neighbors nicht an, ob sie eine Filter Verletzung
+    # haben“): je Nachbar die offenen Befunde der Routing-Filter in der Liste
+    peers = {x["peer_ip"]: x for x in client.get("/routing/peers", params=p).json()}
+    assert [x["type"] for x in peers[ISP]["findings"]] == ["bgp_outside_filter"]
+    assert [x["type"] for x in peers[SITE]["findings"]] == ["bgp_expected_missing"]
+    assert peers[PARTNER]["findings"] == []
+    fid = peers[ISP]["findings"][0]["id"]
+    r = client.patch(f"/findings/{fid}", json={"status": "ignored"}, headers=OP)
+    assert r.status_code == 200, r.text
+    peers = {x["peer_ip"]: x for x in client.get("/routing/peers", params=p).json()}
+    assert peers[ISP]["findings"] == []  # ignoriert: kein Zeichen mehr
 
     # Vorschlag fuer „Netze dahinter“ einer Anbindung: Netze der Eingangsfilter, ohne „alles“
     sug = client.get("/routing/bgp/filtered", params={**p, "next_hops": [SITE, "10.255.0.1"]})
@@ -333,3 +344,31 @@ def test_default_originate_blendet_unbekannte_aus(client, session_factory):
     r = bgp_filters.Filters(s, tid).report(p)
     s.close()
     assert r["out"]["counts"].get("unknown", 0) >= 2 and "originate_only" not in r["out"]["counts"]
+
+
+def test_befunde_nach_einem_update_neu(client, session_factory, monkeypatch):
+    """0.133.0 (Anwender: „Ich sehe nun bei den BGP Filter, das es viel besser ist, aber ich habe
+    immer noch die gleiche Anzahl der Findings“): Befunde entstanden nur nach Läufen - nach einem
+    Update rechnet der Orchestrator sie je Mandant einmal mit der neuen Version neu."""
+    from app.models import AuditLog, Finding, FindingType, Severity, SubjectKind
+    from app.store import version_refresh
+
+    tid, fw, _ = _seed(client)
+    with session_factory() as s:  # Stand der alten Version: ein Befund, den es nicht mehr gibt
+        s.query(Finding).delete()
+        s.add(Finding(tenant_id=tid, type=FindingType.BGP_NO_INBOUND_FILTER,
+                      severity=Severity.INFO, subject_kind=SubjectKind.NODE,
+                      subject_id=f"fw-01 → {PARTNER}", source_system_id=fw,
+                      detail={"peer": PARTNER, "context": "root"}))  # fmt: skip
+        s.commit()
+    fresh, later = version_refresh.refresh(session_factory)
+    assert tid in fresh and later == []
+    p = {"tenant_id": tid, "status": "open"}
+    types = {f["type"] for f in client.get("/findings", params=p).json()}
+    assert "bgp_outside_filter" in types and "bgp_no_inbound_filter" not in types
+    with session_factory() as s:
+        (row,) = s.query(AuditLog).filter(AuditLog.action == "reconcile.version").all()
+        assert row.subject == version_refresh.subject(tid) and row.actor == "system"
+    assert tid not in version_refresh.refresh(session_factory)[0]  # je Version nur einmal
+    monkeypatch.setattr(version_refresh, "__version__", "9.9.9")
+    assert tid in version_refresh.refresh(session_factory)[0]

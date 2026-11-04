@@ -159,7 +159,10 @@ def _chain(c: dict, place: _Place | None = None) -> list[dict]:
             continue
         h = s["hop"]
         left, right = _facing(h, c["direction"])
-        x = {"id": f"hop:{h['key']}", "role": "hop", "hop": h, "left": left, "right": right}
+        # Verbund (0.133.0, Anwender: „dass der eine Firewall Verbund zwei mal auf der Map
+        # auftaucht“): ein Knoten je Verbund und Kontext, gleich welche Firewall zuerst steht
+        hid = f"grp:{h['group']}|{h['context']}" if h.get("group") else h["key"]
+        x = {"id": f"hop:{hid}", "role": "hop", "hop": h, "left": left, "right": right}
         if h["kind"] == "vrf":
             names = _l3outs(h, c["direction"])
             if not names and i == last and peer.get("l3out"):

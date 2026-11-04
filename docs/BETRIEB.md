@@ -671,7 +671,10 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     selbst verwaltet) – nur ein Nachbar in so einer Zone braucht einen Eingangsfilter (sonst „kein
     Eingangsfilter nötig“, keine Abweichung, kein Befund), ebenso der ACI Import; mit
     `default-originate` gilt im Ausgang nur die Default-Route – kein Ausgangsfilter, kein
-    Vorschlag), **HA &
+    Vorschlag. Seit 0.133.0 Spalte **Prüfung** je Nachbar mit gelesener Konfiguration: grünes ✓
+    ohne offene bzw. bestätigte Befunde der Routing-Filter, sonst gelb ⚠ mit ihrer Zahl
+    (Tooltip: welche) – Klick öffnet die Findings zu diesem Nachbarn; ignorierte zählen nicht),
+    **HA &
     Session-Sync** (Modus, Gruppe, Mitglieder mit Rolle, FGSP-Peers), **Policy-Routen &
     SD-WAN** (Bedingung, Weg, Mitglieder nach Vorrang), **L3Outs (ACI)** (VRF, Border-Leafs mit
     Namen, Router-ID und statischen Routen, Interfaces/SVIs mit VLAN und Adressen, BGP-Peers
@@ -1185,7 +1188,9 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
       (Tenant/AP) mit einem Kasten je EPG und ihren VMs bzw. Servern (höchstens sechs, sonst
       „+n weitere“), Systeme ohne EPG im Rahmen „ohne EPG“; in der Mitte L3Outs, Firewalls und
       VDOMs auf den Wegen (das ACI als der L3Out zur Gegenstelle hin – nach dem Routing bzw. der
-      externen EPG –, sonst als VRF), rechts die Gegenstellen.
+      externen EPG –, sonst als VRF), rechts die Gegenstellen. Ein Verbund paralleler Firewalls
+      ist seit 0.133.0 immer ein Knoten („Verbund …“), gleich welche seiner Firewalls ein Weg
+      zuerst nennt.
       - **Ebene „Regeln“:** unter jedem Knoten des Wegs ein Kasten mit den entscheidenden
         Policies bzw. Contracts und ihren Diensten („web-lan (#11) · tcp/443“, „Contract CT_web ·
         tcp/443“, „✕ implizit gesperrt“). Häkchen **Regeln** bzw. **Dienste und Interfaces**
@@ -1463,7 +1468,9 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   IPAM unter 10.30.0.9. Firewall-Objekt H_db01 …, verwendet in 1 Regel“. Aufklappen zeigt alle
   Angaben und Links auf die betroffenen Regeln. Filter Status/Typ, Suche; Status setzen
   (Triage) als Operator – bleibt über spätere Läufe erhalten (Findings werden nach jedem Lauf
-  neu berechnet). **Mehrere auf einmal** (0.117.0): Kästchen je Befund bzw. „alle auf der
+  neu berechnet; seit 0.133.0 auch einmal nach einem **Update** der Plattform, je Mandant kurz
+  nach dem Start im Hintergrund – Audit `reconcile.version` –, damit die Befunde gleich der neuen
+  Version entsprechen und nicht erst nach dem nächsten Lauf). **Mehrere auf einmal** (0.117.0): Kästchen je Befund bzw. „alle auf der
   Seite“, dann in der Leiste Status (Vorgabe „ignoriert“) und optional eine Notiz für alle →
   „Übernehmen“ – ganz oder gar nicht, je Befund ein Audit-Eintrag. Der Abgleich berücksichtigt, dass das IPAM den Server **ohne Präfix**
   führt: `H_web01` passt zu `web01` bzw. `web01.example.ch` (Kurzname nur, wenn eindeutig).

@@ -7,6 +7,28 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.133.0 – 2026-11-04
+
+Rückmeldung des Anwenders 2026-11-04: „Ich sehe nun bei den BGP Filter, das es viel besser ist,
+aber ich habe immer noch die gleiche Anzahl der Findings. Zudem sehe ich den BGP Neighbors nicht
+an, ob sie eine Filter Verletzung haben oder nicht, kann man dies mit Grünem oder Gelbem Zeichen,
+wie bei den Firewall Rules anzeigen?“ und „Im Netzwerkplan sehe ich zwischendurch noch, dass der
+eine Firewall Verbund zwei mal auf der Map auftaucht“. Abnahme bis 0.132.2 (ohne Einwand).
+
+- **Befunde nach einem Update neu:** die Ansichten rechnen sofort mit der neuen Version, die
+  Befunde entstanden aber nur nach Läufen und Änderungen – bis zum nächsten Lauf blieb ihre Zahl
+  die der alten Version. Kurz nach dem Start rechnet der Orchestrator je Mandant einmal den
+  Abgleich und die Befunde der Applikationen neu (mit dem Zeitplan; gesperrte Mandanten danach
+  erneut; Audit `reconcile.version`, zählt nicht für den Stand der Doku).
+- **BGP-Nachbarn: Spalte „Prüfung“:** je Nachbar mit gelesener Konfiguration grünes ✓ ohne
+  offene bzw. bestätigte Befunde der Routing-Filter, sonst gelb ⚠ mit der Zahl und den Arten im
+  Tooltip; Klick öffnet die Findings zu diesem Nachbarn. Ignorierte zählen nicht.
+- **Netzwerkplan: Verbund einmal:** der zusammengefasste Hop eines Verbunds trug den Schlüssel
+  der ersten Firewall darin – je nach Weg fw-a oder fw-b, also zwei Knoten „Verbund …“. Der
+  Knoten gehört jetzt dem Verbund (je Kontext).
+- Tests: `test_bgp_filters.py`, `test_app_plan.py`, `test_app_paths.py`,
+  `e2e/release_0133.spec.ts`.
+
 ## 0.132.2 – 2026-11-04
 
 Rückmeldung des Anwenders 2026-11-04 zu 0.132.1: „Er erkennt, dass es einen Pfad [gibt], aber er

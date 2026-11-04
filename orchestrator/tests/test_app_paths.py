@@ -253,6 +253,12 @@ def test_wege_uneinheitlich_als_befund(client):
     assert conn["paths"] == 1 and conn["inconsistent"] is True
     assert {v["via"] for v in conn["variants"]} == {"fw-r → fw-p1", "fw-r → fw-p2"}
     assert len(_mismatches(client, tid)) == 1
+    # 0.133.0: der Hop des Verbunds traegt den Verbund - ein Knoten im Netzwerkplan
+    (verbund,) = (h for h in conn["hops"] if h.get("group"))
+    assert verbund["group"] == "Nord" and len(verbund["checks"]) == 2
+    plan = client.get(f"/applications/{aid}/connections").json()["plan"]
+    assert [n["id"] for n in plan["nodes"] if n.get("label", "").startswith("Verbund")] == [
+        "hop:grp:Nord|root"]  # fmt: skip
 
     # fw-p2 angeglichen: einheitlich erlaubt, der Befund faellt weg
     same = tp._par("fw-p2", "10.66.0.3/29", allow=True)

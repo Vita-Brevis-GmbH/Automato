@@ -42,7 +42,7 @@ from app.config import Settings, check_security_config, get_settings
 from app.db import get_sessionmaker
 from app.i18n import middleware as i18n_middleware
 from app.secrets import resolve_settings
-from app.store import customer_alias
+from app.store import customer_alias, version_refresh
 
 log = logging.getLogger(__name__)
 
@@ -63,6 +63,8 @@ def _lifespan(settings: Settings):
                 settings.scheduler_timezone,
                 settings.scheduler_interval_seconds,
             )
+            # 0.133.0: nach einem Update die Befunde je Mandant einmal mit der neuen Version
+            version_refresh.start(get_sessionmaker(), stop)
         yield
         if stop is not None:
             stop.set()

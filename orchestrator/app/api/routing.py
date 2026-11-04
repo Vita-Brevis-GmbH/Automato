@@ -61,6 +61,9 @@ from app.db import get_session, get_session_factory
 from app.i18n import L
 from app.models import (
     CollectorRun,
+    Finding,
+    FindingStatus,
+    FindingType,
     SourceSystem,
     Tenant,
     TopoChange,
@@ -895,6 +898,7 @@ def peers(
     order = (TopoPeer.source_system_id, TopoPeer.node, TopoPeer.context, TopoPeer.peer_ip)
     names = _names(session, tid)
     graph = paths.Graph(session, tid)
+    found = _peer_findings(session, tid)
     return [
         row
         for p in _list(session, tid, TopoPeer, source_system_id, order)
@@ -906,10 +910,35 @@ def peers(
                 graph,
                 peer=graph.resolve(p.peer_ip),
                 peer_node=graph.owner_label(p.peer_ip),
+                findings=found.get((p.source_system_id, p.context, p.peer_ip), []),
             ),  # fmt: skip
             infra.context_mark(p.source_system_id, p.context) if infra else None,
         )
     ]
+
+
+# Befunde der Routing-Filter je BGP-Nachbar (0.133.0, Anwender: „sehe ich den BGP Neighbors
+# nicht an, ob sie eine Filter Verletzung haben oder nicht … mit Grünem oder Gelbem Zeichen“)
+PEER_FINDINGS = (FindingType.BGP_EXPECTED_MISSING, FindingType.BGP_OUTSIDE_FILTER,
+                 FindingType.BGP_NO_INBOUND_FILTER, FindingType.BGP_ZONE_MISMATCH,
+                 FindingType.BGP_ZONE_OUT_MISMATCH)  # fmt: skip
+
+
+def _peer_findings(session: Session, tid: int) -> dict[tuple, list[dict]]:
+    """Offene bzw. bestaetigte Befunde je (Quellsystem, Kontext, Nachbar) - wie die Findings."""
+    out: dict[tuple, list[dict]] = defaultdict(list)
+    rows = session.execute(
+        select(Finding.id, Finding.type, Finding.status, Finding.source_system_id, Finding.detail)
+        .where(Finding.tenant_id == tid, Finding.type.in_(PEER_FINDINGS),
+               Finding.status.in_((FindingStatus.OPEN, FindingStatus.ACKNOWLEDGED)))
+        .order_by(Finding.id)
+    )  # fmt: skip
+    for fid, ftype, status, sid, detail in rows:
+        d = detail if isinstance(detail, dict) else {}
+        if d.get("peer"):
+            out[(sid, d.get("context"), d["peer"])].append(
+                {"id": fid, "type": ftype.value, "status": status.value})  # fmt: skip
+    return out
 
 
 @router.get("/ha")

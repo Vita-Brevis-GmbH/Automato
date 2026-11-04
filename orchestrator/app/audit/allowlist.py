@@ -115,6 +115,7 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     ),
     "routing.l3out_firewall.removed": frozenset({"tenant_id", "source_system_id", "dn", "l3out"}),
     "reconcile.run": frozenset({"tenant_id", "findings"}),
+    "reconcile.version": frozenset({"version", "findings"}),  # 0.133.0: nach einem Update
     # NetBox-Sync (ADR 0010): nur Anzahlen und die gewaehlten Abschnitte (ADR 0031), keine Inhalte
     "netbox_sync.planned": frozenset(
         {

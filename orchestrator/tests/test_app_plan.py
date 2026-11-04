@@ -350,3 +350,27 @@ def test_verbindung_zwischen_epgs_der_applikation(client):
     left = min(x for x, _ in edge["points"])
     assert frame["x"] < left < web["x"] and frame["w"] > web["w"] + 16
     assert len(edge["via"]) == 2  # Stuetzpunkte fuer draw.io
+
+
+def test_verbund_nur_einmal_im_plan():
+    """0.133.0 (Anwender: „Im Netzwerkplan sehe ich zwischendurch noch, dass der eine Firewall
+    Verbund zwei mal auf der Map auftaucht“): der Hop eines Verbunds traegt den Schluessel der
+    ersten Firewall darin - je nach Weg fw-a oder fw-b; der Plan zeigt den Verbund einmal."""
+    app = _side("10.1.0.10", "vm-app", "system")
+    a, b = _side("10.9.0.5", "Admin"), _side("10.9.0.6", "Backup")
+
+    def verbund(first):
+        hop = _hop(first, "Verbund Nord", "outside", "inside")
+        return hop | {"group": "Nord"}
+
+    conns = [_conn("a", "in", a, app, [verbund("1|root")]),
+             _conn("b", "in", b, app, [verbund("2|root")], service="tcp/443")]  # fmt: skip
+    plan = app_plan.build(conns)
+    fws = [n for n in plan["nodes"] if n["role"] == "hop"]
+    assert [(n["id"], n["label"]) for n in fws] == [("hop:grp:Nord|root", "Verbund Nord")]
+    assert sorted(fws[0]["conns"]) == ["a", "b"]
+    # ohne Verbund bleibt es je Firewall ein Knoten
+    fw_a, fw_b = _hop("1|root", "fw-a", "o", "i"), _hop("2|root", "fw-b", "o", "i")
+    plain = app_plan.build([_conn("a", "in", a, app, [fw_a]), _conn("b", "in", b, app, [fw_b])])
+    assert sorted(n["id"] for n in plain["nodes"] if n["role"] == "hop") == [
+        "hop:1|root", "hop:2|root"]  # fmt: skip

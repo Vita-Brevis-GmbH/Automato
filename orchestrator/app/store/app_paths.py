@@ -1114,6 +1114,13 @@ def _hop(h: dict, l3: L3Outs | None = None) -> dict:
         "context": h["context"],
         "verdict": _hop_verdict(checks),
         "checks": checks,
+        # Verbund ueber mehrere Firewalls (0.133.0): der Knoten im Netzwerkplan gehoert dem
+        # Verbund, nicht der ersten Firewall darin (sonst je nach Weg zweimal „Verbund …“)
+        **(
+            {"group": h["group"]}
+            if h.get("group") and len({p["key"] for p in _parts(h)}) > 1
+            else {}
+        ),  # fmt: skip
         **({"zone": h["zone"]["name"]} if h.get("zone") else {}),
         # NSX ALB (0.77.0): an diesem Hop vom Load Balancer weiter zum Server; seit 0.85.0 mit
         # der EPG bzw. dem Interface, an dem seine VIP liegt (Netzwerkplan)

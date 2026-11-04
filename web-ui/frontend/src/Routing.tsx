@@ -61,6 +61,7 @@ import TopologyTab from "./Topology";
 import { FoldTitle, useFolds } from "./fold";
 import { Dash, Empty, ErrorBox, fmtTime, Icon, Loading, Note, PageHead, SharedChip } from "./ui";
 import { L } from "./i18n";
+import { findingLabel } from "./refs";
 
 const PAGE = 200;
 
@@ -760,6 +761,7 @@ function PeersTab({ tenantId, initial = {} }: { tenantId: number; initial?: Reco
             <th className="num">AS</th>
             <th>{L("Zustand", "State")}</th>
             {configured && <th>{L("Filter (ein / aus)", "Filters (in / out)")}</th>}
+            {configured && <th>{L("Prüfung", "Check")}</th>}
           </tr>
         </thead>
         <tbody>
@@ -792,12 +794,41 @@ function PeersTab({ tenantId, initial = {} }: { tenantId: number; initial?: Reco
                   )}
                 </td>
               )}
+              {configured && (
+                <td>
+                  <PeerCheck p={p} />
+                </td>
+              )}
             </tr>
           ))}
         </tbody>
       </List>
       {open != null && <BgpPeerDrawer tenantId={tenantId} peerId={open} onClose={() => setOpen(null)} />}
     </>
+  );
+}
+
+// Prüfung je Nachbar (0.133.0, Anwender: „sehe ich den BGP Neighbors nicht an, ob sie eine Filter Verletzung haben
+// oder nicht … mit Grünem oder Gelbem Zeichen, wie bei den Firewall Rules“): offene Befunde der Routing-Filter
+function PeerCheck({ p }: { p: TopoPeer }) {
+  if (!p.attrs?.config) return <Dash />;
+  const list = p.findings ?? [];
+  if (!list.length)
+    return (
+      <span className="chip ok bgp-check" data-check="ok" title={L("keine offenen Befunde der Routing-Filter", "no open findings of the routing filters")}>
+        ✓
+      </span>
+    );
+  const kinds = [...new Set(list.map((x) => findingLabel(x.type)))];
+  return (
+    <a
+      className="chip warn linkchip bgp-check"
+      data-check="findings"
+      href={`#findings?q=${encodeURIComponent(p.peer_ip)}`}
+      title={L(`Offene Befunde: ${kinds.join(", ")} – in den Findings öffnen`, `Open findings: ${kinds.join(", ")} – open in findings`)}
+    >
+      ⚠ {list.length}
+    </a>
   );
 }
 
