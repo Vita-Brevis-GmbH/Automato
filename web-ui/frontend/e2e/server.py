@@ -20,6 +20,9 @@ os.environ.setdefault("AUTOMATO_CREDENTIALS_KEY", "e2e")  # nur Testdaten
 # Stand der Doku (0.108.0): nach einer Aenderung neu rechnen, bevor die Doku kommt - die UI-Tests
 # pruefen den alten Stand mit „wird aktualisiert“ eigens (`page.route`, apps.spec.ts)
 os.environ.setdefault("AUTOMATO_DOC_STALE_SECONDS", "120")
+# 0.133.2: alle Applikationen vorrechnen nicht in den UI-Tests - nach jeder Aenderung rechnete der
+# Hintergrund sonst alle Beispiel-Applikationen (Uebersicht laufend neu); geprueft in Python-Tests
+os.environ.setdefault("AUTOMATO_DOC_WARM_ALL", "false")
 
 import uvicorn  # noqa: E402
 from app.api import jobs  # noqa: E402

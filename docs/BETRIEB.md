@@ -1325,7 +1325,18 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     Einstellungen: `AUTOMATO_DOC_SNAPSHOTS` (Vorgabe `true`; `false` = jedes Mal neu wie bis
     0.107.0), `AUTOMATO_DOC_STALE_SECONDS` (1,5 – kürzere Berechnungen wartet die Seite ab),
     `AUTOMATO_DOC_WARM_DAYS` (7 – so lange angesehene Stände werden vorgerechnet, `0` = nie),
-    `AUTOMATO_DOC_WARM_SECONDS` (600 – Zeitbudget je Durchgang, `0` = ohne Grenze).
+    `AUTOMATO_DOC_WARM_SECONDS` (seit 0.133.2 `0` = ohne Grenze; vorher 600 je Durchgang),
+    `AUTOMATO_DOC_WARM_ALL` (seit 0.133.2, Vorgabe `true`: Doku und Verbindungen **aller**
+    Applikationen im Standard vorrechnen, auch nie geöffnete und nach dem Start – weitere Stände
+    wie Sprache, Namen, Kunde nur die angesehenen; `false` = nur angesehene wie bis 0.133.1).
+    **Seit 0.133.2:** ein Anstoss während des Vorrechnens (z. B. ein Lauf) wartet nicht, das
+    Vorrechnen schaut danach erneut, bis nichts mehr aussteht. Schlägt eine Berechnung fehl, zeigt
+    die Übersicht beim Stand „Fehler“ (Text beim Darüberfahren) und rechnet ihn erst wieder, wenn
+    sich etwas ändert – Einzelheiten im Log (`docker compose logs orchestrator | grep -A30
+    fehlgeschlagen`). Ein Fehler bei einem einzelnen Weg bricht die Verbindungen nicht mehr ab: der
+    Weg fehlt mit dem Hinweis „n Wege nicht berechnet (Fehler im Programm …)“. Das Log des
+    Orchestrators zeigt jetzt auch die Meldungen zum Fortschritt mit Zeit (`… INFO app.store…`),
+    bis 0.133.1 nur Warnungen und Fehler ohne Zeit.
     **Dauer der Berechnung (0.132.1):** unter den Verbindungen „Berechnet in … s: n Wege in … s“ –
     aufgeklappt je Teil (Doku, Verbindungen bilden, Vorbereitung, Plan) und die langsamsten Wege;
     dieselben Zahlen schreibt der Orchestrator ins Log („Applikation 12: Verbindungen in …“).

@@ -405,3 +405,34 @@ def test_regel_zu_any_und_externe_epg_0_0_0_0(client, session_factory):
                for n in cut["notes"]), cut["notes"]  # fmt: skip
     assert "mehr Verbindungen als geprüft werden" in {
         r for x in cut["without"] for r in x["reasons"]}  # fmt: skip
+
+
+def test_hostroute_im_ziel_netz_und_fehler_je_weg(client, monkeypatch):
+    """0.133.2 (Anwender: „Er bricht bei 391 von 808 Wegen ab … Er bricht immer bei dieser
+    Anzahl ab“): eine Hostroute (/32) im Ziel-Netz einer Regel liess die ganze Berechnung mit
+    `AttributeError` abbrechen - sie ist kein eigener Teil; ein Fehler im Programm bei einem Weg
+    bricht nicht mehr alles ab, der Weg fehlt mit einem Hinweis."""
+    from types import SimpleNamespace
+
+    from app.store import app_paths
+
+    c = SimpleNamespace(dst=SimpleNamespace(kind="object", ip="10.70.0.0/16"))
+    first = {"hops": [{"route": {"inner": [{"prefix": "10.70.1.5/32"}, {"prefix": "10.70.2.0/24"},
+                                           {"prefix": "2001:db8::1/128"}]}}]}  # fmt: skip
+    assert app_paths._net_parts(c, first) == ["10.70.2.0/24"]
+
+    tid = _seed(client)
+    original = app_paths._connection
+
+    def broken(session, tid_, graph, checks, data, rules, x, *args, **kwargs):
+        if x.service and x.service[1] == 8080:
+            raise AttributeError("'IPv4Address' object has no attribute 'prefixlen'")
+        return original(session, tid_, graph, checks, data, rules, x, *args, **kwargs)
+
+    monkeypatch.setattr(app_paths, "_connection", broken)
+    out = _connections(client, tid)
+    services = {c["service"] for c in out["connections"]}
+    assert "tcp/443" in services and "tcp/8080" not in services, services
+    assert any(n.startswith("1 Wege nicht berechnet (Fehler im Programm") and "tcp/8080" in n
+               for n in out["notes"]), out["notes"]  # fmt: skip
+    assert out["timing"]["failed"] == 1

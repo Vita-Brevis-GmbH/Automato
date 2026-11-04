@@ -7,6 +7,37 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.133.2 – 2026-11-04
+
+Rückmeldung des Anwenders 2026-11-04 zu 0.133.1: „Er bricht bei 391 von 808 Wegen · seit 3 min ab,
+dann geht es eine Weile, dann kommt er wieder und startet bei 0 Ich habe noch immer 83 App, welche
+nie berechnet wurden“, „Er bricht immer bei dieser Anzahl ab“, „bei 14 steht veraltet und wird
+vorgerechnet, ist aber noch nicht ein anderer Stand, als heute morgen“ und „das log zeigt nichts“.
+
+- **Abbruch behoben:** liegt im Ziel-Netz einer Regel eine Hostroute (/32 bzw. /128) eines
+  Geräts, brach die Berechnung der Verbindungen mit `AttributeError: 'IPv4Address' object has no
+  attribute 'prefixlen'` ab - immer am selben Weg (seit 0.79.1 im Code; mit der alten Grenze von
+  120 Wegen kam dieser Weg nie dran). Dieselbe Stelle bei den Netzen hinter einer Regel zu any.
+- **Ein Weg bricht nicht mehr alles ab:** ein Fehler im Programm bei einem Weg lässt diesen Weg
+  weg, mit dem Hinweis „n Wege nicht berechnet (Fehler im Programm, Einzelheiten im Log des
+  Orchestrators)“; unter den Verbindungen „· n Wege mit Fehler“.
+- **Fehler sichtbar statt Neubeginn:** schlägt eine Berechnung fehl, steht in der Übersicht beim
+  Stand „Fehler“ (Text beim Darüberfahren); vorgerechnet wird er erst wieder mit neuen Eingaben -
+  bis 0.133.1 begann er bei jedem Anstoss bei 0 und brach wieder ab.
+- **Alle Applikationen vorrechnen:** Doku und Verbindungen jeder Applikation im Standard, auch
+  nie geöffnete, schnelle zuerst, bis nichts mehr aussteht (`AUTOMATO_DOC_WARM_ALL`, Vorgabe an;
+  kein Zeitbudget mehr) - auch nach dem Start des Orchestrators. Ein Anstoss während des
+  Vorrechnens wartet nicht mehr (blockierte je Lauf einen Thread), das Vorrechnen schaut danach
+  erneut. Vorgerechnet zählt nicht mehr als angesehen. Fehlen einer Applikation die Verbindungen,
+  steht sie auf „noch nie berechnet · wird vorgerechnet“.
+- **Log:** die Meldungen des Orchestrators (Fortschritt, Dauer, Abfragen) erscheinen jetzt mit
+  Zeit im Log des Containers; bis 0.133.1 kamen nur Warnungen und Fehler ohne Zeit an.
+- „Veraltet“ ohne geänderte Konfiguration: jeder Lauf eines Quellsystems liest die Regeln neu ein
+  (neue IDs, Links der Doku) und macht die Stände darum veraltet - das Vorrechnen holt sie jetzt
+  vollständig nach.
+- Tests: `test_app_paths.py`, `test_doc_snapshots.py`, `e2e/release_0133_2.spec.ts`; UI-Tests ohne
+  Vorrechnen aller Applikationen (`e2e/server.py`).
+
 ## 0.133.1 – 2026-11-04
 
 Rückmeldung des Anwenders 2026-11-04: „Das Berechnen hat immer noch über eine Stunde für eine

@@ -1285,9 +1285,11 @@ function Timing({ t }: { t: NonNullable<AppConnections["timing"]> }) {
       <summary>
         {L(
           `Berechnet in ${s(total)}: ${t.count} Wege in ${s(t.traces)} (Ø ${s(each)})` +
-            (t.queries != null ? ` · ${t.queries} Abfragen an die Datenbank` : ""),
+            (t.queries != null ? ` · ${t.queries} Abfragen an die Datenbank` : "") +
+            (t.failed ? ` · ${t.failed} Wege mit Fehler` : ""),
           `Computed in ${s(total)}: ${t.count} paths in ${s(t.traces)} (avg ${s(each)})` +
-            (t.queries != null ? ` · ${t.queries} database queries` : ""),
+            (t.queries != null ? ` · ${t.queries} database queries` : "") +
+            (t.failed ? ` · ${t.failed} paths with errors` : ""),
         )}
       </summary>
       <div>

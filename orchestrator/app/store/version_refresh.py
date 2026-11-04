@@ -9,6 +9,10 @@ Kurz nach dem Start (mit dem Zeitplan) rechnet der Orchestrator deshalb je Manda
 ganzen Abgleich und die Befunde der Applikationen neu, sobald die Version eine andere ist. Gemerkt
 wird das im Audit-Log (`reconcile.version`, Subjekt `tenant:<id>@<Version>`; die Aktion zählt
 nicht für den Stand der Doku). Gesperrte Mandanten (ein Lauf schreibt gerade) kommen danach dran.
+
+0.133.2: danach (einmal je Start) rechnet ein eigener Thread die Doku aller Mandanten vor
+(`doc_snapshots.warm_all`) - nach einem Neustart bzw. Update rechnete sonst bis zum nächsten Lauf
+nichts vor.
 """
 
 import logging
@@ -74,7 +78,9 @@ def start(factory: sessionmaker[Session], stop: threading.Event | None = None) -
     """Im Hintergrund kurz nach dem Start; gesperrte Mandanten alle `RETRY` Sekunden erneut."""
 
     def loop() -> None:
-        wait = DELAY
+        from app.store import doc_snapshots  # spaet: doc_snapshots -> app_paths -> ...
+
+        wait, warming = DELAY, False
         for _ in range(ROUNDS):
             if stop is not None and stop.wait(wait):
                 return
@@ -85,6 +91,10 @@ def start(factory: sessionmaker[Session], stop: threading.Event | None = None) -
             except Exception:  # z. B. Datenbank noch nicht migriert
                 log.exception("Befunde nach dem Update nicht neu gerechnet")
                 later = [0]
+            if not warming:  # Doku vorrechnen (0.133.2) - eigener Thread, kann lange dauern
+                warming = True
+                threading.Thread(target=doc_snapshots.warm_all, args=(factory,),
+                                 name="automato-doc-warm", daemon=True).start()  # fmt: skip
             if not later:
                 return
             wait = RETRY

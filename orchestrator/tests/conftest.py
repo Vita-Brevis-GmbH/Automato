@@ -65,17 +65,21 @@ def _checks_strict(monkeypatch):
 def _doc_snapshots_off():
     """Doku als Stand (0.108.0) in Tests aus: viele Tests aendern Daten direkt in der Datenbank
     (ohne Lauf bzw. Audit) - `tests/test_doc_snapshots.py` schaltet ihn ein;
-    `AUTOMATO_TEST_DOC_SNAPSHOTS=1` laesst alle Tests mit dem Stand laufen (Fingerabdruck)."""
+    `AUTOMATO_TEST_DOC_SNAPSHOTS=1` laesst alle Tests mit dem Stand laufen (Fingerabdruck).
+    Vorrechnen aller Applikationen (`doc_warm_all`, 0.133.2) nur, wo ein Test es einschaltet."""
     from app.config import get_settings
-    from app.store import bgp_cache
+    from app.store import bgp_cache, doc_snapshots
 
     settings = get_settings()
-    previous = settings.doc_snapshots
+    previous = settings.doc_snapshots, settings.doc_warm_all
     settings.doc_snapshots = os.environ.get("AUTOMATO_TEST_DOC_SNAPSHOTS") == "1"
+    settings.doc_warm_all = False
     bgp_cache.clear()  # 0.131.0: Stand der Routing-Filter je Test neu (gleiche Mandanten-IDs)
+    doc_snapshots._failed.clear()  # 0.133.2: Fehler je Stand (gleiche IDs je Test)
     yield
-    settings.doc_snapshots = previous
+    settings.doc_snapshots, settings.doc_warm_all = previous
     bgp_cache.clear()
+    doc_snapshots._failed.clear()
 
 
 def _worker_url(url: str):

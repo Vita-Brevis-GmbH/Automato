@@ -524,7 +524,10 @@ const DOC_STATE: Record<DocState, { label: string; chip: string; title: string }
   never: {
     label: L("noch nie berechnet", "never computed"),
     chip: "na",
-    title: L("Noch nie geöffnet – wird beim ersten Öffnen berechnet", "Never opened – computed on first opening"),
+    title: L(
+      "Doku bzw. Verbindungen noch nie berechnet – im Hintergrund vorgerechnet (wenn eingeschaltet), sonst beim ersten Öffnen",
+      "Documentation or connections never computed – pre-computed in the background (if enabled), otherwise on first opening",
+    ),
   },
   fresh: { label: L("aktuell", "current"), chip: "ok", title: L("Alle Stände passen", "All states are current") },
 };
@@ -538,6 +541,26 @@ function DocProgress({ p }: { p: { done: number; total: number; seconds: number 
   return (
     <span className="faint doc-progress" title={L("Verbindungen: Wege fertig von allen", "Connections: paths done of all")}>
       {L(` · ${p.done} von ${p.total} Wegen · seit ${since}`, ` · ${p.done} of ${p.total} paths · for ${since}`)}
+    </span>
+  );
+}
+
+// Berechnung fehlgeschlagen (0.133.2, Anwender: „Er bricht immer bei dieser Anzahl ab“): Fehler sichtbar statt still neu zu
+// beginnen – vorgerechnet wird erst wieder, wenn sich die Eingaben ändern; Einzelheiten im Log des Orchestrators
+function DocError({ a }: { a: DocStates["apps"][number] }) {
+  const kind = (["connections", "doc"] as const).find((k) => a.kinds[k].error);
+  const what = kind === "doc" ? L("Doku", "documentation") : L("Verbindungen", "connections");
+  const at = kind ? a.kinds[kind].error?.at : undefined;
+  return (
+    <span
+      className="chip crit doc-error"
+      style={{ marginLeft: 6 }}
+      title={L(
+        `${what}: ${a.error}${at ? ` (${fmtTime(at)})` : ""} – erneut, sobald sich etwas ändert; Einzelheiten im Log des Orchestrators`,
+        `${what}: ${a.error}${at ? ` (${fmtTime(at)})` : ""} – again once something changes; details in the orchestrator log`,
+      )}
+    >
+      {L("Fehler", "error")}
     </span>
   );
 }
@@ -597,10 +620,15 @@ export function DocsCard({ tenantId, onGo }: { tenantId: number; onGo: Go }) {
             ? L(`zuletzt berechnet ${fmtTime(data.last_built_at)}`, `last computed ${fmtTime(data.last_built_at)}`)
             : L("noch nichts berechnet", "nothing computed yet")}
           {data.warm_days > 0 &&
-            L(
-              ` · vorgerechnet werden die in den letzten ${data.warm_days} Tagen geöffneten`,
-              ` · pre-computed: those opened in the last ${data.warm_days} days`,
-            )}
+            (data.warm_all
+              ? L(
+                  ` · vorgerechnet werden Doku und Verbindungen aller Applikationen, weitere Stände (Sprache, Namen, Kunde) die in den letzten ${data.warm_days} Tagen geöffneten`,
+                  ` · pre-computed: documentation and connections of all applications, further states (language, names, customer) those opened in the last ${data.warm_days} days`,
+                )
+              : L(
+                  ` · vorgerechnet werden die in den letzten ${data.warm_days} Tagen geöffneten`,
+                  ` · pre-computed: those opened in the last ${data.warm_days} days`,
+                ))}
         </span>
       }
     >
@@ -658,6 +686,7 @@ export function DocsCard({ tenantId, onGo }: { tenantId: number; onGo: Go }) {
                     {DOC_STATE[a.state].label}
                   </span>
                   {a.kinds.connections.progress && <DocProgress p={a.kinds.connections.progress} />}
+                  {a.error && <DocError a={a} />}
                   {a.auto && (
                     <span className="faint" title={L("wird im Hintergrund vorgerechnet", "pre-computed in the background")}>
                       {" "}

@@ -239,3 +239,90 @@ def test_uebersicht_stand_der_doku(client, monkeypatch, snapshots):
     cust = {"X-Dev-Roles": "customer", "X-Dev-Customers": "1"}
     r = client.get("/applications/doc-states", params={"tenant_id": tid}, headers=cust)
     assert r.status_code == 403
+
+
+def test_alle_vorrechnen_fehler_und_ohne_warten(client, session_factory, monkeypatch, snapshots):
+    """0.133.2 (Anwender: „Ich habe noch immer 83 App, welche nie berechnet wurden … bei 14 steht
+    veraltet und wird vorgerechnet“): `doc_warm_all` rechnet Doku und Verbindungen jeder
+    Applikation im Standard vor - auch nie geoeffnete; ein Anstoss waehrend des Vorrechnens
+    wartet nicht; ein Fehler bleibt bis zu neuen Eingaben stehen und zeigt sich in der
+    Uebersicht; vorgerechnet ist nicht angesehen."""
+    from datetime import UTC, datetime, timedelta
+
+    monkeypatch.setattr(get_settings(), "doc_warm_all", True)
+    tid, aid = _app(client)  # Anlegen: die neue Applikation wird vorgerechnet, ohne Oeffnen
+    assert _rows(session_factory) == [("connections", "de|-|all|connections"),
+                                      ("doc", "de|-|all")]  # fmt: skip
+
+    def states() -> dict:
+        r = client.get("/applications/doc-states", params={"tenant_id": tid})
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    out = states()
+    assert out["warm_all"] and {a["name"]: a["state"] for a in out["apps"]} == {"Web": "fresh"}
+    # nur die Doku gerechnet (z. B. geoeffnet): die Verbindungen fehlen - „noch nie berechnet“,
+    # werden vorgerechnet
+    s = session_factory()
+    s.query(DocSnapshot).filter_by(kind="connections").delete()
+    s.commit()
+    s.close()
+    web = states()["apps"][0]
+    assert (web["state"], web["auto"]) == ("never", True)
+    snapshots.clear()
+    assert doc_snapshots.warm(session_factory, tid) == 1 and snapshots == ["connections"]
+
+    # waehrend des Vorrechnens: ein Anstoss wartet nicht, das Vorrechnen schaut danach erneut
+    assert doc_snapshots._start_warm(tid)
+    assert doc_snapshots.warm(session_factory, tid) == 0
+    assert states()["warming"]
+    assert doc_snapshots._end_warm(tid) is False  # Anstoss waehrenddessen: weiter
+    assert doc_snapshots._end_warm(tid) is True and not states()["warming"]
+
+    # Fehler beim Rechnen: gemerkt, in der Uebersicht, nicht erneut mit denselben Eingaben
+    compute = doc_snapshots.compute
+
+    def broken(session, app, kind, params):
+        if kind == doc_snapshots.CONNECTIONS:
+            raise AttributeError("'IPv4Address' object has no attribute 'prefixlen'")
+        return compute(session, app, kind, params)
+
+    monkeypatch.setattr(doc_snapshots, "compute", broken)
+    client.patch(f"/applications/{aid}", json={"description": "neu"}, headers=OP)
+    web = states()["apps"][0]
+    assert web["state"] == "stale" and web["auto"] is False
+    assert "AttributeError" in web["error"]
+    assert "prefixlen" in web["kinds"]["connections"]["error"]["text"]
+    assert "error" not in web["kinds"]["doc"]
+    assert doc_snapshots.warm(session_factory, tid) == 0  # dieselben Eingaben: nicht erneut
+    monkeypatch.setattr(doc_snapshots, "compute", compute)
+    client.patch(f"/applications/{aid}", json={"description": "neu 2"}, headers=OP)
+    web = states()["apps"][0]  # neue Eingaben: erneut gerechnet, der Fehler ist weg
+    assert web["state"] == "fresh" and web["error"] is None
+
+    # vorgerechnet ist nicht angesehen: ein Kunden-Ausschnitt, vor 8 Tagen angesehen, bleibt
+    # veraltet; der Standard wird immer vorgerechnet
+    old = datetime.now(UTC) - timedelta(days=8)
+    s = session_factory()
+    s.add(
+        DocSnapshot(
+            application_id=aid,
+            kind="doc",
+            variant="de|-|cabc",
+            fingerprint="x",
+            data=doc_snapshots._pack({"params": {}, "result": {}}),
+            viewed_at=old,
+        )
+    )
+    s.query(DocSnapshot).update({"fingerprint": "alt", "viewed_at": old})
+    s.commit()
+    s.close()
+    snapshots.clear()
+    doc_snapshots.warm_all(session_factory)  # wie nach dem Start: alle Mandanten
+    assert sorted(snapshots) == ["connections", "doc"]
+    s = session_factory()
+    rows = {r.variant: r for r in s.query(DocSnapshot)}
+    assert rows["de|-|cabc"].fingerprint == "alt"
+    assert all(doc_snapshots._aware(r.viewed_at) < datetime.now(UTC) - timedelta(days=7)
+               for r in rows.values())  # fmt: skip
+    s.close()

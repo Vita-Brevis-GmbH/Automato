@@ -48,6 +48,18 @@ Verbindungen zum Wegsucher) und 0.74.1 (Befunde nach dem Speichern im Hintergrun
    Zonen, Netzwerkdesign, Grundschema und Verbund rechnet der Hintergrund die in den letzten
    `AUTOMATO_DOC_WARM_DAYS` (7) Tagen angesehenen Stände neu, höchstens
    `AUTOMATO_DOC_WARM_SECONDS` (600) je Durchgang; nicht bei ausgeschaltetem Modul Doku.
+   **Nachtrag 0.133.2** (Anwender 2026-11-04: „Ich habe noch immer 83 App, welche nie berechnet
+   wurden“): mit `AUTOMATO_DOC_WARM_ALL` (Vorgabe `true`) Doku und Verbindungen **jeder**
+   Applikation im Standard (ohne Namen, alle Regeln, Sprache der Plattform) – auch nie geöffnete,
+   auch nach dem Start des Orchestrators; weitere Stände (Sprache, Namen, Kunde) wie bisher nur,
+   wenn in den letzten Tagen angesehen. Je Durchgang der schnellste Stand (geschätzt nach der
+   letzten Dauer bzw. der Doku), danach neu schauen, bis nichts mehr aussteht – Zeitbudget
+   `AUTOMATO_DOC_WARM_SECONDS` neu `0` (ohne Grenze). Ein Anstoss während des Vorrechnens wartet
+   nicht (sonst je Lauf ein blockierter Thread), das Vorrechnen schaut danach erneut. Vorgerechnet
+   zählt nicht als angesehen. Ein Stand, dessen Berechnung fehlschlägt, bleibt mit dem Fehler stehen
+   (Übersicht „Fehler“) und wird erst mit neuen Eingaben erneut gerechnet – bis 0.133.1 begann er
+   bei jedem Anstoss von vorn und brach wieder an derselben Stelle ab. Ein Fehler im Programm bei
+   einem einzelnen Weg bricht die Verbindungen nicht mehr ab (der Weg fehlt mit Hinweis).
 6. **Speichern ohne Warten:** die Befunde der Zonen (Zone anlegen/ändern/löschen, Absichten,
    Vorschläge, Zonenplan-Import, Netzwerkdesign, Grundschema) und die Befunde nach einem geänderten
    Verbund paralleler Firewalls laufen wie die der Applikationen (0.74.1) hinter der Antwort

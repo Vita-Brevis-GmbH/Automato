@@ -7,6 +7,7 @@ HTTPS mit dem Zertifikat aus der internen CA, sonst wie bisher per HTTP.
 
 import argparse
 import json
+import logging
 import sys
 import urllib.request
 
@@ -35,6 +36,18 @@ def check(settings, url: str | None = None, timeout: float = 5.0) -> bool:
         return False
 
 
+def logs() -> None:
+    """Meldungen des Orchestrators mit Zeit ins Log des Containers (0.133.2, Anwender: „das log
+    zeigt nichts“): bis 0.133.1 kamen nur Warnungen und Fehler ohne Zeit an, die Meldungen
+    zum Fortschritt (`app.*`, Stufe INFO) nie. Andere Bibliotheken bleiben bei Warnungen."""
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    root = logging.getLogger()
+    root.addHandler(handler)
+    root.setLevel(logging.WARNING)
+    logging.getLogger("app").setLevel(logging.INFO)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m app.serve")
     parser.add_argument("--check", action="store_true", help="Healthcheck statt Start")
@@ -44,6 +57,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if check(settings) else 1
     import uvicorn
 
+    logs()
     uvicorn.run("app.main:app", host="0.0.0.0", port=PORT, **options(settings))  # noqa: S104
     return 0
 

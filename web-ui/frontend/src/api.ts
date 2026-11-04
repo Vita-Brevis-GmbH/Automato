@@ -1831,16 +1831,26 @@ export interface DocKindState {
   built_at: string | null;
   seconds: number; // längste Berechnung
   progress?: { done: number; total: number; seconds: number }; // 0.133.1: Wege fertig von allen, seit (s)
+  error?: { text: string; at: string }; // 0.133.2: letzter Fehler mit denselben Eingaben
 }
 export interface DocStates {
   enabled: boolean;
   warming: boolean; // Vorrechnen läuft
   warm_days: number;
+  warm_all?: boolean; // 0.133.2: alle Applikationen im Standard vorrechnen
   refreshing?: number; // Befunde nachziehen (ausstehend)
   total: number;
   counts: Record<DocState, number>;
   last_built_at: string | null;
-  apps: { id: number; name: string; state: DocState; stale: number; auto: boolean; kinds: Record<"doc" | "connections", DocKindState> }[];
+  apps: {
+    id: number;
+    name: string;
+    state: DocState;
+    stale: number;
+    auto: boolean;
+    error?: string | null; // 0.133.2: Berechnung fehlgeschlagen (bis sich die Eingaben ändern)
+    kinds: Record<"doc" | "connections", DocKindState>;
+  }[];
 }
 export const fetchDocStates = (tenantId: number) =>
   getJSON<DocStates>(`/api/applications/doc-states${cq({ tenant_id: tenantId })}`);
@@ -2107,6 +2117,7 @@ export interface AppConnections {
     count: number;
     total: number;
     queries?: number; // 0.133.1: Abfragen an die Datenbank
+    failed?: number; // 0.133.2: Wege mit Fehler im Programm (fehlen, Hinweis in den notes)
     slowest: { key: string; seconds: number }[];
   };
 }

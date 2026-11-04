@@ -46,6 +46,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, selectinload
 
 from app.i18n import L
@@ -182,10 +183,31 @@ def _build(session: Session, app: Application, doc: dict | None, graph: paths.Gr
     traced = 0
     todo = list(conns.values())[: limit or None]
     logged = t_setup
+    failed: list[str] = []  # Wege mit Fehler im Programm (0.133.2)
+
+    def one(x: _Conn, with_assign: bool) -> dict | None:
+        """Weg einer Verbindung; ein Fehler im Programm bricht nicht mehr die ganze Berechnung
+        ab (0.133.2, Anwender: „Er bricht immer bei dieser Anzahl ab“), sondern fehlt mit einem
+        Hinweis - die Datenbank (Transaktion unbrauchbar) bricht weiterhin ab."""
+        try:
+            return _connection(session, tid, graph, checks, data, rules, x, l3, zctx,
+                               assigner if with_assign else None)  # fmt: skip
+        except SQLAlchemyError:
+            raise
+        except Exception:
+            log.exception("Applikation %s: Weg %s > %s (%s) fehlgeschlagen", app.id, x.src.ip,
+                          x.dst.ip, _service_text(x.service) or "alle")  # fmt: skip
+            failed.append(f"{x.src.label} → {x.dst.label} ({_service_text(x.service) or 'alle'})")
+            return None
+
     for c in todo:
         t_one = time.monotonic()
-        conn = _connection(session, tid, graph, checks, data, rules, c, l3, zctx, assigner)
+        conn = one(c, True)
         traced += 1
+        if conn is None:
+            if progress is not None:
+                progress(traced, len(todo))
+            continue
         slow.append((time.monotonic() - t_one, conn["key"]))
         if progress is not None:
             progress(traced, len(todo))
@@ -209,7 +231,9 @@ def _build(session: Session, app: Application, doc: dict | None, graph: paths.Gr
             part = _Conn(_copy(c.src), _copy(c.dst), c.service, c.direction, dict(c.rules),
                          list(c.starts), c.reverse)  # fmt: skip
             part.dst.ip, part.dst.label = prefix, f"{c.dst.label} › {prefix}"
-            child = _connection(session, tid, graph, checks, data, rules, part, l3, zctx)
+            child = one(part, False)
+            if child is None:
+                continue
             if shown:
                 child["part_of"] = conn["key"]
             if keep(child):
@@ -221,6 +245,17 @@ def _build(session: Session, app: Application, doc: dict | None, graph: paths.Gr
                 "any zuletzt; Grenze AUTOMATO_APP_TRACES_MAX in der .env, 0 = ohne Grenze)",
                 f"{len(conns)} connections – only the first {limit} checked (connections to any "
                 "last; limit AUTOMATO_APP_TRACES_MAX in the .env, 0 = no limit)",
+            )
+        )
+    if failed:
+        more = L(f" und {len(failed) - 3} weitere", f" and {len(failed) - 3} more") \
+            if len(failed) > 3 else ""  # fmt: skip
+        notes.append(
+            L(
+                f"{len(failed)} Wege nicht berechnet (Fehler im Programm, Einzelheiten im Log "
+                f"des Orchestrators): {', '.join(failed[:3])}{more}",
+                f"{len(failed)} paths not computed (program error, details in the orchestrator "
+                f"log): {', '.join(failed[:3])}{more}",
             )
         )
     if unused:
@@ -272,6 +307,7 @@ def _build(session: Session, app: Application, doc: dict | None, graph: paths.Gr
             "setup": round(t_setup - t_cand, 2),
             "traces": round(t_traces - t_setup, 2),
             "count": traced,
+            "failed": len(failed),  # 0.133.2
             "total": round(time.monotonic() - started, 2),
             "slowest": [
                 {"key": k, "seconds": round(d, 2)} for d, k in sorted(slow, reverse=True)[:5]
@@ -672,7 +708,8 @@ def _fw_any(data: appdoc.TenantData, rule: Rule, side: str, families: set[int]) 
         if net.version in families and net.prefixlen and str(net) not in nets:
             nets.append(str(net))
     # Transfernetze (/29 und kleiner) nur, wenn sonst nichts dahinter liegt
-    wide = [n for n in nets if endpoint(n).prefixlen < (29 if ":" not in n else 125)]
+    # 0.133.2: als Netz lesen - `endpoint` gaebe bei /32 bzw. /128 die Adresse ohne Praefixlaenge
+    wide = [n for n in nets if ipaddress.ip_network(n).prefixlen < (29 if ":" not in n else 125)]
     nets = wide or nets
     if nets:
         return [_Side(n, f"any → {n}", "any") for n in nets[:MAX_COUNTER]]
@@ -977,8 +1014,9 @@ def _net_parts(c: _Conn, first: dict | None) -> list[str]:
     out: list[str] = []
     for h in first["hops"]:
         for r in (h.get("route") or {}).get("inner") or []:
-            net = endpoint(r["prefix"])
-            host = net.prefixlen == (32 if net.version == 4 else 128)
+            # Hostroute (/32 bzw. /128): `endpoint` gibt die Adresse - kein eigener Teil (0.133.2,
+            # Anwender: „Er bricht bei 391 von 808 Wegen ab“ - die Adresse hat keine Praefixlaenge)
+            host = not is_net(endpoint(r["prefix"]))
             if not host and r["prefix"] not in out and r["prefix"] != c.dst.ip:
                 out.append(r["prefix"])
     return out

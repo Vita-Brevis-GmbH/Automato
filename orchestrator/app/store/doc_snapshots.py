@@ -16,7 +16,12 @@ grossen Umgebungen je Aufruf Sekunden bis Minuten, nach jedem Speichern erneut.
   letzte Berechnung schnell war (`doc_stale_seconds`), wartet die Anfrage darauf. Ohne Stand
   wird einmal gewartet. Befunde zeigt die Doku immer aktuell (`applications.doc_findings`).
 - **Vorrechnen** (`warm`): nach Laeufen und Aenderungen die zuletzt angesehenen Staende
-  (`doc_warm_days`) neu, in einem Zeitbudget (`doc_warm_seconds`).
+  (`doc_warm_days`) neu, in einem Zeitbudget (`doc_warm_seconds`). Seit 0.133.2 (Anwender:
+  „Ich habe noch immer 83 App, welche nie berechnet wurden“) mit `doc_warm_all` Doku und
+  Verbindungen jeder Applikation im Standard (ohne Namen, alle Regeln) - auch nie geoeffnete,
+  schnelle zuerst, bis nichts mehr aussteht; ein weiterer Anstoss waehrend des Vorrechnens wartet
+  nicht, sondern laesst es danach erneut schauen. Was mit einem Fehler abbricht, bleibt bis zu
+  neuen Eingaben stehen und zeigt den Fehler in der Uebersicht.
 
 - **Uebersicht** (`overview`, 0.129.0): je Applikation des Mandanten, ob ihre Staende passen,
   veraltet sind, gerade rechnen bzw. noch nie gerechnet wurden, dazu ob das Vorrechnen laeuft.
@@ -43,7 +48,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app import __version__
 from app.config import get_settings
-from app.i18n import lang, use
+from app.i18n import DEFAULT, lang, use
 from app.models import Application, AuditLog, CollectorRun, DocSnapshot, SourceSystem
 
 log = logging.getLogger(__name__)
@@ -65,6 +70,11 @@ _building: set[tuple[int, str, str]] = set()  # (Applikation, Art, Variante)
 # Verbindungen am Messen ist“): je Applikation seit wann und wie weit (Wege fertig von allen)
 _progress: dict[int, dict] = {}
 _warm_locks: dict[int, threading.Lock] = defaultdict(threading.Lock)
+# 0.133.2: Anstoss waehrend des Vorrechnens (Mandant) - danach erneut schauen, statt zu warten
+_warm_again: set[int] = set()
+# 0.133.2 (Anwender: „Er bricht immer bei dieser Anzahl ab“): letzter Fehler je Stand mit dem
+# Abdruck der Eingaben - bis sich diese aendern, rechnet das Vorrechnen ihn nicht erneut
+_failed: dict[tuple[int, str, str], dict] = {}
 
 
 def enabled() -> bool:
@@ -78,6 +88,12 @@ def variant(names: bool = False, rule_ids: set[int] | None = None) -> str:
         text = ",".join(str(i) for i in sorted(rule_ids))
         scope = "c" + hashlib.sha256(text.encode()).hexdigest()[:20]
     return f"{lang()}|{'n' if names else '-'}|{scope}"
+
+
+def _standard(var: str) -> bool:
+    """Stand im Standard (ohne Namen der Gegenstellen, alle Regeln) - in jeder Sprache."""
+    parts = var.split("|")
+    return len(parts) >= 3 and parts[1] == "-" and parts[2] == "all"
 
 
 def _tenant_parts(session: Session, tid: int) -> tuple:
@@ -186,21 +202,26 @@ def _row(session: Session, app_id: int, kind: str, var: str) -> DocSnapshot | No
 
 
 def _save(session: Session, app_id: int, kind: str, var: str, fp: str, result: dict,
-          seconds: float, params: Params) -> datetime:  # fmt: skip
+          seconds: float, params: Params, viewed: bool = True) -> datetime:  # fmt: skip
     """Stand speichern bzw. ersetzen (gleichzeitig gerechnet: der letzte gilt). Klappt es nicht
-    (gleichzeitig angelegt, SQLite gesperrt), bleibt der alte - beim naechsten Mal neu."""
+    (gleichzeitig angelegt, SQLite gesperrt), bleibt der alte - beim naechsten Mal neu.
+    `viewed=False` (Vorrechnen, 0.133.2): zuletzt angesehen bleibt - vorgerechnet ist nicht
+    angesehen, sonst rechnete das Vorrechnen einen Stand fuer immer neu."""
     now = datetime.now(UTC)
     data = _pack({"params": params.out(), "result": result})
     try:
         with session.begin_nested():
             row = _row(session, app_id, kind, var)
             if row is None:
-                row = DocSnapshot(application_id=app_id, kind=kind, variant=var)
+                row = DocSnapshot(application_id=app_id, kind=kind, variant=var, viewed_at=now)
                 session.add(row)
             row.fingerprint, row.built_at, row.seconds, row.data = fp, now, seconds, data
-            row.viewed_at = now
+            if viewed:
+                row.viewed_at = now
     except (IntegrityError, OperationalError):
         log.info("Stand %s/%s/%s nicht gespeichert (gleichzeitig geschrieben)", app_id, kind, var)
+    with _lock:
+        _failed.pop((app_id, kind, var), None)
     return now
 
 
@@ -249,29 +270,43 @@ def progress_of(app_id: int) -> dict | None:
 
 
 def rebuild(factory: sessionmaker[Session], app_id: int, kind: str, var: str, params: Params,
-            code: str, claimed: bool = False) -> bool:  # fmt: skip
-    """Stand mit eigener Session neu rechnen (im Hintergrund); False, wenn schon einer rechnet
-    bzw. die Applikation weg ist."""
+            code: str, claimed: bool = False, viewed: bool = True) -> bool:  # fmt: skip
+    """Stand mit eigener Session neu rechnen (im Hintergrund); False, wenn schon einer rechnet,
+    die Applikation weg ist bzw. die Berechnung fehlschlaegt (Fehler gemerkt, `failure`)."""
     key = (app_id, kind, var)
     if not claimed and not _claim(key):
         return False
     session = factory()
+    fp = None
     try:
         app = session.get(Application, app_id)
         if app is None:
             return False
         with use(code):
-            result, seconds, fp = _build(session, app, kind, var, params)
-        _save(session, app_id, kind, var, fp, result, seconds, params)
+            fp = fingerprint(session, app, var)  # vor dem Rechnen (wie `_build`)
+            started = time.perf_counter()
+            result = compute(session, app, kind, params)
+            seconds = time.perf_counter() - started
+        _save(session, app_id, kind, var, fp, result, seconds, params, viewed)
         session.commit()
         return True
-    except Exception:
+    except Exception as exc:
         session.rollback()
         log.exception("Stand %s der Applikation %s fehlgeschlagen", kind, app_id)
+        with _lock:
+            _failed[key] = {"fp": fp, "error": f"{type(exc).__name__}: {exc}"[:300],
+                            "at": datetime.now(UTC).isoformat()}  # fmt: skip
         return False
     finally:
         session.close()
         _release(key)
+
+
+def failure(app_id: int, kind: str, var: str) -> dict | None:
+    """Letzter Fehler des Stands (0.133.2) - mit dem Abdruck, bei dem er auftrat."""
+    with _lock:
+        f = _failed.get((app_id, kind, var))
+        return dict(f) if f else None
 
 
 def schedule(background: BackgroundTasks, factory: sessionmaker[Session], app_id: int,
@@ -349,14 +384,19 @@ def overview(session: Session, tenant_id: int) -> dict:
     Art (Doku, Verbindungen) die Staende (Varianten) mit passend/veraltet, ob gerade einer rechnet,
     letzte Berechnung und Dauer; Zustand der Applikation `building` (rechnet), `stale` (veraltet -
     `auto`: wird vorgerechnet, sonst beim naechsten Oeffnen), `never` (noch nie gerechnet), sonst
-    `fresh`. Dazu, ob das Vorrechnen fuer den Mandanten laeuft. Nur lesend."""
+    `fresh`. Dazu, ob das Vorrechnen fuer den Mandanten laeuft. Nur lesend.
+
+    0.133.2: mit `doc_warm_all` ist `never` auch, wem die Verbindungen fehlen (`auto`: werden
+    vorgerechnet); `error` = letzter Fehler einer Berechnung mit denselben Eingaben (je Art
+    `kinds[..].error`) - dann nicht vorgerechnet, bis sich etwas aendert."""
     settings = get_settings()
     lock = _warm_locks.get(tenant_id)
     apps = list(session.scalars(
         select(Application).where(Application.tenant_id == tenant_id).order_by(Application.name)
     ))  # fmt: skip
     head = {"enabled": enabled(), "warming": bool(lock and lock.locked()),
-            "warm_days": settings.doc_warm_days}  # fmt: skip
+            "warm_days": settings.doc_warm_days,
+            "warm_all": settings.doc_warm_days > 0 and bool(settings.doc_warm_all)}  # fmt: skip
     counts = dict.fromkeys(("fresh", "stale", "building", "never"), 0)
     if not enabled() or not apps:
         return {**head, "counts": counts, "total": len(apps), "last_built_at": None,
@@ -378,18 +418,31 @@ def overview(session: Session, tenant_id: int) -> dict:
     for r in rows:
         by_app[r.application_id].append(r)
     with _lock:
-        busy = set(_building)
+        busy, failed = set(_building), dict(_failed)
     since = datetime.now(UTC) - timedelta(days=settings.doc_warm_days)
+    warming = settings.doc_warm_days > 0
+    every = warming and bool(settings.doc_warm_all)  # 0.133.2: alle im Standard
     out, last = [], None
     for a in apps:
-        kinds, stale, auto = {}, 0, False
+        kinds, stale, auto, error = {}, 0, False, None
         for kind in KINDS:
             snaps = [r for r in by_app.get(a.id, []) if r.kind == kind]
             fresh = [r for r in snaps if r.fingerprint == _fp(a, r.variant, tenant,
                                                                own.get(str(a.id)))]  # fmt: skip
             old = [r for r in snaps if r not in fresh]
             stale += len(old)
-            auto = auto or any(_aware(r.viewed_at) >= since for r in old)
+            auto = auto or any((every and _standard(r.variant)) or _aware(r.viewed_at) >= since
+                               for r in old)  # fmt: skip
+            # 0.133.2: mit denselben Eingaben fehlgeschlagen - nicht vorgerechnet, Fehler zeigen
+            err = None
+            for (aid, k, var), f in failed.items():
+                if (
+                    aid == a.id
+                    and k == kind
+                    and f.get("fp") == _fp(a, var, tenant, own.get(str(a.id)))
+                ):
+                    err = f
+                    break
             built = max((_aware(r.built_at) for r in snaps), default=None)
             if built and (last is None or built > last):
                 last = built
@@ -399,6 +452,9 @@ def overview(session: Session, tenant_id: int) -> dict:
                 "built_at": built.isoformat() if built else None,
                 "seconds": round(max((r.seconds for r in snaps), default=0.0), 1),
             }  # fmt: skip
+            if err is not None:
+                kinds[kind]["error"] = {"text": err["error"], "at": err["at"]}
+                error = error or err["error"]
         if any(k["building"] for k in kinds.values()):
             state = "building"
             if (p := progress_of(a.id)) and p.get("total"):  # 0.133.1: wie weit
@@ -406,71 +462,175 @@ def overview(session: Session, tenant_id: int) -> dict:
                     "done": p["done"], "total": p["total"],
                     "seconds": round(time.time() - p["since"]),
                 }  # fmt: skip
-        elif not by_app.get(a.id):
-            state = "never"
+        elif not by_app.get(a.id) or (every and not kinds[CONNECTIONS]["variants"]):
+            state = "never"  # 0.133.2: mit `doc_warm_all` auch, wenn Verbindungen fehlen
         elif stale:
             state = "stale"
         else:
             state = "fresh"
         counts[state] += 1
+        auto = warming and ((state == "stale" and auto) or (state == "never" and every))
         out.append({"id": a.id, "name": a.name, "state": state, "stale": stale,
-                    "auto": state == "stale" and auto and settings.doc_warm_days > 0,
-                    "kinds": kinds})  # fmt: skip
+                    "auto": auto and error is None, "error": error, "kinds": kinds})  # fmt: skip
     return {**head, "counts": counts, "total": len(apps),
             "last_built_at": last.isoformat() if last else None, "apps": out}  # fmt: skip
 
 
+@dataclass
+class _Todo:
+    """Ein Stand zum Vorrechnen (0.133.2): geschaetzte Dauer, Schluessel, Abdruck jetzt, Zeile."""
+
+    estimate: float
+    key: tuple[int, str, str]
+    fp: str
+    sid: int | None  # None: noch nie gerechnet
+
+
+def _todo(session: Session, tenant_id: int, application_id: int | None) -> list[_Todo]:
+    """Was das Vorrechnen jetzt rechnen soll, schnelle zuerst: Staende, die nicht mehr passen -
+    im Standard immer (`doc_warm_all`), sonst zuletzt angesehen (`doc_warm_days`) - und mit
+    `doc_warm_all` Doku bzw. Verbindungen im Standard, die noch nie gerechnet wurden (Dauer
+    geschaetzt nach der Doku der Applikation). Ohne die, die mit denselben Eingaben fehlschlugen
+    bzw. gerade rechnen. Eingaben des Mandanten einmal je Aufruf (wie `overview`)."""
+    settings = get_settings()
+    stmt = select(Application).where(Application.tenant_id == tenant_id)
+    if application_id is not None:
+        stmt = stmt.where(Application.id == application_id)
+    apps = {a.id: a for a in session.scalars(stmt)}
+    if not apps:
+        return []
+    tenant = _tenant_parts(session, tenant_id)
+    own = dict(session.execute(
+        select(AuditLog.subject, func.max(AuditLog.id))
+        .where(AuditLog.action.like(f"{_OWN}%"), AuditLog.subject.in_([str(i) for i in apps]))
+        .group_by(AuditLog.subject)
+    ).all())  # fmt: skip
+    rows = session.execute(
+        select(DocSnapshot.id, DocSnapshot.application_id, DocSnapshot.kind,
+               DocSnapshot.variant, DocSnapshot.fingerprint, DocSnapshot.seconds,
+               DocSnapshot.viewed_at)
+        .where(DocSnapshot.application_id.in_(list(apps)))
+    ).all()  # fmt: skip
+    since = datetime.now(UTC) - timedelta(days=settings.doc_warm_days)
+    every = bool(settings.doc_warm_all)
+    with _lock:
+        busy, failed = set(_building), dict(_failed)
+    out: list[_Todo] = []
+
+    def add(estimate: float, app: Application, kind: str, var: str, sid: int | None) -> None:
+        key = (app.id, kind, var)
+        fp = _fp(app, var, tenant, own.get(str(app.id)))
+        if key in busy or (failed.get(key) or {}).get("fp") == fp:
+            return
+        out.append(_Todo(estimate, key, fp, sid))
+
+    have: dict[tuple[int, str], float] = {}  # Standard je Applikation und Art: Dauer
+    for r in rows:
+        app = apps[r.application_id]
+        if _standard(r.variant):
+            have[(app.id, r.kind)] = max(have.get((app.id, r.kind), 0.0), r.seconds)
+        if not (every and _standard(r.variant)) and _aware(r.viewed_at) < since:
+            continue
+        if r.fingerprint != _fp(app, r.variant, tenant, own.get(str(app.id))):
+            add(r.seconds, app, r.kind, r.variant, r.id)
+    if every:
+        with use(DEFAULT):  # Sprache der Plattform (nicht die der ausloesenden Anfrage)
+            base = variant()  # ohne Namen, alle Regeln
+        for app in apps.values():
+            if (app.id, DOC) not in have:
+                add(0.0, app, DOC, base, None)
+            if (app.id, CONNECTIONS) not in have:  # Verbindungen dauern laenger als die Doku
+                add(have.get((app.id, DOC), 1.0) * 2, app, CONNECTIONS, f"{base}|{CONNECTIONS}",
+                    None)  # fmt: skip
+    out.sort(key=lambda t: (t.estimate, t.key))
+    return out
+
+
+def _start_warm(tenant_id: int) -> bool:
+    """Vorrechnen fuer den Mandanten beginnen; laeuft es schon, schaut es danach erneut (kein
+    Warten - ein Anstoss je Lauf blockierte sonst je einen Thread, 0.133.2)."""
+    with _lock:
+        if _warm_locks[tenant_id].acquire(blocking=False):
+            _warm_again.discard(tenant_id)
+            return True
+        _warm_again.add(tenant_id)
+        return False
+
+
+def _end_warm(tenant_id: int) -> bool:
+    """Vorrechnen beenden - ausser es kam waehrenddessen ein Anstoss (dann False: weiter)."""
+    with _lock:
+        if tenant_id in _warm_again:
+            _warm_again.discard(tenant_id)
+            return False
+        _warm_locks[tenant_id].release()
+        return True
+
+
 def warm(factory: sessionmaker[Session], tenant_id: int, application_id: int | None = None
          ) -> int:  # fmt: skip
-    """Zuletzt angesehene Staende des Mandanten (bzw. der Applikation) neu rechnen, die nicht
-    mehr passen - nach Laeufen und Aenderungen, im Zeitbudget. -> Anzahl neu gerechnet."""
+    """Staende des Mandanten (bzw. der Applikation) vorrechnen, die nicht mehr passen bzw. noch
+    nie gerechnet wurden (`_todo`) - nach Laeufen, Aenderungen und dem Start; je Durchgang
+    der schnellste, danach neu schauen, bis nichts mehr aussteht (bzw. `doc_warm_seconds`).
+    -> Anzahl neu gerechnet."""
     settings = get_settings()
     if not enabled() or settings.doc_warm_days <= 0:
         return 0
     from app import modules  # spaet: Module kennen die Store-Dateien
 
-    with _warm_locks[tenant_id]:
-        session = factory()
-        try:
-            if not modules.enabled(session, tenant_id, "doku"):  # Modul aus (ADR 0036)
-                return 0
-            since = datetime.now(UTC) - timedelta(days=settings.doc_warm_days)
-            # 0.133.1 (Anwender: „ich habe 83 wartende“): schnelle Staende zuerst - eine
-            # riesige Applikation haelt die uebrigen nicht mehr bis zum naechsten Durchgang auf
-            stmt = (
-                select(DocSnapshot.id, DocSnapshot.application_id, DocSnapshot.kind,
-                       DocSnapshot.variant, DocSnapshot.fingerprint)
-                .join(Application, Application.id == DocSnapshot.application_id)
-                .where(Application.tenant_id == tenant_id, DocSnapshot.viewed_at >= since)
-                .order_by(DocSnapshot.seconds, DocSnapshot.viewed_at.desc())
-            )  # fmt: skip
-            if application_id is not None:
-                stmt = stmt.where(DocSnapshot.application_id == application_id)
-            rows = session.execute(stmt).all()
-            todo = []
-            for sid, app_id, kind, var, fp in rows:
-                app = session.get(Application, app_id)
-                if app is not None and fingerprint(session, app, var) != fp:
-                    todo.append((sid, app_id, kind, var))
-            params = {
-                sid: _unpack(data)["params"]
-                for sid, data in session.execute(
-                    select(DocSnapshot.id, DocSnapshot.data).where(
-                        DocSnapshot.id.in_([t[0] for t in todo]))
-                )
-            } if todo else {}  # fmt: skip
-        finally:
-            session.close()
-        done, started = 0, time.monotonic()
-        budget = settings.doc_warm_seconds
-        for sid, app_id, kind, var in todo:
-            if budget and time.monotonic() - started > budget:
-                log.info("Mandant %s: %d Staende nicht vorgerechnet (Zeitbudget)", tenant_id,
-                         len(todo) - done)  # fmt: skip
-                break
-            p = params.get(sid) or {}
-            code = var.split("|", 1)[0]
+    if not _start_warm(tenant_id):
+        return 0
+    done, started, tried = 0, time.monotonic(), set()
+    budget = settings.doc_warm_seconds
+    held = True
+    try:
+        while True:
+            session = factory()
+            try:
+                if not modules.enabled(session, tenant_id, "doku"):  # Modul aus (ADR 0036)
+                    item = None
+                else:
+                    item = next((t for t in _todo(session, tenant_id, application_id)
+                                 if (t.key, t.fp) not in tried), None)  # fmt: skip
+                params = {}
+                if item is not None and item.sid is not None:
+                    data = session.scalar(select(DocSnapshot.data)
+                                          .where(DocSnapshot.id == item.sid))  # fmt: skip
+                    params = _unpack(data)["params"] if data else {}
+            finally:
+                session.close()
+            if item is not None and budget and time.monotonic() - started > budget:
+                log.info("Mandant %s: Vorrechnen nach %d Staenden beendet (Zeitbudget)",
+                         tenant_id, done)  # fmt: skip
+                item = None
+            if item is None:
+                if _end_warm(tenant_id):
+                    held = False
+                    return done
+                application_id = None  # Anstoss waehrenddessen: den ganzen Mandanten
+                continue
+            tried.add((item.key, item.fp))  # je Durchgang einmal (auch wenn es fehlschlaegt)
+            app_id, kind, var = item.key
             if rebuild(factory, app_id, kind, var,
-                       Params(p.get("rule_ids"), bool(p.get("names"))), code):  # fmt: skip
+                       Params(params.get("rule_ids"), bool(params.get("names"))),
+                       var.split("|", 1)[0], viewed=False):  # fmt: skip
                 done += 1
-        return done
+    finally:
+        if held:  # Fehler im Vorrechnen selbst: freigeben
+            with _lock:
+                _warm_again.discard(tenant_id)
+                _warm_locks[tenant_id].release()
+
+
+def warm_all(factory: sessionmaker[Session]) -> None:
+    """Alle Mandanten vorrechnen - nach dem Start (0.133.2: nach einem Neustart bzw. Update
+    rechnete bis zum naechsten Lauf nichts vor)."""
+    from app.models import Tenant
+
+    with factory() as session:
+        tenants = list(session.scalars(select(Tenant.id).order_by(Tenant.id)))
+    for tid in tenants:
+        try:
+            warm(factory, tid)
+        except Exception:  # z. B. Datenbank noch nicht migriert
+            log.exception("Mandant %s: Vorrechnen nach dem Start fehlgeschlagen", tid)

@@ -119,10 +119,14 @@ class Settings(BaseSettings):
     # und rechnet im Hintergrund neu; nach Laeufen und Aenderungen werden die Staende der letzten
     # `doc_warm_days` Tage vorgerechnet (hoechstens `doc_warm_seconds` je Durchgang, 0 = ohne
     # Grenze). `doc_snapshots=false`: jedes Mal neu rechnen wie bis 0.107.0
+    # 0.133.2 (Anwender: „Ich habe noch immer 83 App, welche nie berechnet wurden“):
+    # `doc_warm_all` rechnet Doku und Verbindungen jeder Applikation im Standard vor (auch nie
+    # geoeffnete, auch nach dem Start), bis nichts mehr aussteht - darum ohne Zeitbudget
     doc_snapshots: bool = True
     doc_stale_seconds: float = 1.5
     doc_warm_days: int = 7
-    doc_warm_seconds: int = 600
+    doc_warm_seconds: int = 0
+    doc_warm_all: bool = True
 
     # Datenqualitaet (ADR 0029): Stand eines Quellsystems gilt nach so vielen Tagen ohne
     # erfolgreichen Lauf als veraltet (Befund `source_stale`, Betriebszustand); mit Zeitplan
