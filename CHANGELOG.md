@@ -7,6 +7,31 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.132.0 – 2026-11-04
+
+Antwort des Anwenders 2026-11-04: „Generell Filtere ich lediglich die Ausgänge bei Geräten, welche
+ich selber kontrolliere. Eingangsfilter gibt es nur bei Verbindungen nach nicht durch mich
+verwaltete Geräte. Also WAN, MPLS und Fremde Anbindungen … Eventuell kann man bei dem Netzwerk
+Design angeben, welche Zonen / Geräte extern Managed sind“, „Bei Default-originate braucht es
+auch keinen weiteren Filter, dieser Filtert bereits alles weg und sendet dem nächsten Gerät nur
+noch die Default Route“ und zur Vorgabe „Nein Standard immer intern Verwaltet nehmen“. Abnahme bis
+0.131.0 (ohne Einwand).
+
+- **Zone „fremd verwaltet“** (Netzwerkdesign → Kategorien bzw. Zone bearbeiten, Migration
+  `0072`): Häkchen je Zone, Vorgabe selbst verwaltet – auch für Zonen der Art „extern“.
+- **Eingangsfilter nur zu fremd verwalteten Zonen:** Ein BGP-Nachbar ohne Eingangsfilter ist nur
+  in einer fremd verwalteten Zone eine Abweichung (Soll aus den Zonen, Befund „fremd verwalteter
+  Nachbar ohne Eingangsfilter“, jetzt im Teil-Durchgang Zonen – neu gleich nach dem Speichern).
+  Selbst verwaltet: „kein Eingangsfilter nötig“, der Vorschlag nur auf Wunsch aufklappbar; ein
+  vorhandener Eingangsfilter wird weiter mit den Zonen verglichen. Ebenso beim ACI: Import nicht
+  erzwungen ist nur zu einer fremd verwalteten Zone am Peer eine Abweichung.
+- **default-originate:** an den Nachbarn nur die Default-Route – im Soll aus den Zonen kein
+  Ausgangsfilter, kein Vorschlag, keine Abweichung („default-originate (IPv4): nur die
+  Default-Route“), unter „angekündigt“ nur 0.0.0.0/0 mit der Zahl der übrigen, nicht gezeigten
+  Routen.
+- ADR 0041 Ergänzung (Nr. 24–25). Tests: `test_bgp_zones.py`, `test_bgp_filters.py`,
+  `test_checks.py`, `e2e/release_0132.spec.ts`.
+
 ## 0.131.0 – 2026-11-04
 
 Rückmeldung des Anwenders 2026-11-04: „Das Laden der Routingfilter dauert lange, kann man dies

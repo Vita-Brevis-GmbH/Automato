@@ -677,15 +677,19 @@ def _bgp_outside(subject: str, d: dict) -> tuple[str, str]:
 
 
 def _bgp_open(subject: str, d: dict) -> tuple[str, str]:
-    """eBGP-Nachbar ohne Eingangsfilter (0.113.0)."""
+    """BGP-Nachbar ohne Eingangsfilter (0.113.0), seit 0.132.0 nur in einer fremd verwalteten
+    Zone (`neighbor_zone`)."""
     where, n = _bgp_where(d), d.get("received") or 0
     de_n, en_n = f"Netz{'e' if n != 1 else ''}", f"network{'s' if n != 1 else ''}"
+    zone = d.get("neighbor_zone")
+    de_z = f" in der fremd verwalteten Zone {zone}" if zone else ""
+    en_z = f" in the externally managed zone {zone}" if zone else ""
     return (
         L(
-            f"{where}: eBGP ohne Eingangsfilter – die Firewall übernimmt alles, was der Nachbar "
-            f"ankündigt ({n} {de_n}).",
-            f"{where}: eBGP without inbound filter – the firewall accepts everything the neighbor "
-            f"announces ({n} {en_n}).",
+            f"{where}: Nachbar{de_z} ohne Eingangsfilter – die Firewall übernimmt alles, was der "
+            f"Nachbar ankündigt ({n} {de_n}).",
+            f"{where}: neighbor{en_z} without inbound filter – the firewall accepts everything "
+            f"the neighbor announces ({n} {en_n}).",
         ),
         L(
             "Prefix-Liste bzw. Route-Map für die erwarteten Netze setzen; ohne Filter entstehen "

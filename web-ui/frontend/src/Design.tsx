@@ -227,7 +227,7 @@ export default function Design({
 // Grundschemas, erkannt bzw. von Hand) und die Geräte (Firewall/VDOM, ACI-Tenant/-VRF, Anbindungen aus dem Routing):
 // daraus und aus dem Routing ergibt sich, welche Zone hinter einem Interface bzw. L3Out liegt. Die Kategorie folgt
 // der Richtung Zonentyp → Zonentyp im Namenskonzept; die übrigen Selektoren pflegt der Reiter Zonen.
-type AppdocDraft = { type: string | null; nets: string; excluded: string; devices: ZoneDevice[] };
+type AppdocDraft = { type: string | null; nets: string; excluded: string; devices: ZoneDevice[]; external: boolean };
 const DEVICE_KINDS: ZoneDevice["kind"][] = ["fw_vdom", "aci_tenant", "aci_vrf", "exit"];
 const DEVICE_LABEL: Record<ZoneDevice["kind"], string> = {
   fw_vdom: L("Firewall/VDOM", "Firewall/VDOM"),
@@ -284,6 +284,7 @@ function AppdocTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean }
     nets: zonePrefixes(z, false).join("\n"),
     excluded: zonePrefixes(z, true).join("\n"),
     devices: zoneDevices(z),
+    external: !!z.external_managed,
   });
   const value = (z: LogicalZone) => draft[z.id] ?? initial(z);
   const set = (z: LogicalZone, patch: Partial<AppdocDraft>) => {
@@ -296,7 +297,10 @@ function AppdocTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean }
     return !sameNets(v.nets, i.nets) || !sameNets(v.excluded, i.excluded);
   };
   const devicesChanged = (z: LogicalZone) => !sameDevices(value(z).devices, initial(z).devices);
-  const changed = (rows ?? []).filter((z) => draft[z.id] && (value(z).type !== initial(z).type || netsChanged(z) || devicesChanged(z)));
+  const externalChanged = (z: LogicalZone) => value(z).external !== initial(z).external;
+  const changed = (rows ?? []).filter(
+    (z) => draft[z.id] && (value(z).type !== initial(z).type || netsChanged(z) || devicesChanged(z) || externalChanged(z)),
+  );
   const devices = catalog?.devices ?? [];
   const deviceLabel = (d: ZoneDevice) => {
     const known = devices.find((x) => deviceKey(x) === deviceKey(d));
@@ -317,6 +321,7 @@ function AppdocTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean }
             zone_type: v.type,
             ...(netsChanged(z) ? { nets: splitNets(v.nets), excluded: splitNets(v.excluded) } : {}),
             ...(devicesChanged(z) ? { devices: v.devices.map(({ kind, value: val, source_system_id }) => ({ kind, value: val, source_system_id })) } : {}),
+            ...(externalChanged(z) ? { external_managed: v.external } : {}),
           };
         }),
       );
@@ -411,6 +416,24 @@ function AppdocTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean }
                           {L(`${z.nets} Netze`, `${z.nets} networks`)}
                           {z.epgs ? L(` · ${z.epgs} EPGs`, ` · ${z.epgs} EPGs`) : ""}
                         </div>
+                        {/* 0.132.0: fremd verwaltet – nur zu solchen Zonen gehört ein BGP-Eingangsfilter */}
+                        <label
+                          className="faint appdoc-external"
+                          style={{ fontSize: 11, display: "flex", gap: 4, alignItems: "center", marginTop: 2 }}
+                          title={L(
+                            "Geräte dieser Zone verwaltest nicht du (WAN, MPLS, fremde Anbindungen) – nur zu solchen Nachbarn gehört ein Eingangsfilter",
+                            "You do not manage the devices of this zone (WAN, MPLS, third-party links) – only such neighbors need an inbound filter",
+                          )}
+                        >
+                          <input
+                            type="checkbox"
+                            aria-label={L(`Zone ${z.name} fremd verwaltet`, `Zone ${z.name} managed externally`)}
+                            checked={v.external}
+                            disabled={!canEdit}
+                            onChange={(e) => set(z, { external: e.target.checked })}
+                          />
+                          {L("fremd verwaltet", "managed externally")}
+                        </label>
                       </td>
                       <td>
                         <select
@@ -1488,6 +1511,8 @@ function ZoneEditor({
   const [description, setDescription] = useState(base?.description ?? "");
   // Zonentyp von Hand (0.105.0): Zone des Grundschemas; leer = automatisch
   const [zoneType, setZoneType] = useState<string | null>(base?.zone_type ?? null);
+  // fremd verwaltet (0.132.0): nur zu solchen Zonen gehört ein BGP-Eingangsfilter; Vorgabe nein
+  const [external, setExternal] = useState<boolean>(!!base?.external_managed);
   const [catalog, setCatalog] = useState<AppdocCatalog | null>(null);
   useEffect(() => {
     let live = true;
@@ -1553,6 +1578,7 @@ function ZoneEditor({
       description: description.trim() || null,
       selectors: valid.map((s) => ({ ...s, value: s.value.trim(), source_system_id: FW_KINDS.includes(s.kind) ? s.source_system_id : null })),
       zone_type: zoneType,
+      external_managed: external,
     };
     try {
       if (initial) await updateZone(initial.id, body);
@@ -1677,6 +1703,18 @@ function ZoneEditor({
           {L(
             "Mit der Richtung der Kategorien im Namenskonzept (z. B. „Edge Internet → DC“) bestimmt der Zonentyp die Kategorie in der Applikations-Doku",
             "With the direction of the categories in the naming concept (e.g. “Edge Internet → DC”) the zone type determines the category in the application documentation",
+          )}
+        </div>
+      </div>
+      <div className="field">
+        <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <input id="zo-external" type="checkbox" checked={external} onChange={(e) => setExternal(e.target.checked)} />
+          {L("Fremd verwaltet", "Managed externally")}
+        </label>
+        <div className="hint">
+          {L(
+            "Die Geräte dieser Zone verwaltest nicht du (WAN, MPLS, fremde Anbindungen) – nur zu BGP-Nachbarn in solchen Zonen gehört ein Eingangsfilter; sonst ist ein fehlender Eingangsfilter keine Abweichung",
+            "You do not manage the devices of this zone (WAN, MPLS, third-party links) – only BGP neighbors in such zones need an inbound filter; otherwise a missing inbound filter is no deviation",
           )}
         </div>
       </div>

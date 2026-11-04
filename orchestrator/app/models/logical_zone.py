@@ -73,6 +73,9 @@ class LogicalZone(Base):
     # Zonentyp von Hand (0.105.0, ADR 0035): Zone des Grundschemas; leer = automatisch nach
     # Name, Kurzname bzw. Vorlage je Kunde (`store/zone_types.py`)
     zone_type: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # Fremd verwaltet (0.132.0, ADR 0041 Nr. 24): Geraete der Zone verwaltet nicht der Betreiber
+    # (WAN, MPLS, fremde Anbindungen) - nur zu ihnen gehoert ein Eingangsfilter; Vorgabe nein
+    external_managed: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )

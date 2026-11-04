@@ -188,7 +188,7 @@ def test_soll_ist_je_nachbar_befunde_und_vorschlag(client):
     assert sorted((t, sorted(x["subject_id"] for x in v)) for t, v in found.items()) == [
         ("aci_import_not_enforced", ["L3O_vpn · TE:VRF1"]),
         ("bgp_expected_missing", ["L3O_inet · TE:VRF1", f"fw-01 → {SITE}"]),
-        ("bgp_no_inbound_filter", [f"fw-01 → {PARTNER}"]),
+        # 0.132.0: „ohne Eingangsfilter“ nur zu fremd verwalteten Zonen (hier ohne Zonen)
         ("bgp_outside_filter", [f"fw-01 → {ISP}"]),
     ]  # fmt: skip
     missing = next(f for f in found["bgp_expected_missing"] if SITE in f["subject_id"])
@@ -285,6 +285,18 @@ def test_default_originate_und_keine_routen_zurueck_ins_selbe_as(client, session
     assert r["default_originate"] is True
     out = {a["prefix"]: a for a in r["out"]["announced"]}
     assert out["0.0.0.0/0"]["origin"] == "default-originate"
+    assert "10.50.0.0/16" not in out
+    # 0.132.0: mit default-originate nur die Default-Route; ohne zaehlt der Schleifenschutz
+    assert list(out) == ["0.0.0.0/0"] and r["out"]["counts"]["originate_only"] >= 1
+    s = session_factory()
+    p = s.get(TopoPeer, pid)
+    conf = dict(p.attrs["config"])
+    conf.pop("capability-default-originate")
+    p.attrs = {**p.attrs, "config": conf}
+    s.commit()
+    s.close()
+    r = client.get(f"/routing/bgp/peers/{pid}", params={"tenant_id": tid}).json()
+    out = {a["prefix"]: a for a in r["out"]["announced"]}
     assert "10.50.0.0/16" not in out  # AS 65010 im AS-Pfad
     assert r["out"]["counts"]["loop"] == 1
 

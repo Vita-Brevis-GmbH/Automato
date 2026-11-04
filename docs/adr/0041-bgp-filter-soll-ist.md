@@ -202,5 +202,26 @@ Anwender 2026-10-30 („go 116“, Roadmap Version 1 Nr. 3 Rest):
     die Doku; Vorrechnen nach Läufen und nach Änderungen an Zonen, Verbund und L3Outs, Anfragen
     ohne passenden Stand einzeln wie bisher.
 
+## Ergänzung 0.132.0 (2026-11-04)
+
+24. **Eingangsfilter nur zu fremd verwalteten Zonen:** Anwender: „Generell Filtere ich lediglich
+    die Ausgänge bei Geräten, welche ich selber kontrolliere. Eingangsfilter gibt es nur bei
+    Verbindungen nach nicht durch mich verwaltete Geräte. Also WAN, MPLS und Fremde Anbindungen“;
+    Vorgabe „Standard immer intern Verwaltet“. Je Zone das Merkmal `external_managed` (Migration
+    `0072`, Netzwerkdesign, Vorgabe nein – auch für Zonen der Art `external`). Ohne Eingangsfilter
+    ist nur ein Nachbar in einer fremd verwalteten Zone eine Abweichung (`open_ok` sonst); der
+    Befund `bgp_no_inbound_filter` gehört deshalb zur Prüfung `bgp_zonen` (Teil-Durchgang Zonen)
+    statt `bgp_filter` und braucht keine eBGP-Sitzung mehr. Ein vorhandener Eingangsfilter wird
+    wie bisher mit den Zonen verglichen. ACI: Import nicht erzwungen nur zu einer fremd
+    verwalteten Zone am Peer eine Abweichung. Ohne Zone am Nachbarn: selbst verwaltet.
+25. **default-originate = nur die Default-Route:** Entscheid des Anwenders („dieser Filtert
+    bereits alles weg und sendet dem nächsten Gerät nur noch die Default Route“): mit
+    `capability-default-originate(6)` kündigt die Firewall in dieser Familie nur die Default-Route
+    an (`report`: übrige gezählt `originate_only`, nicht gezeigt), das Soll aus den Zonen im
+    Ausgang entfällt (kein Vorschlag, keine Abweichung, `originate`). Hinweis an den Anwender: nach
+    FortiOS-Dokumentation sendet default-originate die Default-Route zusätzlich, weitere Routen
+    unterdrückt der Ausgangsfilter bzw. fehlende network/redistribute – Automato folgt hier dem
+    Betriebsstandard des Anwenders.
+
 Offen: Vergleich im Verlauf des Routings (Änderungen der Filter über die Zeit), Export-Route-Control
 gegen die Zonen diesseits (heute nur gelesen und gezeigt).

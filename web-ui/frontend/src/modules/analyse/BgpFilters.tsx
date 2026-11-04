@@ -232,8 +232,8 @@ export function BgpPeerDrawer({ tenantId, peerId, onClose }: { tenantId: number;
               {r.out.counts.originate_only ? (
                 <span id="bgp-out-originate-only">
                   {L(
-                    ` ${r.out.counts.originate_only} Routen mit nicht auswertbarem Ausgangsfilter ausgeblendet – mit default-originate wird nur die Default-Route erwartet.`,
-                    ` ${r.out.counts.originate_only} routes with an outbound filter that cannot be evaluated hidden – with default-originate only the default route is expected.`,
+                    ` ${r.out.counts.originate_only} weitere Routen nicht angezeigt – mit default-originate geht an den Nachbarn nur die Default-Route.`,
+                    ` ${r.out.counts.originate_only} further routes not shown – with default-originate only the default route goes to the neighbor.`,
                   )}
                 </span>
               ) : (
@@ -348,6 +348,19 @@ function ZoneSoll({ tenantId, peerId }: { tenantId: number; peerId: number }) {
               {L("Adressfamilien der Sitzung", "Address families of the session")}: {z.families.map((f) => `IPv${f}`).join(", ") || "–"}
             </span>
           )}
+          {z.neighbor_external && (
+            <span className="chip warn" id="bgp-zones-external" style={{ marginLeft: 4 }}>
+              {L("Nachbar fremd verwaltet", "neighbor managed externally")}
+            </span>
+          )}
+          {(z.originate ?? []).length > 0 && (
+            <span className="chip info" id="bgp-zones-originate" style={{ marginLeft: 4 }}>
+              {L(
+                `default-originate (${(z.originate ?? []).map((f) => `IPv${f}`).join(", ")}): nur die Default-Route`,
+                `default-originate (${(z.originate ?? []).map((f) => `IPv${f}`).join(", ")}): only the default route`,
+              )}
+            </span>
+          )}
           <Frames frames={z.frames} />
           {(z.lists ?? []).map((x) => (
             <div key={x.family} className="bgp-zone-list" data-family={x.family}>
@@ -355,10 +368,15 @@ function ZoneSoll({ tenantId, peerId }: { tenantId: number; peerId: number }) {
                 {x.open
                   ? out
                     ? L("Heute ohne Ausgangsfilter – kündigt alles an.", "No outbound filter today – announces everything.")
-                    : L(
-                        "Heute ohne Eingangsfilter – die Firewall übernimmt alles, was der Nachbar ankündigt.",
-                        "No inbound filter today – the firewall accepts everything the neighbor announces.",
-                      )
+                    : x.open_ok
+                      ? L(
+                          "Heute ohne Eingangsfilter – der Nachbar ist selbst verwaltet, kein Eingangsfilter nötig.",
+                          "No inbound filter today – the neighbor is managed by you, no inbound filter needed.",
+                        )
+                      : L(
+                          "Heute ohne Eingangsfilter – die Firewall übernimmt alles, was der Nachbar ankündigt.",
+                          "No inbound filter today – the firewall accepts everything the neighbor announces.",
+                        )
                   : `${L("Heute", "Today")}: ${Object.entries(x.filters).map(([k, v]) => `${kindOf(k)} ${v}`).join(" · ")}`}
                 {!out && x.received_total != null && (
                   <span className="bgp-zone-received" data-default-only={x.received_default_only ? "1" : "0"}>
@@ -423,14 +441,24 @@ function ZoneSoll({ tenantId, peerId }: { tenantId: number; peerId: number }) {
                   )}
                 </div>
               )}
-              <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "8px 0 4px" }}>
-                <b>{L(`Vorschlag ${x.name} (FortiOS-CLI)`, `Proposal ${x.name} (FortiOS CLI)`)}</b>
-                <button className="btn btn-sm" onClick={() => copy(x.family, x.cli)}>
-                  {copied === x.family ? L("kopiert", "copied") : L("Kopieren", "Copy")}
-                </button>
-                <span className="faint">{L("nur Text – Automato schreibt nichts auf die Firewall", "text only – Automato writes nothing to the firewall")}</span>
-              </div>
-              <pre className="block bgp-cli">{x.cli}</pre>
+              {x.open_ok ? (
+                // 0.132.0: selbst verwalteter Nachbar ohne Eingangsfilter – Vorschlag nur auf Wunsch
+                <details className="bgp-cli-optional" style={{ margin: "8px 0 4px" }}>
+                  <summary className="faint">{L(`Vorschlag ${x.name} trotzdem zeigen`, `Show proposal ${x.name} anyway`)}</summary>
+                  <pre className="block bgp-cli">{x.cli}</pre>
+                </details>
+              ) : (
+                <>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "8px 0 4px" }}>
+                    <b>{L(`Vorschlag ${x.name} (FortiOS-CLI)`, `Proposal ${x.name} (FortiOS CLI)`)}</b>
+                    <button className="btn btn-sm" onClick={() => copy(x.family, x.cli)}>
+                      {copied === x.family ? L("kopiert", "copied") : L("Kopieren", "Copy")}
+                    </button>
+                    <span className="faint">{L("nur Text – Automato schreibt nichts auf die Firewall", "text only – Automato writes nothing to the firewall")}</span>
+                  </div>
+                  <pre className="block bgp-cli">{x.cli}</pre>
+                </>
+              )}
             </div>
           ))}
         </>
@@ -671,11 +699,16 @@ function L3OutZones({ tenantId, l3outId }: { tenantId: number; l3outId: number }
           )}
           <Frames frames={z.frames} />
           {z.import_enforced === false && (
-            <div className="note warn">
-              {L(
-                "Import ist am L3Out nicht erzwungen – er übernimmt alle Routen, nicht nur die der Zonen.",
-                "Import is not enforced on the L3Out – it accepts all routes, not only those of the zones.",
-              )}
+            <div className={`note ${z.neighbor_external ? "warn" : ""}`} id="l3out-zones-import">
+              {z.neighbor_external
+                ? L(
+                    "Import ist am L3Out nicht erzwungen – er übernimmt alle Routen, nicht nur die der Zonen (Peer fremd verwaltet).",
+                    "Import is not enforced on the L3Out – it accepts all routes, not only those of the zones (peer managed externally).",
+                  )
+                : L(
+                    "Import ist am L3Out nicht erzwungen – der Peer ist selbst verwaltet, kein Import-Filter nötig.",
+                    "Import is not enforced on the L3Out – the peer is managed by you, no import filter needed.",
+                  )}
             </div>
           )}
           {(z.entries ?? []).length > 0 && (

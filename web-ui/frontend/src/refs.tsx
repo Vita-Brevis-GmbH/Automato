@@ -65,7 +65,7 @@ export const FINDING_LABEL: Record<string, string> = {
   net_wider_than_routes: L("Netz der Regel grösser als die Routen", "Network of the rule wider than the routes"),
   bgp_expected_missing: L("BGP: erwartetes Netz kommt nicht an", "BGP: expected network does not arrive"),
   bgp_outside_filter: L("BGP: erhalten, obwohl der Filter sperrt", "BGP: received although the filter denies"),
-  bgp_no_inbound_filter: L("BGP: eBGP ohne Eingangsfilter", "BGP: eBGP without inbound filter"),
+  bgp_no_inbound_filter: L("BGP: fremd verwalteter Nachbar ohne Eingangsfilter", "BGP: externally managed neighbor without inbound filter"),
   aci_import_not_enforced: L("ACI: Import Route Control nicht erzwungen", "ACI: import route control not enforced"),
   bgp_zone_mismatch: L("BGP: Eingangsfilter passt nicht zu den Zonen", "BGP: inbound filter does not match the zones"),
   bgp_zone_out_mismatch: L("BGP: Ausgangsfilter passt nicht zu den Zonen", "BGP: outbound filter does not match the zones"),
@@ -205,8 +205,8 @@ export const FINDING_HINT: Record<string, string> = {
     "The routing table holds networks from the neighbor its inbound filter denies according to the configuration read",
   ),
   bgp_no_inbound_filter: L(
-    "eBGP-Nachbar ohne Prefix-Liste bzw. Route-Map im Eingang – die Firewall übernimmt alles",
-    "eBGP neighbor without prefix list or route map inbound – the firewall accepts everything",
+    "BGP-Nachbar in einer fremd verwalteten Zone (Netzwerkdesign → Zonen) ohne Prefix-Liste bzw. Route-Map im Eingang – die Firewall übernimmt alles",
+    "BGP neighbor in an externally managed zone (network design → zones) without prefix list or route map inbound – the firewall accepts everything",
   ),
   aci_import_not_enforced: L(
     "Subnetze mit import-rtctrl an einem L3Out, der Import nicht erzwingt – sie wirken nicht",

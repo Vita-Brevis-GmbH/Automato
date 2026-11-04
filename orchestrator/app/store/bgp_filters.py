@@ -459,8 +459,13 @@ class Filters:
                 net = _net(prefix)
                 if net is None or net.version != family or frm == p.peer_ip:
                     continue
-                if originate == "enable" and net.prefixlen == 0:
-                    continue  # schon als default-originate
+                if originate == "enable":
+                    # 0.132.0 (Anwender: „Bei Default-originate braucht es auch keinen weiteren
+                    # Filter … noch muss ich die Netzwerke anzeigen, welche gar nie geroutet
+                    # werden“): an den Nachbarn nur die Default-Route, die uebrigen gezaehlt
+                    if net.prefixlen:
+                        outbound["counts"]["originate_only"] += 1
+                    continue
                 if ebgp and remote_as is not None and origin == "bgp" \
                         and remote_as in self._as_paths.get((key, prefix), set()):  # fmt: skip
                     # AS des Nachbarn im AS-Pfad: er verwirft den Pfad (Schleifenschutz) - die
@@ -474,11 +479,6 @@ class Filters:
                 verdict = cfg.verdict(fout, net)
                 if verdict == DENY:
                     outbound["counts"]["deny"] += 1
-                    continue
-                if verdict is None and originate == "enable":
-                    # 0.131.0 (Anwender: „wenn default-originate vorhanden ist … können diese
-                    # hier verschwinden“): nur gezaehlt, nicht als angekuendigt gelistet
-                    outbound["counts"]["originate_only"] += 1
                     continue
                 outbound["counts"][verdict or "unknown"] += 1
                 outbound["announced"].append({"prefix": prefix, "origin": origin,

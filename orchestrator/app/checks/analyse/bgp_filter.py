@@ -2,8 +2,9 @@
 
 Je BGP-Nachbar einer FortiGate mit gelesener Konfiguration: Netze, die der Eingangsfilter
 ausdrücklich erlaubt, von denen der (verbundene) Nachbar nichts liefert; erhaltene Netze, die der
-Filter sperrt; eBGP-Nachbarn ohne Eingangsfilter. Je ACI-L3Out: import-rtctrl ohne enforce import
-(wirkt nicht) bzw. mit enforce import erwartet, aber nichts erhalten."""
+Filter sperrt. Je ACI-L3Out: import-rtctrl ohne enforce import (wirkt nicht) bzw. mit enforce
+import erwartet, aber nichts erhalten. „Ohne Eingangsfilter“ seit 0.132.0 in `bgp_zonen` (nur zu
+fremd verwalteten Zonen)."""
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -54,12 +55,6 @@ def _run(session: Session, tenant_id: int, cx: Context) -> list[Issue]:
                 detail={**base, "prefixes": nets[:SHOWN], "total": denied,
                         "filters": sorted(set(inbound["filters"].values()))},
             ))  # fmt: skip
-        if r["ebgp"] and inbound["open"]:
-            out.append(Issue(
-                FindingType.BGP_NO_INBOUND_FILTER, SubjectKind.NODE, subject,
-                p.source_system_id, Severity.INFO,
-                detail={**base, "received": inbound["received_total"]},
-            ))  # fmt: skip
     stmt = select(TopoL3Out).where(TopoL3Out.tenant_id == tenant_id).order_by(TopoL3Out.id)
     for o in session.scalars(stmt):
         rc = o.route_control or {}
@@ -94,15 +89,14 @@ CHECK = Check(
     ("BGP-Filter Soll/Ist", "BGP filters expected/actual"),
     (
         "Je BGP-Nachbar: Netze, die der Eingangsfilter erlaubt, aber nicht ankommen; erhaltene "
-        "Netze, die der Filter sperrt; eBGP ohne Eingangsfilter; ACI import-rtctrl ohne enforce",
+        "Netze, die der Filter sperrt; ACI import-rtctrl ohne enforce",
         "Per BGP neighbor: networks the inbound filter permits that do not arrive; received "
-        "networks the filter denies; eBGP without inbound filter; ACI import-rtctrl not enforced",
+        "networks the filter denies; ACI import-rtctrl not enforced",
     ),
     frozenset(
         {
             FindingType.BGP_EXPECTED_MISSING,
             FindingType.BGP_OUTSIDE_FILTER,
-            FindingType.BGP_NO_INBOUND_FILTER,
             FindingType.ACI_IMPORT_NOT_ENFORCED,
         }
     ),

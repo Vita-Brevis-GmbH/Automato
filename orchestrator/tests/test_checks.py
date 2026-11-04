@@ -33,6 +33,7 @@ def test_verzeichnis_der_pruefungen():
     assert checks.types_of("zonen") == {FindingType.ZONE_POLICY_VIOLATION, FindingType.ZONE_OVERLAP,
                                         FindingType.ZONE_OUTSIDE_SCHEMA, FindingType.ZONE_NET_EXIT,
                                         FindingType.BGP_ZONE_MISMATCH,
+                                        FindingType.BGP_NO_INBOUND_FILTER,  # 0.132.0
                                         FindingType.BGP_ZONE_OUT_MISMATCH,
                                         FindingType.ACI_IMPORT_ZONE_MISMATCH}  # fmt: skip
 

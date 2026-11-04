@@ -3086,6 +3086,7 @@ export interface BgpZoneList {
   // Eingang (0.131.0): was heute vom Nachbarn ankommt (z. B. nur die Default-Route)
   received_total?: number;
   received_default_only?: boolean;
+  open_ok?: boolean; // 0.132.0: ohne Eingangsfilter, Nachbar selbst verwaltet – kein Filter nötig
   cli: string;
 }
 // 0.131.0: Netz von Hand ohne bekanntes Netz darin – nur Rahmen, nicht im Filter
@@ -3107,6 +3108,8 @@ export interface BgpZoneSoll {
   chain?: BgpZoneChain; // 0.127.0
   families?: number[]; // 0.131.0: Adressfamilien der Sitzung
   frames?: BgpZoneFrame[]; // 0.131.0
+  neighbor_external?: boolean; // 0.132.0: Zone am Nachbarn fremd verwaltet
+  originate?: number[]; // 0.132.0: Familien mit default-originate (Ausgang nur Default-Route)
 }
 export const fetchBgpPeerZones = (tenantId: number, peerId: number, way: "in" | "out" = "in") =>
   getJSON<BgpZoneSoll>(`/api/routing/bgp/peers/${peerId}/zones${cq({ tenant_id: tenantId, way })}`);
@@ -3129,6 +3132,7 @@ export interface L3OutZoneSoll {
   proposal?: string;
   families?: number[]; // 0.131.0: Adressfamilien der Peers des L3Outs
   frames?: BgpZoneFrame[]; // 0.131.0
+  neighbor_external?: boolean; // 0.132.0: Zone am Peer fremd verwaltet
 }
 export const fetchL3OutZones = (tenantId: number, l3outId: number) =>
   getJSON<L3OutZoneSoll>(`/api/routing/bgp/l3outs/${l3outId}/zones${cq({ tenant_id: tenantId })}`);
@@ -3529,6 +3533,7 @@ export interface LogicalZone {
   nodes?: string[]; // Knoten der Zone (Firewall/VDOM, ACI-VRF)
   transitions?: { to: string; to_id: number | string; name: string; count: number }[];
   zone_type?: string | null; // 0.105.0: Zonentyp von Hand (Zone des Grundschemas); wirksam = `schema`
+  external_managed?: boolean; // 0.132.0: fremd verwaltet (WAN, MPLS, fremde Anbindungen); Vorgabe nein
 }
 // Kategorien der Applikations-Doku als Konfiguration (0.104.0, seit 0.106.0 einfach): Titel und Richtung Zonentyp der
 // Quelle → Zonentyp des Ziels (Zonen des Grundschemas, je Seite einer oder mehrere, `*` = jeder); fest (nur Titel):
@@ -3674,6 +3679,7 @@ export interface ZoneIn {
   description: string | null;
   selectors: ZoneSelector[];
   zone_type?: string | null; // 0.105.0; nicht mitgeschickt = bleibt
+  external_managed?: boolean; // 0.132.0; nicht mitgeschickt = bleibt
 }
 export interface ZonePreview {
   counts: { net: number; epg: number };
@@ -3930,9 +3936,10 @@ export interface AppdocZoneIn {
   nets?: string[]; // nicht mitgeschickt = bleiben
   excluded?: string[];
   devices?: Pick<ZoneDevice, "kind" | "value" | "source_system_id">[]; // 0.106.0: Geräte der Zone; fehlt = bleiben
+  external_managed?: boolean; // 0.132.0: fremd verwaltet; fehlt = bleibt
 }
 export const setAppdocZones = (tenantId: number, zones: AppdocZoneIn[]) =>
-  sendJSON<{ id: number; name: string; zone_type: string | null; nets: string[]; excluded: string[]; devices: ZoneDevice[] }[]>(
+  sendJSON<{ id: number; name: string; zone_type: string | null; external_managed: boolean; nets: string[]; excluded: string[]; devices: ZoneDevice[] }[]>(
     "/api/zones/appdoc",
     "PUT",
     { tenant_id: tenantId, zones },

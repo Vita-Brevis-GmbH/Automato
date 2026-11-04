@@ -655,7 +655,12 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     ankommt („nur die Default-Route“). Nachbar und Soll kommen aus dem **vorab berechneten Stand**
     (nach jedem Lauf und jeder Änderung an Zonen, Verbund und L3Outs im Hintergrund; passt er
     nicht, wird einzeln gerechnet). Im Befund stehen die **betroffenen Netze** mit Bedeutung und
-    Gesamtzahl und der Link „BGP-Nachbar … öffnen“), **HA &
+    Gesamtzahl und der Link „BGP-Nachbar … öffnen“. Seit 0.132.0: eine Zone lässt sich als
+    **„fremd verwaltet“** markieren (Netzwerkdesign → Kategorien bzw. Zone bearbeiten; Vorgabe
+    selbst verwaltet) – nur ein Nachbar in so einer Zone braucht einen Eingangsfilter (sonst „kein
+    Eingangsfilter nötig“, keine Abweichung, kein Befund), ebenso der ACI Import; mit
+    `default-originate` gilt im Ausgang nur die Default-Route – kein Ausgangsfilter, kein
+    Vorschlag), **HA &
     Session-Sync** (Modus, Gruppe, Mitglieder mit Rolle, FGSP-Peers), **Policy-Routen &
     SD-WAN** (Bedingung, Weg, Mitglieder nach Vorrang), **L3Outs (ACI)** (VRF, Border-Leafs mit
     Namen, Router-ID und statischen Routen, Interfaces/SVIs mit VLAN und Adressen, BGP-Peers

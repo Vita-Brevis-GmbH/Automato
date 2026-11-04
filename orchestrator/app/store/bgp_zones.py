@@ -203,6 +203,19 @@ class ZoneSoll:
                     }
         return None, {}
 
+    def neighbor_of(self, p: TopoPeer) -> int | None:
+        """Zone am BGP-Nachbarn (bzw. None ohne Zonen, Zone der Firewall oder Nachbarzone)."""
+        if self.st is None:
+            return None
+        key = (p.source_system_id, p.context)
+        home = self.st.node_zone.get(key)
+        return None if home is None else self._neighbor(key, home, p.peer_ip)[0]
+
+    def external(self, zid: int | None) -> bool:
+        """Zone fremd verwaltet (0.132.0, Anwender: „Eingangsfilter gibt es nur bei Verbindungen
+        nach nicht durch mich verwaltete Geräte“); Vorgabe und ohne Zone: selbst verwaltet."""
+        return zid is not None and bool(getattr(self.zones.get(zid), "external_managed", False))
+
     def _blocked(self, prev: int, cur: int, nxt: int) -> bool:
         """Durchgang prev -> cur -> nxt gesperrt: prev und nxt haben denselben Zonentyp und cur
         verbindet gleiche Zonen nicht (0.128.0, Vorgabe)."""
@@ -456,8 +469,15 @@ class ZoneSoll:
         received = self.filters.received(key3, p.peer_ip) if cfg is not None else []
         families = bgp_filters.session_families(p.peer_ip, conf, received)
         scope = self._scope_of(zones, public_only)
+        # 0.132.0: Eingangsfilter nur zu fremd verwalteten Nachbarn (Zone am Nachbarn); mit
+        # default-originate geht an den Nachbarn nur die Default-Route - kein Ausgangsfilter
+        external = self.external(neighbor)
+        originate = [f for f in families if out and cfg is not None and conf.get(
+            f"capability-default-originate{'6' if f == 6 else ''}") == "enable"]  # fmt: skip
         lists = []
         for family in sorted({n.version for n in permit} & set(families)):
+            if family in originate:
+                continue
             x = self._family(family, permit, excluded, conf, cfg, p.peer_ip,
                              self.zones[neighbor], way, announced, scope)  # fmt: skip
             if not out:  # was heute vom Nachbarn ankommt (0.131.0: z. B. nur die Default-Route)
@@ -465,11 +485,20 @@ class ZoneSoll:
                        if (n := _net(prefix)) is not None and n.version == family]  # fmt: skip
                 x["received_total"] = len(got)
                 x["received_default_only"] = bool(got) and all(n.prefixlen == 0 for n in got)
+                x["open_ok"] = x["open"] and not external  # selbst verwaltet: kein Filter noetig
             lists.append(x)
         diffs = sum(len(x["missing"]) + len(x["too_open"]) + len(x["excluded_allowed"])
-                    + len(x.get("announced_outside") or []) + (1 if x["open"] else 0)
+                    + len(x.get("announced_outside") or [])
+                    + (1 if x["open"] and not x.get("open_ok") else 0)
                     for x in lists)  # fmt: skip
-        if not lists and permit:
+        fams = ", ".join(f"IPv{f}" for f in originate)
+        if not lists and originate:
+            state = "ok"
+            text = L(f"default-originate ({fams}): die Firewall sendet dem Nachbarn nur die "
+                     "Default-Route – kein Ausgangsfilter nötig",
+                     f"default-originate ({fams}): the firewall sends only the default route to "
+                     "the neighbor – no outbound filter needed")  # fmt: skip
+        elif not lists and permit:
             state = "no_nets"
             fams = ", ".join(f"IPv{f}" for f in families) or "–"
             text = L(f"Die Zonen haben keine Netze in den Adressfamilien der Sitzung ({fams})",
@@ -487,6 +516,12 @@ class ZoneSoll:
                       f"{diffs} deviations from the zones on this side") if out
                     else L(f"{diffs} Abweichungen zu den Zonen dahinter",
                            f"{diffs} deviations from the zones behind"))  # fmt: skip
+        elif not out and any(x.get("open_ok") for x in lists):
+            state = "ok"
+            text = L("Ohne Eingangsfilter – der Nachbar ist selbst verwaltet, kein Eingangsfilter "
+                     "nötig (Netzwerkdesign → Zonen: „fremd verwaltet“)",
+                     "No inbound filter – the neighbor is managed by you, no inbound filter needed "
+                     "(network design → zones: “managed externally”)")  # fmt: skip
         else:
             state = "ok"
             text = (L("Ausgangsfilter passt zu den Zonen diesseits",
@@ -521,7 +556,8 @@ class ZoneSoll:
         return {**base, "neighbor_zone": self._zone(neighbor),
                 "zones": [self._zone(z) for z in zones], "lists": lists, "public_only": public_only,
                 "families": families, "frames": frames, "state": state, "text": text,
-                "chain": chain}  # fmt: skip
+                "chain": chain, "neighbor_external": external,
+                **({"originate": originate} if originate else {})}  # fmt: skip
 
     def _paths(self, home: int, neighbor: int, out: bool,
                peer_ip: str | None = None) -> dict[int, list[dict]]:  # fmt: skip
@@ -772,18 +808,27 @@ class ZoneSoll:
                     not self._tolerated(net, scope)):  # fmt: skip
                 too_open.append({"prefix": str(net), "epg": e.get("epg")})
         allowed = [str(n) for n in excluded if enforced and covered(n)]
-        diffs = len(missing) + len(too_open) + len(allowed) + (0 if enforced else 1)
+        # 0.132.0: Import-Filter nur zu einer fremd verwalteten Zone am Peer noetig
+        external = self.external(neighbor)
+        diffs = len(missing) + len(too_open) + len(allowed) + (0 if enforced or not external else 1)
         if not entries:
             state, text = "no_nets", L("Die Zonen dahinter haben keine Netze",
                                        "The zones behind have no networks")  # fmt: skip
         elif diffs:
             state, text = "differs", L(f"{diffs} Abweichungen zu den Zonen dahinter",
                                        f"{diffs} deviations from the zones behind")  # fmt: skip
+        elif not enforced:
+            state, text = "ok", L(
+                "Import nicht erzwungen – der Peer ist selbst verwaltet, kein Import-Filter nötig "
+                "(Netzwerkdesign → Zonen: „fremd verwaltet“)",
+                "Import not enforced – the peer is managed by you, no import filter needed "
+                "(network design → zones: “managed externally”)")  # fmt: skip
         else:
             state, text = "ok", L("Import Route Control passt zu den Zonen dahinter",
                                   "Import route control matches the zones behind")  # fmt: skip
         return {**base, "neighbor_zone": self._zone(neighbor),
                 "zones": [self._zone(z) for z in zones], "import_enforced": enforced,
+                "neighbor_external": external,
                 "entries": entries, "missing": missing[:SHOWN], "missing_total": len(missing),
                 "too_open": too_open[:SHOWN], "excluded_allowed": allowed[:SHOWN],
                 "excluded": [{"prefix": str(n), "zones": sorted(v)} for n, v in excluded.items()],

@@ -339,14 +339,22 @@ def test_aci_import_route_control_aus_den_zonen(client, session_factory):
     assert msg.startswith("L3Out L3O_fw (VRF TE:VRF1): Import Route Control passt nicht")
     assert "importiert ausserhalb der Zonen: 172.20.0.0/16" in msg
 
-    # ohne erzwungenen Import: der L3Out uebernimmt alles - eine Abweichung, nichts „fehlt“
+    # ohne erzwungenen Import: der L3Out uebernimmt alles, nichts „fehlt“ - seit 0.132.0 nur
+    # eine Abweichung, wenn die Zone am Peer (DC FW) fremd verwaltet ist
+    from app.models import LogicalZone
+
     s = session_factory()
     o = s.query(TopoL3Out).filter_by(name="L3O_fw").one()
     o.route_control = {"enforce": ["export"], "import": [{"prefix": "10.60.0.0/24"}]}
     s.commit()
     r = bgp_zones.for_l3out(s, tid, o)
+    assert not r["import_enforced"] and r["missing"] == [] and r["state"] == "ok", r
+    assert not r["neighbor_external"] and "selbst verwaltet" in r["text"]
+    s.query(LogicalZone).filter_by(tenant_id=tid, name="DC FW").one().external_managed = True
+    s.commit()
+    r = bgp_zones.for_l3out(s, tid, o)
     s.close()
-    assert not r["import_enforced"] and r["missing"] == [] and r["state"] == "differs"
+    assert r["neighbor_external"] and r["state"] == "differs"
 
 
 # -- 0.131.0: Netze von Hand nur als Rahmen, Transfernetze, Adressfamilien, default-originate ----
@@ -487,3 +495,73 @@ def test_routing_filter_vorab_berechnet(client, session_factory):
         assert changed != first and calls  # neu gerechnet
     finally:
         mp.undo()
+
+
+# -- 0.132.0: Eingangsfilter nur zu fremd verwalteten Zonen, default-originate ------------------
+
+
+def test_eingangsfilter_nur_zu_fremd_verwalteten_zonen(client, session_factory):
+    """0.132.0 (Anwender: „Generell Filtere ich lediglich die Ausgänge bei Geräten, welche ich
+    selber kontrolliere. Eingangsfilter gibt es nur bei Verbindungen nach nicht durch mich
+    verwaltete Geräte. Also WAN, MPLS und Fremde Anbindungen“, Vorgabe: „Standard immer intern
+    Verwaltet“): fw-01 hat zu fw-02 (Zone Lan) keinen Eingangsfilter - selbst verwaltet keine
+    Abweichung und kein Befund; mit „fremd verwaltet“ an Lan Abweichung und Befund
+    `bgp_no_inbound_filter` (Teil-Durchgang Zonen nach dem Speichern)."""
+    fw = _fw1()
+    fw["routing"]["peers"][-1]["attrs"]["config"]["filters"] = {}
+    tid, _fw = _seed(client, fw)
+    from app.models import TopoPeer
+    from app.store import bgp_zones
+
+    s = session_factory()
+    p = s.query(TopoPeer).filter_by(peer_ip=FW02).one()
+    r = bgp_zones.for_peer(s, tid, p)
+    s.close()
+    (v4,) = r["lists"]
+    assert v4["open"] and v4["open_ok"] and r["state"] == "ok" and not r["neighbor_external"]
+    assert "selbst verwaltet" in r["text"]
+    params = {"tenant_id": tid}
+    types = {f["type"] for f in client.get("/findings", params=params).json()}
+    assert not types & {"bgp_no_inbound_filter", "bgp_zone_mismatch"}
+
+    # Lan fremd verwaltet (Netzwerkdesign → Kategorien bzw. Zone bearbeiten)
+    zones = {z["name"]: z for z in client.get("/zones", params=params).json()}
+    assert zones["Lan"]["external_managed"] is False  # Vorgabe: selbst verwaltet
+    body = {"tenant_id": tid, "zones": [{"id": zones["Lan"]["id"], "external_managed": True}]}
+    got = client.put("/zones/appdoc", json=body, headers=ADMIN)
+    assert got.status_code == 200, got.text
+    assert next(z for z in got.json() if z["name"] == "Lan")["external_managed"] is True
+    s = session_factory()
+    p = s.query(TopoPeer).filter_by(peer_ip=FW02).one()
+    r = bgp_zones.for_peer(s, tid, p)
+    s.close()
+    (v4,) = r["lists"]
+    assert r["neighbor_external"] and not v4["open_ok"] and r["state"] == "differs"
+    found = {f["type"]: f for f in client.get("/findings", params=params).json()}
+    assert "bgp_no_inbound_filter" in found, sorted(found)
+    msg = found["bgp_no_inbound_filter"]["message"]
+    assert "in der fremd verwalteten Zone Lan ohne Eingangsfilter" in msg, msg
+
+
+def test_default_originate_nur_default_route(client, session_factory):
+    """0.132.0 (Anwender: „Bei Default-originate braucht es auch keinen weiteren Filter, dieser
+    Filtert bereits alles weg und sendet dem nächsten Gerät nur noch die Default Route“): mit
+    default-originate kein Soll im Ausgang (kein Vorschlag, keine Abweichung, kein Befund), im
+    Bericht nur die Default-Route angekündigt."""
+    tid, _sys = _seed3(client)
+    from app.models import TopoPeer
+    from app.store import bgp_filters, bgp_zones
+
+    s = session_factory()
+    p = s.query(TopoPeer).filter_by(peer_ip=FW02).one()
+    conf = dict(p.attrs["config"])
+    conf["capability-default-originate"] = "enable"
+    p.attrs = {**p.attrs, "config": conf}
+    s.commit()
+    r = bgp_zones.for_peer(s, tid, p, way="out")
+    rep = bgp_filters.Filters(s, tid).report(p)
+    s.close()
+    assert r["state"] == "ok" and r["lists"] == [] and r["originate"] == [4], r
+    assert "nur die Default-Route" in r["text"]
+    assert [a["prefix"] for a in rep["out"]["announced"]] == ["0.0.0.0/0"]
+    assert rep["out"]["counts"]["originate_only"] >= 1

@@ -474,6 +474,7 @@ def zone_out(z: LogicalZone, nets: ZoneNets | None = None, color: dict | None = 
         "customer_id": z.customer_id,
         "position": z.position,
         "zone_type": z.zone_type,  # Zonentyp von Hand (0.105.0); erkannt = `schema`
+        "external_managed": bool(z.external_managed),  # fremd verwaltet (0.132.0)
         "nets": len(nets.nets) if nets else 0,
         "epgs": len(nets.epgs) if nets else 0,
     }

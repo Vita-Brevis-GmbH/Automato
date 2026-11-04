@@ -91,6 +91,8 @@ class ZoneIn(BaseModel):
     # Zonentyp von Hand (0.105.0): Zone des Grundschemas; leer = automatisch; nicht mitgeschickt
     # = bleibt
     zone_type: str | None = Field(default=None, max_length=200)
+    # Fremd verwaltet (0.132.0): nicht mitgeschickt = bleibt
+    external_managed: bool | None = None
 
 
 class PreviewIn(BaseModel):
@@ -326,6 +328,8 @@ def _apply(session: Session, z: LogicalZone, body: ZoneIn, sel: list[store.Selec
     z.position, z.description = body.position, (body.description or "").strip() or None
     if "zone_type" in body.model_fields_set:  # 0.105.0: nur, wenn mitgeschickt
         z.zone_type = _zone_type(session, z.tenant_id, body.zone_type)
+    if body.external_managed is not None:  # 0.132.0: nur, wenn mitgeschickt
+        z.external_managed = body.external_managed
     z.updated_at = datetime.now(UTC)
     z.selectors = [
         LogicalZoneSelector(kind=s.kind, value=s.value, source_system_id=s.source_system_id,
@@ -1065,6 +1069,8 @@ class AppdocZoneIn(BaseModel):
     excluded: list[str] | None = Field(default=None, max_length=500)
     # Geraete der Zone (0.106.0): Firewall/VDOM, ACI-Tenant/-VRF, Anbindung; None = bleiben
     devices: list[DeviceIn] | None = Field(default=None, max_length=200)
+    # fremd verwaltet (0.132.0): nur zu solchen Zonen gehoert ein Eingangsfilter; None = bleibt
+    external_managed: bool | None = None
 
 
 class AppdocZonesIn(BaseModel):
@@ -1156,6 +1162,8 @@ def set_appdoc_zones(
                 ]  # fmt: skip
                 entry["devices"] = len(devices)
                 owners.add(z.customer_id)
+        if x.external_managed is not None and x.external_managed != z.external_managed:
+            z.external_managed = entry["external_managed"] = x.external_managed
         if entry:
             z.updated_at = datetime.now(UTC)
             changes.append({"zone_id": z.id, **entry})
@@ -1168,6 +1176,7 @@ def set_appdoc_zones(
         # Befunde nach den Kategorien und der Zonen - hinter der Antwort (0.108.0)
         app_refresh.schedule_tenant(background, factory, tid)
     return [{"id": z.id, "name": z.name, "zone_type": z.zone_type,
+             "external_managed": z.external_managed,
              "nets": _prefixes_of(z, False), "excluded": _prefixes_of(z, True),
              "devices": [{"kind": k, "value": v, "source_system_id": sid}
                          for k, v, sid in _devices_of(z)]}
