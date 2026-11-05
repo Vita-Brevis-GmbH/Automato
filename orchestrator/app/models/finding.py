@@ -58,6 +58,8 @@ class FindingType(enum.StrEnum):
     EPG_ASSIGNMENT_CONFLICT = "epg_assignment_conflict"
     # SNAT (0.47.0): Policy mit NAT auf einen IP-Pool, den die Firewall nicht (mehr) hat
     SNAT_POOL_MISSING = "snat_pool_missing"
+    # VIP der Firewall ohne Ziel: kein Load Balancer, interne IP nirgends vergeben (0.134.0)
+    VIP_TARGET_MISSING = "vip_target_missing"
     # Topologie (0.50.0, `store/topo_model`): Plausibilitaet der gelesenen Netze und Routen
     TOPO_DUPLICATE_IP = "topo_duplicate_ip"  # dieselbe IP auf zwei Knoten im selben Netz
     TOPO_MASK_MISMATCH = "topo_mask_mismatch"  # Gegenstellen mit verschiedener Netzmaske

@@ -260,9 +260,18 @@ def test_ziel_hinter_vip_und_load_balancer_ist_die_epg_der_server(client, sessio
     target = client.get("/routing/trace", params=params).json()["target"]
     assert target["vip"] == "V-EXT_shop" and target["balancer"] == "vs-web"
     assert target["epgs"][0]["epg"] == "TE|AP_shop|EG_web"
-    # ohne VIP bzw. Load Balancer auf dem Weg: kein Ziel dahinter
-    params = {"tenant_id": tid, "src": "198.51.100.1", "dst": "10.10.0.20"}
-    assert "target" not in client.get("/routing/trace", params=params).json()
+    # Server als Ziel von aussen (0.134.0): der Weg geht über die VIP, Rückweg symmetrisch
+    params = {"tenant_id": tid, "src": "198.51.100.1", "dst": "10.10.0.20", "service": "tcp/443"}
+    got = client.get("/routing/trace", params=params).json()
+    assert got["via_vip"]["name"] == "V-EXT_shop" and got["via_vip"]["balancer"] == "vs-web"
+    assert got["target"]["vip"] == "V-EXT_shop"
+    (path,) = got["paths"]
+    assert path["return"]["state"] == "symmetric", path["return"]
+    assert not any("Rückweg" in n for n in got["notes"]), got["notes"]
+    # ohne VIP bzw. Load Balancer auf dem Weg (Quelle intern): kein Ziel dahinter
+    params = {"tenant_id": tid, "src": "10.30.0.10", "dst": "10.10.0.20"}
+    got = client.get("/routing/trace", params=params).json()
+    assert "target" not in got and "via_vip" not in got
 
     # Namenssuche: die VIP selbst (externe IP) mit der Kette dahinter
     hits = client.get("/routing/resolve", params={"tenant_id": tid, "q": "V-EXT_shop"}).json()

@@ -50,6 +50,7 @@ export const FINDING_LABEL: Record<string, string> = {
   aci_contract_both_sides: L("Contract: EPG Consumer und Provider", "Contract: EPG consumer and provider"),
   epg_assignment_conflict: L("EPG: gelernt ≠ konfiguriert", "EPG: learned ≠ configured"),
   snat_pool_missing: L("SNAT-Pool fehlt", "SNAT pool missing"),
+  vip_target_missing: L("VIP ohne Ziel", "VIP without target"),
   topo_duplicate_ip: L("IP doppelt im Netz", "Duplicate IP in network"),
   topo_mask_mismatch: L("Netzmaske abweichend", "Netmask differs"),
   topo_route_loop: L("Routing-Schleife", "Routing loop"),
@@ -152,6 +153,10 @@ export const FINDING_HINT: Record<string, string> = {
   snat_pool_missing: L(
     "Policy übersetzt die Quelle auf einen IP-Pool, den die Firewall nicht hat",
     "Policy translates the source to an IP-Pool the firewall does not have",
+  ),
+  vip_target_missing: L(
+    "VIP der Firewall ohne Load Balancer dahinter – die interne Adresse ist im IPAM nicht vergeben und gehört zu keiner VM bzw. keinem ACI-Endpunkt",
+    "Firewall VIP without a load balancer behind it – the internal address is not assigned in the IPAM and belongs to no VM or ACI endpoint",
   ),
   topo_duplicate_ip: L("dieselbe IP auf zwei Geräten im selben Netz", "the same IP on two devices in the same network"),
   topo_mask_mismatch: L(
@@ -321,7 +326,7 @@ export const FINDING_GROUPS: { key: string; label: string; help: string; types: 
       "ohne Quelle/Ziel bzw. ohne Consumer/Provider, Contract-Scope ohne Gegenstelle",
       "without source/destination or without consumer/provider, contract scope without peer",
     ),
-    types: ["rule_incomplete", "aci_scope_unpaired", "aci_contract_both_sides", "snat_pool_missing"],
+    types: ["rule_incomplete", "aci_scope_unpaired", "aci_contract_both_sides", "snat_pool_missing", "vip_target_missing"],
   },
   {
     key: "parallel",

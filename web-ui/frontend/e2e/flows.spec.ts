@@ -826,15 +826,18 @@ test("Weg-Suche: Regeln auf dem Weg je Firewall", async ({ page }) => {
   await expect(first).toContainText("Regeln: gesperrt an fw-05 · VDOM root");
   await expect(first).toContainText("implizit gesperrt");
   await expect(page.locator(".card", { hasText: "Wege im Überblick" }).locator("thead")).toContainText("Regeln");
-  // Startpunkt und Dienst: die Policy der VIP ist möglich (Eingang, Ausgang, Quelle nicht prüfbar)
+  // Startpunkt und Dienst, Ziel ist der Server hinter der VIP (0.134.0): von aussen über die VIP, Quelle aus dem
+  // Internet angenommen – die Policy der VIP erlaubt nur 10.1.0.0/24, also implizit gesperrt
   await page.getByPlaceholder("Quelle: IP, Netz oder Name").fill("");
   await page.locator(".filterbar select").filter({ hasText: "Start: aus der Quelle" }).selectOption({ label: "fw-05 · VDOM root" });
   await dst.fill("10.1.0.10");
   await page.getByPlaceholder("Dienst: tcp/443").fill("tcp/443");
   await page.click("button:has-text('Weg suchen')");
   const card = page.locator(".card[id^='trace-']").first();
-  await expect(card).toContainText("abhängig");
-  await expect(card).toContainText("möglich (Eingang, Ausgang, Quelle)");
+  await expect(page.locator(".trace-via-vip")).toContainText("über VIP VIP_web (203.0.113.1) → 10.1.0.10");
+  await expect(page.locator(".trace-via-vip")).toContainText("Quelle: beliebige Adresse im Internet");
+  await expect(card).toContainText("DNAT VIP_web");
+  await expect(card).toContainText("implizit gesperrt");
   // Ziel ist die VIP: DNAT an fw-05, der Weg geht zur internen IP weiter
   await dst.fill("203.0.113.1");
   await page.click("button:has-text('Weg suchen')");

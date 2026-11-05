@@ -309,6 +309,9 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   (Namenskonvention, unbenutzt, nicht im IPAM) und „Ziel nicht im IPAM“ (Mapped-IP bzw. Real
   Server fehlt im führenden IPAM); Schalter **nur Abweichungen**. Im Detail dazu die VM
   hinter dem internen Ziel und „Objekt öffnen“.
+  - **VIP ohne Ziel (0.134.0):** Befund (Findings → Regeln) für eine VIP der Firewall ohne
+    Load Balancer dahinter, deren interne IP weder im IPAM noch an einer VM bzw. einem
+    ACI-Endpunkt vorkommt – meist eine alte Freigabe. Klick → NAT / VIPs mit der VIP.
   - Virtual Server (Lastverteilung) zeigen alle Real Server mit Status (aktiv/Standby/aus),
     Gewicht, Firewall-Objekt, DNS-Name und Health-Check. Im Detail stehen zusätzlich
     Server-Typ, Lastverteilung, Persistenz und die Health-Checks.
@@ -544,6 +547,20 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
           ihrem NAT weiter (z. B. SNAT der VIP-Policy bis zum Server).
         - Startpunkt gewählt und die Quelle hängt dort nicht an: der Eingang ist das Interface
           der Route zur Quelle („gewählt, Eingang lan nach der Route zur Quelle“).
+        - **Server hinter einer VIP von aussen (0.134.0):** Ist das Ziel ein Server hinter
+          einer VIP der Firewall (direkt bzw. über den Load Balancer) und kommt die Suche von
+          aussen (Start an einer Firewall ohne Quelle, öffentliche Quelle, Anbindung als
+          Quelle), geht der Weg über die externe IP der VIP – Eingang ist ihr externes
+          Interface, ohne Quelle gilt eine beliebige Adresse im Internet. Oben steht „über VIP
+          … → Load Balancer → Server“. Mit einer privaten Quelle sucht die Weg-Suche direkt.
+      - **Rückweg (0.134.0):** Je Weg zeigt ein Zeichen, ob die Antwort über dieselben
+        Firewalls zurückgeht („Rückweg ✓“), über eine andere („Rückweg über andere Firewall“ –
+        die Firewall verwirft die Antwort, asymmetrisches Routing) oder nicht prüfbar ist
+        („Rückweg ?“, z. B. ohne Quell-IP); der Hinweis beim Darüberfahren nennt den Rückweg.
+        Nur das Routing zählt, ACI-Knoten und Router nicht, im Verbund genügt derselbe
+        Verbund. Hinter dem Load Balancer antwortet der Server dem Load Balancer, nach einem
+        SNAT der Adresse des Pools. Sind nicht alle Wege symmetrisch, nennt ein Hinweis oben
+        den einzig möglichen.
       - Seit 0.78.4 steht je Policy, **über welches Objekt** Quelle und Ziel passen
         („Quelle any, Ziel G_darknet“), und unter **„dahinter, nicht erreicht“** bis zu fünf
         weitere passende Policies nach der entscheidenden – z. B. hinter einer Sperre

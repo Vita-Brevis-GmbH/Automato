@@ -489,8 +489,9 @@ def test_sperre_ohne_match_vip_greift_nicht_fuer_die_vip(client):
         assert edge["rules"]["rules"][0]["blocklist"] is True
         assert edge["snat"]["pool"] == "IPP_e" and inner["rules"]["verdict"] == "allow"
         assert path["policy"] == {"verdict": "allow", "text": "erlaubt an allen 2 Firewalls"}
-    # nur die Sperrliste und sonst nichts (direkt zur internen Adresse): gesperrt, nicht abhängig
-    path = trace(tid, src_exit=f"exit:{exit_id}", dst="10.40.0.80")
+    # nur die Sperrliste und sonst nichts (interne Adresse ohne VIP): gesperrt, nicht abhängig -
+    # 10.40.0.80 ist seit 0.134.0 von aussen über die VIP erreicht (erlaubt)
+    path = trace(tid, src_exit=f"exit:{exit_id}", dst="10.40.0.81")
     assert path["hops"][0]["rules"]["verdict"] == "implicit_deny", path["hops"][0]["rules"]
     assert path["hops"][0]["rules"]["text"].startswith("gesperrt – Policy 5 „block-bad“ bzw. "
                                                        "implizit")  # fmt: skip
@@ -595,3 +596,93 @@ def test_sd_wan_zone_als_eingang_der_policy(client):
     assert rules["verdict"] == "allow", rules
     assert rules["text"] == "erlaubt durch Policy 10 „inet-to-app“"
     assert [x["external_id"] for x in rules["rules"]] == ["10"]  # Policy 9: andere SD-WAN-Zone
+
+
+def _seed_edge(client, name: str) -> tuple[int, dict[str, int]]:
+    tid = client.post("/tenants", json={"name": name}, headers=ADMIN).json()["id"]
+    sids = {}
+    for fw, result in (("fw-e", EDGE), ("fw-i", INNER)):
+        body = {"tenant_id": tid, "name": fw, "platform": "fortigate", "base_url": "https://x"}
+        sids[fw] = client.post("/systems", json=body, headers=ADMIN).json()["id"]
+        job = {"platform": "fortigate", "tenant_id": tid, "source_system_id": sids[fw]}
+        run_id = client.post("/jobs/collect", json=job).json()["run_id"]
+        r = client.post(f"/internal/collector-runs/{run_id}/result", headers=TOKEN, json=result)
+        assert r.status_code == 200, r.text
+    return tid, sids
+
+
+def test_server_hinter_vip_von_aussen_ueber_die_vip_mit_rueckweg(client):
+    """0.134.0 (Anwender: „Ich nehme als Source die Internet Firewall und als Ziel den Server
+    zuhinterst, aber leider zeigt er mir dennoch nicht den VIP als Pfad an … Gemäss mir sollte
+    der Hin und Rückweg geprüft werden“): ab der Firewall ohne Quelle (bzw. mit öffentlicher
+    Quelle) geht der Weg zum Server über die VIP - Quelle eine Adresse im Internet, Eingang der
+    VIP (`extintf`), die VIP-Policy entscheidet; der Rückweg geht über dieselben Firewalls (nach
+    dem SNAT an den Pool, von dort zurück). Von innen bleibt der direkte Weg."""
+    tid, sids = _seed_edge(client, "Kunde VIP-Weg")
+    params = {"tenant_id": tid, "start": f"{sids['fw-e']}|root", "dst": "10.40.0.80",
+              "service": "tcp/443"}  # fmt: skip
+    r = client.get("/routing/trace", params=params)
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert out["via_vip"]["name"] == "VIP_app" and out["via_vip"]["ext_ip"] == "198.51.100.80"
+    assert out["src_assumed"]["address"]
+    assert out["notes"][0].startswith("Ziel 10.40.0.80 ist über VIP VIP_app (198.51.100.80)")
+    (path,) = out["paths"]
+    edge, inner = path["hops"]
+    assert edge["ingress"]["interface"] == "wan"
+    assert edge["rules"]["verdict"] == "allow", edge["rules"]
+    assert edge["rules"]["text"] == "erlaubt durch Policy 10 „inet-to-app“"
+    assert inner["rules"]["verdict"] == "allow"
+    assert path["return"]["state"] == "symmetric", path["return"]
+    assert path["return"]["firewalls"] == [edge["label"], inner["label"]]
+
+    # öffentliche Quelle ohne Start: an der Firewall der VIP
+    r = client.get(
+        "/routing/trace",
+        params={"tenant_id": tid, "src": "203.0.113.50", "dst": "10.40.0.80", "service": "tcp/443"},
+    )
+    assert r.json()["via_vip"]["name"] == "VIP_app" and "src_assumed" not in r.json()
+    assert r.json()["paths"][0]["return"]["state"] == "symmetric"
+    # von innen (private Quelle): direkt, ohne VIP
+    r = client.get(
+        "/routing/trace",
+        params={"tenant_id": tid, "src": "10.70.0.1", "dst": "10.40.0.80", "service": "tcp/8443"},
+    )
+    assert "via_vip" not in r.json()
+
+
+def test_rueckweg_ueber_andere_firewall(monkeypatch):
+    """0.134.0: geht die Antwort über eine andere Firewall zurück, ist der Weg asymmetrisch -
+    mit Hinweis, welcher Weg möglich ist; ein Verbund zählt als dieselbe Firewall."""
+    from app.store import return_path
+
+    def hop(sid, label, group=None):
+        return {"kind": "firewall", "source_system_id": sid, "context": "root", "label": label,
+                "key": f"{sid}|root", "group": group}  # fmt: skip
+
+    backs = {"10.40.0.80": [hop(3, "fw-c"), hop(1, "fw-a")]}
+
+    def fake_trace(session, tid, dst, src, start, slack, service, **kw):
+        return {"paths": [{"kind": "active", "hops": backs.get(src, [])}]}
+
+    monkeypatch.setattr(return_path.paths_store, "trace", fake_trace)
+    result = {"paths": [{"kind": "active", "hops": [hop(1, "fw-a"), hop(2, "fw-b")]},
+                        {"kind": "active", "hops": [hop(1, "fw-a"), hop(3, "fw-c")]}],
+              "notes": []}  # fmt: skip
+    return_path.annotate(None, 1, None, result, "203.0.113.50", "10.40.0.80")
+    first, second = result["paths"]
+    assert first["return"]["state"] == "asymmetric"
+    assert "Antwort von 10.40.0.80 an 203.0.113.50 über fw-c → fw-a" in first["return"]["text"]
+    assert second["return"]["state"] == "symmetric"
+    assert result["notes"] == ["Nur 1 von 2 Wegen haben den Rückweg über dieselben Firewalls – "
+                               "möglich: fw-a → fw-c"]  # fmt: skip
+    # Verbund: anderes Mitglied desselben Verbunds zurück = symmetrisch
+    backs["10.40.0.80"] = [hop(5, "fw-b2", "V1"), hop(1, "fw-a")]
+    result = {"paths": [{"kind": "active", "hops": [hop(1, "fw-a"), hop(2, "fw-b1", "V1")]}],
+              "notes": []}  # fmt: skip
+    return_path.annotate(None, 1, None, result, "203.0.113.50", "10.40.0.80")
+    assert result["paths"][0]["return"]["state"] == "symmetric"
+    # ohne Quell-IP nicht prüfbar
+    result = {"paths": [{"kind": "active", "hops": [hop(1, "fw-a")]}], "notes": []}
+    return_path.annotate(None, 1, None, result, None, "10.40.0.80")
+    assert result["paths"][0]["return"]["state"] == "unknown"

@@ -2684,6 +2684,8 @@ export interface TracePath {
   parallel?: string[]; // redundant über diese Verbünde paralleler Firewalls
   extra?: number | null; // Hops mehr als der kürzeste Weg mit Ziel (0 = gleich lang; null = ohne Ziel)
   policy?: { verdict: "allow" | "deny" | "depends" | "unknown"; text: string } | null; // Regeln auf dem Weg
+  // 0.134.0: Rückweg über dieselben Firewalls (ausser ACI und Verbund)?
+  return?: { state: "symmetric" | "asymmetric" | "unknown"; text: string; firewalls?: string[] };
   hops: TraceHop[];
   zones?: TraceZoneStep[]; // Zonen auf dem Weg (0.57.0)
   l2_src?: L2Segment; // vom Anschluss der Quelle zum ersten Hop (0.64.0)
@@ -2705,6 +2707,9 @@ export interface TraceResult {
   l2?: { src?: L2Location[]; dst?: L2Location[] }; // Anschluss von Quelle/Ziel (0.64.0)
   exits?: { src?: TraceExitEnd; dst?: TraceExitEnd }; // Anbindung als Quelle bzw. Ziel
   target?: TraceTarget; // 0.117.0: Ziel hinter VIP bzw. Load Balancer (Server und ihre EPG)
+  // 0.134.0: Ziel (Server) von aussen über diese VIP gesucht; Quelle angenommen (Start ohne Quelle)
+  via_vip?: { name: string; ext_ip: string; ext_port?: string | null; balancer?: string | null; server: string; others: number; text: string };
+  src_assumed?: { address: string; text: string };
 }
 // Ziel hinter VIP bzw. Load Balancer (0.117.0): die Server am Ende des Wegs mit ihrer EPG – davon kommt auch die Zielzone
 export interface TraceTarget {

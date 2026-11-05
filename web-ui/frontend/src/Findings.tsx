@@ -249,6 +249,9 @@ function viewLinks(f: Finding): { label: string; view: View; params: ViewParams 
   if (f.type === "parallel_policy_route_mismatch")
     return [{ label: String(d.label ?? L("Policy-Route", "Policy route")), view: "routing",
               params: { tab: "policy", q: `${String(d.source ?? "")} ${String(d.name ?? d.seq ?? "")}`.trim() } }];
+  // 0.134.0: VIP ohne Ziel in NAT / VIPs öffnen
+  if (f.type === "vip_target_missing" && d.name)
+    return [{ label: L(`${String(d.name)} in NAT / VIPs`, `${String(d.name)} in NAT / VIPs`), view: "nat", params: { q: String(d.name) } }];
   if (f.type === "parallel_nat_mismatch" && d.name)
     return [{ label: String(d.name), view: "nat", params: { q: String(d.name) } }];
   // 0.96.0: VIP bzw. IP-Pool (z. B. Name ohne Präfix seines Typs) in NAT / VIPs öffnen

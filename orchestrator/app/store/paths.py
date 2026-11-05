@@ -951,6 +951,8 @@ def trace(
     checks=None,
     backups: bool = True,
     entries: list[tuple[Key, str | None, str | None, str]] | None = None,
+    with_rules: bool = True,
+    balancers: bool = True,
 ) -> dict:
     """Weg von der Quelle (bzw. dem Startpunkt) zum Ziel: je Pfad die Hops mit Ein- und
     Ausgang (Interface, Zone), Route bzw. Policy-Route und Next-Hop, dazu das Ende - die
@@ -960,7 +962,9 @@ def trace(
     Viele Wege eines Mandanten (Verbindungen der Applikations-Doku, 0.45.0): `graph` und
     `checks` (`policy_check.Checks`) einmal laden; `backups=False` nur die aktiven Wege.
     `entries` (Anbindung als Quelle, `store/exit_ends.py`): Starts mit Eingang und Zone der
-    Anbindung - (Knoten, Interface, Zone, wie erreicht)."""
+    Anbindung - (Knoten, Interface, Zone, wie erreicht). Rückweg (`store/return_path.py`,
+    0.134.0): `with_rules=False` ohne Policies, `balancers=False` endet an der VIP eines Load
+    Balancers (die Antwort an die Service Engine geht nicht weiter zum Server)."""
     from app.store import policy_check  # Regeln je Hop - spaet importiert (Regelindex)
 
     dst = endpoint(dst_text)  # IP bzw. Netz (0.39.0: das Netz als Ganzes)
@@ -1027,7 +1031,7 @@ def trace(
     def behind(hops, hop, key, iface, table, dev, cur) -> bool:
         """VIP eines Load Balancers hier angeschlossen (NSX ALB, ADR 0027): der Weg geht am
         selben Knoten vom Netz der VIP zum Server des Pools weiter (einmal je Weg)."""
-        if any(h.get("lb") for h in hops):
+        if not balancers or any(h.get("lb") for h in hops):
             return False
         lb = g.balancer(cur, service)
         if lb is None:
@@ -1238,7 +1242,8 @@ def trace(
         )
     _mark_length(primary + shown)
     notes += _inner_notes(primary + shown, dst)
-    policy_check.check_paths(session, tenant_id, primary + shown, src, dst, service, checks)
+    if with_rules:  # ohne: nur das Routing (Rueckweg, 0.134.0)
+        policy_check.check_paths(session, tenant_id, primary + shown, src, dst, service, checks)
     return {
         "start": [g.nodes[k].out() | {"via": via} for k, _, via in starts],
         # Session-Sync-Paar bzw. Verbund als ein Hop (0.29.0)

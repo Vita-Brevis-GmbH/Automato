@@ -85,9 +85,11 @@ from app.store import (
     l3out_firewall,
     net_lists,
     path_explain,
+    path_vip,
     paths,
     policy_check,
     resolve,
+    return_path,
     topo_changes,
     topology,
     zone_path,
@@ -653,6 +655,17 @@ def _traced(session: Session, tid: int, dst: str | None, src: str | None, start:
     ends: dict[str, exit_ends.End] = {}
     shown: dict[str, dict] = {}
     entries = None
+    # 0.134.0 (Anwender: „Er will direkt zum Server, auch wenn die zweite Policy den richtigen
+    # Weg wählt“): von aussen ist ein Server hinter einer VIP nur über die VIP erreichbar
+    vip, assumed = _via_vip(session, tid, graph, dst, src, start, src_exit, dst_exit, wanted)
+    if vip is not None:
+        dst = vip.ext_ip
+        if not src and not src_exit:  # Start an der Firewall ohne Quelle: aus dem Internet
+            src = exit_ends.internet_address(graph, topology.endpoint(dst).version)
+            assumed = True
+        entries = _vip_entries(graph, vip, start)
+        if entries is not None:
+            start = None
     if src_exit:
         end = ends["src"] = _exit_end(graph, src_exit, "src_exit")
         family = topology.endpoint(dst).version if dst else None
@@ -675,6 +688,15 @@ def _traced(session: Session, tid: int, dst: str | None, src: str | None, start:
     # Ziel hinter VIP bzw. Load Balancer: Server und ihre EPG (0.117.0)
     if (target := paths.target_of(graph, result)) is not None:
         result["target"] = target
+    if vip is not None:
+        result["via_vip"] = vip.out()
+        result["notes"].insert(0, vip.text())
+        if assumed:
+            result["src_assumed"] = {
+                "address": src,
+                "text": L(f"Quelle: beliebige Adresse im Internet ({src})",
+                          f"Source: any address on the internet ({src})"),
+            }  # fmt: skip
     if note:
         result["notes"].insert(0, note)
     if ends:
@@ -720,6 +742,8 @@ def trace(
     zone_path.annotate(session, tid, result, src, dst, wanted, result.get("service_name"), graph)
     # L2 zwischen den Hops, Anschluss von Quelle und Ziel (0.64.0)
     l2_topo.annotate(session, tid, result, src, dst)
+    # Rueckweg je Weg (0.134.0): ueber dieselben Firewalls?
+    return_path.annotate(session, tid, graph, result, src, dst)
     return result
 
 
@@ -767,6 +791,53 @@ def explain(
     out = path_explain.explain(session, tid, graph, result, src, dst, expect)
     out["paths_found"] = len(result.get("paths") or [])
     return out
+
+
+def _via_vip(session: Session, tid: int, graph: paths.Graph, dst: str | None, src: str | None,
+             start: str | None, src_exit: str | None, dst_exit: str | None, wanted
+             ) -> tuple[path_vip.Published | None, bool]:  # fmt: skip
+    """VIP zum Ziel (0.134.0): ein privates Ziel (Server) von aussen - ohne Quelle (Start an
+    einer Firewall), mit öffentlicher Quelle bzw. ab einer Anbindung - über die VIP, deren Kette
+    beim Server endet. -> (VIP, Quelle angenommen)."""
+    if not dst or dst_exit:
+        return None, False
+    try:
+        target = topology.endpoint(dst)
+    except ValueError:
+        return None, False
+    if topology.is_net(target) or not topology.is_private(target):
+        return None, False
+    if src:
+        try:
+            if topology.is_private(topology.endpoint(src)):
+                return None, False  # von innen: direkt
+        except ValueError:
+            return None, False
+    elif not start and not src_exit:
+        return None, False
+    prefer = paths.parse_key(start)[0] if start and paths.parse_key(start) else None
+    if prefer is None and src_exit and (end := exit_ends.find(graph, src_exit)) is not None:
+        prefer = next((s.key[0] for s in end.sides), None)
+    return path_vip.published(session, tid, dst, wanted, prefer), False
+
+
+def _vip_entries(graph: paths.Graph, vip: path_vip.Published, start: str | None
+                 ) -> list[tuple] | None:  # fmt: skip
+    """Start an der Firewall der VIP mit ihrem Eingang (`extintf`; any: nach der Route zur
+    Quelle) - wenn kein anderer Start gewählt ist bzw. der gewählte diese Firewall ist."""
+    chosen = paths.parse_key(start)
+    nodes = [k for k in graph.nodes if k[0] == vip.source_system_id
+             and (not vip.vdom or k[1] == vip.vdom)]  # fmt: skip
+    if not nodes or (chosen is not None and chosen not in nodes):
+        return None
+    key = chosen or nodes[0]
+    how = L(f"VIP {vip.name}", f"VIP {vip.name}")
+    if vip.extintf:
+        how = L(f"VIP {vip.name}, Eingang {vip.extintf}", f"VIP {vip.name}, incoming {vip.extintf}")
+    zone = graph.zone(key[0], vip.extintf) if vip.extintf else None
+    return (
+        [(key, vip.extintf, zone or vip.extintf, how)] if vip.extintf else [(key, None, None, how)]
+    )
 
 
 def _exit_end(graph: paths.Graph, ref: str, what: str) -> exit_ends.End:

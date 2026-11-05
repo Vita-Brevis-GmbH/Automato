@@ -214,6 +214,8 @@ MODULES: tuple[Module, ...] = (
             "zone_path",
             "path_explain",  # Warum dieser Weg? (0.109.0)
             "net_assign",  # grosse Netze der Regeln zuordnen (0.111.0)
+            "path_vip",  # Ziel hinter einer VIP von aussen ueber die VIP (0.134.0)
+            "return_path",  # Rueckweg je Weg, symmetrisch (0.134.0)
         ),
         views=("wege",),
     ),  # fmt: skip

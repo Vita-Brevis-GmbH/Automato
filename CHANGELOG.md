@@ -7,6 +7,34 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.134.0 – 2026-11-05
+
+Rückmeldung des Anwenders 2026-11-05 zu 0.133.4: „Ich nehme als Source die Internet Firewall und
+als Ziel den Server zuhinterst, aber leider zeigt er mir dennoch nicht den VIP als Pfad an,
+sondern nur der direkte Pfad … Er will direkt zum Server, auch wenn die zweite Policy den
+richtigen Weg wählt“; „Gemäss mir sollte der Hin und Rückweg geprüft werden (dieser muss gleich
+sein, ausnahme ACI Nodes und Firewall Verbunde)“; „es scheint noch Externe VIPs zu geben, welche
+keine Loadbalancer haben und die IP nicht mehr zugewiesen ist“.
+
+- **Weg-Suche über die VIP:** Ist das Ziel ein Server hinter einer VIP der Firewall (direkt bzw.
+  über den Load Balancer) und kommt die Suche von aussen – Start an einer Firewall ohne Quelle,
+  öffentliche Quelle oder eine Anbindung als Quelle –, geht der Weg zur externen IP der VIP und
+  von dort über DNAT und Load Balancer zum Server. Bisher suchte die Weg-Suche direkt die
+  Server-IP, die erlaubende VIP-Policy passte darum nur „möglich (Eingang)“. Eingang ist das
+  externe Interface der VIP (sonst nach der Route zur Quelle); ohne Quelle gilt eine beliebige
+  Adresse im Internet. Oben steht „über VIP … → Load Balancer → Server“; eine Quelle von innen
+  (private IP) sucht wie bisher direkt.
+- **Rückweg je Weg:** Firewalls sind zustandsbehaftet, die Antwort muss über dieselben Firewalls
+  zurück. Je Weg rechnet die Weg-Suche den Rückweg (nur Routing) und zeigt „Rückweg ✓“, „Rückweg
+  über andere Firewall“ (mit dem Rückweg im Hinweis) bzw. „Rückweg ?“. ACI-Knoten und Router
+  zählen nicht, im Verbund genügt derselbe Verbund. Abschnitte: am Load Balancer antwortet der
+  Server dem Load Balancer, nach einem SNAT der Adresse des Pools. Sind nicht alle Wege
+  symmetrisch, nennt ein Hinweis den einzig möglichen.
+- **Befund „VIP ohne Ziel“** (Findings → Regeln): VIP der Firewall ohne Load Balancer dahinter,
+  deren interne IP weder im IPAM noch an einer VM bzw. einem ACI-Endpunkt vorkommt.
+- Tests: `test_policy_check.py`, `test_vip_balancer.py`, `test_nat_checks.py`,
+  `e2e/release_0134.spec.ts`, `e2e/flows.spec.ts`.
+
 ## 0.133.4 – 2026-11-05
 
 Rückmeldung des Anwenders 2026-11-05 zu 0.133.3 (der Dienst FT_any ist erledigt): „Regeln:

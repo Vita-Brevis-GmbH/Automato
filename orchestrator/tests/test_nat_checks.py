@@ -44,3 +44,19 @@ def test_pruefung_und_filter_nur_abweichungen(client):
     obj = client.get(f"/objects/{detail['object_id']}").json()
     assert obj["name"] == BAD and obj["category"] == "vip"
     assert detail["vms"] == []  # kein vCenter
+
+
+def test_befund_vip_ohne_ziel(client):
+    """0.134.0 (Anwender: „es scheint noch Externe VIPs zu geben, welche keine Loadbalancer haben
+    und die IP nicht mehr zugewiesen ist. Diese müssen man als Finding markieren“): VIP der
+    Firewall, deren interne Adresse im IPAM nicht vergeben ist, ohne Load Balancer, VM bzw.
+    ACI-Endpunkt - ein Befund; die VIP mit Ziel im IPAM nicht."""
+    tid = _with_bad_vip(client)
+    r = client.get("/findings", params={"tenant_id": tid, "type": "vip_target_missing"})
+    assert r.status_code == 200, r.text
+    found = r.json()
+    items = found["items"] if isinstance(found, dict) else found
+    assert [f["detail"]["name"] for f in items] == [BAD], items
+    (f,) = items
+    assert f["subject_kind"] == "nat" and f["detail"]["mapped"] == ["10.99.0.9"]
+    assert f["detail"]["ext_ip"] == "203.0.113.20"

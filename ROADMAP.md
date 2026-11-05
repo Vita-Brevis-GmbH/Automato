@@ -460,8 +460,9 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.133.2** | Einwand 2026-11-04 zu 0.133.1: Abbruch bei einer Hostroute im Ziel-Netz behoben, ein Weg bricht nicht mehr alles ab, Fehler in der Übersicht statt Neubeginn, alle Applikationen vorrechnen (auch nie geöffnete, nach dem Start, ohne Warten), Log mit Zeit |
 | **0.133.3** | Rückmeldung 2026-11-05: eigener Dienst mit Protokoll IP/0 (z. B. FT_any) = alle Dienste in der Weg-Suche – Sperre mit Internet Service als Sperrliste statt „abhängig“ |
 | **0.133.4** | Rückmeldung 2026-11-05 zu 0.133.3: SD-WAN-Zone als Eingang der Policies (Mitglied gehört zur Zone, Agent liest SD-WAN-Zonen wie Zonen), Anbindung ohne Interface mit Eingang nach der Route, Ein-/Ausgang der Policy bei „möglich“ |
+| **0.134.0** | Einwand 2026-11-05 zu 0.133.4: Server hinter einer VIP von aussen über die VIP gesucht (Start an der Firewall, öffentliche Quelle, Anbindung), Rückweg je Weg über dieselben Firewalls (ausser ACI und Verbund), Befund VIP ohne Ziel |
 
-### Nächste Arbeiten (Stand 0.133.4)
+### Nächste Arbeiten (Stand 0.134.0)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
 **0.68.0** (2026-10-26), bis **0.102.0** (2026-10-28: „ich teste nach dem Freigeben der Version
@@ -497,7 +498,7 @@ Eingangsfiltern und default-originate ohne Einwand), bis **0.132.0** (2026-11-04
 Dauer und VIP-Weg ohne Einwand zu 0.132.0). Zu 0.132.1 Einwand (2026-11-04: Weg über die VIP mit
 Sperrliste davor weiter als gesperrt gezeigt) – korrigiert in 0.132.2, bis **0.132.2** (2026-11-04,
 Rückmeldung zu BGP-Befunden und Netzwerkplan ohne Einwand zu 0.132.2), bis **0.133.0** (2026-11-04,
-Rückmeldung zur Dauer ohne Einwand zu 0.133.0). Zu 0.133.1 Einwand (2026-11-04: Berechnung bricht immer bei 391 von 808 Wegen ab und beginnt von vorn, 83 Applikationen nie berechnet) – korrigiert in 0.133.2, bis **0.133.2** (2026-11-05, „Er rechnet nun durch, super“; Rückmeldung zur Sperre in der Weg-Suche ohne Einwand zu 0.133.2). Zu 0.133.3 (2026-11-05): Dienst FT_any erledigt, „abhängig von: Eingang“ noch offen – in 0.133.4. Zur Abnahme steht 0.133.4. Seit 0.104.0 gilt eine
+Rückmeldung zur Dauer ohne Einwand zu 0.133.0). Zu 0.133.1 Einwand (2026-11-04: Berechnung bricht immer bei 391 von 808 Wegen ab und beginnt von vorn, 83 Applikationen nie berechnet) – korrigiert in 0.133.2, bis **0.133.2** (2026-11-05, „Er rechnet nun durch, super“; Rückmeldung zur Sperre in der Weg-Suche ohne Einwand zu 0.133.2). Zu 0.133.3 (2026-11-05): Dienst FT_any erledigt, „abhängig von: Eingang“ noch offen – in 0.133.4. Zu 0.133.4 Einwand (2026-11-05: Server hinter der VIP nur direkt gesucht, Rückweg nicht geprüft, VIPs ohne Ziel) – in 0.134.0. Zur Abnahme steht 0.134.0. Seit 0.104.0 gilt eine
 Version als abgenommen,
 sobald die nächste Rückmeldung des Anwenders keinen Einwand dazu enthält (`CLAUDE.md`, Ablauf).
 

@@ -225,6 +225,22 @@ function PathKind({ path, activeCount }: { path: TracePath; activeCount: number 
   );
 }
 
+// Rückweg (0.134.0, Anwender: „Hin und Rückweg geprüft … dieser muss gleich sein, ausnahme ACI Nodes und Firewall
+// Verbunde“): über dieselben Firewalls zurück – sonst verwirft die Firewall die Antwort (asymmetrisches Routing)
+function ReturnChip({ r }: { r: NonNullable<TracePath["return"]> }) {
+  const [cls, label] =
+    r.state === "symmetric"
+      ? ["ok", L("Rückweg ✓", "Return ✓")]
+      : r.state === "asymmetric"
+        ? ["crit", L("Rückweg über andere Firewall", "Return via other firewall")]
+        : ["", L("Rückweg ?", "Return ?")];
+  return (
+    <span className={`chip ${cls} path-return`} data-return={r.state} title={r.text}>
+      {label}
+    </span>
+  );
+}
+
 // Regeln auf dem Weg (0.22.0): Urteil je FortiGate-Hop bzw. je Weg
 export const VERDICT: Record<string, [string, string]> = {
   allow: ["ok", L("erlaubt", "allowed")],
@@ -1511,6 +1527,7 @@ function TraceCard({
             {L("Regeln:", "Rules:")} {path.policy.text}
           </span>
         )}
+        {path.return && <ReturnChip r={path.return} />}
         <span className="faint">
           {path.end.text}
           {path.end.also?.length ? L(` bzw. ${path.end.also.join(" bzw. ")}`, ` or ${path.end.also.join(" or ")}`) : ""}
@@ -2532,6 +2549,19 @@ function PathSearch({
             )}
             {trace.start.length > 0 && `Start: ${trace.start.map((s) => `${s.label} (${s.via})`).join(" · ")}`}
           </div>
+          {(trace.via_vip || trace.src_assumed) && (
+            // 0.134.0: Ziel hinter einer VIP von aussen – der Weg geht über die VIP (nicht direkt zur Server-IP)
+            <div className="trace-via-vip" style={{ margin: "4px 0" }}>
+              {trace.via_vip && (
+                <span className="chip info" title={trace.via_vip.text}>
+                  {L("über VIP", "via VIP")} {trace.via_vip.name} ({trace.via_vip.ext_ip}
+                  {trace.via_vip.ext_port ? `:${trace.via_vip.ext_port}` : ""}){trace.via_vip.balancer ? ` → ${trace.via_vip.balancer}` : ""}{" "}
+                  → {trace.via_vip.server}
+                </span>
+              )}{" "}
+              {trace.src_assumed && <span className="faint">{trace.src_assumed.text}</span>}
+            </div>
+          )}
           {trace.notes.map((n) => (
             <Note key={n} warn>
               {n}
