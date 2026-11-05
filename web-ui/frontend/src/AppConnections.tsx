@@ -400,6 +400,11 @@ function ConnDetail({ c, onRule, onExplain }: { c: AppConnection; onRule: (id: n
             )
           : ""}
       </div>
+      {c.service_chain && c.service_chain.length > 1 && (
+        <div className="faint conn-service-line" style={{ marginBottom: 6 }}>
+          {L("Ports:", "Ports:")} {c.service_chain.map((x) => `${x.label} ${x.service}`).join(" → ")}
+        </div>
+      )}
       {c.return && (
         // 0.136.0: Rückweg über dieselben Firewalls (ausser ACI und Verbund)
         <div className="conn-return-line" data-return={c.return.state} style={{ marginBottom: 6 }}>
@@ -1201,7 +1206,18 @@ export default function ConnectionsCard({
                     <td>
                       <SideLabel s={c.dst} />
                     </td>
-                    <td className="mono">{c.service ?? L("alle", "all")}</td>
+                    <td className="mono">
+                      {c.service ?? L("alle", "all")}
+                      {c.service_chain && c.service_chain.length > 1 && (
+                        // 0.137.0: Port des Clients, dahinter die Ports nach VIP bzw. Load Balancer
+                        <div className="faint conn-service-chain" title={c.service_chain.map((x) => `${x.label} ${x.service}`).join(" → ")}>
+                          {c.service_chain
+                            .slice(1)
+                            .map((x) => `→ ${x.label} ${x.service}`)
+                            .join(" ")}
+                        </div>
+                      )}
+                    </td>
                     <td>
                       <HopChain hops={c.hops} />
                       {!c.reached && c.end && <div className="faint">{c.end.text}</div>}

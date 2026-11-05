@@ -43,6 +43,7 @@ import {
   TraceZoneStep,
   VipServer,
 } from "./api";
+import type { ServiceAt, ServiceStage } from "./api";
 import type { View, ViewParams } from "./App";
 import { NatDrawer } from "./Nat";
 import PathExplainDrawer from "./PathExplain";
@@ -222,6 +223,24 @@ function PathKind({ path, activeCount }: { path: TracePath; activeCount: number 
     </span>
   ) : (
     <span className="chip ok">{L("aktiv", "active")}</span>
+  );
+}
+
+// Ports entlang des Wegs (0.137.0, Anwender: „Service Feld nicht genau definiert, wo es hin gehört, zum Zielsystem oder
+// zum VIP“): Client → VIP (Port-Weiterleitung) → Eingang Load Balancer → Server
+export function ServiceChain({ stages }: { stages: ServiceStage[] }) {
+  return (
+    <div className="faint trace-service-chain" style={{ margin: "0 0 6px" }}>
+      {L("Ports:", "Ports:")}{" "}
+      {stages.map((x, i) => (
+        <Fragment key={i}>
+          {i > 0 && " → "}
+          <span data-at={x.at}>
+            {x.label} <span className="mono">{x.service}</span>
+          </span>
+        </Fragment>
+      ))}
+    </div>
   );
 }
 
@@ -963,6 +982,11 @@ function HopFacts({ h, zone, title }: { h: TraceHop; zone?: TraceZone | null; ti
             <dd>
               {decisive ? <RuleFacts p={decisive} r={h.rules} sid={h.source_system_id} /> : null}
               <div className="faint">{h.rules.text}</div>
+              {h.checked_service && (
+                <div className="faint">
+                  {L("geprüft mit", "checked with")} {h.checked_service}
+                </div>
+              )}
             </dd>
           </>
         )}
@@ -1841,6 +1865,17 @@ function TraceCard({
                     </td>
                     <td>
                       <HopRulesCell r={h.rules} />
+                      {h.checked_service && h.rules && (
+                        <div
+                          className="faint hop-checked-service"
+                          title={L(
+                            "Port, mit dem die Policies bzw. Contracts dieses Hops geprüft sind – nach der Port-Weiterleitung der VIP bzw. hinter dem Load Balancer",
+                            "Port with which the policies or contracts of this hop are checked – after the port forwarding of the VIP or behind the load balancer",
+                          )}
+                        >
+                          {L("geprüft mit", "checked with")} {h.checked_service}
+                        </div>
+                      )}
                       {h.snat && (
                         <div
                           className="faint"
@@ -2234,7 +2269,7 @@ type Asked = { ip: string; name?: string; net?: string | null; exit?: string };
 
 // URL der Suche (ADR 0019 Ergänzung): zuerst src, dst, service (wie die Links aus der Applikations-Doku),
 // dann Start, Backup-Wege, die Namen der Eingaben und die Anbindungen
-function searchUrl(src: Asked, dst: Asked, service: string, start: string, slack: string, startPort = ""): string {
+function searchUrl(src: Asked, dst: Asked, service: string, start: string, slack: string, startPort = "", serviceAt: ServiceAt = "client"): string {
   const p = new URLSearchParams();
   const put = (k: string, v?: string | null) => {
     if (v) p.set(k, v);
@@ -2242,6 +2277,7 @@ function searchUrl(src: Asked, dst: Asked, service: string, start: string, slack
   put("src", src.ip);
   put("dst", dst.ip);
   put("service", service.trim());
+  put("service_at", service.trim() && serviceAt !== "client" ? serviceAt : "");
   put("start", start);
   put("start_port", start ? startPort : "");
   if (slack !== "1") p.set("slack", slack === "" ? "off" : slack);
@@ -2281,6 +2317,10 @@ function PathSearch({
   );
   // tcp/443, udp/53 bzw. Service-Objekt/ACI-Filter (in Links auch `svc`)
   const [service, setService] = useState(initial?.service ?? initial?.svc ?? "");
+  // 0.137.0: wo der Dienst gilt – beim Client (Vorgabe), am Eingang des Load Balancers bzw. am Ziel-Server
+  const [serviceAt, setServiceAt] = useState<ServiceAt>(() =>
+    initial?.service_at === "lb" || initial?.service_at === "server" ? initial.service_at : "client",
+  );
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   // Details am Weg im Seitenpanel (ADR 0019 Ergänzung)
@@ -2320,10 +2360,10 @@ function PathSearch({
       setAsked(a);
       // Eingaben in der URL (#wege?src=…&dst=…&service=…): Zurück bzw. ein neuer Tab stellt die Suche wieder her
       const port = start && start === (over?.start ?? startNow) ? (over?.startPort ?? startPortNow) : "";
-      window.history.replaceState(null, "", searchUrl(a.src, a.dst, svc, start, slack, port));
+      window.history.replaceState(null, "", searchUrl(a.src, a.dst, svc, start, slack, port, serviceAt));
       if (s.ip || start || s.exit) {
         const sl = slack === "" ? 0 : Number(slack);
-        setAsks({ dst: d.ip, src: s.ip, start, startPort: port, service: svc, slack: sl, srcExit: s.exit, dstExit: d.exit });
+        setAsks({ dst: d.ip, src: s.ip, start, startPort: port, service: svc, serviceAt, slack: sl, srcExit: s.exit, dstExit: d.exit });
         setTrace(
           await traceRoute(tenantId, {
             dst: d.ip,
@@ -2331,6 +2371,7 @@ function PathSearch({
             start,
             startPort: port,
             service: svc,
+            serviceAt,
             slack: slack === "" ? 0 : Number(slack),
             srcExit: s.exit,
             dstExit: d.exit,
@@ -2495,6 +2536,20 @@ function PathSearch({
         </div>
         <select
           className="sel"
+          id="trace-service-at"
+          value={serviceAt}
+          onChange={(e) => setServiceAt(e.target.value as ServiceAt)}
+          title={L(
+            "Wo der Dienst gilt: beim Client (Port an der VIP bzw. am Ziel), am Eingang des Load Balancers oder am Ziel-Server – die Weg-Suche rechnet über VIP und Load Balancer zurück zum Port des Clients",
+            "Where the service applies: at the client (port at the VIP or destination), at the load balancer entry or at the destination server – the path search calculates back via VIP and load balancer to the client port",
+          )}
+        >
+          <option value="client">{L("Dienst beim Client", "Service at the client")}</option>
+          <option value="lb">{L("Dienst am Eingang Load Balancer", "Service at load balancer entry")}</option>
+          <option value="server">{L("Dienst am Ziel-Server", "Service at destination server")}</option>
+        </select>
+        <select
+          className="sel"
           value={slack}
           onChange={(e) => setSlack(e.target.value)}
           title={L(
@@ -2542,13 +2597,21 @@ function PathSearch({
                   : ""}
                 {L("Ziel", "Destination")} {label(asked.dst, trace.exits?.dst)}
                 {trace.service
-                  ? ` · ${L("Dienst", "Service")} ${trace.service_name ? `${trace.service_name} = ` : ""}${trace.service}`
+                  ? trace.service_at && trace.service_at.at !== "client"
+                    ? ` · ${L("Dienst", "Service")} ${trace.service_at.given} ${trace.service_at.label} = ${L("beim Client", "at the client")} ${trace.service}`
+                    : ` · ${L("Dienst", "Service")} ${trace.service_name ? `${trace.service_name} = ` : ""}${trace.service}`
                   : ""}
                 {trace.start.length > 0 ? " · " : ""}
               </>
             )}
             {trace.start.length > 0 && `Start: ${trace.start.map((s) => `${s.label} (${s.via})`).join(" · ")}`}
           </div>
+          {trace.service_chain && <ServiceChain stages={trace.service_chain} />}
+          {trace.service_at?.note && (
+            <div className="faint trace-service-note" style={{ margin: "0 0 6px" }}>
+              {trace.service_at.note}
+            </div>
+          )}
           {(trace.via_vip || trace.src_assumed) && (
             // 0.134.0: Ziel hinter einer VIP von aussen – der Weg geht über die VIP (nicht direkt zur Server-IP)
             <div className="trace-via-vip" style={{ margin: "4px 0" }}>

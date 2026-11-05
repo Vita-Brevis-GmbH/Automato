@@ -216,6 +216,7 @@ MODULES: tuple[Module, ...] = (
             "net_assign",  # grosse Netze der Regeln zuordnen (0.111.0)
             "path_vip",  # Ziel hinter einer VIP von aussen ueber die VIP (0.134.0)
             "return_path",  # Rueckweg je Weg, symmetrisch (0.134.0)
+            "path_service",  # Dienst je Stelle: Client, Load Balancer, Server (0.137.0)
         ),
         views=("wege",),
     ),  # fmt: skip

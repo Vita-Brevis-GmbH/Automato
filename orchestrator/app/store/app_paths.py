@@ -55,6 +55,7 @@ from app.models import (
     Epg,
     EpgEndpoint,
     EpgSubnet,
+    NatRule,
     Rule,
     RuleDomain,
     RuleIpRange,
@@ -65,6 +66,7 @@ from app.store import (
     appdoc,
     epg_locate,
     net_assign,
+    path_service,
     paths,
     policy_check,
     return_path,
@@ -459,6 +461,7 @@ def _candidates(
             if aci_direction.replies_only(rule.raw, names):
                 without[rule.id].add(_why("replies"))
                 continue  # Consumer -> Provider nur Antworten (0.72.1): keine Verbindung
+        front = None  # VIP der Firewall vor dem System (0.137.0: Port des Clients)
         if rule.domain == RuleDomain.ACI_CONTRACT:
             key = f"aci:{rule.id}:{h['side']}:{h.get('epg') or h['system']}"
             if key not in counters:
@@ -476,12 +479,16 @@ def _candidates(
             entry = _entry(data, rule, h)  # ueber VIP bzw. Load Balancer (0.79.0)
             if entry is not None:
                 own_ips = [entry]
+            front = _fw_vip(data, rule, h) if entry is not None else None
         if not counters[key]:
             skipped.add(rule.name or f"#{rule.external_id}")
             aci = rule.domain == RuleDomain.ACI_CONTRACT
             without[rule.id].add(_why("counter_aci" if aci else "counter"))
             continue
         services = _named(h["services"]) if h.get("reverse") else _services(rule)
+        if front is not None:
+            # Port des Clients statt des Ports nach der Port-Weiterleitung (0.137.0)
+            services = list(dict.fromkeys(_client_service(front, x) for x in services))
         families = {_family(i) for i in own_ips}
         if not any(_family(cp.ip) in families for cp in counters[key]):
             without[rule.id].add(_why("family"))
@@ -564,24 +571,46 @@ def _entry(data: appdoc.TenantData, rule: Rule, h: dict) -> str | None:
     text = str(h.get("object") or "")
     if h.get("side") != "dst":
         return None
+    vip = _fw_vip(data, rule, h)
+    if vip is not None:
+        return nat_store.host_ip(vip.ext_ip.split("-")[0])
     if nat_store.CHAIN not in text:
-        vip = data.nat_by_name.get((rule.source_system_id, rule.vdom, text.strip().lower()))
-        server = nat_store.host_ip(str(h.get("value") or ""))
-        if vip is None or nat_store.is_balancer(vip) or not vip.ext_ip or server is None:
-            return None
-        if server not in {nat_store.host_ip(v) for v in nat_store.internal_ips(vip)}:
-            return None
-        return nat_store.host_ip(vip.ext_ip.split("-")[0])
-    front, _, lb_name = text.partition(nat_store.CHAIN)
-    vip = data.nat_by_name.get((rule.source_system_id, rule.vdom, front.strip().lower()))
-    if vip is not None and not nat_store.is_balancer(vip) and vip.ext_ip:
-        return nat_store.host_ip(vip.ext_ip.split("-")[0])
+        return None
+    _front, _, lb_name = text.partition(nat_store.CHAIN)
     value = str(h.get("value") or "")
     for n in data.nats:
         if nat_store.is_balancer(n) and n.name == lb_name.strip():
             if value in nat_store.internal_ips(n):
                 return nat_store.host_ip(n.ext_ip)
     return None
+
+
+def _fw_vip(data: appdoc.TenantData, rule: Rule, h: dict) -> NatRule | None:
+    """VIP der Firewall, über die die Regel das System als Ziel erreicht: direkt (Treffer über
+    die VIP, das System ist ihr internes Ziel) bzw. vor dem Load Balancer („V-EXT_x → vs-web“)."""
+    text = str(h.get("object") or "")
+    if h.get("side") != "dst":
+        return None
+    chained = nat_store.CHAIN in text
+    name = text.partition(nat_store.CHAIN)[0] if chained else text
+    vip = data.nat_by_name.get((rule.source_system_id, rule.vdom, name.strip().lower()))
+    if vip is None or nat_store.is_balancer(vip) or not vip.ext_ip:
+        return None
+    if not chained:
+        server = nat_store.host_ip(str(h.get("value") or ""))
+        if server not in {nat_store.host_ip(v) for v in nat_store.internal_ips(vip)}:
+            return None
+    return vip
+
+
+def _client_service(vip: NatRule | None, svc):
+    """Dienst der Regel als Port des Clients (0.137.0, Anwender: „Service Feld nicht genau
+    definiert, wo es hin gehört“): die FortiGate prüft die Policy nach der Port-Weiterleitung
+    der VIP - der Client nutzt den externen Port (443 statt 8443)."""
+    if vip is None or not svc or svc[1] is None:
+        return svc
+    port = path_service.reverse_vip(vip, svc[1])
+    return (svc[0], port) if port is not None else svc
 
 
 def _merge(m: _Conn, c: _Conn) -> None:
@@ -946,6 +975,8 @@ def _connection(
         "notes": res["notes"],
         # Rueckweg ueber dieselben Firewalls (0.136.0, ausser ACI und Verbund)
         "return": return_path.summary(active),
+        # Ports entlang des Wegs, wenn sie sich aendern: Client, VIP, Load Balancer, Server
+        "service_chain": res.get("service_chain"),
         "zones": _zones_out(res.get("zones"), first),
         # Teile des Ziel-Netzes, die genauer anders geroutet werden (eigene Verbindungen)
         "parts": parts,

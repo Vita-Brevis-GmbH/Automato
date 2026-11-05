@@ -51,7 +51,7 @@ from app.models import (
 from app.models.device_object import ObjectCategory
 from app.models.rule import EndpointKind, rule_service
 from app.store import nat as nat_store
-from app.store import rule_view
+from app.store import path_service, rule_view
 from app.store.rule_index import value_range
 from app.store.topology import endpoint, is_net, is_private, span
 
@@ -831,9 +831,14 @@ def check_paths(session: Session, tenant_id: int, paths: list[dict], src, dst, s
                     cache[key] = checks.aci.check(sid, vrf, cur_src, hop_dst, cur_svc, into,
                                                   outside=outside)  # fmt: skip
                 hop["rules"] = cache[key]
+                if cur_svc != service and cur_svc and cur_svc[1] is not None:
+                    hop["checked_service"] = path_service.text(cur_svc)  # 0.137.0
                 verdicts.append((hop["label"], cache[key]["verdict"], kind, cache[key]["text"]))
                 continue
             cur_svc = _forwarded(cur_svc, hop.get("nat"))
+            if cur_svc != service and cur_svc and cur_svc[1] is not None:
+                # 0.137.0: mit diesem Port geprueft (nach Port-Weiterleitung bzw. Load Balancer)
+                hop["checked_service"] = path_service.text(cur_svc)
             ingress, egress = hop.get("ingress") or {}, hop.get("egress") or {}
             sid, vdom = hop["source_system_id"], hop["context"]
             ports = (ingress.get("interface"), ingress.get("zone"),
@@ -877,31 +882,15 @@ def _behind_balancer(lb: dict, src, service):
     unbekannt - die VIP steht fuer ihr Netz) bzw. der Client; Port = Port des Servers."""
     if lb.get("snat") != "client":
         src = endpoint(lb["ext"]) if lb.get("ext") else None
-    port = lb.get("server_port")
-    if service and port not in (None, ""):
-        try:
-            service = (service[0], int(port))
-        except (TypeError, ValueError):
-            pass
-    return src, service
+    return src, path_service.behind_lb(service, lb)
 
 
 def _forwarded(service, nat: dict | None):
-    """Port-Weiterleitung einer VIP: externer Port -> interner Port (Bereich mit Abstand)."""
-    if not service or service[1] is None or not nat or not nat.get("ports"):
-        return service
-    ext, mapped = (_port_range(p) for p in nat["ports"])
-    if ext is None or mapped is None or not ext[0] <= service[1] <= ext[1]:
-        return service
-    return (service[0], mapped[0] + service[1] - ext[0])
+    """Port-Weiterleitung einer VIP: externer Port -> interner Port (`path_service`)."""
+    return path_service.forwarded(service, nat)
 
 
-def _port_range(text: str | None) -> tuple[int, int] | None:
-    a, _, b = str(text or "").partition("-")
-    if not a.strip().isdigit():
-        return None
-    lo = int(a)
-    return lo, int(b) if b.strip().isdigit() else lo
+_port_range = path_service.port_range
 
 
 def _overall(verdicts: list[tuple]) -> dict | None:

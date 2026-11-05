@@ -547,6 +547,15 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
           ihrem NAT weiter (z. B. SNAT der VIP-Policy bis zum Server).
         - Startpunkt gewählt und die Quelle hängt dort nicht an: der Eingang ist das Interface
           der Route zur Quelle („gewählt, Eingang lan nach der Route zur Quelle“).
+        - **Wo der Dienst gilt (0.137.0):** Neben dem Dienst die Auswahl „Dienst beim Client“
+          (Vorgabe: der Port, den der Client an der VIP bzw. am Ziel nutzt), „am Eingang Load
+          Balancer“ bzw. „am Ziel-Server“. Die Weg-Suche rechnet über die Port-Weiterleitung der
+          VIP und den Pool zurück zum Port des Clients („Dienst tcp/8443 am Ziel-Server = beim
+          Client tcp/443“). Ändern VIP bzw. Load Balancer den Port, steht oben „Ports: Client …
+          → VIP … → Eingang Load Balancer … → Server …“ und je Hop „geprüft mit tcp/…“ – die
+          FortiGate prüft die Policy nach der Port-Weiterleitung, der Dienst der Policy ist darum
+          der weitergeleitete Port. Die Verbindungen der Applikations-Doku zeigen den Port des
+          Clients, darunter die Ports entlang des Wegs.
         - **Server hinter einer VIP von aussen (0.134.0):** Ist das Ziel ein Server hinter
           einer VIP der Firewall (direkt bzw. über den Load Balancer) und kommt die Suche von
           aussen (Start an einer Firewall ohne Quelle, öffentliche Quelle, Anbindung als

@@ -85,6 +85,7 @@ from app.store import (
     l3out_firewall,
     net_lists,
     path_explain,
+    path_service,
     path_vip,
     paths,
     policy_check,
@@ -635,11 +636,13 @@ EXIT_REF = r"^(exit|router):[^@\s]+(@\d+)?$"
 
 def _traced(session: Session, tid: int, dst: str | None, src: str | None, start: str | None,
             slack: int, service: str | None, src_exit: str | None, dst_exit: str | None,
-            start_port: str | None = None,
+            start_port: str | None = None, service_at: str = "client",
             ) -> tuple[dict, paths.Graph, str | None, str | None, tuple | None]:  # fmt: skip
     """Weg wie in der Weg-Suche (auch fuer „Warum dieser Weg?“) -> (Ergebnis, Graph, Quelle,
     Ziel, Dienst). `start_port` (0.113.1): Eingang (Interface bzw. Zone) am Startpunkt - z. B.
-    das der Regel, deren Quelle any ist."""
+    das der Regel, deren Quelle any ist. `service_at` (0.137.0): wo der Dienst gilt - beim
+    Client (Vorgabe), am Eingang des Load Balancers bzw. am Ziel-Server; gerechnet wird mit
+    dem Port des Clients."""
     if not dst and not dst_exit:
         raise HTTPException(status_code=422, detail=L("dst oder dst_exit angeben",
                                                       "specify dst or dst_exit"))  # fmt: skip
@@ -657,7 +660,11 @@ def _traced(session: Session, tid: int, dst: str | None, src: str | None, start:
     entries = None
     # 0.134.0 (Anwender: „Er will direkt zum Server, auch wenn die zweite Policy den richtigen
     # Weg wählt“): von aussen ist ein Server hinter einer VIP nur über die VIP erreichbar
-    vip, assumed = _via_vip(session, tid, graph, dst, src, start, src_exit, dst_exit, wanted)
+    given = wanted  # Dienst wie eingegeben (0.137.0)
+    vip, assumed = _via_vip(session, tid, graph, dst, src, start, src_exit, dst_exit,
+                            wanted if service_at == "client" else None)  # fmt: skip
+    # Dienst an einer anderen Stelle (0.137.0): rueckwaerts zum Port des Clients
+    wanted, at_note = path_service.client_service(session, tid, dst, wanted, service_at, vip)
     if vip is not None:
         dst = vip.ext_ip
         if not src and not src_exit:  # Start an der Firewall ohne Quelle: aus dem Internet
@@ -703,6 +710,12 @@ def _traced(session: Session, tid: int, dst: str | None, src: str | None, start:
         _exit_notes(result, ends, shown)
     if service and wanted is not None and result["service"] != service.strip().lower():
         result["service_name"] = service.strip()
+    if given is not None:  # wo der Dienst gilt (0.137.0)
+        result["service_at"] = {"at": service_at, "label": path_service.label(service_at),
+                                "given": path_service.text(given),
+                                "client": path_service.text(wanted), "note": at_note}  # fmt: skip
+        if service_at != "client":
+            result.pop("service_name", None)  # der Name gilt fuer den eingegebenen Dienst
     return result, graph, src, dst, wanted
 
 
@@ -727,6 +740,11 @@ def trace(
     start_port: str | None = Query(
         None, max_length=100, description="Eingang am Startpunkt (Interface bzw. Zone)"
     ),
+    service_at: str = Query(
+        "client",
+        pattern="^(client|lb|server)$",
+        description="Wo der Dienst gilt: client (Vorgabe), lb (Eingang Load Balancer), server",
+    ),
     tenant_id: int | None = None,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
@@ -737,7 +755,8 @@ def trace(
     (`src` waehlt ein anderes), als Ziel ihre Netze und je Weg, ob er ueber sie hinausgeht."""
     tid = _tenant(session, principal, tenant_id)
     result, graph, src, dst, wanted = _traced(session, tid, dst, src, start, slack, service,
-                                              src_exit, dst_exit, start_port)  # fmt: skip
+                                              src_exit, dst_exit, start_port,
+                                              service_at)  # fmt: skip
     # Zonen je Hop, Uebergaenge und Absicht Quell-/Zielzone (0.57.0)
     zone_path.annotate(session, tid, result, src, dst, wanted, result.get("service_name"), graph)
     # L2 zwischen den Hops, Anschluss von Quelle und Ziel (0.64.0)
@@ -757,6 +776,7 @@ def explain(
     src_exit: str | None = Query(None, max_length=100, pattern=EXIT_REF),
     dst_exit: str | None = Query(None, max_length=100, pattern=EXIT_REF),
     start_port: str | None = Query(None, max_length=100),
+    service_at: str = Query("client", pattern="^(client|lb|server)$"),
     connection: bool = Query(False, description="Weg wie bei Verbindungen Ende zu Ende"),
     starts: Annotated[list[str] | None, Query(max_length=20)] = None,
     expect: int | None = Query(None, description="Erwartet ueber dieses Quellsystem"),
@@ -787,7 +807,8 @@ def explain(
                                                     wanted, starts or [])  # fmt: skip
     else:
         result, graph, src, dst, _wanted = _traced(session, tid, dst, src, start, slack, service,
-                                                   src_exit, dst_exit, start_port)  # fmt: skip
+                                                   src_exit, dst_exit, start_port,
+                                                   service_at)  # fmt: skip
     out = path_explain.explain(session, tid, graph, result, src, dst, expect)
     out["paths_found"] = len(result.get("paths") or [])
     return out

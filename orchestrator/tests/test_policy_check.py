@@ -671,6 +671,47 @@ def test_verbindung_der_applikation_ueber_die_vip(client):
     assert conn["verdict"] == "allow" and not conn["mismatch"], conn["text"]
 
 
+def test_dienst_je_stelle_bei_port_weiterleitung(client):
+    """0.137.0 (Anwender: „wenn wir bei den VIPs oder Loadbalancer die Ports anpassen, dann
+    wird ebenso nicht sauber angezeigt, da das Service Feld nicht genau definiert ist, wo es
+    hin gehört“): VIP_app leitet 443 auf 8443 weiter. Beim Client 443, am Ziel-Server 8443 -
+    beides derselbe Weg; je Hop „geprüft mit tcp/8443“; die Verbindung der Applikation zeigt
+    den Port des Clients (bis 0.136.0 der Port der Policy nach der Port-Weiterleitung)."""
+    tid, _sids = _seed_edge(client, "Kunde Dienst je Stelle")
+
+    def trace(**params) -> dict:
+        params = {"tenant_id": tid, "src": "203.0.113.50", **params}
+        r = client.get("/routing/trace", params=params)
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    chain = [("client", "tcp/443"), ("vip", "tcp/8443"), ("server", "tcp/8443")]
+    for got in (trace(dst="198.51.100.80", service="tcp/443"),
+                trace(dst="198.51.100.80", service="tcp/8443", service_at="server"),
+                trace(dst="10.40.0.80", service="tcp/8443", service_at="server")):  # fmt: skip
+        assert got["service"] == "tcp/443", got["service_at"]
+        assert [(x["at"], x["service"]) for x in got["service_chain"]] == chain
+        edge, inner = got["paths"][0]["hops"]
+        assert edge["checked_service"] == inner["checked_service"] == "tcp/8443"
+        assert got["paths"][0]["policy"]["verdict"] == "allow"
+    assert got["service_at"] == {
+        "at": "server", "label": "am Ziel-Server", "given": "tcp/8443", "client": "tcp/443",
+        "note": "Dienst tcp/8443 am Ziel-Server = beim Client tcp/443"}  # fmt: skip
+    # ohne Load Balancer: am Eingang des Load Balancers gilt wie beim Client (Hinweis)
+    got = trace(dst="198.51.100.80", service="tcp/443", service_at="lb")
+    assert got["service"] == "tcp/443" and "kein Load Balancer" in got["service_at"]["note"]
+    # ohne Port-Weiterleitung auf dem Weg: keine Port-Kette
+    assert "service_chain" not in trace(dst="10.40.0.80", src="10.70.0.100", service="tcp/8443")
+
+    body = {"name": "App", "members": [{"kind": "host", "ref": "10.40.0.80"}]}
+    app = client.post(f"/applications?tenant_id={tid}", json=body,
+                      headers={"X-Dev-Roles": "operator"}).json()  # fmt: skip
+    conns = client.get(f"/applications/{app['id']}/connections").json()["connections"]
+    (conn,) = (c for c in conns if c["src"]["ip"] == "203.0.113.0/24")
+    assert conn["service"] == "tcp/443" and conn["verdict"] == "allow"
+    assert [(x["at"], x["service"]) for x in conn["service_chain"]] == chain
+
+
 def test_verbindung_mit_rueckweg_ueber_andere_firewall(client, monkeypatch):
     """0.136.0 (Anwender: „Ja“ - Rückweg auch in den Verbindungen der Applikations-Doku): je
     Verbindung der Rückweg aus ihren aktiven Wegen, über eine andere Firewall gezählt in der

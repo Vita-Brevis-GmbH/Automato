@@ -2007,6 +2007,8 @@ export interface AppConnection {
   notes: string[];
   // 0.136.0: Rückweg über dieselben Firewalls (ausser ACI und Verbund) aus den aktiven Wegen
   return?: { state: "symmetric" | "asymmetric" | "unknown"; text: string; firewalls?: string[] } | null;
+  // 0.137.0: Ports entlang des Wegs (Client, VIP, Load Balancer, Server), wenn sie sich ändern
+  service_chain?: ServiceStage[] | null;
   // logische Zonen (0.78.0, ADR 0024): Quelle/Ziel, Kette des Wegs, Absichten mit Urteil
   zones?: AppConnZones | null;
   // Netz als Ziel (0.79.1): genauer geroutete Teile (eigene Verbindungen) bzw. Teil von
@@ -2492,6 +2494,7 @@ export interface VipServer {
 }
 export interface TraceHop extends RoutingNode {
   via: string; // wie der Weg hierher kam (Quelle angeschlossen, Adresse des Nachbarn, …)
+  checked_service?: string; // 0.137.0: Policies/Contracts mit diesem Port geprüft (nach Port-Weiterleitung bzw. Load Balancer)
   vrf?: number | string; // VRF des Eingangs, wenn nicht die Standard-VRF ("mgmt" = Management)
   ingress: TracePort;
   egress?: TracePort;
@@ -2704,6 +2707,9 @@ export interface TraceResult {
   slack?: number; // Backup-Wege mit höchstens so vielen Hops mehr als der kürzeste aktive
   service?: string | null; // geprüfter Dienst (z. B. tcp/443)
   service_name?: string; // angegebenes Service-Objekt bzw. ACI-Filter (FT_https)
+  // 0.137.0: wo der eingegebene Dienst gilt, der Port beim Client und die Ports entlang des Wegs
+  service_at?: { at: ServiceAt; label: string; given: string; client: string; note: string | null };
+  service_chain?: ServiceStage[];
   // Zonen (0.57.0): Quell- und Zielzone, Absicht zwischen ihnen mit Urteil; null = keine Zonen
   zones?: { src: TraceZone[]; dst: TraceZone[]; intents: TraceZoneIntent[] } | null;
   l2?: { src?: L2Location[]; dst?: L2Location[] }; // Anschluss von Quelle/Ziel (0.64.0)
@@ -2980,11 +2986,19 @@ export const lookupRoute = (tenantId: number, ip: string) =>
 // wählen dann ein anderes Netz der Anbindung
 export const traceRoute = (
   tenantId: number,
-  opts: { dst: string; src?: string; start?: string; startPort?: string; slack?: number; service?: string; srcExit?: string; dstExit?: string },
+  opts: { dst: string; src?: string; start?: string; startPort?: string; slack?: number; service?: string; serviceAt?: ServiceAt; srcExit?: string; dstExit?: string },
 ) =>
   getJSON<TraceResult>(
-    `/api/routing/trace${qs({ tenant_id: tenantId, dst: opts.dst.trim() || undefined, src: opts.src?.trim() || undefined, start: opts.start || undefined, start_port: opts.startPort || undefined, slack: opts.slack, service: opts.service?.trim() || undefined, src_exit: opts.srcExit || undefined, dst_exit: opts.dstExit || undefined })}`,
+    `/api/routing/trace${qs({ tenant_id: tenantId, dst: opts.dst.trim() || undefined, src: opts.src?.trim() || undefined, start: opts.start || undefined, start_port: opts.startPort || undefined, slack: opts.slack, service: opts.service?.trim() || undefined, service_at: opts.service?.trim() && opts.serviceAt && opts.serviceAt !== "client" ? opts.serviceAt : undefined, src_exit: opts.srcExit || undefined, dst_exit: opts.dstExit || undefined })}`,
   );
+// 0.137.0: wo der Dienst gilt – beim Client (Vorgabe), am Eingang des Load Balancers bzw. am Ziel-Server
+export type ServiceAt = "client" | "lb" | "server";
+// Ports entlang des Wegs, wenn VIP bzw. Load Balancer sie ändern
+export interface ServiceStage {
+  at: "client" | "vip" | "lb" | "server";
+  label: string;
+  service: string;
+}
 // Warum dieser Weg? (0.109.0): derselbe Weg Hop für Hop in Sätzen – Start, Eingang und Tabelle,
 // Policy-Routen, alle Routen zum Ziel (gewählt bzw. verworfen mit Grund), Next-Hop, Ende mit Hinweis;
 // `expect` = Gerät (Quellsystem), über das der Verkehr gehen müsste
@@ -3027,6 +3041,7 @@ export interface ExplainQuery {
   startPort?: string; // Eingang am Startpunkt (0.113.1, Regel mit Quelle any)
   slack?: number;
   service?: string | null;
+  serviceAt?: ServiceAt; // 0.137.0: wo der Dienst gilt
   srcExit?: string;
   dstExit?: string;
   connection?: boolean; // Weg wie bei Verbindungen Ende zu Ende
@@ -3042,6 +3057,7 @@ export const explainPath = (tenantId: number, q: ExplainQuery, expect?: number |
       start_port: q.startPort,
       slack: q.slack,
       service: q.service?.trim(),
+      service_at: q.service?.trim() && q.serviceAt && q.serviceAt !== "client" ? q.serviceAt : undefined,
       src_exit: q.srcExit,
       dst_exit: q.dstExit,
       connection: q.connection ? "true" : undefined,

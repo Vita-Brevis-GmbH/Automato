@@ -7,6 +7,31 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.137.0 – 2026-11-05
+
+Rückmeldung des Anwenders 2026-11-05 zu 0.136.0: „wenn wir bei den VIPs oder Loadbalancer die
+Ports anpassen, dann wird ebenso nicht sauber angezeigt, da das Service Feld nicht genau
+definiert ist, wo es hin gehört, zum Zielsystem oder zum VIP. Zudem könnte dies zu
+Fehldiagnosen führen“; Entscheid: „Der Dienst soll zugewiesen werden können, auswahlfeld, also
+Clientseitig, Eingang Loadbalancer oder beim Ziel Server, Standard wäre Clientseitig.“
+
+- **Weg-Suche – wo der Dienst gilt:** Auswahl neben dem Dienst: „Dienst beim Client“ (Vorgabe),
+  „Dienst am Eingang Load Balancer“ bzw. „Dienst am Ziel-Server“. Die Weg-Suche rechnet über die
+  Port-Weiterleitung der VIP und den Pool des Load Balancers zurück zum Port des Clients
+  („Dienst tcp/8443 am Ziel-Server = beim Client tcp/443“); führen mehrere Ports zum Server,
+  nennt der Hinweis die übrigen. Die Wahl steht in der URL (`service_at`).
+- **Ports entlang des Wegs:** Ändern VIP bzw. Load Balancer den Port, steht oben „Ports: Client
+  tcp/443 → VIP … tcp/8443 → Eingang Load Balancer … → Server tcp/8080“; je Hop „geprüft mit
+  tcp/…“ – mit diesem Port sind Policies bzw. Contracts geprüft (die FortiGate prüft nach der
+  Port-Weiterleitung).
+- **Verbindungen der Applikations-Doku:** Der Dienst ist der Port des Clients – bis 0.136.0 stand
+  bei einer VIP mit Port-Weiterleitung der Port der Policy (nach der Weiterleitung), z. B.
+  „→ 198.51.100.80 tcp/8443“ statt 443. Darunter bzw. im Detail die Ports entlang des Wegs.
+- **Korrektur:** Leitet die VIP einen anderen Port auf den Load Balancer weiter (z. B. 8443 →
+  443), wählt die Weg-Suche den Virtual Service jetzt mit dem weitergeleiteten Port – bisher
+  fand sie ihn nicht und der Weg endete an der VIP.
+- Tests: `test_vip_balancer.py`, `test_policy_check.py`, `e2e/release_0137.spec.ts`.
+
 ## 0.136.0 – 2026-11-05
 
 Rückmeldung des Anwenders 2026-11-05 zu 0.135.0: „Ja“ – den Rückweg auch in den Verbindungen der

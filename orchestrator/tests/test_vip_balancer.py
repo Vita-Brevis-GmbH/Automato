@@ -279,3 +279,73 @@ def test_ziel_hinter_vip_und_load_balancer_ist_die_epg_der_server(client, sessio
     assert vip["name"] == "V-EXT_shop"
     assert vip["detail"].endswith(f"→ {VIP} · Load Balancer vs-web → EPG TE|AP_shop|EG_web "
                                   "(2 Server)")  # fmt: skip
+
+
+def test_dienst_je_stelle_client_load_balancer_server(client):
+    """0.137.0 (Anwender: „Der Dienst soll zugewiesen werden können, auswahlfeld, also
+    Clientseitig, Eingang Loadbalancer oder beim Ziel Server, Standard wäre Clientseitig“): der
+    Dienst gilt beim Client (Vorgabe), am Eingang des Load Balancers bzw. am Ziel-Server - die
+    Weg-Suche rechnet rückwärts zum Port des Clients und zeigt die Ports entlang des Wegs."""
+    tid = _seed(client)
+
+    def trace(**params) -> dict:
+        params = {"tenant_id": tid, "src": "198.51.100.1", "dst": PUBLIC, **params}
+        r = client.get("/routing/trace", params=params)
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    chain = [("client", "tcp/443"), ("lb", "tcp/443"), ("server", "tcp/8080")]
+    got = trace(service="tcp/443")  # Vorgabe: beim Client
+    assert got["service_at"]["at"] == "client" and got["service"] == "tcp/443"
+    assert [(x["at"], x["service"]) for x in got["service_chain"]] == chain
+    front, back = got["paths"][0]["hops"]
+    assert "checked_service" not in front and back["checked_service"] == "tcp/8080"
+    # am Ziel-Server 8080: beim Client 443 (vs-web), auch Port 80 führt zum Pool
+    got = trace(service="tcp/8080", service_at="server")
+    assert got["service"] == "tcp/443" and got["service_at"]["given"] == "tcp/8080"
+    assert got["service_at"]["note"] == ("Dienst tcp/8080 am Ziel-Server = beim Client tcp/443 "
+                                         "(auch möglich: Port 80)")  # fmt: skip
+    assert got["paths"][0]["policy"]["verdict"] == "allow"
+    # Server als Ziel (über die VIP, 0.134.0) mit seinem Port
+    got = trace(dst="10.10.0.20", service="tcp/8080", service_at="server")
+    assert got["via_vip"]["name"] == "V-EXT_shop" and got["service"] == "tcp/443"
+    # am Eingang des Load Balancers
+    got = trace(service="tcp/443", service_at="lb")
+    assert got["service"] == "tcp/443" and got["service_at"]["label"] == (
+        "am Eingang des Load Balancers"
+    )
+    # unbekannte Stelle: 422
+    r = client.get("/routing/trace", params={"tenant_id": tid, "src": "198.51.100.1",
+                                             "dst": PUBLIC, "service_at": "vip"})  # fmt: skip
+    assert r.status_code == 422
+
+
+def test_load_balancer_nach_der_port_weiterleitung(client):
+    """0.137.0: leitet die VIP der Firewall einen anderen Port auf den Load Balancer weiter
+    (8443 -> 443), wählt die Weg-Suche den Virtual Service mit dem weitergeleiteten Port - bis
+    0.136.0 suchte sie ihn mit dem Port des Clients und fand keinen."""
+    tid = client.post("/tenants", json={"name": "Kunde A"}, headers=ADMIN).json()["id"]
+    fw = _fw()
+    fw["nat_rules"][0] |= {"ext_port": "8443", "mapped_port": "443", "portforward": True}
+    body = {"tenant_id": tid, "name": "fw-r", "platform": "fortigate", "base_url": "https://x"}
+    _deliver(client, tid, client.post("/systems", json=body, headers=ADMIN).json()["id"],
+             "fortigate", fw)  # fmt: skip
+    body = {"tenant_id": tid, "name": "avi-01", "platform": "avi", "base_url": "https://avi",
+            "username": "ro", "password": "x", "read_scope": "admin"}  # fmt: skip
+    _deliver(client, tid, client.post("/systems", json=body, headers=ADMIN).json()["id"],
+             "avi", AVI)  # fmt: skip
+    params = {"tenant_id": tid, "src": "198.51.100.1", "dst": PUBLIC, "service": "tcp/8443"}
+    got = client.get("/routing/trace", params=params).json()
+    front, back = got["paths"][0]["hops"]
+    assert front["lb"]["name"] == "vs-web" and back["dst"] == "10.10.0.20"
+    assert front["checked_service"] == "tcp/443" and back["checked_service"] == "tcp/8080"
+    assert [(x["at"], x["service"]) for x in got["service_chain"]] == [
+        ("client", "tcp/8443"),
+        ("vip", "tcp/443"),
+        ("lb", "tcp/443"),
+        ("server", "tcp/8080"),
+    ]
+    # rückwärts: am Ziel-Server 8080 = beim Client 8443
+    back = params | {"service": "tcp/8080", "service_at": "server"}
+    got = client.get("/routing/trace", params=back).json()
+    assert got["service"] == "tcp/8443"

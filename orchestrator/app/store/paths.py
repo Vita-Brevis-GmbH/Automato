@@ -76,7 +76,7 @@ from app.models import (
     TopoRoute,
 )
 from app.store import nat as nat_store
-from app.store import references
+from app.store import path_service, references
 from app.store.topology import (
     MGMT,
     Table,
@@ -1033,7 +1033,8 @@ def trace(
         selben Knoten vom Netz der VIP zum Server des Pools weiter (einmal je Weg)."""
         if not balancers or any(h.get("lb") for h in hops):
             return False
-        lb = g.balancer(cur, service)
+        # Port am Eingang des Load Balancers: nach der Port-Weiterleitung der VIP (0.137.0)
+        lb = g.balancer(cur, path_service.at_end([*hops, hop], service))
         if lb is None:
             return False
         hop["lb"] = lb
@@ -1244,7 +1245,7 @@ def trace(
     notes += _inner_notes(primary + shown, dst)
     if with_rules:  # ohne: nur das Routing (Rueckweg, 0.134.0)
         policy_check.check_paths(session, tenant_id, primary + shown, src, dst, service, checks)
-    return {
+    out = {
         "start": [g.nodes[k].out() | {"via": via} for k, _, via in starts],
         # Session-Sync-Paar bzw. Verbund als ein Hop (0.29.0)
         "paths": _merge_parallel(primary) + _merge_parallel(shown),
@@ -1252,6 +1253,12 @@ def trace(
         "slack": slack,
         "service": _service_text(service),
     }
+    # Ports entlang des (ersten) Wegs: Client, VIP, Load Balancer, Server (0.137.0)
+    first = next((p for p in out["paths"] if p.get("kind") != "backup"), None)
+    if first is not None and (ports := path_service.chain(first, service)) is not None:
+        if len({x["service"] for x in ports}) > 1:
+            out["service_chain"] = ports
+    return out
 
 
 def target_of(g: Graph, result: dict) -> dict | None:

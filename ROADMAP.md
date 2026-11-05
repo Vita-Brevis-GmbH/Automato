@@ -463,8 +463,9 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.134.0** | Einwand 2026-11-05 zu 0.133.4: Server hinter einer VIP von aussen über die VIP gesucht (Start an der Firewall, öffentliche Quelle, Anbindung), Rückweg je Weg über dieselben Firewalls (ausser ACI und Verbund), Befund VIP ohne Ziel |
 | **0.135.0** | Antwort 2026-11-05 zu 0.134.0: Verbindungen der Applikations-Doku über die VIP (auch ohne Load Balancer), ACI-Contracts ohne Quell-IP je externe EPG der VRF statt „nicht prüfbar“ |
 | **0.136.0** | Antwort 2026-11-05 zu 0.135.0: Rückweg je Verbindung der Applikations-Doku (Zeichen, Übersicht, Filter, Detail, Word), Antwort von aussen über den Ausgang des Hinwegs, Quelle an mehreren Firewalls |
+| **0.137.0** | Rückmeldung 2026-11-05 zu 0.136.0: Dienst je Stelle (Auswahl beim Client / Eingang Load Balancer / Ziel-Server, Rückrechnung zum Port des Clients), Ports entlang des Wegs und „geprüft mit“ je Hop, Verbindungen mit dem Port des Clients, Load Balancer nach Port-Weiterleitung |
 
-### Nächste Arbeiten (Stand 0.136.0)
+### Nächste Arbeiten (Stand 0.137.0)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
 **0.68.0** (2026-10-26), bis **0.102.0** (2026-10-28: „ich teste nach dem Freigeben der Version
@@ -500,7 +501,7 @@ Eingangsfiltern und default-originate ohne Einwand), bis **0.132.0** (2026-11-04
 Dauer und VIP-Weg ohne Einwand zu 0.132.0). Zu 0.132.1 Einwand (2026-11-04: Weg über die VIP mit
 Sperrliste davor weiter als gesperrt gezeigt) – korrigiert in 0.132.2, bis **0.132.2** (2026-11-04,
 Rückmeldung zu BGP-Befunden und Netzwerkplan ohne Einwand zu 0.132.2), bis **0.133.0** (2026-11-04,
-Rückmeldung zur Dauer ohne Einwand zu 0.133.0). Zu 0.133.1 Einwand (2026-11-04: Berechnung bricht immer bei 391 von 808 Wegen ab und beginnt von vorn, 83 Applikationen nie berechnet) – korrigiert in 0.133.2, bis **0.133.2** (2026-11-05, „Er rechnet nun durch, super“; Rückmeldung zur Sperre in der Weg-Suche ohne Einwand zu 0.133.2). Zu 0.133.3 (2026-11-05): Dienst FT_any erledigt, „abhängig von: Eingang“ noch offen – in 0.133.4. Zu 0.133.4 Einwand (2026-11-05: Server hinter der VIP nur direkt gesucht, Rückweg nicht geprüft, VIPs ohne Ziel) – in 0.134.0. Zu 0.134.0 (2026-11-05): Verbindungen über die VIP und ACI ohne Quelle gewünscht – in 0.135.0. Zu 0.135.0 (2026-11-05): Rückweg auch in den Verbindungen gewünscht – in 0.136.0. Zur Abnahme steht 0.136.0. Seit 0.104.0 gilt eine
+Rückmeldung zur Dauer ohne Einwand zu 0.133.0). Zu 0.133.1 Einwand (2026-11-04: Berechnung bricht immer bei 391 von 808 Wegen ab und beginnt von vorn, 83 Applikationen nie berechnet) – korrigiert in 0.133.2, bis **0.133.2** (2026-11-05, „Er rechnet nun durch, super“; Rückmeldung zur Sperre in der Weg-Suche ohne Einwand zu 0.133.2). Zu 0.133.3 (2026-11-05): Dienst FT_any erledigt, „abhängig von: Eingang“ noch offen – in 0.133.4. Zu 0.133.4 Einwand (2026-11-05: Server hinter der VIP nur direkt gesucht, Rückweg nicht geprüft, VIPs ohne Ziel) – in 0.134.0. Zu 0.134.0 (2026-11-05): Verbindungen über die VIP und ACI ohne Quelle gewünscht – in 0.135.0. Zu 0.135.0 (2026-11-05): Rückweg auch in den Verbindungen gewünscht – in 0.136.0. Zu 0.136.0 (2026-11-05): Dienst bei geänderten Ports nicht eindeutig – in 0.137.0. Zur Abnahme steht 0.137.0. Seit 0.104.0 gilt eine
 Version als abgenommen,
 sobald die nächste Rückmeldung des Anwenders keinen Einwand dazu enthält (`CLAUDE.md`, Ablauf).
 
