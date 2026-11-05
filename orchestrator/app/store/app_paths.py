@@ -543,10 +543,22 @@ def _candidates(
 def _entry(data: appdoc.TenantData, rule: Rule, h: dict) -> str | None:
     """Ziel der Verbindung, wenn die Regel das System ueber einen Load Balancer erreicht
     (0.79.0, Treffer „V-EXT_x → vs-web“): die externe IP der VIP der FortiGate davor bzw. die
-    VIP des Virtual Service - der Weg geht dann ueber DNAT und Load Balancer zum Server."""
+    VIP des Virtual Service - der Weg geht dann ueber DNAT und Load Balancer zum Server.
+
+    0.135.0 (Anwender: „beides ja“ zur Weg-Suche über die VIP, 0.134.0): ebenso eine VIP direkt
+    auf den Server (Treffer über die VIP, ohne Load Balancer) - eine Policy mit der VIP als Ziel
+    trifft nur Verkehr zur externen IP, nicht zur Server-IP."""
     text = str(h.get("object") or "")
-    if h.get("side") != "dst" or nat_store.CHAIN not in text:
+    if h.get("side") != "dst":
         return None
+    if nat_store.CHAIN not in text:
+        vip = data.nat_by_name.get((rule.source_system_id, rule.vdom, text.strip().lower()))
+        server = nat_store.host_ip(str(h.get("value") or ""))
+        if vip is None or nat_store.is_balancer(vip) or not vip.ext_ip or server is None:
+            return None
+        if server not in {nat_store.host_ip(v) for v in nat_store.internal_ips(vip)}:
+            return None
+        return nat_store.host_ip(vip.ext_ip.split("-")[0])
     front, _, lb_name = text.partition(nat_store.CHAIN)
     vip = data.nat_by_name.get((rule.source_system_id, rule.vdom, front.strip().lower()))
     if vip is not None and not nat_store.is_balancer(vip) and vip.ext_ip:

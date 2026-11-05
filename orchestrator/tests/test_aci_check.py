@@ -131,12 +131,33 @@ def test_contracts_je_vrf_hop(client):
         ("CT_inet", True),
     ]
 
-    # Startpunkt ohne Quelle: Contracts nicht prüfbar
+    # Startpunkt ohne Quelle (0.135.0, Anwender: „Contracts nicht prüfbar an aci01 …“): der Weg
+    # kommt von aussen ins Fabric - je externe EPG der VRF das Urteil statt „nicht prüfbar“
     rules, policy, _ = _aci(client, tid, start=start, dst="10.50.1.10", service="tcp/443")
     assert (rules["verdict"], rules["text"]) == (
-        "unknown",
-        "Quelle unbekannt – Contracts nicht prüfbar",
+        "depends",
+        "abhängig von der Quelle (ohne IP) – erlaubt für externe EPG L3O_fw|EN_srv, gesperrt für "
+        "L3O_fw|EN_any, L3O_inet|EN_inet, L3O_fw|EN_wide",
     )
+    assert rules["src_epg"] == ("Quelle von aussen ohne IP – externe EPG L3O_fw|EN_any, "
+                                "L3O_fw|EN_srv, L3O_inet|EN_inet, L3O_fw|EN_wide")  # fmt: skip
+    assert "apic-01 · VRF TE:VRF1 (abhängig von der Quelle (ohne IP)" in policy["text"]
+    assert "nicht prüfbar" not in policy["text"]
+    # keine externe EPG erlaubt den Dienst: gesperrt
+    rules, _, _ = _aci(client, tid, start=start, dst="10.50.1.10", service="tcp/22")
+    assert (rules["verdict"], rules["text"]) == (
+        "implicit_deny",
+        "gesperrt für jede Quelle von aussen (keine externe EPG der VRF erlaubt)",
+    )
+    # Start im Fabric selbst ohne Quelle: weiterhin nicht prüfbar
+    aci = next(
+        n["key"]
+        for n in client.get("/routing/summary", params={"tenant_id": tid}).json()["nodes"]
+        if n["label"] == "apic-01 · VRF TE:VRF1"
+    )
+    out = tp._trace(client, tid, start=aci, dst="10.50.1.10", service="tcp/443")
+    hop = next(h for p in out["paths"] for h in p["hops"] if h["kind"] == "vrf")
+    assert hop["rules"]["text"] == "Quelle unbekannt – Contracts nicht prüfbar"
 
 
 def test_im_fabric_taboo_vzany_gleiche_epg(client):

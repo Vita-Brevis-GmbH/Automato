@@ -553,6 +553,8 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
           Quelle), geht der Weg über die externe IP der VIP – Eingang ist ihr externes
           Interface, ohne Quelle gilt eine beliebige Adresse im Internet. Oben steht „über VIP
           … → Load Balancer → Server“. Mit einer privaten Quelle sucht die Weg-Suche direkt.
+          Die Verbindungen der Applikations-Doku gehen seit 0.135.0 ebenso zur externen IP,
+          wenn die Regel den Server über eine VIP erreicht (auch ohne Load Balancer).
       - **Rückweg (0.134.0):** Je Weg zeigt ein Zeichen, ob die Antwort über dieselben
         Firewalls zurückgeht („Rückweg ✓“), über eine andere („Rückweg über andere Firewall“ –
         die Firewall verwirft die Antwort, asymmetrisches Routing) oder nicht prüfbar ist
@@ -580,6 +582,12 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
         TE/AP/EG_a (Portgruppe der VM vm-a)“). Sonst die externe EPG über das längste
         Subnetz mit `import-security` (wie in der Doku, 0.28.0). Erfasst keine EPG die IP,
         verwirft das Fabric den Verkehr.
+      - **Ohne Quell-IP von aussen (0.135.0):** Kommt der Weg über eine Firewall ins Fabric
+        (z. B. Start an der Firewall ohne Quelle), prüft die Weg-Suche jede externe EPG der VRF:
+        „abhängig von der Quelle (ohne IP) – erlaubt für externe EPG …, gesperrt für …“,
+        „gesperrt für jede Quelle von aussen“ bzw. „erlaubt für jede Quelle von aussen“ (nur
+        mit einer externen EPG für 0.0.0.0/0). Nach einem SNAT bzw. über die VIP prüft sie die
+        Adresse selbst; beginnt der Weg im Fabric ohne Quelle, bleibt es „nicht prüfbar“.
       - Gleiche EPG: ohne Contract erlaubt. Taboo-Contracts des Ziels sperren zuerst. Sonst
         erlaubt ein Contract mit der Quelle als Consumer und dem Ziel als Provider – direkt,
         über vzAny der VRF, eine ESG oder die Preferred Group – mit passendem Filter. Kein

@@ -651,6 +651,26 @@ def test_server_hinter_vip_von_aussen_ueber_die_vip_mit_rueckweg(client):
     assert "via_vip" not in r.json()
 
 
+def test_verbindung_der_applikation_ueber_die_vip(client):
+    """0.135.0 (Anwender: „beides ja“ - Verbindungen wie die Weg-Suche über die VIP): eine
+    Policy mit einer VIP direkt auf den Server (ohne Load Balancer) als Ziel trifft nur Verkehr
+    zur externen IP - die Verbindung geht zur externen IP der VIP, DNAT an der äusseren Firewall,
+    weiter zum Server. Bis 0.134.0 ging sie direkt zur Server-IP (ohne DNAT)."""
+    tid, _sids = _seed_edge(client, "Kunde VIP-Verbindung")
+    body = {"name": "App", "members": [{"kind": "host", "ref": "10.40.0.80"}]}
+    app = client.post(f"/applications?tenant_id={tid}", json=body,
+                      headers={"X-Dev-Roles": "operator"}).json()  # fmt: skip
+    conns = client.get(f"/applications/{app['id']}/connections").json()["connections"]
+    (conn,) = (c for c in conns if c["src"]["ip"] == "203.0.113.0/24")
+    assert conn["dst"]["ip"] == "198.51.100.80", conn["key"]
+    edge, inner = conn["hops"]
+    (check,) = edge["checks"]
+    assert check["nat"]["name"] == "VIP_app" and check["nat"]["to"] == ["10.40.0.80"]
+    assert check["rules"][0]["name"] == "inet-to-app" and check["rules"][0]["decides"]
+    assert inner["checks"][0]["rules"][0]["name"] == "edge-to-app"
+    assert conn["verdict"] == "allow" and not conn["mismatch"], conn["text"]
+
+
 def test_rueckweg_ueber_andere_firewall(monkeypatch):
     """0.134.0: geht die Antwort über eine andere Firewall zurück, ist der Weg asymmetrisch -
     mit Hinweis, welcher Weg möglich ist; ein Verbund zählt als dieselbe Firewall."""

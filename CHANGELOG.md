@@ -7,6 +7,25 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.135.0 – 2026-11-05
+
+Rückmeldung des Anwenders 2026-11-05 zu 0.134.0: „beides ja“ – die Verbindungen der
+Applikations-Doku wie die Weg-Suche über die VIP, und „Contracts nicht prüfbar“ am ACI-Hop
+klären.
+
+- **Verbindungen über die VIP:** Eine Firewall-Regel mit einer VIP direkt auf den Server (ohne
+  Load Balancer) als Ziel trifft nur Verkehr zur externen IP. Die Verbindung geht darum zur
+  externen IP der VIP, mit DNAT an der Firewall weiter zum Server – wie seit 0.79.0 die Kette
+  VIP → Load Balancer. Bis 0.134.0 ging sie direkt zur Server-IP (ohne DNAT).
+- **ACI-Contracts ohne Quell-IP:** „Contracts nicht prüfbar“ kam von der fehlenden Quelle (Start
+  an einer Firewall ohne Quelle). Kommt der Weg von aussen ins Fabric, ordnet das ACI die Quelle
+  einer externen EPG der VRF zu – die Weg-Suche prüft jetzt jede: „abhängig von der Quelle (ohne
+  IP) – erlaubt für externe EPG …, gesperrt für …“, „gesperrt für jede Quelle von aussen“ bzw.
+  „erlaubt für jede Quelle von aussen“ (nur wenn eine externe EPG 0.0.0.0/0 erfasst). Mit SNAT
+  bzw. über die VIP (0.134.0, Quelle aus dem Internet) prüft sie die Adresse selbst. Beginnt der
+  Weg im Fabric ohne Quelle, bleibt es „nicht prüfbar“.
+- Tests: `test_policy_check.py`, `test_aci_check.py`.
+
 ## 0.134.0 – 2026-11-05
 
 Rückmeldung des Anwenders 2026-11-05 zu 0.133.4: „Ich nehme als Source die Internet Firewall und

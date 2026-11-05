@@ -382,9 +382,14 @@ class AciChecker:
 
     # -- Pruefen -----------------------------------------------------------------
 
-    def check(self, sid: int, vrf: str, src, dst, service, dst_vrf: str | None = None) -> dict:
+    def check(self, sid: int, vrf: str, src, dst, service, dst_vrf: str | None = None,
+              outside: bool = False) -> dict:  # fmt: skip
         """Urteil des Fabrics; `dst_vrf`: Ziel in einer anderen VRF, in diese geleakt
-        (Shared Service, Route-Leaking - `aci_shared`, 0.44.0)."""
+        (Shared Service, Route-Leaking - `aci_shared`, 0.44.0). `outside`: der Weg kommt von
+        aussen ins Fabric (über einen L3Out) - ohne Quell-IP zählt jede externe EPG der VRF
+        (0.135.0)."""
+        if src is None and outside:
+            return self._from_outside(sid, vrf, dst, service, dst_vrf)
         srcs, src_text = self.members(sid, vrf, src)
         dsts, dst_text = self.members(sid, dst_vrf or vrf, dst)
         # L3Outs der externen EPGs (0.74.0, Netzwerkplan der Applikation)
@@ -418,6 +423,84 @@ class AciChecker:
             return base | {"verdict": one["verdict"], "rules": rules, "text": text}
         text = L("abhängig von der EPG – je nach Zuordnung erlaubt bzw. gesperrt",
                  "depends on the EPG – allowed or blocked depending on the assignment")  # fmt: skip
+        return base | {"verdict": "depends", "rules": rules, "text": text}
+
+    def _from_outside(self, sid: int, vrf: str, dst, service, dst_vrf: str | None) -> dict:
+        """Quelle ohne IP von aussen (0.135.0, Anwender: „Contracts nicht prüfbar an aci01 …“
+        bei Start an der Firewall ohne Quelle): das Fabric ordnet sie einer externen EPG der VRF
+        zu (Subnetz mit `import-security`) - je externe EPG das Urteil. Alle erlauben (und eine
+        erfasst 0.0.0.0/0 bzw. ::/0): erlaubt; alle sperren: gesperrt; sonst abhängig von der
+        Quelle mit den externen EPGs, für die es gilt."""
+        exts: dict[int, Member] = {}
+        whole = False
+        for epg, net, scope in self.cls._ext.get((sid, vrf), []):
+            if not aci_relevance.classifies(scope):
+                continue
+            whole = whole or net.prefixlen == 0
+            if epg.id not in exts:
+                name = aci_relevance.ext_label(epg)
+                exts[epg.id] = Member(epg, False, L(f"externe EPG {name}", f"external EPG {name}"))
+        dsts, dst_text = self.members(sid, dst_vrf or vrf, dst)
+        unknown = L("Quelle unbekannt", "source unknown")
+        if not exts:
+            text = L(
+                f"Quelle unbekannt, keine externe EPG in VRF {vrf} – Contracts nicht prüfbar",
+                f"source unknown, no external EPG in VRF {vrf} – contracts not verifiable",
+            )
+            return {"src_epg": unknown, "dst_epg": dst_text, "l3outs": [], "verdict": "unknown",
+                    "rules": [], "text": text}  # fmt: skip
+        srcs = list(exts.values())
+        listed = ", ".join(aci_relevance.ext_label(m.epg) for m in srcs[:SHOWN])
+        src_text = L(f"Quelle von aussen ohne IP – externe EPG {listed}",
+                     f"source from outside without IP – external EPG {listed}")  # fmt: skip
+        src_text += " …" if len(srcs) > SHOWN else ""
+        l3outs = sorted({m.epg.l3out for m in srcs + (dsts or []) if m.epg.l3out
+                         and m.epg.kind == "external"})  # fmt: skip
+        base = {"src_epg": src_text, "dst_epg": dst_text, "l3outs": l3outs}
+        if not dsts:
+            if dst_text in self._unknown:
+                return base | {"verdict": "unknown", "rules": [], "text": dst_text}
+            text = L(f"{dst_text} – das Fabric verwirft den Verkehr",
+                     f"{dst_text} – the fabric drops the traffic")  # fmt: skip
+            return base | {"verdict": "implicit_deny", "rules": [], "text": text}
+        by_src: dict[str, set[str]] = {}
+        rules: list[dict] = []
+        for s in srcs:
+            for d in dsts:
+                r = self._pair(sid, vrf, s, d, service, dst_vrf)
+                by_src.setdefault(aci_relevance.ext_label(s.epg), set()).add(r["verdict"])
+                for e in r["rules"]:
+                    if e["rule_id"] not in {x["rule_id"] for x in rules} and len(rules) < SHOWN:
+                        rules.append(e)
+        allowed = [n for n, v in by_src.items() if v == {"allow"}]
+        blocked = [n for n, v in by_src.items() if v <= {"deny", "implicit_deny"}]
+        if len(allowed) == len(by_src) and whole:
+            text = L(
+                "erlaubt für jede Quelle von aussen (alle externen EPGs der VRF)",
+                "allowed for any source from outside (all external EPGs of the VRF)",
+            )
+            return base | {"verdict": "allow", "rules": rules, "text": text}
+        if len(blocked) == len(by_src):
+            text = L(
+                "gesperrt für jede Quelle von aussen (keine externe EPG der VRF erlaubt)",
+                "blocked for any source from outside (no external EPG of the VRF allowed)",
+            )
+            return base | {"verdict": "implicit_deny", "rules": rules, "text": text}
+
+        def names(items: list[str]) -> str:
+            return ", ".join(items[:4]) + (" …" if len(items) > 4 else "")
+
+        text = L("abhängig von der Quelle (ohne IP)", "depends on the source (no IP)")
+        if allowed:
+            text += L(f" – erlaubt für externe EPG {names(allowed)}",
+                      f" – allowed for external EPG {names(allowed)}")  # fmt: skip
+        else:
+            text += L(" – keine externe EPG sicher erlaubt", " – no external EPG surely allowed")
+        if blocked:
+            text += L(f", gesperrt für {names(blocked)}", f", blocked for {names(blocked)}")
+        if not whole and len(allowed) == len(by_src):
+            text += L(" (andere Quellen erfasst keine externe EPG)",
+                      " (no external EPG covers other sources)")  # fmt: skip
         return base | {"verdict": "depends", "rules": rules, "text": text}
 
     def _pair(self, sid: int, vrf: str, s: Member, d: Member, service,

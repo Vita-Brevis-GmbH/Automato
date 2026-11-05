@@ -809,7 +809,7 @@ def check_paths(session: Session, tenant_id: int, paths: list[dict], src, dst, s
         verdicts = []
         cur_src, cur_svc = src, service
         lb = None
-        for hop in path["hops"]:
+        for i, hop in enumerate(path["hops"]):
             if lb is not None:  # nach dem Load Balancer (NSX ALB): Quelle und Port zum Server
                 cur_src, cur_svc = _behind_balancer(lb, cur_src, cur_svc)
             lb = hop.get("lb")
@@ -821,9 +821,15 @@ def check_paths(session: Session, tenant_id: int, paths: list[dict], src, dst, s
                 checks.aci = checks.aci or AciChecker(session, tenant_id)
                 sid, vrf = hop["source_system_id"], hop["context"]
                 into = (hop.get("leak") or {}).get("vrf")  # Ziel in geleakter VRF (0.44.0)
-                key = ("aci", sid, vrf, cur_src, hop_dst, cur_svc, into)
+                # von aussen (0.135.0): vor dem VRF-Hop ein anderes Geraet - ohne Quell-IP
+                # zaehlt jede externe EPG der VRF
+                outside = cur_src is None and any(
+                    h.get("source_system_id") != sid for h in path["hops"][:i]
+                )
+                key = ("aci", sid, vrf, cur_src, hop_dst, cur_svc, into, outside)
                 if key not in cache:
-                    cache[key] = checks.aci.check(sid, vrf, cur_src, hop_dst, cur_svc, into)
+                    cache[key] = checks.aci.check(sid, vrf, cur_src, hop_dst, cur_svc, into,
+                                                  outside=outside)  # fmt: skip
                 hop["rules"] = cache[key]
                 verdicts.append((hop["label"], cache[key]["verdict"], kind, cache[key]["text"]))
                 continue
