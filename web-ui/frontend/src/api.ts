@@ -55,7 +55,7 @@ export interface RulePair {
   rule_id: number;
   name: string;
   family: string | null;
-  match: "same" | "similar" | "confirmed"; // confirmed = von Hand bestätigt
+  match: "same" | "similar" | "confirmed" | "auto"; // confirmed = von Hand bestätigt, auto = automatisch (Mandant, 0.138.0)
   diff: string[]; // src | dst | service | name | zone
 }
 
@@ -458,6 +458,8 @@ export interface Tenant {
   naming_profile_id: number | null;
   // Applikations-Doku (0.95.0): Gegenstellen nur mit Adresse für Betreuer mit Namen zeigen (Admin)
   appdoc_foreign_names?: boolean;
+  // 0.138.0: ähnliche IPv4/IPv6-Paare automatisch bestätigen (Admin)
+  rule_pairs_auto?: boolean;
 }
 
 // Standorte (ADR 0015): virtuell = Nummer der Namenskonvention (000, 001), physisch = Ort-Code
@@ -1331,7 +1333,7 @@ export const switchCheck = (tenantId: number, key: string, enabled: boolean) =>
 
 export const patchTenant = (
   tenantId: number,
-  body: { code?: string | null; audit_reads?: boolean; naming_profile_id?: number | null; appdoc_foreign_names?: boolean },
+  body: { code?: string | null; audit_reads?: boolean; naming_profile_id?: number | null; appdoc_foreign_names?: boolean; rule_pairs_auto?: boolean },
 ) => sendJSON<Tenant>(`/api/tenants/${tenantId}`, "PATCH", body);
 export const fetchSites = (tenantId: number) => getJSON<Site[]>(`/api/tenants/${tenantId}/sites`);
 export const createSite = (

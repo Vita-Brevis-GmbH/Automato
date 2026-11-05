@@ -7,15 +7,15 @@ virtueller Standort kann an mehreren physischen laufen (ADR 0004-Ergaenzung, ADR
 Global-Admin sieht/verwaltet alle Mandanten.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select, update
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app import audit
 from app.auth.deps import require_admin, require_viewer, tenant_scope
 from app.auth.principal import Principal
-from app.db import get_session
+from app.db import get_session, get_session_factory
 from app.models import (
     SITE_KINDS,
     Application,
@@ -27,7 +27,7 @@ from app.models import (
     Tenant,
 )
 from app.models.tenant import DnsType, IpamType
-from app.store import deletion
+from app.store import deletion, rule_index, tenant_lock
 from app.store import sites as site_store
 
 router = APIRouter(prefix="/tenants", tags=["tenants"])
@@ -45,6 +45,8 @@ class TenantOut(BaseModel):
     naming_profile_id: int | None = None  # None = Standardprofil „default"
     # Applikations-Doku (0.95.0): Gegenstellen nur mit Adresse fuer Betreuer mit Namen zeigen
     appdoc_foreign_names: bool = False
+    # IPv4/IPv6-Paare: aehnliche automatisch bestaetigen (0.138.0)
+    rule_pairs_auto: bool = False
 
 
 class TenantIn(BaseModel):
@@ -61,6 +63,8 @@ class TenantPatch(BaseModel):
     naming_profile_id: int | None = None
     # Namen der Gegenstellen in der Applikations-Doku (0.95.0) - nur der Admin (Endpunkt)
     appdoc_foreign_names: bool | None = None
+    # IPv4/IPv6-Paare automatisch bestaetigen (0.138.0) - der Regelindex folgt im Hintergrund
+    rule_pairs_auto: bool | None = None
 
 
 class SiteIn(BaseModel):
@@ -98,6 +102,7 @@ def _tenant_out(t: Tenant) -> TenantOut:
         dns_type=t.dns_type.value,
         naming_profile_id=t.naming_profile_id,
         appdoc_foreign_names=bool(t.appdoc_foreign_names),
+        rule_pairs_auto=bool(t.rule_pairs_auto),
     )
 
 
@@ -182,11 +187,17 @@ def create_tenant(
 def update_tenant(
     tenant_id: int,
     body: TenantPatch,
+    background: BackgroundTasks,
     principal: Principal = Depends(require_admin),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ):
     tenant = _get_scoped_tenant(session, principal, tenant_id)
     data = body.model_dump(exclude_unset=True)  # nur gesetzte Felder aendern
+    pairs_changed = (data.get("rule_pairs_auto") is not None
+                     and bool(data["rule_pairs_auto"]) != bool(tenant.rule_pairs_auto))  # fmt: skip
+    if pairs_changed:
+        tenant.rule_pairs_auto = bool(data["rule_pairs_auto"])
     if "code" in data:
         tenant.code = data["code"]
     if "audit_reads" in data and data["audit_reads"] is not None:
@@ -209,9 +220,27 @@ def update_tenant(
             "audit_reads": tenant.audit_reads,
             "naming_profile_id": tenant.naming_profile_id,
             "appdoc_foreign_names": tenant.appdoc_foreign_names,
+            "rule_pairs_auto": tenant.rule_pairs_auto,
         },
     )
+    if pairs_changed:  # Paare neu bilden - im Hintergrund, sobald der Mandant frei ist
+        session.flush()
+        background.add_task(_pairs_later, factory, tenant.id)
     return _tenant_out(tenant)
+
+
+def _pairs_later(factory: sessionmaker, tenant_id: int) -> None:
+    """Regelindex (IPv4/IPv6-Paare) nach dem Umschalten von `rule_pairs_auto` (0.138.0)."""
+    with factory() as session:
+        tenant_lock.hold(session, tenant_id)
+        rule_index.rebuild(session, tenant_id)
+        tenant = session.get(Tenant, tenant_id)
+        # neuer Stand der Paare: die Doku der Applikationen rechnet danach neu (ADR 0037)
+        audit.record(session, actor="system", action="rule_pairs.rebuilt",
+                     subject=str(tenant_id),
+                     detail={"tenant_id": tenant_id,
+                             "auto": bool(tenant and tenant.rule_pairs_auto)})  # fmt: skip
+        session.commit()
 
 
 @router.delete("/{tenant_id}")

@@ -243,6 +243,14 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     Mandanten), ist sie gespeichert und die Markierung folgt im Hintergrund – „Gespeichert – die
     Markierung folgt …“, das Detail lädt selbst neu (0.113.1). Filter „Paar“: ähnlich (offen) zum Abarbeiten, bestätigt,
     gleich, mit/ohne Paar.
+  - **Automatisch bestätigen** (0.138.0, Einstellung je Mandant unter *Mandanten & Standorte*,
+    Admin): „IPv4/IPv6-Paare automatisch bestätigen“ – jeder Vorschlag („ähnlich“) zählt dann als
+    Paar mit der Marke „✓ automatisch“ (grün, Abweichungen im Tooltip), in der Applikations-Doku
+    wie ein bestätigtes Paar. Stimmt ein Paar nicht: im Detail „Kein Paar“ – das trennt es
+    dauerhaft, auch nach neuen Läufen; „zurücknehmen“ macht es wieder automatisch. Filter
+    „automatisch bestätigt“ zum Durchsehen. Das Umschalten bildet die Paare im Hintergrund neu
+    (Audit `rule_pairs.rebuilt`); ausgeschaltet sind die Vorschläge wieder „ähnlich“, bestätigte
+    und abgelehnte bleiben, wie sie sind.
   Klick → Detail: je Objekt Typ, Kommentar, Gruppenmitglieder (Objektnamen verlinkt) und je
   Wert die **Referenzdaten** aus dem IPAM (DNS-Name, Netz, VLAN, Standort; aufklappbar mit
   allen Feldern und Link in NetBox), die **VM** dahinter (vCenter: Name, Status, Portgruppe,
@@ -1785,7 +1793,8 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   (auch nicht nach Zeitplan) bzw. keine Befunde der Applikationen im Hintergrund. Die gelesenen
   Daten bleiben; wieder an = sofort wieder da.
 - **Mandanten & Standorte (Admin schreibt):** **+ Mandant**, Kürzel, Namensprofil,
-  Lese-Audit, **Standorte** (ADR 0015): *virtuell* (dreistellige Nummer, z. B. `000` =
+  Lese-Audit, „IPv4/IPv6-Paare automatisch bestätigen“ (0.138.0, siehe Regeln & Contracts),
+  **Standorte** (ADR 0015): *virtuell* (dreistellige Nummer, z. B. `000` =
   Stretched DC) und *physisch* (Ort-Code, z. B. `chzrh1`); **+ Standort** mit Art, Code, Name
   und – bei virtuellen – den physischen Standorten, an denen er läuft (**Zuordnen** ändert das
   später). Die Standort-Auswahl in Quellsystem und Applikation ist nach Art

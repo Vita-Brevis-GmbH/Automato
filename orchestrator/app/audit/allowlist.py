@@ -47,8 +47,17 @@ ALLOWLIST: dict[str, frozenset[str]] = {
         {"finding_id", "tenant_id", "type", "severity", "source_system_id"}
     ),  # fmt: skip
     "tenant.created": frozenset({"tenant_id", "name", "code"}),
+    # IPv4/IPv6-Paare nach dem Umschalten von rule_pairs_auto neu gebildet (0.138.0)
+    "rule_pairs.rebuilt": frozenset({"tenant_id", "auto"}),
     "tenant.updated": frozenset(
-        {"tenant_id", "code", "audit_reads", "naming_profile_id", "appdoc_foreign_names"}
+        {
+            "tenant_id",
+            "code",
+            "audit_reads",
+            "naming_profile_id",
+            "appdoc_foreign_names",
+            "rule_pairs_auto",
+        }
     ),
     "tenant.deleted": frozenset(
         {

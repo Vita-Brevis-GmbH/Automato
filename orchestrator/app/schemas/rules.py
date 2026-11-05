@@ -28,7 +28,8 @@ class RulePairOut(BaseModel):
     rule_id: int
     name: str
     family: str | None = None
-    # same (gleiche Objektnamen, Services, Interfaces) | similar (Abweichungen) | confirmed
+    # same (gleiche Objektnamen, Services, Interfaces) | similar (Abweichungen) | confirmed |
+    # auto (aehnlich, automatisch bestaetigt - Mandant `rule_pairs_auto`, 0.138.0)
     # (von Hand bestaetigt, Abweichungen in diff)
     match: str
     diff: list[str] = []  # src | dst | service | name | zone

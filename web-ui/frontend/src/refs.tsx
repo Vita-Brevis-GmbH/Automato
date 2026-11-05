@@ -913,7 +913,12 @@ export function FamilyMarks({ r, onPair }: { r: Rule; onPair?: (id: number) => v
               `von Hand als Paar bestätigt${diff ? `, ${diff}` : ""}`,
               `confirmed as a pair by hand${diff ? `, ${diff}` : ""}`,
             )
-          : L(`ähnlich, ${diff}`, `similar, ${diff}`)) +
+          : p.match === "auto"
+            ? L(
+                `automatisch als Paar bestätigt (Einstellung des Mandanten)${diff ? `, ${diff}` : ""} – „Kein Paar“ in der Regel trennt es`,
+                `confirmed as a pair automatically (tenant setting)${diff ? `, ${diff}` : ""} – “No pair” on the rule separates it`,
+              )
+            : L(`ähnlich, ${diff}`, `similar, ${diff}`)) +
       L(
         ". Eigene Regel wie auf der FortiGate – nur zur Orientierung verbunden.",
         ". Separate rule as on the FortiGate – linked for orientation only.",
@@ -940,7 +945,9 @@ export function FamilyMarks({ r, onPair }: { r: Rule; onPair?: (id: number) => v
             ? L(" ähnlich", " similar")
             : p.match === "confirmed"
               ? L(" ✓ bestätigt", " ✓ confirmed")
-              : ""}
+              : p.match === "auto"
+                ? L(" ✓ automatisch", " ✓ automatic")
+                : ""}
         </button>
       )}
     </div>

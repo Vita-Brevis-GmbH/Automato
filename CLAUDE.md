@@ -87,7 +87,7 @@ und wird erweitert. Details: `README.md`, `ARCHITECTURE.md`, `docs/adr/`.
 
 ## Aktueller Stand
 
-0.137.0 – Einzelheiten je Bereich in `docs/STAND.md`, Produktiv-Installation in
+0.138.0 – Einzelheiten je Bereich in `docs/STAND.md`, Produktiv-Installation in
 `docs/INSTALLATION-PROD.md`, NetBox je Kunde in `docs/INSTALLATION-NETBOX-HOST.md`. Offene Punkte und nächste Arbeiten in `ROADMAP.md` („Roadmap nach
 Versionen“): Version 1 bis zur Produktivschaltung DC = **1.0.0** (R14), Version 2 = neuer Name und
 Cockpit (eigenes Projekt), Version 3 = Automatisierung.

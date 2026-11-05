@@ -91,7 +91,7 @@ def list_rules(
     vdom: str | None = Query(None, description="FortiGate-VDOM der Policy"),
     pair: str | None = Query(
         None,
-        pattern="^(same|similar|confirmed|any|none)$",
+        pattern="^(same|similar|confirmed|auto|any|none)$",
         description="IPv4/IPv6-Paar: gleich, aehnlich (offen), bestaetigt, irgendeins, keins",
     ),
     twins: bool = Query(
@@ -134,7 +134,7 @@ def list_rules(
         paired = select(RuleIndex.rule_id).where(
             RuleIndex.rule_id == Rule.id, RuleIndex.pair_rule_id.is_not(None)
         )
-        if pair in ("same", "similar", "confirmed"):
+        if pair in ("same", "similar", "confirmed", "auto"):
             paired = paired.where(RuleIndex.pair_match == pair)
         conds.append(~exists(paired) if pair == "none" else exists(paired))
     # Parallele Firewalls (0.18.0): je gleicher Policy nur die fuehrende Regel - ausser mit

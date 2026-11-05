@@ -128,6 +128,7 @@ def test_schreibpfade_werden_auditiert(session_factory, client):
         "audit_reads": False,
         "naming_profile_id": None,
         "appdoc_foreign_names": False,  # 0.95.0
+        "rule_pairs_auto": False,  # 0.138.0
     }
 
 

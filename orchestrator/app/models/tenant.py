@@ -54,6 +54,11 @@ class Tenant(Base):
     appdoc_foreign_names: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=false(), default=False
     )
+    # IPv4/IPv6-Paare (0.138.0): aehnliche Vorschlaege gelten ohne Bestaetigung als Paar
+    # („automatisch“), „Kein Paar“ trennt eines dauerhaft. Standard aus, setzt der Admin.
+    rule_pairs_auto: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=false(), default=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )

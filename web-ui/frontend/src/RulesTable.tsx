@@ -646,6 +646,7 @@ export default function RulesTable({
           <option value="">{L("Paar: alle", "Pair: all")}</option>
           <option value="similar">{L("ähnlich (offen)", "similar (open)")}</option>
           <option value="confirmed">{L("bestätigt", "confirmed")}</option>
+          <option value="auto">{L("automatisch bestätigt", "confirmed automatically")}</option>
           <option value="same">{L("gleich", "identical")}</option>
           <option value="any">{L("mit Paar", "with pair")}</option>
           <option value="none">{L("ohne Paar", "without pair")}</option>

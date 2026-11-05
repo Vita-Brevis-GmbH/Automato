@@ -62,6 +62,7 @@ from app.store import (
     peer_names,
     references,
     rule_index,
+    rule_pairs,
     sites,
     virtual,
 )
@@ -1406,7 +1407,7 @@ def _pairs(session: Session, rule_ids: set) -> dict[int, int]:
             RuleIndex.rule_id, RuleIndex.pair_rule_id, RuleIndex.pair_match, RuleIndex.row
         ).where(RuleIndex.rule_id.in_(ids), RuleIndex.pair_rule_id.is_not(None))
     ):
-        if match in ("same", "confirmed") and partner in rule_ids:
+        if match in rule_pairs.PAIRED and partner in rule_ids:
             v4 = rid if (row or {}).get("family") == "v4" else partner
             out[rid] = v4
     return out

@@ -41,6 +41,7 @@ from app.models import (
     RuleObjectUsage,
     RulePairDecision,
     SourceSystem,
+    Tenant,
 )
 from app.schemas.rules import AciContractOut, RuleNatOut, RuleOut, RulePairOut
 from app.store import epgs as epg_store
@@ -396,7 +397,9 @@ def rebuild(
         range_rows += ranges
         if info is not None:
             infos.append(info)
-    pairs = rule_pairs.pair(infos, pair_decisions(session, tenant_id, source_system_id))
+    tenant = session.get(Tenant, tenant_id)
+    auto = bool(tenant is not None and tenant.rule_pairs_auto)  # 0.138.0
+    pairs = rule_pairs.pair(infos, pair_decisions(session, tenant_id, source_system_id), auto)
     for row in index_rows:
         p = pairs.get(row["rule_id"])
         row["pair_rule_id"] = p.partner_id if p else None

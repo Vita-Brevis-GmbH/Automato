@@ -193,11 +193,21 @@ function PairActions({
           ·{" "}
         </>
       )}
+      {p && p.match === "auto" && (
+        // 0.138.0: automatisch bestätigt (Einstellung des Mandanten) – „Kein Paar“ trennt es dauerhaft
+        <span className="faint" id="pair-auto">
+          {L("automatisch bestätigt (Einstellung des Mandanten) · ", "confirmed automatically (tenant setting) · ")}
+        </span>
+      )}
       {p && !confirmed && (
         <button
           className="linkbtn"
           disabled={busy}
-          title={L("Kein Gegenstück – nicht mehr als Paar vorschlagen", "No counterpart – do not suggest as pair any more")}
+          title={
+            p.match === "auto"
+              ? L("Paar auseinandernehmen – dauerhaft, auch nach neuen Läufen", "Separate the pair – permanently, also after new runs")
+              : L("Kein Gegenstück – nicht mehr als Paar vorschlagen", "No counterpart – do not suggest as pair any more")
+          }
           onClick={() => onReject(p.rule_id)}
         >
           {L("Kein Paar", "No pair")}

@@ -7,6 +7,27 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.138.0 – 2026-11-05
+
+Rückmeldung des Anwenders 2026-11-05: „Ich habe 500 Firewall Rule Paare, welche ich bestätigen
+müsste, da eigentlich 99% stimmen ist es ein riesiger Aufwand … in den Basis Settings angeben,
+dass die Paare automatisch bestätigt werden und dann aber wir die Möglichkeit haben, sie
+auseinander zu nehmen, wenn sie nicht stimmen?“
+
+- **Paare automatisch bestätigen (je Mandant):** Unter *Mandanten & Standorte* schaltet der Admin
+  „IPv4/IPv6-Paare automatisch bestätigen“ ein (Vorgabe aus). Jeder Vorschlag („ähnlich“) gilt
+  dann als Paar – Marke „✓ automatisch“, im Detail „automatisch bestätigt (Einstellung des
+  Mandanten)“, in Regeln & Contracts und in der Applikations-Doku wie ein bestätigtes Paar.
+  Abweichungen stehen weiter im Tooltip.
+- **Auseinandernehmen:** „Kein Paar“ im Detail trennt ein automatisch bestätigtes Paar dauerhaft,
+  auch nach neuen Läufen; „zurücknehmen“ macht es wieder zum Paar. Filter „Paar: automatisch
+  bestätigt“ zum Durchsehen.
+- Umschalten bildet die Paare im Hintergrund neu (Audit `tenant.updated` mit `rule_pairs_auto`,
+  danach `rule_pairs.rebuilt`). Ausgeschaltet sind die Vorschläge wieder „ähnlich“; von Hand
+  bestätigte bzw. abgelehnte Paare bleiben.
+- Migration `0074` (`tenant.rule_pairs_auto`).
+- Tests: `test_ip_family.py`, `test_tenants_api.py`, `e2e/release_0138.spec.ts`.
+
 ## 0.137.0 – 2026-11-05
 
 Rückmeldung des Anwenders 2026-11-05 zu 0.136.0: „wenn wir bei den VIPs oder Loadbalancer die

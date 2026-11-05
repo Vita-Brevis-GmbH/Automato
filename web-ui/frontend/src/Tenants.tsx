@@ -135,6 +135,11 @@ export default function Tenants({
                 </span>
                 <span className="s-right">
                   {t.audit_reads && <span className="chip info">{L("Lese-Audit", "Read audit")}</span>}
+                  {t.rule_pairs_auto && (
+                    <span className="chip info" title={L("Ähnliche IPv4/IPv6-Paare automatisch bestätigt", "Similar IPv4/IPv6 pairs confirmed automatically")}>
+                      {L("Paare automatisch", "Pairs automatic")}
+                    </span>
+                  )}
                   {t.appdoc_foreign_names && (
                     <span
                       className="chip info"
@@ -294,6 +299,8 @@ function TenantSettings({
   const [auditReads, setAuditReads] = useState(tenant.audit_reads);
   // 0.95.0: Namen der Gegenstellen in der Applikations-Doku (nur Betreuer, setzt der Admin)
   const [foreignNames, setForeignNames] = useState(!!tenant.appdoc_foreign_names);
+  // 0.138.0: ähnliche IPv4/IPv6-Paare automatisch bestätigen
+  const [pairsAuto, setPairsAuto] = useState(!!tenant.rule_pairs_auto);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<unknown>(null);
   const [saved, setSaved] = useState(false);
@@ -302,7 +309,8 @@ function TenantSettings({
     (code.trim() || null) !== tenant.code ||
     profileId !== tenant.naming_profile_id ||
     auditReads !== tenant.audit_reads ||
-    foreignNames !== !!tenant.appdoc_foreign_names;
+    foreignNames !== !!tenant.appdoc_foreign_names ||
+    pairsAuto !== !!tenant.rule_pairs_auto;
 
   const save = async () => {
     setBusy(true);
@@ -314,6 +322,7 @@ function TenantSettings({
         naming_profile_id: profileId,
         audit_reads: auditReads,
         appdoc_foreign_names: foreignNames,
+        rule_pairs_auto: pairsAuto,
       });
       await onSaved();
       setSaved(true);
@@ -381,6 +390,18 @@ function TenantSettings({
               "Record read access of this tenant in the audit log",
             )}
           </label>
+        </div>
+        <div className="field" id="ts-pairs-auto">
+          <label className="check">
+            <input type="checkbox" checked={pairsAuto} disabled={ro} onChange={(e) => setPairsAuto(e.target.checked)} />
+            {L("IPv4/IPv6-Paare automatisch bestätigen", "Confirm IPv4/IPv6 pairs automatically")}
+          </label>
+          <div className="hint">
+            {L(
+              "Ähnliche Paare (Vorschläge) gelten ohne Bestätigung als Paar – gekennzeichnet „automatisch“, in der Applikations-Doku eine Zeile. Stimmt eines nicht: in der Regel „Kein Paar“ – das trennt es dauerhaft, auch nach neuen Läufen.",
+              "Similar pairs (suggestions) count as a pair without confirmation – marked “automatic”, one row in the application documentation. If one is wrong: “No pair” on the rule – this separates it permanently, also after new runs.",
+            )}
+          </div>
         </div>
         <div className="field" id="ts-foreign-names">
           <label className="check">

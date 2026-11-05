@@ -47,7 +47,8 @@ class RuleIndex(Base):
     nat: Mapped[str] = mapped_column(Text, default="")
     # Listenzeile wie /rules sie liefert (ohne die live gezaehlten nicht aufgeloesten Objekte)
     row: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    # IPv4/IPv6-Gegenstueck derselben Firewall (nur Markierung): same | similar | confirmed
+    # IPv4/IPv6-Gegenstueck derselben Firewall (nur Markierung): same | similar | confirmed |
+    # auto (0.138.0)
     pair_rule_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     pair_match: Mapped[str | None] = mapped_column(String(12), nullable=True)
     pair_diff: Mapped[list | None] = mapped_column(JSON, nullable=True)
