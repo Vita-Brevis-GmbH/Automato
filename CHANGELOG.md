@@ -7,6 +7,29 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.139.1 – 2026-11-05
+
+Rückmeldung des Anwenders 2026-11-05 zu 0.139.0: „Ich habe Fehler bei der Doku Erstellung“ – im
+Log nach dem Update nur „Applikation 1: 89 von 120 Wegen in 297 s“ und „Abweichungen Regel <-> Weg:
+1 von 98 Applikationen nach 120 s (Zeitbudget)“, keine Doku fertig.
+
+- **Befunde aus dem Stand der Verbindungen:** Die Befunde der Applikationen (Wege uneinheitlich,
+  Regel nie gebraucht, Contract enger als die Firewall) kommen jetzt aus den eben gerechneten
+  Verbindungen der Applikation. Bisher rechnete der Orchestrator nach dem Update, nach jedem Lauf
+  und nach Änderungen dieselben Wege ein zweites Mal – je grosser Applikation mehrere Minuten,
+  nach dem Update unter der Sperre des Mandanten, und das Vorrechnen der Doku wartete bzw.
+  konkurrierte darum. Mit dem Stand der Doku (Vorgabe) entfällt diese zweite Berechnung;
+  „Abgleich neu berechnen“ von Hand rechnet wie bisher. Die Befunde zählen jetzt alle Wege der
+  Verbindungen (bis `app_traces_max`), nicht nur die ersten 120.
+- **Applikation für Applikation:** Das Vorrechnen rechnet je Applikation Doku und Verbindungen
+  nacheinander (die schnellen zuerst) – bisher erst alle Dokus, dann alle Verbindungen, so war
+  lange keine Applikation ganz fertig. Die Übersicht zeigt „Durchgang 1: 12 von 98 Applikationen
+  (25 von 196 Ständen)“.
+- **Im Log sichtbar:** je Durchgang „Mandant 2: Durchgang 1 des Vorrechnens - 196 Staende von 98
+  Applikationen“ und je Stand „Vorrechnen 25/196: Applikation 7 Verbindungen in 84.2 s“ – bisher
+  meldete die Doku nichts, bis die ersten Verbindungen fertig waren.
+- Tests: `test_rules_read.py`, `e2e/release_0139.spec.ts`.
+
 ## 0.139.0 – 2026-11-05
 
 Rückmeldung des Anwenders 2026-11-05: „Das Neuberechnen der Apps und Wege muss besser gesteuert

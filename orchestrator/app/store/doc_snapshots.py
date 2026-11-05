@@ -228,7 +228,26 @@ def _save(session: Session, app_id: int, kind: str, var: str, fp: str, result: d
         log.info("Stand %s/%s/%s nicht gespeichert (gleichzeitig geschrieben)", app_id, kind, var)
     with _lock:
         _failed.pop((app_id, kind, var), None)
+    if kind == CONNECTIONS and _standard(var):
+        _derive(session, app_id, result)
     return now
+
+
+def _derive(session: Session, app_id: int, result: dict) -> None:
+    """Befunde der Applikation aus ihren eben gerechneten Verbindungen (0.139.1,
+    `reconcile.derive_app_findings`) - statt die Wege fuer die Befunde ein zweites Mal zu rechnen;
+    danach die Zugehoerigkeit der Befunde zu den Kunden. Darf den Stand nie verlieren."""
+    from app.store import customers, reconcile  # spaet: reconcile -> app_paths -> ...
+
+    try:
+        with session.begin_nested():
+            if reconcile.derive_app_findings(session, app_id, result) is not None:
+                app = session.get(Application, app_id)
+                customers.derive_findings(session, app.tenant_id)
+    except OperationalError:  # SQLite: gleichzeitig geschrieben - beim naechsten Stand erneut
+        log.info("Befunde der Applikation %s nicht nachgezogen (gleichzeitig geschrieben)", app_id)
+    except Exception:  # noqa: BLE001 - Befunde nachziehen darf den Stand nicht kosten
+        log.exception("Befunde aus den Verbindungen der Applikation %s fehlgeschlagen", app_id)
 
 
 def _viewed(session: Session, row: DocSnapshot) -> None:
@@ -494,7 +513,8 @@ class _Todo:
 
 
 def _todo(session: Session, tenant_id: int, application_id: int | None) -> list[_Todo]:
-    """Was das Vorrechnen jetzt rechnen soll, schnelle zuerst: Staende, die nicht mehr passen -
+    """Was das Vorrechnen jetzt rechnen soll, je Applikation (schnelle zuerst, 0.139.1): Staende,
+    die nicht mehr passen -
     im Standard immer (`doc_warm_all`), sonst zuletzt angesehen (`doc_warm_days`) - und mit
     `doc_warm_all` Doku bzw. Verbindungen im Standard, die noch nie gerechnet wurden (Dauer
     geschaetzt nach der Doku der Applikation). Ohne die, die mit denselben Eingaben fehlschlugen
@@ -549,7 +569,12 @@ def _todo(session: Session, tenant_id: int, application_id: int | None) -> list[
             if (app.id, CONNECTIONS) not in have:  # Verbindungen dauern laenger als die Doku
                 add(have.get((app.id, DOC), 1.0) * 2, app, CONNECTIONS, f"{base}|{CONNECTIONS}",
                     None)  # fmt: skip
-    out.sort(key=lambda t: (t.estimate, t.key))
+    # 0.139.1: Applikation fuer Applikation (Doku, dann Verbindungen) - die schnellen zuerst; bis
+    # dahin erst alle Dokus, dann alle Verbindungen (lange keine Applikation ganz fertig)
+    per_app: dict[int, float] = defaultdict(float)
+    for t in out:
+        per_app[t.key[0]] += t.estimate
+    out.sort(key=lambda t: (per_app[t.key[0]], t.key[0], t.key[1] != DOC, t.key[2]))
     return out
 
 
@@ -654,8 +679,12 @@ def warm(factory: sessionmaker[Session], tenant_id: int, application_id: int | N
             finally:
                 session.close()
             _round_start(tenant_id, number, todo, application_id)
+            if todo:  # 0.139.1: im Log sichtbar (bis dahin still bis zu den Verbindungen)
+                log.info("Mandant %s: Durchgang %d des Vorrechnens - %d Staende von %d "
+                         "Applikationen", tenant_id, number, len(todo),
+                         len({t.key[0] for t in todo}))  # fmt: skip
             over = False
-            for item in todo:
+            for position, item in enumerate(todo, 1):
                 if budget and time.monotonic() - started > budget:
                     log.info("Mandant %s: Vorrechnen nach %d Staenden beendet (Zeitbudget)",
                              tenant_id, done)  # fmt: skip
@@ -673,11 +702,15 @@ def warm(factory: sessionmaker[Session], tenant_id: int, application_id: int | N
                         params = _unpack(data)["params"] if data else {}
                 finally:
                     session.close()
+                t_item = time.monotonic()
                 if item is not None and rebuild(
                         factory, app_id, kind, var,
                         Params(params.get("rule_ids"), bool(params.get("names"))),
                         var.split("|", 1)[0], viewed=False):  # fmt: skip
                     done += 1
+                    log.info("Vorrechnen %d/%d: Applikation %s %s in %.1f s", position, len(todo),
+                             app_id, "Doku" if kind == DOC else "Verbindungen",
+                             time.monotonic() - t_item)  # fmt: skip
                 _round_step(tenant_id, app_id)
             if number > 1 or todo:
                 log.info("Mandant %s: Durchgang %d des Vorrechnens fertig (%d Staende)",

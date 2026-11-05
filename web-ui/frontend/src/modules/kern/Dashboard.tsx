@@ -644,8 +644,8 @@ export function DocsCard({ tenantId, onGo }: { tenantId: number; onGo: Go }) {
             )}
           >
             {L(
-              `Durchgang ${data.round.number}: ${data.round.apps_done} von ${data.round.apps_total}`,
-              `Round ${data.round.number}: ${data.round.apps_done} of ${data.round.apps_total}`,
+              `Durchgang ${data.round.number}: ${data.round.apps_done} von ${data.round.apps_total} Applikationen (${data.round.done} von ${data.round.total} Ständen)`,
+              `Round ${data.round.number}: ${data.round.apps_done} of ${data.round.apps_total} applications (${data.round.done} of ${data.round.total} states)`,
             )}
             {data.round.again && L(" · danach erneut", " · then again")}
           </span>

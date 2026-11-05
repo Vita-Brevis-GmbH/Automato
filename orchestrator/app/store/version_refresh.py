@@ -60,7 +60,8 @@ def refresh(factory: sessionmaker[Session]) -> tuple[list[int], list[int]]:
                 continue
             try:
                 counts = reconcile.reconcile_tenant(session, tid)
-                reconcile.refresh_app_findings(session, tid)
+                # 0.139.1: mit dem Stand der Doku kommen sie beim Vorrechnen (derived)
+                reconcile.refresh_app_findings(session, tid, derived=True)
                 audit.record(session, actor="system", action=ACTION, subject=subject(tid),
                              detail={"version": __version__,
                                      "findings": sum(counts.values())})  # fmt: skip

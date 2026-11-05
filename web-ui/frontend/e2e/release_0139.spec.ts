@@ -14,7 +14,7 @@ test("Übersicht: Durchgang des Vorrechnens (0.139.0)", async ({ page }) => {
   });
   await page.goto("/#uebersicht");
   const chip = page.locator("#dash-docs #docs-round");
-  await expect(chip).toHaveText("Durchgang 2: 340 von 808 · danach erneut");
+  await expect(chip).toHaveText("Durchgang 2: 340 von 808 Applikationen (700 von 1616 Ständen) · danach erneut");
   await expect(chip).toHaveAttribute("title", /neue Läufe brechen nichts ab/);
 });
 

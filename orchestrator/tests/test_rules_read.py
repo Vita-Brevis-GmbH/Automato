@@ -216,3 +216,43 @@ def test_regeln_einlesen_nur_fortigate_und_aci(client):
     viewer = {"X-Dev-Roles": "viewer"}
     r = client.post(f"/applications/{ids['Web']}/read-rules", json={}, headers=viewer)
     assert r.status_code == 403
+
+
+def test_befunde_aus_dem_stand_der_verbindungen(client, session_factory, computed, monkeypatch):
+    """0.139.1 (Anwender: „Ich habe Fehler bei der Doku Erstellung“ - nach dem Update rechnete der
+    Orchestrator je Applikation minutenlang die Befunde mit denselben Wegen wie die Verbindungen,
+    die Doku kam nicht dran): mit dem Stand der Doku kommen die Befunde der Applikationen aus
+    ihren eben gerechneten Verbindungen - Laeufe, Updates und Aenderungen rechnen die Wege nicht
+    ein zweites Mal; „Abgleich neu berechnen“ von Hand weiterhin."""
+    from app.store import reconcile
+
+    tid = _seed(client)
+    traced: list[int] = []
+    issues = reconcile._app_issues
+
+    def counted(session, tenant_id, apps, budget=None):
+        traced.append(len(apps))
+        return issues(session, tenant_id, apps, budget)
+
+    monkeypatch.setattr(reconcile, "_app_issues", counted)
+    ids = _apps(client, tid)  # Anlegen: das Vorrechnen rechnet Doku und Verbindungen
+
+    def unused() -> list[dict]:
+        r = client.get("/findings", params={"tenant_id": tid, "type": "app_rule_unused"})
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    found = unused()
+    assert found and {f["detail"]["application_id"] for f in found} == {ids["Web"]}
+    assert traced == []  # keine zweite Berechnung der Wege
+    # ein Lauf: Befunde kommen mit den neu gerechneten Verbindungen
+    fw3 = next(s["id"] for s in client.get("/systems").json() if s["name"] == "fw-03")
+    computed.clear()
+    from test_app_paths import FW3
+
+    tp._deliver(client, tid, fw3, "fortigate", FW3)
+    assert traced == [] and (ids["Web"], "connections") in computed
+    assert unused()
+    # von Hand („Abgleich neu berechnen“): wie bisher mit eigenen Wegen
+    assert client.post("/reconcile", params={"tenant_id": tid}, headers=OP).status_code == 200
+    assert traced and unused()

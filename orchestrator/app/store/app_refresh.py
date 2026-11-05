@@ -122,7 +122,7 @@ def run_regroup(factory: sessionmaker[Session], tenant_id: int) -> None:
         session = factory()
         try:
             reconcile.reconcile_tenant(session, tenant_id)
-            reconcile.refresh_app_findings(session, tenant_id)
+            reconcile.refresh_app_findings(session, tenant_id, derived=True)
             session.commit()
         except Exception:
             session.rollback()
@@ -142,7 +142,7 @@ def run_tenant(factory: sessionmaker[Session], tenant_id: int) -> None:
             _pending.discard((tenant_id, 0))
         session = factory()
         try:
-            reconcile.refresh_app_findings(session, tenant_id)
+            reconcile.refresh_app_findings(session, tenant_id, derived=True)
             reconcile.refresh_zone_findings(session, tenant_id)
             customers.derive(session, tenant_id)
             session.commit()
@@ -179,7 +179,7 @@ def run_runs(factory: sessionmaker[Session], tenant_id: int, application_id: int
         _release(("runs", tenant_id, application_id or 0))  # ab hier: ein neuer Lauf = neu
         session = factory()
         try:
-            reconcile.refresh_app_findings(session, tenant_id, application_id)
+            reconcile.refresh_app_findings(session, tenant_id, application_id, derived=True)
             session.commit()
         except Exception:
             session.rollback()
@@ -209,7 +209,7 @@ def run(factory: sessionmaker[Session], tenant_id: int, application_id: int) -> 
             _pending.discard((tenant_id, application_id))
         session = factory()
         try:
-            reconcile.refresh_app_findings(session, tenant_id, application_id)
+            reconcile.refresh_app_findings(session, tenant_id, application_id, derived=True)
             customers.derive_findings(session, tenant_id)
             session.commit()
         except Exception:

@@ -1397,7 +1397,11 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     mit Importen im Gang dieselben schnellen Applikationen immer wieder zuerst dran. Die Befunde
     Regel ↔ Weg rechnen nicht mehr im Einspielen jedes Laufs, sondern zusammengefasst danach
     (Übersicht „Befunde nachziehen“). Nach dem Speichern einer Applikation rechnet sie gleich,
-    ohne auf den Durchgang zu warten.
+    ohne auf den Durchgang zu warten. **Seit 0.139.1** kommen diese Befunde aus den eben
+    gerechneten Verbindungen der Applikation (keine zweite Berechnung der Wege nach Update, Lauf
+    oder Änderung; „Abgleich neu berechnen“ von Hand rechnet wie bisher), das Vorrechnen geht
+    Applikation für Applikation (Doku, dann Verbindungen) und meldet im Log je Durchgang und Stand
+    den Fortschritt: `docker compose logs orchestrator | grep -E "Durchgang|Vorrechnen"`.
     **Regeln neu einlesen (0.139.0, ADR 0047, Operator):** in der Applikation „⟳ Regeln neu
     einlesen“ – nach einer Regeländerung auf Firewalls bzw. im ACI. Zur Auswahl stehen alle
     FortiGates und Cisco ACI des Mandanten, die der Applikation vorgewählt („Regeln der Doku“,

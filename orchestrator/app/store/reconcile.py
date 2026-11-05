@@ -263,52 +263,60 @@ def _app_issues(session: Session, tenant_id: int, apps: list,
             logging.getLogger(__name__).exception("Verbindungen von Applikation %s", app.id)
             failed.add(app.id)
             continue
-        per_rule: dict[int, list[dict]] = defaultdict(list)
-        for c in result["connections"]:
-            if not c["inconsistent"]:
-                continue
-            variants = [{k: v.get(k) for k in ("kind", "via", "verdict", "text", "reason")}
-                        for v in c["variants"][:APP_VARIANTS]]  # fmt: skip
-            for st in c["rules"]:
-                if st["action"] != "allow":
-                    continue
-                per_rule[st["rule_id"]].append({
-                    "src": c["src"]["label"], "dst": c["dst"]["label"],
-                    "service": c["service"], "verdict": c["verdict"],
-                    "state": st["state"], "path": c["text"], "variants": variants,
-                })  # fmt: skip
-        unused: dict[int, list[dict]] = defaultdict(list)  # 0.107.0: nie auf dem Weg
-        for x in result.get("unused") or []:
-            unused[x["rule_id"]].append({k: x[k] for k in ("src", "dst", "service", "path")})
-        narrower = result.get("narrower") or []
-        wanted = set(per_rule) | set(unused) | {n["rule_id"] for n in narrower}
-        wanted |= {x for n in narrower for x in n["firewall_rules"]}
-        rules = {r.id: r for r in session.scalars(select(Rule).where(
-            Rule.id.in_(list(wanted))))} if wanted else {}  # fmt: skip
-        out += _narrower_issues(app, narrower, rules, names)
-        out += _unused_issues(app, unused, rules, names)
-        for rid, conns in per_rule.items():
-            r = rules.get(rid)
-            if r is None:
-                continue
-            raw = r.raw if isinstance(r.raw, dict) else {}
-            aci = r.domain is RuleDomain.ACI_CONTRACT
-            label = (r.name or f"#{r.external_id}") + vdom_suffix(r.vdom)
-            subject = f"{raw.get('tenant')}/{label}" if aci and raw.get("tenant") else label
-            out.append(Issue(
-                FindingType.APP_CONNECTION_MISMATCH, SubjectKind.RULE,
-                f"{subject} · Applikation {app.name}", r.source_system_id, Severity.WARNING,
-                detail={
-                    "rule_id": r.id, "external_id": r.external_id, "domain": r.domain.value,
-                    "name": label, "source_system_id": r.source_system_id,
-                    "source": names.get(r.source_system_id),
-                    **({"vdom": r.vdom} if r.vdom else {}),
-                    "tenant": raw.get("tenant") if aci else None,
-                    "application_id": app.id, "application": app.name,
-                    "count": len(conns), "connections": conns[:APP_CONNECTIONS],
-                },
-            ))  # fmt: skip
+        out += _issues_of(session, app, result, names)
     return out, failed
+
+
+def _issues_of(session: Session, app, result: dict, names: dict[int, str]) -> list[Issue]:
+    """Befunde einer Applikation aus ihren Verbindungen (`app_paths.build`) - auch aus dem
+    gespeicherten Stand der Verbindungen (0.139.1, `derive_app_findings`)."""
+    out: list[Issue] = []
+    per_rule: dict[int, list[dict]] = defaultdict(list)
+    for c in result["connections"]:
+        if not c["inconsistent"]:
+            continue
+        variants = [{k: v.get(k) for k in ("kind", "via", "verdict", "text", "reason")}
+                    for v in c["variants"][:APP_VARIANTS]]  # fmt: skip
+        for st in c["rules"]:
+            if st["action"] != "allow":
+                continue
+            per_rule[st["rule_id"]].append({
+                "src": c["src"]["label"], "dst": c["dst"]["label"],
+                "service": c["service"], "verdict": c["verdict"],
+                "state": st["state"], "path": c["text"], "variants": variants,
+            })  # fmt: skip
+    unused: dict[int, list[dict]] = defaultdict(list)  # 0.107.0: nie auf dem Weg
+    for x in result.get("unused") or []:
+        unused[x["rule_id"]].append({k: x[k] for k in ("src", "dst", "service", "path")})
+    narrower = result.get("narrower") or []
+    wanted = set(per_rule) | set(unused) | {n["rule_id"] for n in narrower}
+    wanted |= {x for n in narrower for x in n["firewall_rules"]}
+    rules = {r.id: r for r in session.scalars(select(Rule).where(
+        Rule.id.in_(list(wanted))))} if wanted else {}  # fmt: skip
+    out += _narrower_issues(app, narrower, rules, names)
+    out += _unused_issues(app, unused, rules, names)
+    for rid, conns in per_rule.items():
+        r = rules.get(rid)
+        if r is None:
+            continue
+        raw = r.raw if isinstance(r.raw, dict) else {}
+        aci = r.domain is RuleDomain.ACI_CONTRACT
+        label = (r.name or f"#{r.external_id}") + vdom_suffix(r.vdom)
+        subject = f"{raw.get('tenant')}/{label}" if aci and raw.get("tenant") else label
+        out.append(Issue(
+            FindingType.APP_CONNECTION_MISMATCH, SubjectKind.RULE,
+            f"{subject} · Applikation {app.name}", r.source_system_id, Severity.WARNING,
+            detail={
+                "rule_id": r.id, "external_id": r.external_id, "domain": r.domain.value,
+                "name": label, "source_system_id": r.source_system_id,
+                "source": names.get(r.source_system_id),
+                **({"vdom": r.vdom} if r.vdom else {}),
+                "tenant": raw.get("tenant") if aci else None,
+                "application_id": app.id, "application": app.name,
+                "count": len(conns), "connections": conns[:APP_CONNECTIONS],
+            },
+        ))  # fmt: skip
+    return out
 
 
 def _rule_subject(r: Rule) -> tuple[str, str, dict]:
@@ -382,12 +390,55 @@ def _narrower_issues(app, narrower: list[dict], rules: dict, names: dict) -> lis
     return out
 
 
+def app_findings_derived(session: Session, tenant_id: int) -> bool:
+    """Kommen die Befunde der Applikationen aus dem Stand ihrer Verbindungen (0.139.1)? Ja, wenn
+    das Vorrechnen die Verbindungen jeder Applikation rechnet (Stand der Doku an, `doc_warm_all`,
+    Modul Doku) - dann rechnen Laeufe, Updates und Aenderungen die Wege nicht ein zweites Mal."""
+    from app import modules
+    from app.config import get_settings
+    from app.store import doc_snapshots
+
+    s = get_settings()
+    return (doc_snapshots.enabled() and s.doc_warm_days > 0 and bool(s.doc_warm_all)
+            and modules.enabled(session, tenant_id, "doku"))  # fmt: skip
+
+
+@german_only  # speichert Texte: immer deutsch (ADR 0028)
+def derive_app_findings(session: Session, application_id: int, result: dict) -> int | None:
+    """Befunde einer Applikation aus ihren eben gerechneten Verbindungen (0.139.1, Anwender:
+    „Ich habe Fehler bei der Doku Erstellung“ - nach dem Update rechnete der Orchestrator je
+    Applikation erst minutenlang die Befunde mit denselben Wegen wie die Verbindungen, die Doku
+    kam nicht dran). Nur ihre Befunde werden ersetzt; ohne Module bzw. Pruefung nichts (None)."""
+    from app import checks, modules
+    from app.models import Application
+
+    app = session.get(Application, application_id)
+    if app is None:
+        return None
+    tid = app.tenant_id
+    if not (modules.enabled(session, tid, "findings") and modules.enabled(session, tid, "wege")):
+        return None
+    if not checks.enabled(session, tid, checks.by_key("applikationen")):
+        return None
+    issues = _issues_of(session, app, result, _source_names(session, tid))
+
+    def keep(f: Finding) -> bool:
+        owner = (f.detail or {}).get("application_id") if isinstance(f.detail, dict) else None
+        return owner != application_id
+
+    _sync_findings(session, tid, issues, types=APP_TYPES, keep=keep)
+    return len(issues)
+
+
 @german_only  # speichert Texte: immer deutsch (ADR 0028)
 def refresh_app_findings(session: Session, tenant_id: int | None,
-                         application_id: int | None = None) -> int:  # fmt: skip
+                         application_id: int | None = None,
+                         derived: bool = False) -> int:  # fmt: skip
     """Abweichungen Regel <-> Weg neu berechnen: alle Applikationen des Mandanten (nach einem
     Lauf) bzw. eine (nach dem Aendern, nach dem Loeschen ihre Befunde entfernen). Triage-Status
-    bleibt wie sonst erhalten."""
+    bleibt wie sonst erhalten. `derived` (0.139.1, nach Laeufen, Updates und Aenderungen): kommen
+    die Befunde aus dem Stand der Verbindungen (`app_findings_derived`), rechnet das Vorrechnen
+    sie mit den Verbindungen - hier nur noch die einer geloeschten Applikation entfernen."""
     from app.models import Application
 
     if tenant_id is None:
@@ -405,6 +456,12 @@ def refresh_app_findings(session: Session, tenant_id: int | None,
     if not checks.enabled(session, tenant_id, checks.by_key("applikationen")):
         _sync_findings(session, tenant_id, [], types=APP_TYPES)  # aus: Befunde fallen weg
         return 0
+    if (
+        derived
+        and app_findings_derived(session, tenant_id)
+        and (application_id is None or session.get(Application, application_id) is not None)
+    ):
+        return 0  # kommen mit den Verbindungen (Vorrechnen) - keine zweite Berechnung der Wege
     started = time.monotonic()
     stmt = select(Application).where(Application.tenant_id == tenant_id)
     if application_id is not None:

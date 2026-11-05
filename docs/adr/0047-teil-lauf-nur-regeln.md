@@ -54,6 +54,14 @@ Ergänzt ADR 0037 (Doku als Stand im Hintergrund) und ADR 0009 (Läufe über Age
    - Ein Agent ohne 0.139.0 liest beim Teil-Lauf alles (das Feld `scope` ist ihm unbekannt) – das
      Ergebnis wird wie ein voller Lauf eingespielt.
 
+5. **Befunde aus dem Stand der Verbindungen** (Ergänzung 0.139.1, Einwand „Fehler bei der Doku
+   Erstellung“): sobald die Verbindungen einer Applikation im Standard gerechnet sind, ersetzt
+   `reconcile.derive_app_findings` ihre Befunde (Wege uneinheitlich, Regel nie gebraucht,
+   Contract enger) aus diesem Ergebnis. Mit dem Stand der Doku und `doc_warm_all` rechnen Update,
+   Läufe und Änderungen die Wege für die Befunde nicht mehr selbst (`refresh_app_findings(…,
+   derived=True)`); „Abgleich neu berechnen“ von Hand weiterhin. Das Vorrechnen ordnet je
+   Applikation (Doku, dann Verbindungen) und meldet Durchgang und Stand im Log.
+
 ## Folgen
 
 - Rein lesend gegenüber den Geräten wie jeder Lauf; kein neuer Schreibpfad.
