@@ -16,6 +16,10 @@ Rückweg mit - nur das Routing, ohne Policies (die Antwort erlaubt die Sitzung):
   Mitglied) müssen rückwärts dieselben sein. ACI-Knoten und Router zählen nicht.
 - **Ergebnis** je Weg `return` = {state: symmetric | asymmetric | unknown, text, firewalls};
   sind nicht alle Wege symmetrisch, ein Hinweis, welcher der einzig mögliche ist.
+- **Antwort von aussen** (0.136.0): hängt der Antwortende an keinem gelesenen Gerät (Internet,
+  Partner), kommt die Antwort über den Ausgang des Hinwegs zurück, von dort nach dem Routing.
+- **Verbindungen der Applikations-Doku** (0.136.0): dieselbe Prüfung je Verbindung, Quelle bzw.
+  Ziel auch als Netz (`nets=True`), `connection.return` aus den aktiven Wegen.
 
 Nur lesend, aus den gelesenen Routing-Tabellen."""
 
@@ -92,21 +96,39 @@ def _segments(path: dict, source: str, dst: str) -> list[tuple]:
     return out
 
 
+def _exit_entry(hops: list[dict]) -> tuple | None:
+    """Eingang der Antwort von aussen (0.136.0): kommt die Antwort von einer Adresse ausserhalb
+    der gelesenen Geräte (Internet, Partner), kommt sie über den Ausgang des Hinwegs zurück -
+    (Knoten, Interface, Zone, wie erreicht) für `paths.trace(entries=)`."""
+    if not hops:
+        return None
+    last = hops[-1]
+    part = (last.get("parts") or [last])[0]
+    key = paths_store.parse_key(part.get("key"))
+    egress = part.get("egress") or {}
+    if key is None or not egress.get("interface"):
+        return None
+    how = L("Antwort über den Ausgang des Hinwegs", "reply via the exit of the forward path")
+    return (key, egress["interface"], egress.get("zone"), how)
+
+
 def _same(forward: list[tuple], back: list[tuple]) -> bool:
     return [f for f, _ in forward] == [b for b, _ in reversed(back)]
 
 
 def annotate(session: Session, tenant_id: int, graph, result: dict, src: str | None,
-             dst: str | None) -> None:  # fmt: skip
-    """Rückweg je Weg (siehe Modul) in `path.return`; ohne Quelle (IP) nicht prüfbar."""
-    found = result.get("paths") or []
+             dst: str | None, nets: bool = False, backups: bool = True) -> None:  # fmt: skip
+    """Rückweg je Weg (siehe Modul) in `path.return`; ohne Quelle (IP) nicht prüfbar. `nets`
+    (Verbindungen der Applikations-Doku, 0.136.0): Quelle bzw. Ziel auch als Netz - die Antwort
+    geht an das Netz als Ganzes."""
+    found = [p for p in result.get("paths") or [] if backups or p.get("kind") != "backup"]
     if not found or not dst:
         return
     try:
         source = endpoint(src) if src else None
     except ValueError:
         source = None
-    if source is None or is_net(source):
+    if source is None or (is_net(source) and not nets):
         for p in found:
             p["return"] = {
                 "state": "unknown",
@@ -116,10 +138,15 @@ def annotate(session: Session, tenant_id: int, graph, result: dict, src: str | N
                 ),
             }
         return
-    target = str(endpoint(dst)) if not is_net(endpoint(dst)) else None
-    if target is None:
+    try:
+        target = endpoint(dst)
+    except ValueError:
         return
-    cache: dict[tuple[str, str], list[list[tuple]]] = {}
+    if is_net(target) and not nets:
+        return
+    target = str(target)
+    # je Graph (Mandant, Suche bzw. Berechnung der Verbindungen) einmal je Rückweg
+    cache = graph.__dict__.setdefault("_return_paths", {}) if graph is not None else {}
     for p in found[:MAX_PATHS]:
         p["return"] = _check(session, tenant_id, graph, p, str(source), target, cache)
     states = [p["return"]["state"] for p in found if p.get("return")]
@@ -145,13 +172,45 @@ def annotate(session: Session, tenant_id: int, graph, result: dict, src: str | N
         ))  # fmt: skip
 
 
+def summary(found: list[dict]) -> dict | None:
+    """Rückweg einer Verbindung aus ihren Wegen (0.136.0): über eine andere Firewall, sobald
+    ein Weg es ist (ECMP verteilt die Antworten), symmetrisch nur, wenn alle es sind."""
+    rets = [p["return"] for p in found if p.get("return")]
+    if not rets:
+        return None
+    bad = [r for r in rets if r["state"] == "asymmetric"]
+    if bad:
+        text = bad[0]["text"]
+        if len(rets) > 1:
+            text += L(f" ({len(bad)} von {len(rets)} Wegen)", f" ({len(bad)} of {len(rets)} paths)")
+        return {"state": "asymmetric", "text": text, "firewalls": bad[0].get("firewalls") or []}
+    if all(r["state"] == "symmetric" for r in rets):
+        return {"state": "symmetric", "text": rets[0]["text"],
+                "firewalls": rets[0].get("firewalls") or []}  # fmt: skip
+    unsure = next(r for r in rets if r["state"] != "symmetric")
+    return {"state": "unknown", "text": unsure["text"], "firewalls": unsure.get("firewalls") or []}
+
+
+def _from_last_connected(graph, hops: list[dict], to: str) -> list[dict]:
+    """Hops ab dem letzten Knoten am Netz des Empfängers der Antwort (0.136.0): hängt die
+    Quelle an mehreren Knoten (Transfernetz, SNAT-Pool), kann der Weg an jedem beginnen - die
+    Antwort endet am ersten, der das Netz angeschlossen hat; davor zählt nicht."""
+    if graph is None:
+        return hops
+    near = {k for k, *_ in graph.connected_nodes(endpoint(to))}
+    cut = 0
+    for i, h in enumerate(hops):
+        keys = {paths_store.parse_key(x.get("key")) for x in h.get("parts") or [h]}
+        if not keys & near:
+            break
+        cut = i
+    return hops[cut:]
+
+
 def _check(session, tenant_id, graph, path: dict, source: str, target: str, cache) -> dict:
     texts, firewalls, state = [], [], "symmetric"
     for hops, start, frm, to, skip in _segments(path, source, target):
-        forward = _firewalls(hops)
-        firewalls += [label for _, label in forward if label not in firewalls]
-        if not forward:
-            continue
+        firewalls += [label for _, label in _firewalls(hops) if label not in firewalls]
         try:
             endpoint(to)
             if frm is not None:
@@ -159,11 +218,20 @@ def _check(session, tenant_id, graph, path: dict, source: str, target: str, cach
         except ValueError:
             state = "unknown" if state == "symmetric" else state
             continue
-        key = (start, frm, to)
+        forward = _firewalls(_from_last_connected(graph, hops, to))
+        if not forward:
+            continue
+        entry = _exit_entry(hops) if start is None else None
+        key = (start, frm, to, entry[:2] if entry else None)
         if key not in cache:
             back = paths_store.trace(session, tenant_id, to, frm, start, 0, None, graph=graph,
                                      backups=False, with_rules=False,
                                      balancers=False)  # fmt: skip
+            if not back.get("paths") and entry is not None:
+                # Antwort von aussen (an keinem gelesenen Geraet): über den Ausgang des Hinwegs
+                back = paths_store.trace(session, tenant_id, to, frm, None, 0, None,
+                                         graph=graph, backups=False, with_rules=False,
+                                         balancers=False, entries=[entry])  # fmt: skip
             cache[key] = [_firewalls(b.get("hops") or []) for b in back.get("paths") or []
                           if b.get("kind") != "backup"]  # fmt: skip
         backs = [[x for x in b if x[0] != skip] for b in cache[key]]

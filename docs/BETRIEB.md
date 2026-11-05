@@ -562,7 +562,9 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
         Nur das Routing zählt, ACI-Knoten und Router nicht, im Verbund genügt derselbe
         Verbund. Hinter dem Load Balancer antwortet der Server dem Load Balancer, nach einem
         SNAT der Adresse des Pools. Sind nicht alle Wege symmetrisch, nennt ein Hinweis oben
-        den einzig möglichen.
+        den einzig möglichen. Antwortet eine Adresse ausserhalb der gelesenen Geräte (Internet),
+        kommt die Antwort über den Ausgang des Hinwegs zurück (seit 0.136.0); hängt die Quelle
+        an mehreren Firewalls (Transfernetz), zählt der Weg ab der letzten davon.
       - Seit 0.78.4 steht je Policy, **über welches Objekt** Quelle und Ziel passen
         („Quelle any, Ziel G_darknet“), und unter **„dahinter, nicht erreicht“** bis zu fünf
         weitere passende Policies nach der entscheidenden – z. B. hinter einer Sperre
@@ -1166,7 +1168,8 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
       (erlaubt, gesperrt, abhängig, offen = nicht prüfbar bzw. der Weg endet vor dem Ziel),
       *Regeln* (erlaubende bzw. sperrende Regeln der Doku), *Regel auf dem Weg* (entscheidet,
       möglich, greift nicht, nicht auf dem Weg, nicht prüfbar), *Richtung*, *Hinweise*
-      (Abweichungen, Wege uneinheitlich, gegen die Zonen-Absicht). In einer Gruppe „oder“,
+      (Abweichungen, Wege uneinheitlich, Rückweg über andere Firewall, gegen die
+      Zonen-Absicht). In einer Gruppe „oder“,
       zwischen den Gruppen „und“ (z. B. „gesperrt“ + „Abweichungen“ = erlaubende Regel, deren
       Weg sperrt); die Zahl am Knopf gilt mit den übrigen Filtern. Es erscheinen nur Arten, die
       es in der Applikation gibt; „N von M“ zeigt, wie viele Verbindungen übrig sind, „Filter
@@ -1175,6 +1178,12 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
       anderen gesperrt (aktive Wege bzw. ECMP, Backup-Wege gleicher Länge, die Firewalls eines
       Verbunds), steht in der Zeile „Wege uneinheitlich“; das Detail zeigt je Weg (aktiv bzw.
       Backup, über welche Firewalls) das Urteil. Im Kopf der Karte „N Wege uneinheitlich“.
+    - **Rückweg (0.136.0):** Je Verbindung prüft die Doku wie die Weg-Suche, ob die Antwort über
+      dieselben Firewalls zurückgeht (ACI-Knoten und Router zählen nicht, im Verbund derselbe
+      Verbund). Sonst steht in der Zeile „Rückweg über andere Firewall“ (Hinweis: über welche),
+      im Kopf der Karte „N Rückweg über andere Firewall“, als Filter unter *Hinweise* und bei
+      „nur Auffälliges“; das Detail nennt den Rückweg („Rückweg ✓“, „Rückweg ?“ mit Grund). Bei
+      mehreren aktiven Wegen genügt einer über eine andere Firewall. Kein Befund.
     - **Als Befund (0.59.0, seit 0.73.0 nur bei uneinheitlichen Wegen):** je erlaubender Regel
       und Applikation ein Befund „Applikation: Wege uneinheitlich“ (Findings → Applikationen,
       auch in der Applikations-Doku bei den Befunden) mit den Verbindungen und dem Urteil je

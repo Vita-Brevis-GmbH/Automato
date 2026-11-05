@@ -124,7 +124,11 @@ def test_eine_zeile_je_verbindung_ueber_aci_und_zwei_firewalls(client):
         "Policy 12 „web-lan-8080“ erlaubt – der Weg ist gesperrt an apic-01 · VRF TE:VRF1"
     )
     assert out["summary"] == {"total": 2, "allow": 1, "blocked": 1, "open": 0, "mismatch": 1,
-                              "inconsistent": 0, "zone_violations": 0, "unused": 1}  # fmt: skip
+                              "inconsistent": 0, "zone_violations": 0, "asymmetric": 0,
+                              "unused": 1}  # fmt: skip
+    # Rueckweg (0.136.0): zurueck ueber dieselben Firewalls (das ACI zaehlt nicht)
+    assert https["return"]["state"] == "symmetric", https["return"]
+    assert https["return"]["firewalls"] == ["fw-01 · VDOM root", "fw-02"]
     assert https["zones"] is None  # ohne logische Zonen
     # Abweichungen zuerst, gesperrte vor erlaubten
     assert out["connections"][0]["service"] == "tcp/8080"

@@ -671,6 +671,34 @@ def test_verbindung_der_applikation_ueber_die_vip(client):
     assert conn["verdict"] == "allow" and not conn["mismatch"], conn["text"]
 
 
+def test_verbindung_mit_rueckweg_ueber_andere_firewall(client, monkeypatch):
+    """0.136.0 (Anwender: „Ja“ - Rückweg auch in den Verbindungen der Applikations-Doku): je
+    Verbindung der Rückweg aus ihren aktiven Wegen, über eine andere Firewall gezählt in der
+    Übersicht und als Abweichung im Word-Export."""
+    from app.store import return_path
+
+    tid, _sids = _seed_edge(client, "Kunde Rückweg-Verbindung")
+    body = {"name": "App", "members": [{"kind": "host", "ref": "10.40.0.80"}]}
+    app = client.post(f"/applications?tenant_id={tid}", json=body,
+                      headers={"X-Dev-Roles": "operator"}).json()  # fmt: skip
+    out = client.get(f"/applications/{app['id']}/connections").json()
+    (conn,) = (c for c in out["connections"] if c["src"]["ip"] == "203.0.113.0/24")
+    assert conn["return"]["state"] == "symmetric", conn["return"]
+    assert out["summary"]["asymmetric"] == 0
+
+    bad = {"state": "asymmetric", "firewalls": ["fw-e", "fw-i"],
+           "text": "Rückweg über andere Firewalls – Antwort von 10.40.0.80 an 203.0.113.0/24 "
+                   "über fw-x"}  # fmt: skip
+    monkeypatch.setattr(return_path, "_check", lambda *_a, **_k: dict(bad))
+    out = client.get(f"/applications/{app['id']}/connections?fresh=true").json()
+    (conn,) = (c for c in out["connections"] if c["src"]["ip"] == "203.0.113.0/24")
+    assert conn["return"] == bad
+    assert out["summary"]["asymmetric"] == len(out["connections"])
+    from app.store import word_export
+
+    assert word_export._return(conn) == [bad["text"]]
+
+
 def test_rueckweg_ueber_andere_firewall(monkeypatch):
     """0.134.0: geht die Antwort über eine andere Firewall zurück, ist der Weg asymmetrisch -
     mit Hinweis, welcher Weg möglich ist; ein Verbund zählt als dieselbe Firewall."""

@@ -7,6 +7,25 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.136.0 – 2026-11-05
+
+Rückmeldung des Anwenders 2026-11-05 zu 0.135.0: „Ja“ – den Rückweg auch in den Verbindungen der
+Applikations-Doku prüfen (wie seit 0.134.0 in der Weg-Suche).
+
+- **Rückweg je Verbindung:** Je Verbindung prüft die Applikations-Doku, ob die Antwort über
+  dieselben Firewalls zurückgeht (ACI-Knoten und Router zählen nicht, im Verbund genügt derselbe
+  Verbund). Ein Zeichen „Rückweg über andere Firewall“ steht in der Spalte der Abweichungen, die
+  Übersicht zählt sie, „nur Auffälliges“ und der Filter „Rückweg über andere Firewall“ zeigen
+  sie; das Detail nennt den Rückweg („Rückweg ✓ … / ?“). Im Word-Export steht er bei der
+  Abweichung. Bei mehreren aktiven Wegen (ECMP) genügt ein Weg über eine andere Firewall.
+- **Antwort von aussen:** Antwortet eine Adresse ausserhalb der gelesenen Geräte (Internet,
+  Partner), kommt die Antwort über den Ausgang des Hinwegs zurück, von dort nach dem Routing.
+  Bis 0.135.0 war der Rückweg jeder Verbindung nach aussen „nicht prüfbar“ (Weg-Suche).
+- **Quelle an mehreren Firewalls** (Transfernetz, SNAT-Pool): verglichen wird ab der letzten
+  Firewall am Netz der Quelle – der Weg kann an jeder beginnen.
+- Die Befunde rechnen den Rückweg nicht (gleiche Dauer wie bisher).
+- Tests: `test_policy_check.py`, `test_paths.py`, `test_app_paths.py`, `e2e/release_0136.spec.ts`.
+
 ## 0.135.0 – 2026-11-05
 
 Rückmeldung des Anwenders 2026-11-05 zu 0.134.0: „beides ja“ – die Verbindungen der

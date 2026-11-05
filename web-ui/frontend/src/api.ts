@@ -2005,6 +2005,8 @@ export interface AppConnection {
   variants: { kind: "active" | "backup"; via: string; verdict: string; text: string; reason: string | null }[];
   inconsistent: boolean;
   notes: string[];
+  // 0.136.0: Rückweg über dieselben Firewalls (ausser ACI und Verbund) aus den aktiven Wegen
+  return?: { state: "symmetric" | "asymmetric" | "unknown"; text: string; firewalls?: string[] } | null;
   // logische Zonen (0.78.0, ADR 0024): Quelle/Ziel, Kette des Wegs, Absichten mit Urteil
   zones?: AppConnZones | null;
   // Netz als Ziel (0.79.1): genauer geroutete Teile (eigene Verbindungen) bzw. Teil von
@@ -2104,7 +2106,7 @@ export interface AppConnections {
   connections: AppConnection[];
   notes: string[];
   without?: AppConnWithout[];
-  summary: { total: number; allow: number; blocked: number; open: number; mismatch: number; inconsistent?: number; zone_violations?: number; unused?: number };
+  summary: { total: number; allow: number; blocked: number; open: number; mismatch: number; inconsistent?: number; zone_violations?: number; asymmetric?: number; unused?: number };
   plan?: AppPlan;
   snapshot?: DocSnapshot; // 0.108.0
   // 0.132.1: Dauer je Teil (Sekunden) und die langsamsten Wege

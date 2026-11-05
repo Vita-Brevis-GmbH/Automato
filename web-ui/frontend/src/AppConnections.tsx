@@ -139,6 +139,15 @@ const FACETS: { key: string; label: string; items: Facet[] }[] = [
         test: (c) => c.inconsistent,
       },
       {
+        key: "return",
+        label: L("Rückweg über andere Firewall", "Return via other firewall"),
+        title: L(
+          "die Antwort ginge über eine andere Firewall zurück (asymmetrisches Routing) – die Firewall verwirft sie",
+          "the reply would return via another firewall (asymmetric routing) – the firewall drops it",
+        ),
+        test: (c) => c.return?.state === "asymmetric",
+      },
+      {
         key: "zones",
         label: L("gegen die Zonen-Absicht", "against the zone intent"),
         title: L("der Weg erlaubt, was die Absicht zwischen den Zonen sperrt", "the path allows what the intent between the zones denies"),
@@ -391,6 +400,19 @@ function ConnDetail({ c, onRule, onExplain }: { c: AppConnection; onRule: (id: n
             )
           : ""}
       </div>
+      {c.return && (
+        // 0.136.0: Rückweg über dieselben Firewalls (ausser ACI und Verbund)
+        <div className="conn-return-line" data-return={c.return.state} style={{ marginBottom: 6 }}>
+          <span className={`chip ${c.return.state === "symmetric" ? "ok" : c.return.state === "asymmetric" ? "crit" : ""}`}>
+            {c.return.state === "symmetric"
+              ? L("Rückweg ✓", "Return ✓")
+              : c.return.state === "asymmetric"
+                ? L("Rückweg über andere Firewall", "Return via other firewall")
+                : L("Rückweg ?", "Return ?")}
+          </span>{" "}
+          <span className="faint">{c.return.text}</span>
+        </div>
+      )}
       <Variants c={c} />
       <table className="compact">
         <thead>
@@ -990,7 +1012,8 @@ export default function ConnectionsCard({
       .catch(setError);
   const needle = q.trim().toLowerCase();
   const base = (data?.connections ?? []).filter((c) => {
-    if (onlyIssues && !c.mismatch.length && !c.inconsistent && c.verdict === "allow" && c.reached) return false;
+    if (onlyIssues && !c.mismatch.length && !c.inconsistent && c.return?.state !== "asymmetric" && c.verdict === "allow" && c.reached)
+      return false;
     if (!needle) return true;
     const text = [c.src.label, c.src.ip, c.dst.label, c.dst.ip, c.service, ...c.hops.map((h) => h.label), ...c.rules.map((r) => r.label)]
       .join("\n")
@@ -1032,6 +1055,18 @@ export default function ConnectionsCard({
                 )}
               >
                 {L(`${s.inconsistent} Wege uneinheitlich`, `${s.inconsistent} paths inconsistent`)}
+              </span>
+            )}
+            {(s.asymmetric ?? 0) > 0 && (
+              <span
+                className="chip crit"
+                id="conn-asymmetric"
+                title={L(
+                  "die Antwort ginge über eine andere Firewall zurück (asymmetrisches Routing) – die Firewall verwirft sie",
+                  "the reply would return via another firewall (asymmetric routing) – the firewall drops it",
+                )}
+              >
+                {L(`${s.asymmetric} Rückweg über andere Firewall`, `${s.asymmetric} return via other firewall`)}
               </span>
             )}
             {(s.zone_violations ?? 0) > 0 && (
@@ -1224,6 +1259,12 @@ export default function ConnectionsCard({
                         </span>
                       )}
                       {c.mismatch.length > 0 && <div className="print-only conn-why">{c.mismatch.join("; ")}</div>}
+                      {c.return?.state === "asymmetric" && (
+                        <span className="chip crit conn-return" data-return="asymmetric" title={c.return.text}>
+                          {L("Rückweg über andere Firewall", "Return via other firewall")}
+                        </span>
+                      )}
+                      {c.return?.state === "asymmetric" && <div className="print-only conn-why">{c.return.text}</div>}
                       {c.zones?.violation && (
                         <span className="chip crit" title={c.zones.intents.map((i) => i.text).join("\n")}>
                           {L("gegen Zonen-Absicht", "against zone intent")}

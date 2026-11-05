@@ -306,6 +306,12 @@ def _variants(c: dict) -> str:
         else L("Wege uneinheitlich", "paths inconsistent")  # fmt: skip
 
 
+def _return(c: dict) -> list[str]:
+    """Rückweg über eine andere Firewall (0.136.0) als Abweichung der Verbindung."""
+    ret = c.get("return") or {}
+    return [ret["text"]] if ret.get("state") == "asymmetric" and ret.get("text") else []
+
+
 def _connections(out: Writer, data: dict) -> None:
     out.heading(L("Verbindungen Ende zu Ende", "End-to-end connections"), 1)
     s = data.get("summary") or {}
@@ -316,7 +322,10 @@ def _connections(out: Writer, data: dict) -> None:
                     f"{s.get('total', 0)} connections · {s.get('allow', 0)} allowed · "
                     f"{s.get('blocked', 0)} blocked · {s.get('open', 0)} depends or open · "
                     f"{s.get('mismatch', 0)} deviations · {s.get('inconsistent', 0)} paths "
-                    "inconsistent"))  # fmt: skip
+                    "inconsistent")
+                  + (L(f" · {s['asymmetric']} Rückweg über andere Firewall",
+                       f" · {s['asymmetric']} return via other firewall")
+                     if s.get("asymmetric") else ""))  # fmt: skip
     for n in data.get("notes") or []:
         out.note(n)
     rows = []
@@ -333,7 +342,8 @@ def _connections(out: Writer, data: dict) -> None:
                                             c.get("verdict") or ""),
                      _zones(c.get("zones")) or "–",
                      "; ".join(([_variants(c)] if c.get("inconsistent") else [])
-                               + (c.get("mismatch") or []))])  # fmt: skip
+                               + (c.get("mismatch") or [])
+                               + _return(c))])  # fmt: skip
     if rows:
         out.table([L("Richtung", "Direction"), L("Quelle", "Source"), L("Ziel", "Destination"),
                    L("Dienst", "Service"), L("Weg (entscheidende Regel)", "Path (deciding rule)"),

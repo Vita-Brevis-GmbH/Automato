@@ -60,7 +60,15 @@ from app.models import (
     RuleIpRange,
     TopoL3Out,
 )
-from app.store import aci_direction, appdoc, epg_locate, net_assign, paths, policy_check
+from app.store import (
+    aci_direction,
+    appdoc,
+    epg_locate,
+    net_assign,
+    paths,
+    policy_check,
+    return_path,
+)
 from app.store import epgs as epg_store
 from app.store import nat as nat_store
 from app.store.topology import endpoint, is_net, within
@@ -111,9 +119,10 @@ def build(session: Session, app: Application, doc: dict | None = None,
           limit: int | None = None, progress=None) -> dict:  # fmt: skip
     """Verbindungen der Applikation mit Weg, Urteil je Hop und Abgleich mit den Regeln. Graph
     und Policies lassen sich fuer mehrere Applikationen teilen (Befunde, 0.59.0); `zones`:
-    logische Zonen je Verbindung und Hop mit der Absicht (0.78.0, ADR 0024) - die Befunde
-    brauchen sie nicht. `limit`: so viele Wege (Vorgabe `app_traces_max`, 0 = alle, 0.130.0) -
-    Verbindungen zu any zuletzt. `progress(fertig, alle)` je Weg (Stand der Doku, 0.133.1).
+    logische Zonen je Verbindung und Hop mit der Absicht (0.78.0, ADR 0024) und der Rückweg
+    (0.136.0) - die Befunde brauchen beides nicht. `limit`: so viele Wege (Vorgabe
+    `app_traces_max`, 0 = alle, 0.130.0) - Verbindungen zu any zuletzt. `progress(fertig,
+    alle)` je Weg (Stand der Doku, 0.133.1).
 
     0.133.1 (Anwender: „woran kann es liegen, dass bei mir es ewig dauert und bei dir
     Sekunden?“): `timing.queries` = Abfragen an die Datenbank waehrend der Berechnung."""
@@ -293,6 +302,10 @@ def _build(session: Session, app: Application, doc: dict | None, graph: paths.Gr
             "inconsistent": sum(1 for c in out if c["inconsistent"]),
             # gegen die Absicht der Zonen (0.78.0)
             "zone_violations": sum(1 for c in out if (c.get("zones") or {}).get("violation")),
+            # Rueckweg ueber eine andere Firewall (0.136.0)
+            "asymmetric": sum(
+                1 for c in out if (c.get("return") or {}).get("state") == "asymmetric"
+            ),  # fmt: skip
             "unused": len({x["rule_id"] for x in unused}),  # 0.107.0
         },
         "unused": unused,
@@ -890,6 +903,10 @@ def _connection(
                                   c.starts)  # fmt: skip
     if zctx is not None:  # Zonen je Hop und Absicht zwischen Quell- und Zielzone (0.78.0)
         zctx.annotate(res, c.src.ip, c.dst.ip, c.service)
+        # Rueckweg je aktivem Weg (0.136.0, Anwender: „Ja“ - wie in der Weg-Suche); die
+        # Befunde (ohne Zonen) brauchen ihn nicht
+        return_path.annotate(session, tid, graph, res, c.src.ip, c.dst.ip, nets=True,
+                             backups=False)  # fmt: skip
     active = [p for p in res["paths"] if p.get("kind") != "backup"]
     first = active[0] if active else None
     hops = [_hop(h, l3) for h in first["hops"]] if first else []
@@ -927,6 +944,8 @@ def _connection(
         "variants": variants if len(variants) > 1 else [],
         "inconsistent": inconsistent(variants),
         "notes": res["notes"],
+        # Rueckweg ueber dieselben Firewalls (0.136.0, ausser ACI und Verbund)
+        "return": return_path.summary(active),
         "zones": _zones_out(res.get("zones"), first),
         # Teile des Ziel-Netzes, die genauer anders geroutet werden (eigene Verbindungen)
         "parts": parts,

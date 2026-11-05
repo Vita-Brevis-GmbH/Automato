@@ -824,3 +824,15 @@ def test_verbund_mit_verschiedenen_urteilen():
         "verdict": "depends",
         "text": "im Verbund verschieden – fw-p1: erlaubt; fw-p2: gesperrt an fw-p2",
     }
+
+
+def test_rueckweg_von_aussen_ueber_den_ausgang_des_hinwegs(client):
+    """0.136.0: antwortet eine Adresse ausserhalb der gelesenen Geräte (Internet), kommt die
+    Antwort über den Ausgang des Hinwegs zurück - bis 0.135.0 „kein Rückweg … gefunden“ (nicht
+    prüfbar) bei jeder Verbindung nach aussen."""
+    tid = _seed(client)
+    out = _trace(client, tid, src="10.20.0.5", dst="8.8.8.8")
+    assert len(out["paths"]) == 2  # ECMP über wan1 und wan2
+    for path in out["paths"]:
+        assert path["return"] == {"state": "symmetric", "text": "Rückweg über dieselben Firewalls",
+                                  "firewalls": ["fw-01 · VDOM root"]}  # fmt: skip
