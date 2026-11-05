@@ -45,6 +45,7 @@ from app.models import (
     RuleIpRange,
     RuleObjectRef,
     ServiceObject,
+    TopoPolicyRoute,
     Zone,
 )
 from app.models.device_object import ObjectCategory
@@ -122,6 +123,7 @@ class Checker:
         self.tenant_id = tenant_id
         self._policies: dict[tuple[int, str], list[_Policy]] = {}
         self._known: dict[int, set[str]] = {}
+        self._sdwan: dict[int, dict[str, set[str]]] = {}
         self._ifaces: dict[int, dict[str, list[str]]] = {}
         self._pool_cache: dict[tuple[int, str], dict[str, NatRule]] = {}
         self._vip_cache: dict[tuple[int, str], list[NatRule]] = {}
@@ -271,7 +273,8 @@ class Checker:
                 out[rid].names.append(name)
 
     def known(self, sid: int) -> set[str]:
-        """Interface- und Zonennamen der Firewall (unbekannte Namen = nicht pruefbar)."""
+        """Interface- und Zonennamen der Firewall (unbekannte Namen = nicht pruefbar) - mit den
+        SD-WAN-Zonen (0.133.4)."""
         if sid not in self._known:
             names: set[str] = set()
             for name, zone in self.session.execute(
@@ -280,8 +283,31 @@ class Checker:
                 )
             ):
                 names |= {n for n in (name, zone) if n}
+            for zones in self.sdwan(sid).values():
+                names |= zones
             self._known[sid] = names
         return self._known[sid]
+
+    def sdwan(self, sid: int) -> dict[str, set[str]]:
+        """SD-WAN-Zonen je Interface (Mitglieder aus `system/sdwan`, 0.133.4, Anwender: alle
+        Policies nur „möglich (Eingang)“): Policies nennen die SD-WAN-Zone (z. B.
+        `virtual-wan-link`), der Weg kommt über ihr Mitglied (z. B. `wan1`) herein."""
+        if sid not in self._sdwan:
+            out: dict[str, set[str]] = defaultdict(set)
+            for attrs in self.session.scalars(
+                select(TopoPolicyRoute.attrs).where(
+                    TopoPolicyRoute.source_system_id == sid, TopoPolicyRoute.kind == "sdwan")
+            ):  # fmt: skip
+                for m in (attrs or {}).get("members") or []:
+                    if isinstance(m, dict) and m.get("zone") and m.get("interface"):
+                        out[str(m["interface"])].add(str(m["zone"]))
+            self._sdwan[sid] = dict(out)
+        return self._sdwan[sid]
+
+    def _with_sdwan(self, sid: int, port: dict | None) -> dict | None:
+        """Ein- bzw. Ausgang mit den SD-WAN-Zonen seines Interfaces (`_ports`)."""
+        zones = self.sdwan(sid).get((port or {}).get("interface") or "")
+        return {**port, "sdwan": sorted(zones)} if port and zones else port
 
     def _pools(self, sid: int, vdom: str) -> dict[str, NatRule]:
         key = (sid, vdom)
@@ -397,10 +423,10 @@ class Checker:
             for p in self.policies(sid, vdom):
                 if not p.enabled:
                     continue
-                in_ok = _ports(p.srcintf, ingress, known)
+                in_ok = _ports(p.srcintf, self._with_sdwan(sid, ingress), known)
                 if in_ok is False:
                     continue
-                out_ok = _ports(p.dstintf, egress, known)
+                out_ok = _ports(p.dstintf, self._with_sdwan(sid, egress), known)
                 if out_ok is not False:
                     out.append((p, in_ok, out_ok))
             self._by_ports[key] = out
@@ -684,6 +710,7 @@ def _ports(names: list[str], port: dict | None, known: set[str]) -> bool | None:
     if any(n.lower() == "any" for n in names):
         return True
     have = {v for v in ((port or {}).get("interface"), (port or {}).get("zone")) if v}
+    have |= set((port or {}).get("sdwan") or ())  # SD-WAN-Zonen des Interfaces (0.133.4)
     if not have:
         return None
     if have & set(names):

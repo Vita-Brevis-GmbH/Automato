@@ -557,3 +557,41 @@ def test_eigener_dienst_ip_alle_protokolle_wie_all(client):
     rules = first_hop(seed("FT_gre", {"protocol": "IP", "protocol-number": 47}))
     assert rules["verdict"] == "depends", rules
     assert "Dienst" in rules["rules"][0]["unsure"]
+
+
+def test_sd_wan_zone_als_eingang_der_policy(client):
+    """0.133.4 (Anwender: „Policy 145 · erlauben · Quelle any … möglich (Eingang)“): die Policy
+    nennt die SD-WAN-Zone (`virtual-wan-link`), der Weg kommt über ihr Mitglied `wan` herein -
+    das Mitglied gehört zur Zone (aus `system/sdwan`), die Policy entscheidet; eine andere Zone
+    bleibt aussen vor."""
+    import copy
+
+    edge = copy.deepcopy(EDGE)
+    edge["rules"][0]["raw"]["srcintf"] = [{"name": "virtual-wan-link"}]
+    edge["rules"].insert(0, _policy(9, "other-zone", "SDWAN_MPLS", "transit", ["all"], ["all"],
+                                    ["all"], "deny"))  # fmt: skip
+    for i in edge["inventory"]["interfaces"]:
+        if i["name"] == "wan":
+            i["zone"] = None
+    edge["routing"]["policy_routes"] = [
+        {"node": "fw-e", "context": "root", "kind": "sdwan", "seq": 1, "name": "inet",
+         "enabled": True, "match": {"dst": ["all"]}, "action": "manual", "output_device": ["wan"],
+         "attrs": {"zones": ["virtual-wan-link"],
+                   "members": [{"seq-num": 1, "interface": "wan", "zone": "virtual-wan-link"},
+                               {"seq-num": 2, "interface": "mpls1", "zone": "SDWAN_MPLS"}]}},
+    ]  # fmt: skip
+    tid = client.post("/tenants", json={"name": "Kunde SD-WAN"}, headers=ADMIN).json()["id"]
+    for name, result in (("fw-e", edge), ("fw-i", INNER)):
+        body = {"tenant_id": tid, "name": name, "platform": "fortigate", "base_url": "https://x"}
+        sid = client.post("/systems", json=body, headers=ADMIN).json()["id"]
+        job = {"platform": "fortigate", "tenant_id": tid, "source_system_id": sid}
+        run_id = client.post("/jobs/collect", json=job).json()["run_id"]
+        r = client.post(f"/internal/collector-runs/{run_id}/result", headers=TOKEN, json=result)
+        assert r.status_code == 200, r.text
+    params = {"tenant_id": tid, "src": "203.0.113.50", "dst": "198.51.100.80",
+              "service": "tcp/443"}  # fmt: skip
+    (path,) = client.get("/routing/trace", params=params).json()["paths"]
+    rules = path["hops"][0]["rules"]
+    assert rules["verdict"] == "allow", rules
+    assert rules["text"] == "erlaubt durch Policy 10 „inet-to-app“"
+    assert [x["external_id"] for x in rules["rules"]] == ["10"]  # Policy 9: andere SD-WAN-Zone

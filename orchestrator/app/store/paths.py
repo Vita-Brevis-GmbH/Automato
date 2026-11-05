@@ -971,7 +971,18 @@ def trace(
     entry_zones: dict[tuple[Key, str | None], str] = {}
     chosen = parse_key(start)
     if entries is not None:  # Anbindung als Quelle: Eingang wie von aussen (z. B. wan1)
-        starts = [(k, iface, via) for k, iface, _zone, via in entries if k in g.nodes]
+        for k, iface, zone, via in entries:
+            if k not in g.nodes:
+                continue
+            if iface is None and zone is None and src is not None and (
+                    g.nodes[k].kind in ("firewall", "vdom")):  # fmt: skip
+                # 0.133.4 (Anwender: „möglich (Eingang)“ bei allen Policies): Anbindung ohne
+                # Interface bzw. Zone - Eingang nach der Route zur Quelle (wie beim Startpunkt)
+                iface = g.rpf_interface(k, src)
+                if iface is not None:
+                    via += L(f", Eingang {iface} nach der Route zur Quelle",
+                             f", incoming {iface} by the route to the source")  # fmt: skip
+            starts.append((k, iface, via))
         entry_zones = {(k, iface): zone for k, iface, zone, _via in entries if zone}
     elif start and chosen not in g.nodes:
         notes.append(

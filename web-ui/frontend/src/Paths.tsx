@@ -270,7 +270,16 @@ function HopRuleLine({ p }: { p: HopRule }) {
           {L(` · Sperrliste (${p.unsure.join(", ")})`, ` · blocklist (${p.unsure.join(", ")})`)}
         </span>
       ) : p.unsure.length ? (
-        L(` · möglich (${p.unsure.join(", ")})`, ` · possible (${p.unsure.join(", ")})`)
+        // 0.133.4: welche Interfaces bzw. Zonen die Policy erwartet (z. B. eine SD-WAN-Zone) - zum Vergleich mit dem Hop
+        <span
+          className="hop-unsure"
+          title={L(
+            `Eingang der Policy: ${(p.srcintf ?? []).join(", ") || "–"} · Ausgang der Policy: ${(p.dstintf ?? []).join(", ") || "–"}`,
+            `Incoming of the policy: ${(p.srcintf ?? []).join(", ") || "–"} · outgoing of the policy: ${(p.dstintf ?? []).join(", ") || "–"}`,
+          )}
+        >
+          {L(` · möglich (${p.unsure.join(", ")})`, ` · possible (${p.unsure.join(", ")})`)}
+        </span>
       ) : (
         ""
       )}

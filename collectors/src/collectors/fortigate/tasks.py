@@ -204,6 +204,7 @@ def collect_once(
             nat_rules += n
             objects += o
             zones += vdom.get("zones") or []
+            zones += norm.sdwan_zones((vdom.get("routing") or {}).get("sdwan"), zones)
         name = target.name if target is not None and target.name else "fortigate"
         inventory = norm.normalize_inventory(d.get("interfaces"), zones, d.get("system"), name)
         node = (d.get("system") or {}).get("hostname") or name  # wie das Geraet im Inventar

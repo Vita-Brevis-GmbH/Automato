@@ -7,6 +7,24 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.133.4 – 2026-11-05
+
+Rückmeldung des Anwenders 2026-11-05 zu 0.133.3 (der Dienst FT_any ist erledigt): „Regeln:
+abhängig … (nur mögliche Policies, sonst implizit gesperrt – abhängig von: Eingang, Quelle)“ –
+alle Policies am Hop nur „möglich (Eingang)“, auch die erlaubenden VIP-Policies mit Quelle any.
+
+- **SD-WAN-Zone als Eingang:** Policies nennen die SD-WAN-Zone (z. B. `virtual-wan-link`), der
+  Weg kommt über ihr Mitglied (z. B. `wan1`) herein. Bisher kannte die Prüfung die SD-WAN-Zone
+  nicht - jede Policy war nur „möglich (Eingang)“. Jetzt gehört das Mitglied zur Zone (aus
+  `system/sdwan`, sofort mit den gelesenen SD-WAN-Regeln); der Agent liest die SD-WAN-Zonen ab
+  dieser Version auch ohne SD-WAN-Regeln wie Zonen (nach dem Agent-Update und einem Lauf).
+- **Anbindung ohne Interface:** liefert die Anbindung als Quelle kein Interface bzw. keine Zone,
+  gilt als Eingang das Interface der Route zur Quelle (wie beim gewählten Startpunkt).
+- **Weg-Suche:** bei „möglich (…)“ zeigt der Hinweis beim Darüberfahren Ein- und Ausgang der
+  Policy – zum Vergleich mit dem Hop.
+- Tests: `test_policy_check.py`, `collectors/tests/test_inventory.py`,
+  `e2e/release_0133_4.spec.ts`.
+
 ## 0.133.3 – 2026-11-05
 
 Rückmeldung des Anwenders 2026-11-05: „Er rechnet nun durch, super. Mit den Wegsuche, wenn ich im

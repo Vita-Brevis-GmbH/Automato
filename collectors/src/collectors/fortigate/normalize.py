@@ -834,6 +834,23 @@ def _mgmt_ip(items: list[dict]) -> str | None:
     return None
 
 
+def sdwan_zones(cfg, zones: list[dict] | None = None) -> list[dict]:
+    """SD-WAN-Zonen (`system/sdwan`) wie `system/zone`: Mitglied -> Zone (0.133.4) - Policies
+    nennen die SD-WAN-Zone (z. B. `virtual-wan-link`), nicht das Interface. Interfaces, die schon
+    in einer Zone sind, bleiben dort."""
+    if not isinstance(cfg, dict) or cfg.get("status") == "disable":
+        return []
+    taken = {m.get("interface-name") for z in zones or [] for m in z.get("interface", [])}
+    out: dict[str, list[dict]] = {}
+    for m in cfg.get("members") or []:
+        if not isinstance(m, dict):
+            continue
+        iface, zone = str(m.get("interface") or ""), str(m.get("zone") or "")
+        if iface and zone and iface not in taken:
+            out.setdefault(zone, []).append({"interface-name": iface})
+    return [{"name": z, "interface": members} for z, members in out.items()]
+
+
 def normalize_inventory(
     interfaces: list[dict] | None,
     zones: list[dict] | None,
