@@ -502,3 +502,58 @@ def test_sperre_ohne_match_vip_greift_nicht_fuer_die_vip(client):
     assert edge["rules"]["verdict"] == "depends" and "blocklists" not in edge["rules"]
     assert edge["snat"]["pool"] == "IPP_e" and inner["rules"]["verdict"] == "allow"
     assert path["policy"]["verdict"] == "depends", path["policy"]
+
+
+def test_eigener_dienst_ip_alle_protokolle_wie_all(client):
+    """0.133.3 (Anwender: „wenn ich im Pfad eine Deny Policy habe, dies geht noch nicht … Quellen
+    Botnet-C&C.Server … Dienste wie auf der Firewall FT_any · Service · IP“): ein eigener Service
+    mit Protokoll IP und Nummer 0 trifft alle Protokolle wie ALL - die Sperre mit Internet Service
+    ist eine Sperrliste (erlaubt ausser der Liste), nicht „abhängig von: Dienst, Quelle“. Ein
+    IP-Service mit anderer Nummer (GRE 47) bleibt nicht prüfbar."""
+    import copy
+
+    isdb = {"internet-service-src": "enable", "match-vip": "enable",
+            "internet-service-src-name": [{"name": "Botnet-C&C.Server"}]}  # fmt: skip
+
+    def seed(service: str, attrs: dict) -> int:
+        edge = copy.deepcopy(EDGE)
+        edge["rules"].insert(0, _policy(5, "block-bad", "internet", "any",
+                                        ["isdb:Botnet-C&C.Server"], ["all"], [service.lower()],
+                                        "deny", **isdb))  # fmt: skip
+        edge["objects"].append(
+            {
+                "name": service,
+                "category": "service",
+                "obj_type": "IP",
+                "values": [service.lower()],
+                "attrs": attrs,
+                "vdom": "root",
+            }
+        )
+        tid = client.post("/tenants", json={"name": f"Kunde {service}"}, headers=ADMIN).json()["id"]
+        for name, result in (("fw-e", edge), ("fw-i", INNER)):
+            body = {"tenant_id": tid, "name": name, "platform": "fortigate",
+                    "base_url": "https://x"}  # fmt: skip
+            sid = client.post("/systems", json=body, headers=ADMIN).json()["id"]
+            job = {"platform": "fortigate", "tenant_id": tid, "source_system_id": sid}
+            run_id = client.post("/jobs/collect", json=job).json()["run_id"]
+            r = client.post(f"/internal/collector-runs/{run_id}/result", headers=TOKEN,
+                            json=result)  # fmt: skip
+            assert r.status_code == 200, r.text
+        return tid
+
+    def first_hop(tid: int) -> dict:
+        params = {"tenant_id": tid, "src": "203.0.113.50", "dst": "198.51.100.80",
+                  "service": "tcp/443"}  # fmt: skip
+        (path,) = client.get("/routing/trace", params=params).json()["paths"]
+        return path["hops"][0]["rules"]
+
+    rules = first_hop(seed("FT_any", {"protocol": "IP"}))
+    assert rules["verdict"] == "allow", rules
+    assert rules["text"] == ("erlaubt durch Policy 10 „inet-to-app“ – ausser Sperrliste Policy 5 "
+                             "„block-bad“ (Internet Service bzw. Land)")  # fmt: skip
+    assert rules["rules"][0]["unsure"] == ["Quelle"] and rules["rules"][0]["blocklist"] is True
+
+    rules = first_hop(seed("FT_gre", {"protocol": "IP", "protocol-number": 47}))
+    assert rules["verdict"] == "depends", rules
+    assert "Dienst" in rules["rules"][0]["unsure"]

@@ -7,6 +7,20 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.133.3 – 2026-11-05
+
+Rückmeldung des Anwenders 2026-11-05: „Er rechnet nun durch, super. Mit den Wegsuche, wenn ich im
+Pfad eine Deny Policy habe, dies geht noch nicht … Die Regel ist zuoberst und soll allen Traffic
+von den Schadsystemen sperren. Quellen Botnet-C&C.Server … Ziele all … Dienste wie auf der
+Firewall FT_any · Service · IP“. Abnahme bis 0.133.2 (ohne Einwand).
+
+- **Eigener Dienst „alle Protokolle“:** ein FortiGate-Service mit Protokoll IP und Nummer 0 (z. B.
+  „FT_any“) trifft in der Weg-Suche alle Dienste wie ALL. Bisher galt er als nicht prüfbar - die
+  Sperre mit Internet Service war darum „abhängig von: Dienst, Quelle“ statt Sperrliste. Jetzt:
+  „erlaubt durch Policy … – ausser Sperrliste Policy … (Internet Service bzw. Land)“. Ein
+  IP-Service mit anderer Nummer (z. B. GRE 47) bleibt nicht prüfbar. Wirkt ohne neuen Lauf.
+- Tests: `test_policy_check.py`.
+
 ## 0.133.2 – 2026-11-04
 
 Rückmeldung des Anwenders 2026-11-04 zu 0.133.1: „Er bricht bei 391 von 808 Wegen · seit 3 min ab,

@@ -47,6 +47,7 @@ from app.models import (
     ServiceObject,
     Zone,
 )
+from app.models.device_object import ObjectCategory
 from app.models.rule import EndpointKind, rule_service
 from app.store import nat as nat_store
 from app.store import rule_view
@@ -233,6 +234,18 @@ class Checker:
                 p.public_only[side] = True
                 continue
             p.unresolved[side] = True  # FQDN, eigene ISDB, dynamisch: nicht als IP pruefbar
+        # eigener Service mit Protokoll IP und Nummer 0 (z. B. „FT_any“) trifft alle Protokolle
+        # wie ALL (0.133.3, Anwender: Sperre mit „Dienste … FT_any · Service · IP“ war „abhängig
+        # von: Dienst“ statt Sperrliste)
+        every = {
+            name.lower()
+            for name, obj_type, attrs in self.session.execute(
+                select(DeviceObject.name, DeviceObject.obj_type, DeviceObject.attrs).where(
+                    DeviceObject.source_system_id == sid,
+                    DeviceObject.category == ObjectCategory.SERVICE)
+            )
+            if _all_protocols(obj_type, attrs)
+        }  # fmt: skip
         for rid, proto, start, end, name in self.session.execute(
             select(
                 rule_service.c.rule_id,
@@ -245,6 +258,8 @@ class Checker:
             .join(Rule, Rule.id == rule_service.c.rule_id)
             .where(*where)
         ):
+            if proto is Proto.IP and name in every:
+                name = "all"
             out[rid].services.append((proto, start, end, name))
         for rid, name in self.session.execute(
             select(RuleObjectRef.rule_id, RuleObjectRef.name)
@@ -551,6 +566,17 @@ class _AddrIndex:
         for bucket in range(first, last + 1):
             out.update(pid for a, b, pid in buckets.get(bucket, ()) if a <= hi and lo <= b)
         return out
+
+
+def _all_protocols(obj_type: str | None, attrs: dict | None) -> bool:
+    """FortiGate-Service mit Protokoll IP und Protokollnummer 0 (fehlt = 0): alle Protokolle."""
+    attrs = attrs if isinstance(attrs, dict) else {}
+    if str(attrs.get("protocol") or obj_type or "").upper() != "IP":
+        return False
+    try:
+        return int(attrs.get("protocol-number") or 0) == 0
+    except (TypeError, ValueError):
+        return False
 
 
 def _blocklist(p: _Policy, unsure: list[str], words: dict[str, str]) -> bool:
