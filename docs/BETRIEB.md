@@ -152,7 +152,8 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   letzte Läufe, Regeln je Zone, **Routing-Änderungen der letzten 7 Tage**, **Applikationen**,
   **Regeln je Firewall und Aktion**, **Objekte nach Kategorie und Präfix der Namenskonvention**,
   seit 0.129.0 **Stand der Doku** (je Applikation aktuell, veraltet, rechnet gerade, noch nie
-  berechnet; „Vorrechnen läuft“, „Befunde nachziehen“; die nicht aktuellen mit Zustand, letzter
+  berechnet; „Vorrechnen läuft“, „Befunde nachziehen“, seit 0.139.0 „Durchgang 2: 340 von 808 ·
+  danach erneut“; die nicht aktuellen mit Zustand, letzter
   Berechnung und Dauer, Klick öffnet die Applikation; neue Bereiche stehen zuerst hinten);
   ein Klick auf einen Balken öffnet die Ansicht mit diesem Filter. Bereiche eines abgeschalteten
   Moduls bzw. des Betriebs (für Kunden-Benutzer) fehlen.
@@ -191,7 +192,8 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   erfolgreich), Quellsystem, Plattform, Auslöser (von Hand, Zeitplan). Je Lauf Ausführung
   (Agent/zentral, Zeitplan), **Einträge** (seit 0.78.5; Regeln, ohne Regeln die publizierten
   Dienste des NSX ALB, VMs des vCenters bzw. Geräte der Switches; beim IPAM die Datensätze),
-  Status mit Meldung, angelegt/begonnen, beendet mit Dauer; offene Läufe **Abbrechen**
+  Status mit Meldung, angelegt/begonnen, beendet mit Dauer (seit 0.139.0 „nur Regeln“ bei einem
+  Lauf für eine Applikation); offene Läufe **Abbrechen**
   (Operator). Offene Läufe auf der Seite aktualisieren sich alle 10 s. Beim NSX ALB steht seit
   0.78.5 auch bei Erfolg eine Zusammenfassung: Version, gelesene Avi-Tenants, Anzahl Virtual
   Services, VS VIPs, Pools, Pool Groups und Einträge (VIP × Port), dazu, was nicht lesbar war –
@@ -1388,6 +1390,25 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     Weg fehlt mit dem Hinweis „n Wege nicht berechnet (Fehler im Programm …)“. Das Log des
     Orchestrators zeigt jetzt auch die Meldungen zum Fortschritt mit Zeit (`… INFO app.store…`),
     bis 0.133.1 nur Warnungen und Fehler ohne Zeit.
+    **Durchgänge (0.139.0, ADR 0047):** das Vorrechnen nimmt zu Beginn alles, was aussteht
+    (schnelle zuerst), und rechnet jede Applikation einmal – auch wenn währenddessen weitere Läufe
+    eingehen. Ein Lauf bzw. eine Änderung währenddessen bricht nichts ab, sondern merkt einen
+    weiteren Durchgang mit allem, was danach nicht mehr passt („danach erneut“). Bis 0.138.0 kamen
+    mit Importen im Gang dieselben schnellen Applikationen immer wieder zuerst dran. Die Befunde
+    Regel ↔ Weg rechnen nicht mehr im Einspielen jedes Laufs, sondern zusammengefasst danach
+    (Übersicht „Befunde nachziehen“). Nach dem Speichern einer Applikation rechnet sie gleich,
+    ohne auf den Durchgang zu warten.
+    **Regeln neu einlesen (0.139.0, ADR 0047, Operator):** in der Applikation „⟳ Regeln neu
+    einlesen“ – nach einer Regeländerung auf Firewalls bzw. im ACI. Zur Auswahl stehen alle
+    FortiGates und Cisco ACI des Mandanten, die der Applikation vorgewählt („Regeln der Doku“,
+    „auf dem Weg“). Je Gerät liest ein Lauf **nur Regeln, Objekte und NAT** bzw. beim ACI den
+    Tenant-Baum (Contracts, Filter, EPGs) – Interfaces, Routing, HA, Fabric und Border-Leafs
+    bleiben vom letzten vollen Lauf. Das Fenster zeigt je Gerät „wartet / liest / eingelesen“;
+    sind alle fertig, rechnet **nur diese Applikation** neu und die Doku lädt sich. Andere
+    Applikationen zeigen danach „veraltet“ und rechnen beim nächsten Durchgang bzw. beim Öffnen.
+    Wer am Gerät auch Interfaces oder Routing geändert hat, liest es voll („Jetzt einlesen“). Ein
+    Teil-Lauf zählt nicht als voller Lauf (Stand des Quellsystems in der Datenqualität). Agenten
+    vor 0.139.0 lesen dabei alles (bis zu ihrem Selbst-Update).
     **Dauer der Berechnung (0.132.1):** unter den Verbindungen „Berechnet in … s: n Wege in … s“ –
     aufgeklappt je Teil (Doku, Verbindungen bilden, Vorbereitung, Plan) und die langsamsten Wege;
     dieselben Zahlen schreibt der Orchestrator ins Log („Applikation 12: Verbindungen in …“).

@@ -155,6 +155,46 @@ def run_tenant(factory: sessionmaker[Session], tenant_id: int) -> None:
     bgp_cache.warm(factory, tenant_id)  # 0.131.0: Routing-Filter
 
 
+def schedule_runs(background: BackgroundTasks, factory: sessionmaker[Session], tenant_id: int,
+                  application_id: int | None = None, full: bool = True) -> bool:  # fmt: skip
+    """Nach einem Lauf (0.139.0, Anwender: „Das Neuberechnen der Apps und Wege muss besser
+    gesteuert werden“): die Abweichungen Regel <-> Weg der Applikationen - bis 0.138.0 bis zu
+    `app_findings_seconds` im Einspielen jedes Laufs - danach Doku und Routing-Filter, alles
+    hinter der Antwort. Zusammengefasst: steht schon ein Durchgang aus, der noch nicht begonnen
+    hat, kommt keiner dazu - zehn Laeufe hintereinander rechnen so nicht zehnmal. Nach einem
+    Lauf nur der Regeln einer Applikation (`application_id`) nur diese, ohne Routing-Filter
+    (`full=False`)."""
+    key = ("runs", tenant_id, application_id or 0)
+    if not _claim(key):
+        return False
+    background.add_task(run_runs, factory, tenant_id, application_id, full)
+    return True
+
+
+def run_runs(factory: sessionmaker[Session], tenant_id: int, application_id: int | None = None,
+             full: bool = True) -> None:  # fmt: skip
+    from app.store import bgp_cache, doc_snapshots, reconcile  # spaet: reconcile -> app_paths
+
+    with _tenant_locks[tenant_id]:
+        _release(("runs", tenant_id, application_id or 0))  # ab hier: ein neuer Lauf = neu
+        session = factory()
+        try:
+            reconcile.refresh_app_findings(session, tenant_id, application_id)
+            session.commit()
+        except Exception:
+            session.rollback()
+            log.exception("Mandant %s: Befunde der Applikationen nach dem Lauf fehlgeschlagen",
+                          tenant_id)  # fmt: skip
+        finally:
+            session.close()
+    if application_id is not None:  # nur diese Applikation, gleich (auch waehrend eines Durchgangs)
+        doc_snapshots.refresh_app(factory, tenant_id, application_id)
+    else:
+        doc_snapshots.warm(factory, tenant_id)
+    if full:
+        bgp_cache.warm(factory, tenant_id)  # 0.131.0: Routing-Filter
+
+
 def pending(tenant_id: int, application_id: int) -> bool:
     with _lock:
         return (tenant_id, application_id) in _pending
@@ -177,4 +217,5 @@ def run(factory: sessionmaker[Session], tenant_id: int, application_id: int) -> 
             log.exception("Applikation %s: Befunde nachziehen fehlgeschlagen", application_id)
         finally:
             session.close()
-    doc_snapshots.warm(factory, tenant_id, application_id)
+    # 0.139.0: gleich, ohne auf einen Durchgang des Mandanten zu warten bzw. einen anzustossen
+    doc_snapshots.refresh_app(factory, tenant_id, application_id)

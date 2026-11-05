@@ -7,6 +7,37 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.139.0 – 2026-11-05
+
+Rückmeldung des Anwenders 2026-11-05: „Das Neuberechnen der Apps und Wege muss besser gesteuert
+werden. Wenn ich Imports am Laufen habe, startet er jedes Mal neu, wenn ein Gerät importiert hat
+… vorberechnen ungeachtet der Daten mal starten und dann wenn alle vorberechnet sind, die
+komplette Berechnung durchführen“ und auf die Rückfrage: „Wenn ich im Realen System was ändere für
+eine App auf diversen Firewalls und ACI, würde ich gerne nicht alle Firewalls und ACI neu
+integrieren, sondern nur die Regeln neu berechnen, welche geändert haben.“ (ADR 0047)
+
+- **Vorrechnen in Durchgängen:** zu Beginn steht fest, was aussteht; jede Applikation wird je Stand
+  genau einmal gerechnet, auch wenn währenddessen Läufe eingehen. Ein Lauf bzw. eine Änderung
+  währenddessen merkt einen weiteren Durchgang mit allem, was danach nicht mehr passt. Übersicht:
+  „Durchgang 2: 340 von 808 · danach erneut“. Bis 0.138.0 kamen nach jedem Lauf die schnellen
+  Applikationen erneut zuerst dran, die langsamen nie.
+- **Befunde nach Läufen zusammengefasst:** die Abweichungen Regel ↔ Weg (bis zu 120 s) rechnen
+  nicht mehr im Einspielen jedes Laufs, sondern hinter den Läufen – zehn Läufe hintereinander
+  rechnen sie nicht zehnmal. Die Routing-Filter rechnen nach einem Anstoss während des Rechnens
+  noch einmal (bisher ging er verloren). Eine gespeicherte Applikation rechnet gleich, ohne auf
+  den Durchgang zu warten.
+- **Regeln neu einlesen** (Applikation, Operator): je FortiGate bzw. Cisco ACI ein Lauf **nur der
+  Regeln** – FortiGate: Policies, Objekte, NAT je VDOM ohne Interfaces, Zonen, Routing, HA, System;
+  ACI: Tenant-Baum ohne Fabric und Border-Leafs. Inventar und Routing bleiben vom letzten vollen
+  Lauf. Vorgewählt die Geräte der Applikation (Regeln der Doku, auf dem Weg). Danach rechnet nur
+  diese Applikation neu; das Fenster zeigt je Gerät den Stand. Läufe: „nur Regeln“. Zählt nicht
+  als voller Lauf (Datenqualität, Routing-Filter).
+- Migration `0075` (`collector_run.scope`, `application_id`); Agent/Worker bekommen `scope` im
+  Ziel – ältere Agenten lesen alles.
+- Tests: `test_rules_read.py`, `test_fortigate_client.py`, `e2e/release_0139.spec.ts`; zwei Tests,
+  die mit `AUTOMATO_TEST_DOC_SNAPSHOTS=1` (nächtlicher Lauf) am gespeicherten Stand scheiterten,
+  rechnen jetzt ohne Stand bzw. leeren ihn.
+
 ## 0.138.0 – 2026-11-05
 
 Rückmeldung des Anwenders 2026-11-05: „Ich habe 500 Firewall Rule Paare, welche ich bestätigen

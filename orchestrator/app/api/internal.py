@@ -26,9 +26,8 @@ from app.schemas.collector import CollectorResult, ReferenceBatch
 from app.sot import build_adapter
 from app.store import agents as agent_store
 from app.store import (
-    bgp_cache,
+    app_refresh,
     customers,
-    doc_snapshots,
     ingest,
     reconcile,
     references,
@@ -85,7 +84,10 @@ def run_target(
     if src is None:
         return {"target": None}
     try:
-        return {"target": agent_store.target_for(src, None)}
+        target = agent_store.target_for(src, None)
+        if run.scope:  # 0.139.0: nur Regeln
+            target["scope"] = run.scope
+        return {"target": target}
     except credentials.CredentialsUnavailable as exc:
         # Lauf mit Grund beenden (0.113.2): der Worker liest ohne Ziel nicht - sonst wartete
         # er bis zur Frist und wuerde immer wieder geschickt
@@ -192,7 +194,7 @@ def _finish_reference_run(session: Session, run, result: CollectorResult, actor)
             reconcile.reconcile_tenant(session, run.tenant_id)
             # Suchtext der Regeln enthaelt DNS-Namen aus dem IPAM -> Index neu
             rule_index.rebuild(session, run.tenant_id)
-            reconcile.refresh_app_findings(session, run.tenant_id)  # Regel <-> Weg
+            # Regel <-> Weg: seit 0.139.0 hinter dem Lauf (`app_refresh.schedule_runs`)
             customers.derive(session, run.tenant_id)  # Kunden (ADR 0018)
 
         error = _attempt(run, finalize, session)
@@ -270,12 +272,26 @@ def submit_result(
     with german():
         ack = _receive(session, run_id, result, x_internal_token, x_agent_token, channel)
     run = session.get(CollectorRun, run_id)
-    if run is not None and run.tenant_id and run.status is RunStatus.COMPLETED:
-        # Doku der zuletzt angesehenen Applikationen vorrechnen (0.108.0, ADR 0037)
-        background.add_task(doc_snapshots.warm, factory, run.tenant_id)
-        background.add_task(bgp_cache.warm, factory, run.tenant_id)  # 0.131.0
+    if run is not None and run.tenant_id:
+        _after_run(session, background, factory, run)
     shown = runs.show_message(ack.message)
     return ack if shown == ack.message else ack.model_copy(update={"shown": shown})
+
+
+def _after_run(session: Session, background: BackgroundTasks, factory: sessionmaker,
+               run: CollectorRun) -> None:  # fmt: skip
+    """Nach dem Lauf im Hintergrund (0.139.0, `app_refresh.schedule_runs`): Befunde Regel <->
+    Weg, Doku und Routing-Filter - zusammengefasst ueber mehrere Laeufe. Lauf nur der Regeln
+    einer Applikation: nur diese, sobald ihr letzter Teil-Lauf fertig ist (auch wenn einer
+    fehlschlug - die anderen haben eingespielt)."""
+    if run.scope == runs.RULES and run.application_id:
+        if run.status in runs.OPEN or runs.open_for_application(session, run.application_id):
+            return
+        app_refresh.schedule_runs(background, factory, run.tenant_id, run.application_id,
+                                  full=False)  # fmt: skip
+        return
+    if run.status is RunStatus.COMPLETED:
+        app_refresh.schedule_runs(background, factory, run.tenant_id)
 
 
 def _receive(

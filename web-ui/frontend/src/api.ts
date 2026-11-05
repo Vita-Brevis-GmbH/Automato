@@ -531,6 +531,8 @@ export interface Run {
   queued_at: string | null;
   started_at?: string | null; // abgeholt bzw. vom zentralen Worker gestartet
   finished_at: string | null;
+  scope?: string | null; // 0.139.0: rules = nur Regeln (für die Applikation application_id)
+  application_id?: number | null;
 }
 
 export interface Nat {
@@ -1493,6 +1495,7 @@ export interface CollectAllItem {
   blocking_run_id?: string | null; // offener Lauf, der das Quellsystem belegt (abbrechbar)
 }
 // Offenen Lauf beenden (operator) – z. B. hängt er nach einem Neustart des Agenten
+export const fetchRun = (runId: string) => getJSON<Run>(`/api/jobs/${runId}`);
 export const cancelRun = (runId: string) => sendJSON<Run>(`/api/jobs/${runId}/cancel`, "POST", {});
 export const startCollectAll = (tenantId: number) =>
   sendJSON<{ queued: number; items: CollectAllItem[] }>("/api/jobs/collect-all", "POST", { tenant_id: tenantId });
@@ -1835,9 +1838,21 @@ export interface DocKindState {
   progress?: { done: number; total: number; seconds: number }; // 0.133.1: Wege fertig von allen, seit (s)
   error?: { text: string; at: string }; // 0.133.2: letzter Fehler mit denselben Eingaben
 }
+// 0.139.0: Durchgang des Vorrechnens - was beim Start ausstand, je Stand einmal
+export interface DocRound {
+  number: number;
+  apps_done: number;
+  apps_total: number;
+  done: number; // Stände fertig
+  total: number;
+  since: number; // Unix-Zeit (s)
+  application_id: number | null;
+  again: boolean; // Lauf bzw. Änderung währenddessen: danach ein weiterer Durchgang
+}
 export interface DocStates {
   enabled: boolean;
   warming: boolean; // Vorrechnen läuft
+  round?: DocRound | null;
   warm_days: number;
   warm_all?: boolean; // 0.133.2: alle Applikationen im Standard vorrechnen
   refreshing?: number; // Befunde nachziehen (ausstehend)
@@ -1854,6 +1869,23 @@ export interface DocStates {
     kinds: Record<"doc" | "connections", DocKindState>;
   }[];
 }
+// 0.139.0 (ADR 0047): Regeln einer Applikation neu einlesen - Teil-Lauf nur der Regeln
+export interface RuleSource {
+  source_system_id: number;
+  name: string;
+  platform: string;
+  own: boolean; // gehört zur Applikation (vorgewählt)
+  reasons: ("rules" | "path")[];
+  open_run: string | null; // liest bzw. wartet schon
+  last_full_run: string | null;
+}
+export interface ReadRulesResult {
+  queued: number;
+  items: { source_system_id: number; name: string | null; run_id: string | null; execution: string | null; skipped: string | null }[];
+}
+export const fetchRuleSources = (appId: number) => getJSON<RuleSource[]>(`/api/applications/${appId}/rule-sources`);
+export const readAppRules = (appId: number, sourceSystemIds: number[]) =>
+  sendJSON<ReadRulesResult>(`/api/applications/${appId}/read-rules`, "POST", { source_system_ids: sourceSystemIds });
 export const fetchDocStates = (tenantId: number) =>
   getJSON<DocStates>(`/api/applications/doc-states${cq({ tenant_id: tenantId })}`);
 export const fetchApp = (id: number) => getJSON<ApplicationDetail>(`/api/applications/${id}`);

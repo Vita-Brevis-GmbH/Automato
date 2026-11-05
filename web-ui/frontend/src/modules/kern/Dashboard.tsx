@@ -634,6 +634,22 @@ export function DocsCard({ tenantId, onGo }: { tenantId: number; onGo: Go }) {
     >
       <div className="dash-docs-state" style={{ padding: "8px 16px 0", display: "flex", gap: 6, flexWrap: "wrap" }}>
         {data.warming && <span className="chip info" id="docs-warming">{L("Vorrechnen läuft", "Pre-computing")}</span>}
+        {data.round && data.round.apps_total > 0 && (
+          <span
+            className="chip info"
+            id="docs-round"
+            title={L(
+              "Was beim Start des Durchgangs ausstand, wird je Applikation einmal gerechnet – neue Läufe brechen nichts ab, danach folgt ein weiterer Durchgang mit dem neuesten Stand",
+              "What was pending when the round started is computed once per application – new runs do not abort it, another round with the latest data follows",
+            )}
+          >
+            {L(
+              `Durchgang ${data.round.number}: ${data.round.apps_done} von ${data.round.apps_total}`,
+              `Round ${data.round.number}: ${data.round.apps_done} of ${data.round.apps_total}`,
+            )}
+            {data.round.again && L(" · danach erneut", " · then again")}
+          </span>
+        )}
         {(data.refreshing ?? 0) > 0 && (
           <span className="chip info" id="docs-refreshing" title={L("Befunde der Applikationen werden nachgezogen", "Findings of the applications are being updated")}>
             {L("Befunde nachziehen", "Updating findings")}

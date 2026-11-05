@@ -43,6 +43,7 @@ _lock = threading.Lock()
 _bundles: dict[tuple[int, str], "Bundle"] = {}
 _langs: dict[int, set[str]] = defaultdict(lambda: {DEFAULT})
 _building: set[int] = set()
+_again: set[int] = set()  # 0.139.0: Anstoss waehrend des Rechnens - danach noch einmal
 _tenant_locks: dict[int, threading.Lock] = defaultdict(threading.Lock)
 
 
@@ -63,7 +64,9 @@ def enabled() -> bool:
 def fingerprint(session: Session, tenant_id: int) -> str:
     from app.store import doc_snapshots  # gleiche Eingaben wie die Doku
 
-    parts = [__version__, tenant_id, lang(), doc_snapshots._tenant_parts(session, tenant_id)]
+    # Laeufe nur der Regeln (0.139.0) aendern die Routing-Filter nicht
+    parts = [__version__, tenant_id, lang(),
+             doc_snapshots._tenant_parts(session, tenant_id, full_only=True)]  # fmt: skip
     return hashlib.sha256(repr(parts).encode()).hexdigest()
 
 
@@ -157,11 +160,13 @@ def schedule(background: BackgroundTasks, factory: sessionmaker[Session], tenant
 
 def warm(factory: sessionmaker[Session], tenant_id: int) -> int:
     """Stand des Mandanten in den zuletzt verlangten Sprachen neu, wo er nicht mehr passt (nach
-    Laeufen und Aenderungen, im Hintergrund). -> Anzahl neu gerechnet."""
+    Laeufen und Aenderungen, im Hintergrund). Rechnet er schon, rechnet er danach noch einmal
+    (0.139.0 wie die Doku: bis dahin ging der Anstoss verloren). -> Anzahl neu gerechnet."""
     if not enabled():
         return 0
     with _lock:
         if tenant_id in _building:
+            _again.add(tenant_id)
             return 0
         _building.add(tenant_id)
     return _warm_claimed(factory, tenant_id)
@@ -170,27 +175,40 @@ def warm(factory: sessionmaker[Session], tenant_id: int) -> int:
 def _warm_claimed(factory: sessionmaker[Session], tenant_id: int) -> int:
     done = 0
     try:
-        with _tenant_locks[tenant_id]:
+        while True:
             with _lock:
-                codes = sorted(_langs[tenant_id])
-            for code in codes:
-                with use(code):
-                    session = factory()
-                    try:
-                        old = _bundles.get((tenant_id, code))
-                        if old is not None and old.fingerprint == fingerprint(session, tenant_id):
-                            continue
-                        _store(tenant_id, code, build(session, tenant_id))
-                        done += 1
-                    except Exception:
-                        log.exception("Mandant %s: Routing-Filter vorrechnen fehlgeschlagen",
-                                      tenant_id)  # fmt: skip
-                    finally:
-                        session.rollback()
-                        session.close()
+                _again.discard(tenant_id)
+            done += _warm_once(factory, tenant_id)
+            with _lock:
+                if tenant_id not in _again:
+                    break
     finally:
         with _lock:
             _building.discard(tenant_id)
+            _again.discard(tenant_id)
+    return done
+
+
+def _warm_once(factory: sessionmaker[Session], tenant_id: int) -> int:
+    done = 0
+    with _tenant_locks[tenant_id]:
+        with _lock:
+            codes = sorted(_langs[tenant_id])
+        for code in codes:
+            with use(code):
+                session = factory()
+                try:
+                    old = _bundles.get((tenant_id, code))
+                    if old is not None and old.fingerprint == fingerprint(session, tenant_id):
+                        continue
+                    _store(tenant_id, code, build(session, tenant_id))
+                    done += 1
+                except Exception:
+                    log.exception("Mandant %s: Routing-Filter vorrechnen fehlgeschlagen",
+                                  tenant_id)  # fmt: skip
+                finally:
+                    session.rollback()
+                    session.close()
     return done
 
 

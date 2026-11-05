@@ -116,6 +116,7 @@ def test_langsam_letzter_stand_sofort_neu_im_hintergrund(client, monkeypatch, sn
     monkeypatch.setattr(get_settings(), "doc_stale_seconds", 0.0)  # jede Berechnung ist „lang“
     client.patch(f"/applications/{aid}", json={"description": "x"}, headers=OP)
     monkeypatch.setattr(doc_snapshots, "warm", lambda *a, **k: 0)  # kein Vorrechnen
+    monkeypatch.setattr(doc_snapshots, "refresh_app", lambda *a, **k: 0)  # 0.139.0: je App
     client.patch(f"/applications/{aid}", json={"description": "y"}, headers=OP)
     snapshots.clear()
     stale = _doc(client, aid)

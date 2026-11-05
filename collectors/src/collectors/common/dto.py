@@ -439,6 +439,9 @@ class Target(BaseModel):
     base_url: str = ""
     verify_tls: bool = True
     read_scope: str = ""  # ACI: zu lesende Tenants (kommagetrennt, leer = alle); Switches: Adressen
+    # 0.139.0: `rules` = nur Regeln, Objekte und NAT lesen (FortiGate, Cisco ACI) - fuer eine
+    # Applikation; Inventar und Routing bleiben vom letzten vollen Lauf
+    scope: str | None = None
     known_hosts: dict[str, str] = Field(default_factory=dict)  # Switches: gespeicherte Schluessel
     token: str | None = None
     username: str | None = None

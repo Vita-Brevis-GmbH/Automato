@@ -29,6 +29,9 @@ from app.store import run_text, tenant_lock
 log = logging.getLogger(__name__)
 
 OPEN = (RunStatus.QUEUED, RunStatus.RUNNING)
+# 0.139.0: Lauf nur der Regeln (FortiGate, Cisco ACI) - Inventar und Routing bleiben
+RULES = "rules"
+RULES_PLATFORMS = ("fortigate", "cisco_aci")
 
 
 class RunRejected(ValueError):
@@ -44,8 +47,16 @@ def queue_collect(
     execution: str,
     actor: str,
     trigger: str = "manual",
+    scope: str | None = None,
+    application_id: int | None = None,
 ) -> CollectorRun:
+    """Lauf anlegen; `scope` = `RULES` (0.139.0) liest nur Regeln, Objekte und NAT fuer die
+    Applikation `application_id` (nur FortiGate und Cisco ACI)."""
     from app import modules  # spaet: modules nutzt die Modelle
+
+    if scope is not None and (scope != RULES or platform not in RULES_PLATFORMS):
+        raise RunRejected(L("nur Regeln lesen geht bei FortiGate und Cisco ACI",
+                            "reading rules only works for FortiGate and Cisco ACI"))  # fmt: skip
 
     # Module je Mandant (0.107.0, ADR 0036): Worker aus = keine neuen Laeufe, Gateway aus =
     # keine Referenzquellen (IPAM) - auch nicht nach Zeitplan
@@ -86,23 +97,35 @@ def queue_collect(
         source_system_id=source_system_id,
         execution=execution,
         trigger=trigger,
+        scope=scope,
+        application_id=application_id,
     )
     session.add(run)
     session.flush()  # run.id verfuegbar machen
-    audit.record(
-        session,
-        actor=actor,
-        action="collector_run.queued",
-        subject=run.id,
-        detail={
-            "platform": platform,
-            "tenant_id": tenant_id,
-            "source_system_id": source_system_id,
-            "execution": execution,
-            "trigger": trigger,
-        },
-    )
+    detail = {
+        "platform": platform,
+        "tenant_id": tenant_id,
+        "source_system_id": source_system_id,
+        "execution": execution,
+        "trigger": trigger,
+    }
+    if scope is not None:  # 0.139.0
+        detail |= {"scope": scope, "application_id": application_id}
+    audit.record(session, actor=actor, action="collector_run.queued", subject=run.id,
+                 detail=detail)  # fmt: skip
     return run
+
+
+def open_for_application(session: Session, application_id: int) -> int:
+    """Offene Laeufe nur der Regeln fuer die Applikation (0.139.0): erst der letzte rechnet sie
+    neu."""
+    from sqlalchemy import func
+
+    return session.scalar(
+        select(func.count()).select_from(CollectorRun).where(
+            CollectorRun.application_id == application_id, CollectorRun.scope == RULES,
+            CollectorRun.status.in_(OPEN))
+    ) or 0  # fmt: skip
 
 
 def blocking(session: Session, source_system_id: int) -> CollectorRun | None:

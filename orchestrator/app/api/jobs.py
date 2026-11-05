@@ -147,6 +147,8 @@ def _run_out(run: CollectorRun, session: Session | None = None) -> CollectorRunO
         queued_at=run.queued_at,
         started_at=run.started_at,
         finished_at=run.finished_at,
+        scope=run.scope,
+        application_id=run.application_id,
     )
 
 

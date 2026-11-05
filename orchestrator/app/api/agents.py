@@ -117,6 +117,8 @@ class Target(BaseModel):
     priv_protocol: str | None = None
     priv_password: str | None = None
     context: str | None = None
+    # 0.139.0: `rules` = nur Regeln, Objekte und NAT lesen (Lauf fuer eine Applikation)
+    scope: str | None = None
 
     @model_serializer(mode="wrap")
     def _only_used(self, handler):
@@ -128,8 +130,9 @@ class Target(BaseModel):
         return data
 
 
+# dazu `scope` nur bei Teil-Laeufen (0.139.0)
 _SWITCH_ONLY = ("known_hosts", "access", "auth_protocol", "auth_password", "priv_protocol",
-                "priv_password", "context")  # fmt: skip
+                "priv_password", "context", "scope")  # fmt: skip
 
 
 class NextRun(BaseModel):
@@ -375,7 +378,7 @@ def next_run(
     src = session.get(SourceSystem, run.source_system_id) if run.source_system_id else None
     if src is not None:
         try:
-            target = Target(**store.target_for(src, agent.id))
+            target = Target(**store.target_for(src, agent.id), scope=run.scope)
         except credentials.CredentialsUnavailable as exc:
             # Lauf nicht mit falschen/ohne Zugangsdaten starten - sichtbar abbrechen
             run.status = RunStatus.FAILED

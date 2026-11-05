@@ -77,6 +77,17 @@ export function RunsTable({
                     {L("Zeitplan", "Schedule")}
                   </span>
                 )}
+                {r.scope === "rules" && (
+                  <span
+                    className="chip info run-rules-only"
+                    title={L(
+                      "nur Regeln, Objekte und NAT gelesen – für eine Applikation; Inventar und Routing bleiben vom letzten vollen Lauf (0.139.0)",
+                      "only rules, objects and NAT read – for one application; inventory and routing stay from the last full run (0.139.0)",
+                    )}
+                  >
+                    {L("nur Regeln", "rules only")}
+                  </span>
+                )}
               </td>
               <td className="num">{r.rule_count ?? "–"}</td>
               <td>

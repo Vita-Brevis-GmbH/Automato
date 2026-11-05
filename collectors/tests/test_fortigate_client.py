@@ -284,3 +284,85 @@ def test_vdom_ohne_leserecht_fehlt_mit_meldung(monkeypatch):
         "https://fw", "t", client=httpx.Client(transport=httpx.MockTransport(admin))
     )
     assert [v["vdom"] for v in client.gather()["vdoms"]] == ["kunde-a"]
+
+
+def test_nur_regeln_ohne_interfaces_routing_und_system():
+    """0.139.0 (Anwender: „nicht alle Firewalls und ACI neu integrieren, sondern nur die Regeln“):
+    ein Lauf nur der Regeln liest Regeln, Objekte und NAT - keine Interfaces, Zonen, Routing,
+    HA bzw. System; das Ergebnis hat weder Inventar noch Routing (bleiben im Orchestrator)."""
+    from collectors.common.dto import Target
+    from collectors.fortigate import tasks
+
+    asked: list[str] = []
+    mock = _client_with_mock()
+    inner = mock._client.get if hasattr(mock, "_client") else None
+    assert inner is not None
+
+    def get(url, *args, **kwargs):
+        asked.append(str(url))
+        return inner(url, *args, **kwargs)
+
+    mock._client.get = get
+    data = mock.gather_rules()
+    assert data["rules_only"] and data["vdoms"] and data["vdoms"][0]["policies"]
+    assert "interfaces" not in data and "routing" not in data["vdoms"][0]
+    paths = {u.split("/api/v2/", 1)[-1].split("?", 1)[0] for u in asked}
+    assert "cmdb/firewall/policy" in paths and "cmdb/firewall/vip" in paths
+    assert not any(
+        p.startswith(
+            (
+                "cmdb/system/interface",
+                "cmdb/system/zone",
+                "monitor/router",
+                "monitor/system/ha",
+                "cmdb/router",
+            )
+        )
+        for p in paths
+    ), paths
+
+    sent = {}
+
+    def submit(run_id, result, via_agent=False):
+        sent["result"] = result
+        return None
+
+    target = Target(
+        source_system_id=1,
+        name="fw-01",
+        platform="fortigate",
+        base_url="https://fw-01.lab",
+        token="t",
+        scope="rules",
+    )
+    orig = tasks.gather
+    tasks.gather = lambda t=None: data
+    tasks.submit_result, keep = submit, tasks.submit_result
+    try:
+        tasks.collect_once("r1", target)
+    finally:
+        tasks.gather, tasks.submit_result = orig, keep
+    result = sent["result"]
+    assert result.status == "completed" and result.rules and result.objects
+    assert result.inventory is None and result.routing is None
+    assert result.message.startswith("nur Regeln")
+    assert tasks.rules_only(target) and not tasks.rules_only(None)
+
+
+def test_aci_nur_regeln_ohne_fabric(monkeypatch):
+    """0.139.0: ACI nur der Tenant-Baum (Contracts, Filter, EPGs) - Fabric und Border-Leafs
+    bleiben vom letzten vollen Lauf."""
+    from collectors.cisco_aci import tasks
+    from collectors.common.dto import Target
+
+    sent = {}
+    monkeypatch.setattr(
+        tasks, "submit_result", lambda run_id, result, via_agent=False: sent.setdefault("r", result)
+    )
+    target = Target(source_system_id=2, name="apic", platform="cisco_aci", scope="rules")
+    data = tasks.gather(target)
+    assert data["rules_only"] and "fabric" not in data and "border" not in data
+    tasks.collect_once("r2", target)
+    result = sent["r"]
+    assert result.status == "completed" and result.rules and result.epgs
+    assert result.inventory is None and result.routing is None and result.message == "nur Regeln"

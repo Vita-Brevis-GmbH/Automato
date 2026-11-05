@@ -248,6 +248,7 @@ MODULES: tuple[Module, ...] = (
             "peer_names",
             "app_import",
             "app_refresh",
+            "app_rules_read",  # Regeln einer Applikation neu einlesen (0.139.0, ADR 0047)
             "doc_snapshots",  # Stand der Doku im Hintergrund (0.108.0, ADR 0037)
             "docx_writer",
             "md_writer",

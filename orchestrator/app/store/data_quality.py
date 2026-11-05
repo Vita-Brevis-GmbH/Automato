@@ -282,14 +282,16 @@ def states(session: Session, tenant_id: int, settings: Settings, now: datetime,
             good = session.scalars(
                 select(CollectorRun)
                 .where(CollectorRun.source_system_id == src.id,
-                       CollectorRun.status == RunStatus.COMPLETED)
+                       CollectorRun.status == RunStatus.COMPLETED,
+                       CollectorRun.scope.is_(None))  # 0.139.0: volle Laeufe (Routing, Inventar)
                 .order_by(CollectorRun.queued_at.desc())
                 .limit(1)
             ).first()  # fmt: skip
         last = session.scalars(
             select(CollectorRun)
             .where(CollectorRun.source_system_id == src.id,
-                   CollectorRun.status.in_((RunStatus.COMPLETED, RunStatus.FAILED)))
+                   CollectorRun.status.in_((RunStatus.COMPLETED, RunStatus.FAILED)),
+                   CollectorRun.scope.is_(None))
             .order_by(CollectorRun.queued_at.desc())
             .limit(1)
         ).first()  # fmt: skip

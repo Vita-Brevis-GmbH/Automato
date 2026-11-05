@@ -39,6 +39,9 @@ class CollectorRunOut(BaseModel):
     queued_at: datetime | None = None
     started_at: datetime | None = None  # abgeholt bzw. vom zentralen Worker gestartet
     finished_at: datetime | None = None
+    # 0.139.0: `rules` = nur Regeln, Objekte und NAT fuer die Applikation `application_id`
+    scope: str | None = None
+    application_id: int | None = None
 
 
 class CollectAllRequest(BaseModel):

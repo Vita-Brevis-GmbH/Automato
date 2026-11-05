@@ -51,16 +51,25 @@ def _no_credentials(target: Target | None) -> str:
     )
 
 
+def rules_only(target: Target | None) -> bool:
+    """Lauf nur der Regeln (0.139.0): Regeln, Objekte und NAT - Inventar und Routing bleiben."""
+    return target is not None and target.scope == "rules"
+
+
 def gather(target: Target | None = None) -> dict:
     """FortiGate-Rohdaten (IPv4+IPv6, NAT) - echtes Geraet je VDOM (`vdoms`) oder (nur zentral)
-    Beispieldaten als ein VDOM ohne Namen (flach, wie aeltere Clients)."""
+    Beispieldaten als ein VDOM ohne Namen (flach, wie aeltere Clients). Lauf nur der Regeln
+    (0.139.0): ohne Interfaces, Zonen, Routing, HA und System (`rules_only` im Ergebnis)."""
     creds = _credentials(target)
     if creds is not None:
         url, token, verify = creds
-        return FortiGateClient(url, token, verify_tls=verify).gather()
+        client = FortiGateClient(url, token, verify_tls=verify)
+        return client.gather_rules() if rules_only(target) else client.gather()
     if get_settings().agent_token:
         # Agent im Kundennetz: nie Beispieldaten in einen echten Mandanten schreiben
         raise RuntimeError(_no_credentials(target))
+    if rules_only(target):
+        return {"vdoms": [_sample_rules()], "rules_only": True}
     return {
         "policies": _sample("sample_policies.json"),
         "addresses": _sample("sample_addresses.json"),
@@ -74,6 +83,21 @@ def gather(target: Target | None = None) -> dict:
         "interfaces": _sample("sample_interfaces.json"),
         "zones": _sample("sample_zones.json"),
         "system": _sample("sample_system.json"),
+    }
+
+
+def _sample_rules() -> dict:
+    """Beispieldaten nur der Regeln (zentral/Lab) - wie ein VDOM ohne Namen."""
+    return {
+        "policies": _sample("sample_policies.json"),
+        "addresses": _sample("sample_addresses.json"),
+        "addresses6": _sample("sample_addresses6.json"),
+        "groups": _sample("sample_addrgrps.json"),
+        "groups6": _sample("sample_addrgrps6.json"),
+        "services": _sample("sample_services.json"),
+        "service_groups": _sample("sample_service_groups.json"),
+        "vips": _sample("sample_vips.json"),
+        "ippools": _sample("sample_ippools.json"),
     }
 
 
@@ -206,17 +230,24 @@ def collect_once(
             zones += vdom.get("zones") or []
             zones += norm.sdwan_zones((vdom.get("routing") or {}).get("sdwan"), zones)
         name = target.name if target is not None and target.name else "fortigate"
-        inventory = norm.normalize_inventory(d.get("interfaces"), zones, d.get("system"), name)
-        node = (d.get("system") or {}).get("hostname") or name  # wie das Geraet im Inventar
-        result = CollectorResult(
-            status="completed",
-            rules=rules,
-            nat_rules=nat_rules,
-            objects=objects,
-            inventory=inventory,
-            routing=routing.normalize(d.get("vdoms") or [], d.get("ha"), node, d.get("interfaces")),
-            message=_vdom_message(d),
-        )
+        if d.get("rules_only"):  # 0.139.0: Inventar und Routing bleiben vom letzten vollen Lauf
+            message = " · ".join(p for p in ("nur Regeln", _vdom_message(d)) if p)
+            result = CollectorResult(status="completed", rules=rules, nat_rules=nat_rules,
+                                     objects=objects, message=message)  # fmt: skip
+        else:
+            inventory = norm.normalize_inventory(d.get("interfaces"), zones, d.get("system"), name)
+            node = (d.get("system") or {}).get("hostname") or name  # wie das Geraet im Inventar
+            result = CollectorResult(
+                status="completed",
+                rules=rules,
+                nat_rules=nat_rules,
+                objects=objects,
+                inventory=inventory,
+                routing=routing.normalize(
+                    d.get("vdoms") or [], d.get("ha"), node, d.get("interfaces")
+                ),
+                message=_vdom_message(d),
+            )
     except Exception as exc:  # noqa: BLE001 - Fehler gehen als failed-Result zurueck
         result = CollectorResult(status="failed", message=diagnose.device_error(exc, "fortigate"))
     return confirmed(result, submit_result(run_id, result, via_agent=via_agent))

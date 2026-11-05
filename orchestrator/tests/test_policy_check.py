@@ -716,8 +716,11 @@ def test_verbindung_mit_rueckweg_ueber_andere_firewall(client, monkeypatch):
     """0.136.0 (Anwender: „Ja“ - Rückweg auch in den Verbindungen der Applikations-Doku): je
     Verbindung der Rückweg aus ihren aktiven Wegen, über eine andere Firewall gezählt in der
     Übersicht und als Abweichung im Word-Export."""
+    from app.config import get_settings
     from app.store import return_path
 
+    # gerechnet, nicht der gespeicherte Stand (der Ersatz fuer `_check` aendert keinen Abdruck)
+    monkeypatch.setattr(get_settings(), "doc_snapshots", False)
     tid, _sids = _seed_edge(client, "Kunde Rückweg-Verbindung")
     body = {"name": "App", "members": [{"kind": "host", "ref": "10.40.0.80"}]}
     app = client.post(f"/applications?tenant_id={tid}", json=body,

@@ -83,11 +83,15 @@ def _no_credentials(target: Target | None) -> str:
 
 def gather(target: Target | None = None) -> dict:
     """Tenant-Baum + Fabric-Klassen + Routing der Border-Leafs (ADR 0019) - echter APIC oder
-    (nur zentral) Beispieldaten."""
+    (nur zentral) Beispieldaten. Lauf nur der Regeln (0.139.0, `Target.scope`): nur der
+    Tenant-Baum (Contracts, Filter, EPGs) - Fabric und Routing bleiben vom letzten vollen Lauf."""
     apic = _credentials(target)
+    rules = target is not None and target.scope == "rules"  # 0.139.0: nur die Tenants
     if apic is not None:
         with apic.client() as client:
             export = client.export(apic.tenants)
+            if rules:  # ohne Fabric und Routing der Border-Leafs
+                return {"tenants": export, "rules_only": True}
             contexts = aci_routing.border_contexts(aci_routing.parse_l3outs(export))
             return {
                 "tenants": export,
@@ -97,6 +101,8 @@ def gather(target: Target | None = None) -> dict:
     if get_settings().agent_token:
         # Agent im Kundennetz: nie Beispieldaten in einen echten Mandanten schreiben
         raise RuntimeError(_no_credentials(target))
+    if rules:
+        return {"tenants": fetch_mo_export(), "rules_only": True}
     return {"tenants": fetch_mo_export(), "fabric": fetch_fabric_sample()}
 
 
@@ -128,19 +134,23 @@ def collect_once(
         export = data["tenants"]
         rules = [rule for c in parse_mo_export(export) for rule in normalize_contract(c)]
         epgs = [NormalizedEpg(**e) for e in parse_epgs(export)]
-        inventory = parse_inventory(export, data.get("fabric"))
-        inventory.vrf_leaks = parse_leaks(export)  # Route-Leaking zwischen VRFs (0.44.0)
         objects = filter_objects(parse_filters(export))
-        routing = aci_routing.normalize(export, data.get("fabric"), data.get("border"))
-        result = CollectorResult(
-            status="completed",
-            rules=rules,
-            epgs=epgs,
-            inventory=inventory,
-            objects=objects,
-            routing=routing,
-            message=_routing_message(routing),
-        )
+        if data.get("rules_only"):  # 0.139.0: Inventar (Fabric, VRF-Leaks) und Routing bleiben
+            result = CollectorResult(status="completed", rules=rules, epgs=epgs, objects=objects,
+                                     message="nur Regeln")  # fmt: skip
+        else:
+            inventory = parse_inventory(export, data.get("fabric"))
+            inventory.vrf_leaks = parse_leaks(export)  # Route-Leaking zwischen VRFs (0.44.0)
+            routing = aci_routing.normalize(export, data.get("fabric"), data.get("border"))
+            result = CollectorResult(
+                status="completed",
+                rules=rules,
+                epgs=epgs,
+                inventory=inventory,
+                objects=objects,
+                routing=routing,
+                message=_routing_message(routing),
+            )
     except Exception as exc:  # noqa: BLE001 - Fehler sichtbar an die interne API melden
         result = CollectorResult(status="failed", message=diagnose.device_error(exc, "cisco_aci"))
     return confirmed(result, submit_result(run_id, result, via_agent=via_agent))

@@ -21,7 +21,9 @@ grossen Umgebungen je Aufruf Sekunden bis Minuten, nach jedem Speichern erneut.
   Verbindungen jeder Applikation im Standard (ohne Namen, alle Regeln) - auch nie geoeffnete,
   schnelle zuerst, bis nichts mehr aussteht; ein weiterer Anstoss waehrend des Vorrechnens wartet
   nicht, sondern laesst es danach erneut schauen. Was mit einem Fehler abbricht, bleibt bis zu
-  neuen Eingaben stehen und zeigt den Fehler in der Uebersicht.
+  neuen Eingaben stehen und zeigt den Fehler in der Uebersicht. Seit 0.139.0 in Durchgaengen:
+  was beim Start aussteht, wird je Stand einmal gerechnet; Laeufe waehrenddessen merken nur einen
+  weiteren Durchgang (`warm`, `round_of`).
 
 - **Uebersicht** (`overview`, 0.129.0): je Applikation des Mandanten, ob ihre Staende passen,
   veraltet sind, gerade rechnen bzw. noch nie gerechnet wurden, dazu ob das Vorrechnen laeuft.
@@ -72,6 +74,8 @@ _progress: dict[int, dict] = {}
 _warm_locks: dict[int, threading.Lock] = defaultdict(threading.Lock)
 # 0.133.2: Anstoss waehrend des Vorrechnens (Mandant) - danach erneut schauen, statt zu warten
 _warm_again: set[int] = set()
+# 0.139.0: laufender Durchgang je Mandant (Nummer, Staende, offene je Applikation, seit)
+_rounds: dict[int, dict] = {}
 # 0.133.2 (Anwender: „Er bricht immer bei dieser Anzahl ab“): letzter Fehler je Stand mit dem
 # Abdruck der Eingaben - bis sich diese aendern, rechnet das Vorrechnen ihn nicht erneut
 _failed: dict[tuple[int, str, str], dict] = {}
@@ -96,11 +100,13 @@ def _standard(var: str) -> bool:
     return len(parts) >= 3 and parts[1] == "-" and parts[2] == "all"
 
 
-def _tenant_parts(session: Session, tid: int) -> tuple:
-    """Eingaben des Mandanten im Abdruck: letzter Lauf, Quellsysteme, letzte Aenderung."""
-    runs = session.scalar(
-        select(func.max(CollectorRun.finished_at)).where(CollectorRun.tenant_id == tid)
-    )
+def _tenant_parts(session: Session, tid: int, full_only: bool = False) -> tuple:
+    """Eingaben des Mandanten im Abdruck: letzter Lauf, Quellsysteme, letzte Aenderung.
+    `full_only` (0.139.0, Routing-Filter): ohne Laeufe, die nur Regeln lesen."""
+    stmt = select(func.max(CollectorRun.finished_at)).where(CollectorRun.tenant_id == tid)
+    if full_only:
+        stmt = stmt.where(CollectorRun.scope.is_(None))
+    runs = session.scalar(stmt)
     sources = session.execute(
         select(SourceSystem.id, SourceSystem.enabled, SourceSystem.reference_run_id)
         .where(SourceSystem.tenant_id == tid).order_by(SourceSystem.id)
@@ -395,6 +401,7 @@ def overview(session: Session, tenant_id: int) -> dict:
         select(Application).where(Application.tenant_id == tenant_id).order_by(Application.name)
     ))  # fmt: skip
     head = {"enabled": enabled(), "warming": bool(lock and lock.locked()),
+            "round": round_of(tenant_id),  # 0.139.0: Durchgang des Vorrechnens
             "warm_days": settings.doc_warm_days,
             "warm_all": settings.doc_warm_days > 0 and bool(settings.doc_warm_all)}  # fmt: skip
     counts = dict.fromkeys(("fresh", "stale", "building", "never"), 0)
@@ -567,12 +574,66 @@ def _end_warm(tenant_id: int) -> bool:
         return True
 
 
+def round_of(tenant_id: int) -> dict | None:
+    """Durchgang des Vorrechnens (0.139.0): Nummer, Applikationen fertig von allen, Staende,
+    seit wann, ob danach ein weiterer folgt (`again`: Lauf bzw. Aenderung waehrenddessen)."""
+    with _lock:
+        r = _rounds.get(tenant_id)
+        if r is None:
+            return None
+        return {"number": r["number"], "apps_done": len(r["apps"]) - len(r["open"]),
+                "apps_total": len(r["apps"]), "done": r["done"], "total": r["total"],
+                "since": r["since"], "application_id": r["application_id"],
+                "again": tenant_id in _warm_again}  # fmt: skip
+
+
+def _round_start(tenant_id: int, number: int, todo: list[_Todo], application_id: int | None
+                 ) -> None:  # fmt: skip
+    left: dict[int, int] = defaultdict(int)
+    for t in todo:
+        left[t.key[0]] += 1
+    with _lock:
+        _rounds[tenant_id] = {"number": number, "total": len(todo), "done": 0,
+                              "apps": set(left), "open": dict(left), "since": time.time(),
+                              "application_id": application_id}  # fmt: skip
+
+
+def _round_step(tenant_id: int, app_id: int) -> None:
+    with _lock:
+        r = _rounds.get(tenant_id)
+        if r is None:
+            return
+        r["done"] += 1
+        r["open"][app_id] -= 1
+        if r["open"][app_id] <= 0:
+            r["open"].pop(app_id)
+
+
+def _fresh(session: Session, item: _Todo) -> bool:
+    """Passt der Stand schon (z. B. beim Oeffnen gerechnet, waehrend der Durchgang lief)?"""
+    app_id, kind, var = item.key
+    row = session.execute(
+        select(DocSnapshot.fingerprint).where(
+            DocSnapshot.application_id == app_id, DocSnapshot.kind == kind,
+            DocSnapshot.variant == var)
+    ).first()  # fmt: skip
+    app = session.get(Application, app_id)
+    return row is not None and app is not None and row.fingerprint == fingerprint(session, app, var)
+
+
 def warm(factory: sessionmaker[Session], tenant_id: int, application_id: int | None = None
          ) -> int:  # fmt: skip
     """Staende des Mandanten (bzw. der Applikation) vorrechnen, die nicht mehr passen bzw. noch
-    nie gerechnet wurden (`_todo`) - nach Laeufen, Aenderungen und dem Start; je Durchgang
-    der schnellste, danach neu schauen, bis nichts mehr aussteht (bzw. `doc_warm_seconds`).
-    -> Anzahl neu gerechnet."""
+    nie gerechnet wurden (`_todo`) - nach Laeufen, Aenderungen und dem Start.
+
+    In Durchgaengen (0.139.0, Anwender: „Wenn ich Imports am Laufen habe, startet er jedes Mal
+    neu, wenn ein Gerät importiert hat … vorberechnen ungeachtet der Daten mal starten und dann
+    wenn alle vorberechnet sind, die komplette Berechnung durchführen“): zu Beginn steht fest,
+    was aussteht (schnelle zuerst), und jeder Stand wird genau einmal gerechnet - mit den Daten,
+    die beim Rechnen gelten. Ein Lauf bzw. eine Aenderung waehrenddessen bricht nichts ab,
+    sondern merkt einen weiteren Durchgang mit allem, was danach nicht mehr passt. Bis 0.138.0
+    galt nach jedem Lauf alles als neu, die schnellen kamen immer wieder zuerst dran und die
+    langsamen nie. Endet nach `doc_warm_seconds` (0 = ohne Grenze). -> Anzahl neu gerechnet."""
     settings = get_settings()
     if not enabled() or settings.doc_warm_days <= 0:
         return 0
@@ -580,46 +641,93 @@ def warm(factory: sessionmaker[Session], tenant_id: int, application_id: int | N
 
     if not _start_warm(tenant_id):
         return 0
-    done, started, tried = 0, time.monotonic(), set()
+    done, started, number = 0, time.monotonic(), 0
     budget = settings.doc_warm_seconds
     held = True
     try:
         while True:
+            number += 1
             session = factory()
             try:
-                if not modules.enabled(session, tenant_id, "doku"):  # Modul aus (ADR 0036)
-                    item = None
-                else:
-                    item = next((t for t in _todo(session, tenant_id, application_id)
-                                 if (t.key, t.fp) not in tried), None)  # fmt: skip
-                params = {}
-                if item is not None and item.sid is not None:
-                    data = session.scalar(select(DocSnapshot.data)
-                                          .where(DocSnapshot.id == item.sid))  # fmt: skip
-                    params = _unpack(data)["params"] if data else {}
+                todo = (_todo(session, tenant_id, application_id)
+                        if modules.enabled(session, tenant_id, "doku") else [])  # fmt: skip
             finally:
                 session.close()
-            if item is not None and budget and time.monotonic() - started > budget:
-                log.info("Mandant %s: Vorrechnen nach %d Staenden beendet (Zeitbudget)",
-                         tenant_id, done)  # fmt: skip
-                item = None
-            if item is None:
-                if _end_warm(tenant_id):
-                    held = False
-                    return done
-                application_id = None  # Anstoss waehrenddessen: den ganzen Mandanten
-                continue
-            tried.add((item.key, item.fp))  # je Durchgang einmal (auch wenn es fehlschlaegt)
-            app_id, kind, var = item.key
-            if rebuild(factory, app_id, kind, var,
-                       Params(params.get("rule_ids"), bool(params.get("names"))),
-                       var.split("|", 1)[0], viewed=False):  # fmt: skip
-                done += 1
+            _round_start(tenant_id, number, todo, application_id)
+            over = False
+            for item in todo:
+                if budget and time.monotonic() - started > budget:
+                    log.info("Mandant %s: Vorrechnen nach %d Staenden beendet (Zeitbudget)",
+                             tenant_id, done)  # fmt: skip
+                    over = True
+                    break
+                app_id, kind, var = item.key
+                session = factory()
+                try:
+                    params = {}
+                    if _fresh(session, item):
+                        item = None
+                    elif item.sid is not None:
+                        data = session.scalar(select(DocSnapshot.data)
+                                              .where(DocSnapshot.id == item.sid))  # fmt: skip
+                        params = _unpack(data)["params"] if data else {}
+                finally:
+                    session.close()
+                if item is not None and rebuild(
+                        factory, app_id, kind, var,
+                        Params(params.get("rule_ids"), bool(params.get("names"))),
+                        var.split("|", 1)[0], viewed=False):  # fmt: skip
+                    done += 1
+                _round_step(tenant_id, app_id)
+            if number > 1 or todo:
+                log.info("Mandant %s: Durchgang %d des Vorrechnens fertig (%d Staende)",
+                         tenant_id, number, len(todo))  # fmt: skip
+            if over:
+                with _lock:
+                    _warm_again.discard(tenant_id)
+            if _end_warm(tenant_id):
+                held = False
+                return done
+            application_id = None  # Anstoss waehrenddessen: der ganze Mandant
     finally:
+        with _lock:
+            _rounds.pop(tenant_id, None)
         if held:  # Fehler im Vorrechnen selbst: freigeben
             with _lock:
                 _warm_again.discard(tenant_id)
                 _warm_locks[tenant_id].release()
+
+
+def refresh_app(factory: sessionmaker[Session], tenant_id: int, application_id: int) -> int:
+    """Staende einer Applikation gleich neu (0.139.0) - nach ihrem Speichern bzw. nach dem
+    Einlesen ihrer Regeln, ohne auf einen laufenden Durchgang des Mandanten zu warten und ohne
+    einen neuen fuer alle anzustossen. Was gerade rechnet, rechnet nicht doppelt (`rebuild`).
+    -> Anzahl neu gerechnet."""
+    settings = get_settings()
+    if not enabled() or settings.doc_warm_days <= 0:
+        return 0
+    from app import modules  # spaet: Module kennen die Store-Dateien
+
+    session = factory()
+    try:
+        if not modules.enabled(session, tenant_id, "doku"):
+            return 0
+        todo = []
+        for item in _todo(session, tenant_id, application_id):
+            params = {}
+            if item.sid is not None:
+                data = session.scalar(select(DocSnapshot.data).where(DocSnapshot.id == item.sid))
+                params = _unpack(data)["params"] if data else {}
+            todo.append((item.key, params))
+    finally:
+        session.close()
+    done = 0
+    for (app_id, kind, var), params in todo:
+        if rebuild(factory, app_id, kind, var,
+                   Params(params.get("rule_ids"), bool(params.get("names"))),
+                   var.split("|", 1)[0], viewed=False):  # fmt: skip
+            done += 1
+    return done
 
 
 def warm_all(factory: sessionmaker[Session]) -> None:

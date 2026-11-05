@@ -165,8 +165,8 @@ def persist_result(session: Session, run, result: CollectorResult, sot) -> None:
         rule_index.rebuild(
             session, run.tenant_id, source_system_id=run.source_system_id, rules=rules
         )
-    # Abweichungen Regel <-> Weg der Applikationen (0.59.0) - mit dem neuen Regelindex
-    reconcile.refresh_app_findings(session, run.tenant_id)
+    # Abweichungen Regel <-> Weg der Applikationen (0.59.0): seit 0.139.0 nicht mehr hier,
+    # sondern zusammengefasst hinter dem Lauf (`app_refresh.schedule_runs`)
     # Kunden (ADR 0018): Zugehoerigkeit ist abgeleitet - nach jedem Lauf neu
     customers.derive(session, run.tenant_id)
 

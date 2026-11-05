@@ -51,6 +51,7 @@ import { ActionBadge, Dash, download, Drawer, Empty, ErrorBox, Expandable, Expor
 import { L } from "./i18n";
 import { RuleWegeLink } from "./modules/wege/RuleWegeLink";
 import RulesetCompare from "./modules/doku/RulesetCompare";
+import { ReadRulesDialog } from "./modules/doku/ReadRulesDialog";
 
 type Go = (v: View, p?: ViewParams) => void;
 
@@ -250,6 +251,7 @@ export default function ApplicationDocView({
   const [showEmpty, setShowEmpty] = useState(false);
   const [printing, setPrinting] = useState<Set<string> | null>(null); // Druck: gewählte Abschnitte offen
   const [exportOpen, setExportOpen] = useState(false);
+  const [readOpen, setReadOpen] = useState(false); // 0.139.0: Regeln neu einlesen
   const [systemKey, setSystemKey] = useState<string | null>(null); // Detail eines Systems (0.73.0)
   const [epgKey, setEpgKey] = useState<string | null>(null); // Detail einer EPG (0.95.0)
   const [objectId, setObjectId] = useState<number | null>(null); // Firewall-Objekt (0.95.0)
@@ -419,6 +421,19 @@ export default function ApplicationDocView({
         {maintain && (
           <button className="btn btn-ghost btn-sm" id="app-doc-edit" onClick={onEdit}>
             {L("Bearbeiten", "Edit")}
+          </button>
+        )}
+        {me.isOperator && !me.isCustomer && (
+          <button
+            className="btn btn-ghost btn-sm"
+            id="app-read-rules"
+            onClick={() => setReadOpen(true)}
+            title={L(
+              "Nur die Regeln der Firewalls und des ACI dieser Applikation neu einlesen und nur sie neu berechnen – nach Änderungen am Gerät",
+              "Re-read only the rules of this application's firewalls and ACI and recompute only it – after changes on the device",
+            )}
+          >
+            ⟳ {L("Regeln neu einlesen", "Re-read rules")}
           </button>
         )}
         <button
@@ -904,6 +919,7 @@ export default function ApplicationDocView({
       {exportOpen && (
         <ExportDialog customer={me.isCustomer} onClose={() => setExportOpen(false)} onRun={runExport} />
       )}
+      {readOpen && <ReadRulesDialog appId={id} onClose={() => setReadOpen(false)} onDone={() => void refreshDoc(false)} />}
       {systemKey && (
         <SystemDrawer
           x={doc.systems.find((x) => x.key === systemKey)}

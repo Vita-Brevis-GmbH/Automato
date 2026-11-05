@@ -306,6 +306,9 @@ def test_default_originate_und_keine_routen_zurueck_ins_selbe_as(client, session
     p.attrs = {**p.attrs, "config": conf}
     s.commit()
     s.close()
+    from app.store import bgp_cache
+
+    bgp_cache.clear()  # direkt in der Datenbank geaendert: der Fingerabdruck merkt es nicht
     r = client.get(f"/routing/bgp/peers/{pid}", params={"tenant_id": tid}).json()
     out = {a["prefix"]: a for a in r["out"]["announced"]}
     assert "10.50.0.0/16" not in out  # AS 65010 im AS-Pfad

@@ -29,13 +29,14 @@ from app.auth.deps import require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session, get_session_factory
 from app.i18n import L
-from app.models import Application, Rule, Site, SourceSystem, Tenant
+from app.models import Application, CollectorRun, Rule, Site, SourceSystem, Tenant
 from app.schemas.appdoc import DocTableOut, SiteRef
 from app.schemas.rules import RuleOut
 from app.store import (
     app_import,
     app_plan,
     app_refresh,
+    app_rules_read,
     appdoc_catalog,
     appdoc_ruleset,
     customer_alias,
@@ -613,6 +614,75 @@ def doc_states(
         raise HTTPException(status_code=403, detail=L("nur für den Betrieb", "operations only"))
     tid = _require_tenant(principal, tenant_id)
     return {**doc_snapshots.overview(session, tid), "refreshing": app_refresh.pending_count(tid)}
+
+
+class RuleSourceOut(BaseModel):
+    """FortiGate bzw. Cisco ACI fuer „Regeln neu einlesen“ (0.139.0)."""
+
+    source_system_id: int
+    name: str
+    platform: str
+    own: bool  # gehoert zur Applikation (vorgewaehlt)
+    reasons: list[str] = []  # rules = Regeln/Contracts der Doku, path = auf dem Weg
+    open_run: str | None = None  # liest bzw. wartet schon (dann uebersprungen)
+    last_full_run: str | None = None
+
+
+class ReadRulesIn(BaseModel):
+    source_system_ids: list[int] | None = None  # ohne Angabe: die der Applikation
+
+
+class ReadRulesItem(BaseModel):
+    source_system_id: int
+    name: str | None = None
+    run_id: str | None = None
+    execution: str | None = None
+    skipped: str | None = None
+
+
+class ReadRulesOut(BaseModel):
+    queued: int
+    items: list[ReadRulesItem]
+
+
+@router.get("/{application_id}/rule-sources", response_model=list[RuleSourceOut])
+def rule_sources(
+    application_id: int,
+    principal: Principal = Depends(require_operator),
+    session: Session = Depends(get_session, scope="function"),
+):
+    """Geraete fuer „Regeln neu einlesen“ (0.139.0, ADR 0047): FortiGates und Cisco ACI des
+    Mandanten, die der Applikation zuerst."""
+    if principal.is_customer:
+        raise HTTPException(status_code=403, detail=L("nur für den Betrieb", "operations only"))
+    app = _load(session, principal, application_id)
+    return app_rules_read.sources(session, app)
+
+
+@router.post("/{application_id}/read-rules", response_model=ReadRulesOut, status_code=202)
+def read_rules(
+    application_id: int,
+    payload: ReadRulesIn,
+    principal: Principal = Depends(require_operator),
+    session: Session = Depends(get_session, scope="function"),
+):
+    """Nur die Regeln der Geraete neu einlesen und danach nur diese Applikation neu rechnen
+    (0.139.0, ADR 0047) - rein lesend gegenueber den Geraeten, wie „Jetzt einlesen“."""
+    if principal.is_customer:
+        raise HTTPException(status_code=403, detail=L("nur für den Betrieb", "operations only"))
+    app = _load(session, principal, application_id)
+    if not modules.enabled(session, app.tenant_id, "worker"):
+        raise HTTPException(status_code=422, detail=modules.disabled_text("worker"))
+    items = app_rules_read.start(session, app, payload.source_system_ids,
+                                 f"user:{principal.subject}")  # fmt: skip
+    from app.jobs import celery_app  # spaet: Celery nur, wenn gelesen wird
+
+    for i in items:
+        if i["run_id"] and i["execution"] == "inprocess":
+            run = session.get(CollectorRun, i["run_id"])
+            celery_app.dispatch_collect(run.platform, run.id)
+    return ReadRulesOut(queued=sum(1 for i in items if i["run_id"]),
+                        items=[ReadRulesItem(**i) for i in items])  # fmt: skip
 
 
 @router.get("/candidates", response_model=list[CandidateOut])

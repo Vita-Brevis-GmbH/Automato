@@ -312,6 +312,14 @@ class FortiGateClient:
     def vdom_tables(self, vdom: str | None) -> dict[str, list]:
         """Was die Normalisierung je VDOM braucht (IPv4+IPv6, NAT, Zonen, Interfaces)."""
         return {
+            **self.rule_tables(vdom),
+            "zones": self.zones(vdom),
+            "interfaces": self.interfaces(vdom),
+        }
+
+    def rule_tables(self, vdom: str | None) -> dict[str, list]:
+        """Regeln, Objekte und NAT eines VDOMs (0.139.0: allein fuer einen Lauf nur der Regeln)."""
+        return {
             "policies": self.policies(vdom),
             "policies6": self.policies6(vdom),
             "addresses": self.addresses(vdom),
@@ -327,9 +335,28 @@ class FortiGateClient:
             "ldb_monitors": self.ldb_monitors(vdom),
             "ippools": self.ippools(vdom),
             "ippools6": self.ippools6(vdom),
-            "zones": self.zones(vdom),
-            "interfaces": self.interfaces(vdom),
         }
+
+    def gather_rules(self) -> dict[str, Any]:
+        """Nur Regeln, Objekte und NAT je VDOM (0.139.0, Anwender: „nicht alle Firewalls und ACI
+        neu integrieren, sondern nur die Regeln“) - ohne Interfaces, Zonen, Routing, HA und
+        System. Nicht lesbare VDOMs wie bei `gather`."""
+        vdoms: list[dict[str, Any]] = []
+        skipped: list[dict[str, str]] = []
+        denied: httpx.HTTPStatusError | None = None
+        for name in self.vdoms():
+            try:
+                tables = self.rule_tables(name)
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code != 403:
+                    raise
+                denied = denied or exc
+                skipped.append({"vdom": str(name), "error": f"HTTP {exc.response.status_code}"})
+                continue
+            vdoms.append({"vdom": name or self.default_vdom, **tables})
+        if not vdoms and denied is not None:
+            raise denied
+        return {"vdoms": vdoms, "skipped": skipped, "rules_only": True}
 
     def gather(self) -> dict[str, Any]:
         """Alles einlesen, je VDOM (ADR 0019): `vdoms` = [{vdom, policies, ..., routing}], dazu
