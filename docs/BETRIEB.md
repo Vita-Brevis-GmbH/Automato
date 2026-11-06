@@ -2340,6 +2340,22 @@ an (`deploy/agent-gateway`, Port 8443).
   synchronized: yes“), sonst NTP aktivieren (`sudo timedatectl set-ntp true`, intern ggf.
   den DC als NTP-Server eintragen). Toleranz: `AUTOMATO_OIDC_CLOCK_SKEW_SECONDS` (Default 60). Nach Änderungen an `.env`: `docker compose … up -d` (neu
   erstellt den Container).
+- **„Keine Antwort vom Server – Verbindung abgebrochen“** (bis 0.139.1: „Failed to fetch“) bzw.
+  **HTTP 500 ohne Text** (z. B. „Läufe laden“) — die Anfrage kam nicht bis zum Orchestrator
+  oder brach unterwegs ab; im Log des Orchestrators steht dann nichts. Nachsehen im Log der
+  Web-UI: `docker compose logs --since 30m web-ui 2>&1 | grep -A6 "proxy error"`.
+  „socket hang up“ mit TLS intern war bis 0.139.1 der Wettlauf beim Wiederverwenden der
+  Verbindungen (seit 0.139.2 behoben: der Orchestrator hält unbenutzte Verbindungen 75 s offen,
+  der Proxy schliesst sie nach 30 s). Andere Meldungen dort (z. B. `ECONNREFUSED`) heissen: der
+  Orchestrator lief in dem Moment nicht (Neustart, `docker compose ps`). Im Browser zeigt der
+  Reiter „Netzwerk“ (mit „Log beibehalten“), ob die Anfrage „(canceled)“ war – dann leitete der
+  Tab gerade zu Keycloak um.
+- **„Anmeldung nicht möglich: Keycloak hat die Anmeldung nicht abgeschlossen: …“** (seit
+  0.139.2) — Keycloak hat statt einer Anmeldung einen Fehler zurückgeschickt, und ein neuer
+  Anlauf brachte denselben Fehler. `authentication_expired`: die Anmeldung bei Keycloak lief ab
+  (Anmeldeseite lange offen) bzw. ein anderer Tab hat sie schon abgeschlossen – „Erneut
+  anmelden“ genügt. `access_denied`: die Anmeldung wurde abgebrochen oder abgelehnt. Bis 0.139.1
+  blieb in diesem Fall `?error=…` in der Adresszeile stehen, ohne dass etwas geschah.
 
 - **FortiGate „antwortet auf <Pfad> nicht mit JSON (HTTP 200, …)“** (bis 0.11.1: „Expecting
   value: line 1 column 1 (char 0)“) — die FortiGate liefert für diese Tabelle eine leere bzw.

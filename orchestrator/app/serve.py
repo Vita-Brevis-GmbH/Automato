@@ -15,14 +15,20 @@ from app import tls
 from app.config import get_settings
 
 PORT = 8000
+# Unbenutzte Verbindungen offen halten (0.139.2, Befund des Anwenders: „socket hang up“ im Proxy
+# der Web-UI, HTTP 500 in der Übersicht): uvicorn schloss sie nach 5 s - genau im Takt, in dem die
+# Übersicht fragt; der Proxy nahm ab und zu eine Verbindung, die gerade zuging. Der Proxy schliesst
+# seine unbenutzten Verbindungen nach 30 s selbst (web-ui/frontend/vite.config.ts), also vorher.
+KEEP_ALIVE_SECONDS = 75
 
 
 def options(settings) -> dict:
     """uvicorn-Optionen; mit TLS intern Zertifikat und Schluessel des Orchestrators."""
+    base = {"timeout_keep_alive": KEEP_ALIVE_SECONDS}
     if not settings.internal_tls:
-        return {}
+        return base
     cert, key = tls.server_files(settings)
-    return {"ssl_certfile": cert, "ssl_keyfile": key}
+    return {**base, "ssl_certfile": cert, "ssl_keyfile": key}
 
 
 def check(settings, url: str | None = None, timeout: float = 5.0) -> bool:

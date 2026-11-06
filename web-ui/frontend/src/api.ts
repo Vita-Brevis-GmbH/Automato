@@ -1180,7 +1180,8 @@ export class ApiError extends Error {
     public status: number,
     public detail: string,
   ) {
-    super(detail ? `${detail} (HTTP ${status})` : `HTTP ${status}`);
+    // status 0 = keine Antwort (Verbindung abgebrochen, 0.139.2)
+    super(status === 0 ? detail : detail ? `${detail} (HTTP ${status})` : `HTTP ${status}`);
   }
 }
 
@@ -1228,6 +1229,33 @@ async function authHeaders(): Promise<Record<string, string>> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+// Anfrage ohne Antwort (0.139.2, Befund des Anwenders: „Doku laden: Failed to fetch“): der Browser
+// meldet nur „Failed to fetch“, wenn die Verbindung abbricht - oder wenn der Tab gerade zu Keycloak
+// umleitet. Lesende Anfragen einmal wiederholen; beim Umleiten keine Meldung (die Seite wechselt);
+// sonst eine verständliche Meldung.
+async function send(url: string, init: RequestInit): Promise<Response> {
+  const reading = (init.method ?? "GET").toUpperCase() === "GET";
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fetch(url, init);
+    } catch (e) {
+      if (auth.isLeaving()) return new Promise<Response>(() => {}); // Seite wechselt zu Keycloak
+      if (!(e instanceof TypeError) || !reading || attempt > 0) {
+        if (e instanceof TypeError)
+          throw new ApiError(
+            0,
+            L(
+              "Keine Antwort vom Server – Verbindung abgebrochen (Browser: „Failed to fetch“)",
+              "No response from the server – connection lost (browser: “Failed to fetch”)",
+            ),
+          );
+        throw e;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  }
+}
+
 // Fetch mit Token und einheitlicher Fehlerbehandlung; liefert die rohe Antwort.
 async function fetchChecked(url: string, init: RequestInit = {}): Promise<Response> {
   // Sprache der Oberfläche (0.86.0): Texte des Servers folgen schrittweise
@@ -1236,7 +1264,7 @@ async function fetchChecked(url: string, init: RequestInit = {}): Promise<Respon
     ...(await authHeaders()),
     ...(init.headers as Record<string, string>),
   };
-  const response = await fetch(url, { ...init, headers });
+  const response = await send(url, { ...init, headers });
   if (!response.ok) {
     const body = await response.json().catch(() => null);
     const detail = detailText(body);

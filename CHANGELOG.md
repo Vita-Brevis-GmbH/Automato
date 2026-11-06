@@ -7,6 +7,33 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.139.2 – 2026-11-06
+
+Befund des Anwenders 2026-11-06: „Doku laden: Failed to fetch“ ohne Fehler im Log; in der
+Browser-Konsole `GET /api/jobs?tenant_id=2&limit=8 500` und eine Adresszeile mit
+`?error=temporarily_unavailable&error_description=authentication_expired`; im Log der Web-UI
+`http proxy error: /jobs?tenant_id=2&limit=8 – Error: socket hang up` (mit TLS intern).
+
+- **Verbindung Web-UI → Orchestrator:** Mit TLS intern verwendet der Proxy der Web-UI seine
+  Verbindungen zum Orchestrator wieder; der Orchestrator schloss unbenutzte Verbindungen nach
+  5 Sekunden – genau im Takt, in dem die Übersicht die Läufe abfragt. Ab und zu nahm der Proxy
+  eine Verbindung, die gerade zuging, und antwortete selbst mit einem leeren HTTP 500. Jetzt hält
+  der Orchestrator unbenutzte Verbindungen 75 Sekunden offen (`app/serve.py`, Dockerfile), der
+  Proxy schliesst seine nach 30 Sekunden selbst (`vite.config.ts`).
+- **Rückmeldung von Keycloak mit Fehler:** Schickt Keycloak statt einer Anmeldung einen Fehler
+  zurück (z. B. `authentication_expired`, wenn die Anmeldung abgelaufen ist oder ein anderer Tab
+  sie schon abgeschlossen hat), bereinigt die Oberfläche die Adresszeile, stellt die Ansicht
+  wieder her und übernimmt die Sitzung eines anderen Tabs. Gibt es keine, meldet sie sich einmal
+  neu an; kommt der Fehler wieder, steht der Grund da („Keycloak hat die Anmeldung nicht
+  abgeschlossen: …“). Bisher blieb `?error=…` stehen, und es geschah nichts.
+- **Mehrere Tabs:** Ein verdeckter Tab leitet nicht mehr selbst zu Keycloak um, sondern wartet,
+  bis er wieder sichtbar ist oder ein anderer Tab neu angemeldet hat; ein sichtbarer wartet bis
+  20 Sekunden, wenn gerade ein anderer Tab umleitet. Ein umleitender Tab löscht die gemeinsame
+  Sitzung der anderen Tabs nicht mehr.
+- **Verständliche Meldung:** Statt „Failed to fetch“ steht „Keine Antwort vom Server –
+  Verbindung abgebrochen“. Lesende Anfragen wiederholt die Oberfläche einmal, und während der
+  Tab zu Keycloak umleitet, erscheint keine Meldung mehr.
+
 ## 0.139.1 – 2026-11-05
 
 Rückmeldung des Anwenders 2026-11-05 zu 0.139.0: „Ich habe Fehler bei der Doku Erstellung“ – im

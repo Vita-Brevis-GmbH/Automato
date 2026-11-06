@@ -70,9 +70,10 @@ def test_einstellungen(tmp_path):
     assert tls.redis_url(on) == "rediss://redis:6379/0" and tls.redis_url(off).startswith("redis:")
     assert tls.redis_ssl(on) == {"ssl_cert_reqs": ssl.CERT_REQUIRED, "ssl_ca_certs": ca}
     assert tls.redis_ssl(off) is None
-    assert serve.options(off) == {}
+    # 0.139.2: unbenutzte Verbindungen länger offen als der Proxy der Web-UI (30 s)
+    assert serve.options(off) == {"timeout_keep_alive": 75}
     own = tmp_path / "orchestrator"
-    assert serve.options(on) == {"ssl_certfile": str(own / "server.crt"),
+    assert serve.options(on) == {"timeout_keep_alive": 75, "ssl_certfile": str(own / "server.crt"),
                                  "ssl_keyfile": str(own / "server.key")}  # fmt: skip
     assert tls.https_url("http://orchestrator:8000") == "https://orchestrator:8000"
 
