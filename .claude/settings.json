@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git status*)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git fetch origin *)",
+      "Bash(git pull origin claude/*)",
+      "Bash(git push -u origin claude/*)",
+      "Bash(uv run *)",
+      "Bash(uv sync *)",
+      "Bash(python3 scripts/version.py *)",
+      "Bash(npm run *)",
+      "Bash(npx playwright test *)",
+      "mcp__github__actions_list",
+      "mcp__github__actions_get",
+      "mcp__github__get_job_logs",
+      "mcp__Claude_Code_Remote__send_later",
+      "mcp__Claude_Code_Remote__delete_trigger",
+      "mcp__Claude_Code_Remote__list_triggers"
+    ]
+  }
+}
