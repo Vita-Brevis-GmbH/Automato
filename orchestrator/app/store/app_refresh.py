@@ -29,6 +29,46 @@ log = logging.getLogger(__name__)
 _lock = threading.Lock()
 _pending: set[tuple] = set()  # (Mandant, Applikation; 0 = alle) bzw. (Art, Mandant)
 _tenant_locks: dict[int, threading.Lock] = defaultdict(threading.Lock)
+# 0.141.0: Mandanten, deren Befunde und Vorrechnen auf offene Laeufe warten (-> Anzahl)
+_waiting: dict[int, int] = {}
+
+
+def wait_for_runs(tenant_id: int, count: int) -> None:
+    """Befunde und Vorrechnen nach dem letzten offenen Lauf (0.141.0) - bis dahin vorgemerkt;
+    der Zeitplan setzt fort, falls der letzte Lauf haengen bleibt (`resume`)."""
+    with _lock:
+        _waiting[tenant_id] = count
+    log.info("Mandant %s: Befunde und Vorrechnen warten auf %d offene Laeufe", tenant_id, count)
+
+
+def waiting(tenant_id: int) -> int:
+    """Offene Laeufe, auf die Befunde und Vorrechnen warten (0 = keine) - fuer die Uebersicht."""
+    with _lock:
+        return _waiting.get(tenant_id, 0)
+
+
+def resume(factory: sessionmaker[Session]) -> list[int]:
+    """Zeitplan (0.141.0): vorgemerkte Mandanten ohne offene Laeufe fortsetzen - z. B. wenn der
+    letzte Lauf ohne Ergebnis endete (Frist). -> fortgesetzte Mandanten."""
+    from app.store import runs
+
+    with _lock:
+        tenants = list(_waiting)
+    started = []
+    for tid in tenants:
+        with factory() as session:
+            count = runs.open_count(session, tid)
+        if count:
+            with _lock:
+                _waiting[tid] = count
+            continue
+        if _claim(("runs", tid, 0)):
+            with _lock:
+                _waiting.pop(tid, None)
+            threading.Thread(target=run_runs, args=(factory, tid), daemon=True,
+                             name=f"automato-runs-{tid}").start()  # fmt: skip
+            started.append(tid)
+    return started
 
 
 def schedule(background: BackgroundTasks, factory: sessionmaker[Session], tenant_id: int,
@@ -173,12 +213,17 @@ def schedule_runs(background: BackgroundTasks, factory: sessionmaker[Session], t
 
 def run_runs(factory: sessionmaker[Session], tenant_id: int, application_id: int | None = None,
              full: bool = True) -> None:  # fmt: skip
-    from app.store import bgp_cache, doc_snapshots, reconcile  # spaet: reconcile -> app_paths
+    from app.store import bgp_cache, doc_snapshots, reconcile, runs  # spaet: reconcile -> ...
 
     with _tenant_locks[tenant_id]:
         _release(("runs", tenant_id, application_id or 0))  # ab hier: ein neuer Lauf = neu
         session = factory()
         try:
+            if application_id is None and (count := runs.open_count(session, tenant_id)):
+                wait_for_runs(tenant_id, count)  # 0.141.0: inzwischen neue Laeufe - danach
+                return
+            with _lock:
+                _waiting.pop(tenant_id, None)
             reconcile.refresh_app_findings(session, tenant_id, application_id, derived=True)
             session.commit()
         except Exception:

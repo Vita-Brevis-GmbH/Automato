@@ -1866,6 +1866,7 @@ export interface DocKindState {
   seconds: number; // längste Berechnung
   progress?: { done: number; total: number; seconds: number }; // 0.133.1: Wege fertig von allen, seit (s)
   error?: { text: string; at: string }; // 0.133.2: letzter Fehler mit denselben Eingaben
+  reason?: string; // 0.141.0: Änderung, die den Stand betrifft (warum neu gerechnet wird)
 }
 // 0.139.0: Durchgang des Vorrechnens - was beim Start ausstand, je Stand einmal
 export interface DocRound {
@@ -1885,6 +1886,8 @@ export interface DocStates {
   warm_days: number;
   warm_all?: boolean; // 0.133.2: alle Applikationen im Standard vorrechnen
   refreshing?: number; // Befunde nachziehen (ausstehend)
+  waiting_runs?: number; // 0.141.0: Befunde und Vorrechnen warten auf so viele offene Läufe
+  generation?: number; // 0.141.0: Datenstand (Nummer der letzten Änderung am Inhalt)
   total: number;
   counts: Record<DocState, number>;
   last_built_at: string | null;

@@ -25,6 +25,7 @@ from app.models.customer import (
     CustomerSelector,
     CustomerUser,
 )
+from app.models.data_state import DataChange, DataState
 from app.models.device_object import (
     ADDRESS_CATEGORIES,
     GROUP_CATEGORIES,
@@ -127,6 +128,8 @@ __all__ = [
     "AuditLog",
     "Base",
     "CollectorRun",
+    "DataChange",
+    "DataState",
     "DeviceObject",
     "DictionaryEntry",
     "DnsType",

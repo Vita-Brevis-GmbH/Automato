@@ -51,7 +51,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app import __version__
 from app.config import get_settings
 from app.i18n import DEFAULT, lang, use
-from app.models import Application, AuditLog, CollectorRun, DocSnapshot, SourceSystem
+from app.models import Application, AuditLog, DocSnapshot, SourceSystem
 
 log = logging.getLogger(__name__)
 
@@ -79,6 +79,8 @@ _rounds: dict[int, dict] = {}
 # 0.133.2 (Anwender: „Er bricht immer bei dieser Anzahl ab“): letzter Fehler je Stand mit dem
 # Abdruck der Eingaben - bis sich diese aendern, rechnet das Vorrechnen ihn nicht erneut
 _failed: dict[tuple[int, str, str], dict] = {}
+# 0.141.0: warum ein Stand neu rechnen muss (Aenderung, die ihn betrifft) - fuer die Uebersicht
+_reasons: dict[tuple[int, str, str], str] = {}
 
 
 def enabled() -> bool:
@@ -101,37 +103,67 @@ def _standard(var: str) -> bool:
 
 
 def _tenant_parts(session: Session, tid: int, full_only: bool = False) -> tuple:
-    """Eingaben des Mandanten im Abdruck: letzter Lauf, Quellsysteme, letzte Aenderung.
-    `full_only` (0.139.0, Routing-Filter): ohne Laeufe, die nur Regeln lesen."""
-    stmt = select(func.max(CollectorRun.finished_at)).where(CollectorRun.tenant_id == tid)
-    if full_only:
-        stmt = stmt.where(CollectorRun.scope.is_(None))
-    runs = session.scalar(stmt)
+    """Eingaben des Mandanten im Abdruck: Datenstand, Quellsysteme, letzte Aenderung.
+
+    Seit 0.141.0 (ADR 0049) ist der Datenstand die Nummer der letzten Aenderung am Inhalt
+    (`data_state.generation`) statt des Zeitpunkts des letzten Laufs - ein Lauf ohne Aenderung
+    aendert nichts. `full_only` (Routing-Filter): nur Aenderungen an Routing bzw. Inventar."""
+    from app.store import data_state  # spaet: data_state gehoert zum Worker
+
+    generation = data_state.generation(session, tid, net_only=full_only)
     sources = session.execute(
-        select(SourceSystem.id, SourceSystem.enabled, SourceSystem.reference_run_id)
+        select(SourceSystem.id, SourceSystem.enabled)
         .where(SourceSystem.tenant_id == tid).order_by(SourceSystem.id)
     ).all()  # fmt: skip
     quiet = or_(*(AuditLog.action.like(f"{p}%") for p in _QUIET))
     others = and_(AuditLog.action.like(f"{_OWN}%"), AuditLog.action != _ALL_APPS)
     config = session.scalar(select(func.max(AuditLog.id)).where(not_(quiet), not_(others)))
-    return runs, [tuple(s) for s in sources], config
+    return generation, [tuple(s) for s in sources], config
 
 
-def _fp(app: Application, var: str, tenant: tuple, own: int | None) -> str:
-    runs, sources, config = tenant
-    parts = [__version__, app.id, str(app.updated_at), str(runs), sources, config, own, var,
+def _base(app: Application, var: str, tenant: tuple, own: int | None) -> str:
+    """Abdruck ohne den Datenstand (0.141.0): Version, Applikation, Quellsysteme, Konfiguration,
+    Variante - aendert sich davon etwas, rechnet der Stand neu."""
+    _generation, sources, config = tenant
+    parts = [__version__, app.id, str(app.updated_at), sources, config, own, var,
              get_settings().app_traces_max]  # 0.130.0: andere Grenze = neu rechnen  # fmt: skip
     return hashlib.sha256(repr(parts).encode()).hexdigest()
 
 
-def fingerprint(session: Session, app: Application, var: str) -> str:
-    """Abdruck der Eingaben eines Stands (siehe Modul)."""
-    own = session.scalar(
+def _join(base: str, generation: int) -> str:
+    return hashlib.sha256(f"{base}|{generation}".encode()).hexdigest()
+
+
+def _fp(app: Application, var: str, tenant: tuple, own: int | None) -> str:
+    return _join(_base(app, var, tenant, own), tenant[0])
+
+
+def _own(session: Session, app: Application) -> int | None:
+    return session.scalar(
         select(func.max(AuditLog.id)).where(
             AuditLog.action.like(f"{_OWN}%"), AuditLog.subject == str(app.id)
         )
     )
-    return _fp(app, var, _tenant_parts(session, app.tenant_id), own)
+
+
+@dataclass
+class Inputs:
+    """Abdruck eines Stands vor dem Rechnen: ganz, ohne Datenstand, Datenstand."""
+
+    fp: str
+    base: str
+    generation: int
+
+
+def inputs(session: Session, app: Application, var: str) -> Inputs:
+    tenant = _tenant_parts(session, app.tenant_id)
+    base = _base(app, var, tenant, _own(session, app))
+    return Inputs(_join(base, tenant[0]), base, tenant[0])
+
+
+def fingerprint(session: Session, app: Application, var: str) -> str:
+    """Abdruck der Eingaben eines Stands (siehe Modul)."""
+    return inputs(session, app, var).fp
 
 
 def _pack(obj: dict) -> bytes:
@@ -216,21 +248,29 @@ def _row(session: Session, app_id: int, kind: str, var: str) -> DocSnapshot | No
     )  # fmt: skip
 
 
-def _save(session: Session, app_id: int, kind: str, var: str, fp: str, result: dict,
+def _save(session: Session, app_id: int, kind: str, var: str, fp: "Inputs", result: dict,
           seconds: float, params: Params, viewed: bool = True) -> datetime:  # fmt: skip
     """Stand speichern bzw. ersetzen (gleichzeitig gerechnet: der letzte gilt). Klappt es nicht
     (gleichzeitig angelegt, SQLite gesperrt), bleibt der alte - beim naechsten Mal neu.
     `viewed=False` (Vorrechnen, 0.133.2): zuletzt angesehen bleibt - vorgerechnet ist nicht
     angesehen, sonst rechnete das Vorrechnen einen Stand fuer immer neu."""
+    from app.store import footprint  # spaet: footprint -> data_state
+
     now = datetime.now(UTC)
     data = _pack({"params": params.out(), "result": result})
+    try:
+        trace = footprint.of(kind, result)
+    except Exception:  # noqa: BLE001 - ohne Fussabdruck rechnet der Stand beim naechsten Mal neu
+        log.exception("Fussabdruck des Stands %s/%s/%s nicht ermittelt", app_id, kind, var)
+        trace = None
     try:
         with session.begin_nested():
             row = _row(session, app_id, kind, var)
             if row is None:
                 row = DocSnapshot(application_id=app_id, kind=kind, variant=var, viewed_at=now)
                 session.add(row)
-            row.fingerprint, row.built_at, row.seconds, row.data = fp, now, seconds, data
+            row.fingerprint, row.built_at, row.seconds, row.data = fp.fp, now, seconds, data
+            row.base, row.data_seq, row.footprint = fp.base, fp.generation, trace
             if viewed:
                 row.viewed_at = now
     except (IntegrityError, OperationalError):
@@ -269,8 +309,8 @@ def _viewed(session: Session, row: DocSnapshot) -> None:
 
 
 def _build(session: Session, app: Application, kind: str, var: str, params: Params
-           ) -> tuple[dict, float, str]:  # fmt: skip
-    fp = fingerprint(session, app, var)  # vor dem Rechnen: was danach dazukommt, zaehlt neu
+           ) -> tuple[dict, float, Inputs]:  # fmt: skip
+    fp = inputs(session, app, var)  # vor dem Rechnen: was danach dazukommt, zaehlt neu
     started = time.perf_counter()
     result = compute(session, app, kind, params)
     return result, time.perf_counter() - started, fp
@@ -317,7 +357,7 @@ def rebuild(factory: sessionmaker[Session], app_id: int, kind: str, var: str, pa
         if app is None:
             return False
         with use(code):
-            fp = fingerprint(session, app, var)  # vor dem Rechnen (wie `_build`)
+            fp = inputs(session, app, var)  # vor dem Rechnen (wie `_build`)
             started = time.perf_counter()
             result = compute(session, app, kind, params)
             seconds = time.perf_counter() - started
@@ -328,7 +368,8 @@ def rebuild(factory: sessionmaker[Session], app_id: int, kind: str, var: str, pa
         session.rollback()
         log.exception("Stand %s der Applikation %s fehlgeschlagen", kind, app_id)
         with _lock:
-            _failed[key] = {"fp": fp, "error": f"{type(exc).__name__}: {exc}"[:300],
+            _failed[key] = {"fp": fp.fp if fp else None,
+                            "error": f"{type(exc).__name__}: {exc}"[:300],
                             "at": datetime.now(UTC).isoformat()}  # fmt: skip
         return False
     finally:
@@ -370,6 +411,8 @@ def serve(session: Session, factory: sessionmaker[Session], background: Backgrou
     if row is not None:
         now = datetime.now(UTC)
         fresh = row.fingerprint == fingerprint(session, app, var)
+        if not fresh and not force and carry(session, app.tenant_id, app.id, row_ids={row.id}):
+            fresh = True  # 0.141.0: Aenderung betrifft den Stand nicht - uebernommen
         if fresh and not force:
             if _aware(row.viewed_at) < now - timedelta(minutes=10):
                 _viewed(session, row)  # fuer das Vorrechnen (nicht bei jedem Aufruf schreiben)
@@ -428,8 +471,14 @@ def overview(session: Session, tenant_id: int) -> dict:
     apps = list(session.scalars(
         select(Application).where(Application.tenant_id == tenant_id).order_by(Application.name)
     ))  # fmt: skip
+    from app.store import app_refresh, data_state, runs  # spaet: app_refresh -> doc_snapshots
+
     head = {"enabled": enabled(), "warming": bool(lock and lock.locked()),
             "round": round_of(tenant_id),  # 0.139.0: Durchgang des Vorrechnens
+            # 0.141.0: wartet auf offene Laeufe; Datenstand (Nummer der letzten Aenderung)
+            "waiting_runs": (runs.open_count(session, tenant_id)
+                             if app_refresh.waiting(tenant_id) else 0),  # fmt: skip
+            "generation": data_state.generation(session, tenant_id),
             "warm_days": settings.doc_warm_days,
             "warm_all": settings.doc_warm_days > 0 and bool(settings.doc_warm_all)}  # fmt: skip
     counts = dict.fromkeys(("fresh", "stale", "building", "never"), 0)
@@ -453,7 +502,7 @@ def overview(session: Session, tenant_id: int) -> dict:
     for r in rows:
         by_app[r.application_id].append(r)
     with _lock:
-        busy, failed = set(_building), dict(_failed)
+        busy, failed, reasons = set(_building), dict(_failed), dict(_reasons)
     since = datetime.now(UTC) - timedelta(days=settings.doc_warm_days)
     warming = settings.doc_warm_days > 0
     every = warming and bool(settings.doc_warm_all)  # 0.133.2: alle im Standard
@@ -487,6 +536,11 @@ def overview(session: Session, tenant_id: int) -> dict:
                 "built_at": built.isoformat() if built else None,
                 "seconds": round(max((r.seconds for r in snaps), default=0.0), 1),
             }  # fmt: skip
+            # 0.141.0: warum veraltet - die Aenderung, die den Stand betrifft
+            why = next((reasons[(a.id, kind, r.variant)] for r in old
+                        if (a.id, kind, r.variant) in reasons), None)  # fmt: skip
+            if why:
+                kinds[kind]["reason"] = why
             if err is not None:
                 kinds[kind]["error"] = {"text": err["error"], "at": err["at"]}
                 error = error or err["error"]
@@ -655,6 +709,106 @@ def _fresh(session: Session, item: _Todo) -> bool:
     return row is not None and app is not None and row.fingerprint == fingerprint(session, app, var)
 
 
+def carry(
+    session: Session,
+    tenant_id: int,
+    application_id: int | None = None,
+    row_ids: set[int] | None = None,
+) -> int:
+    """Staende ohne Neuberechnung auf den aktuellen Datenstand heben, wenn keine Aenderung seit
+    ihrer Berechnung sie betrifft (0.141.0, ADR 0049, `footprint.affected`). Nur wenn sonst nichts
+    anders ist (Version, Applikation, Konfiguration, Quellsysteme: `_base`); fehlt eine Aenderung
+    (aufgeraeumt) bzw. der Fussabdruck, rechnet der Stand neu. Den Grund merkt `_reasons`.
+    -> Anzahl uebernommen."""
+    from app.store import data_state, footprint  # spaet: footprint -> data_state
+
+    tenant = _tenant_parts(session, tenant_id)
+    generation = tenant[0]
+    stmt = select(Application).where(Application.tenant_id == tenant_id)
+    if application_id is not None:
+        stmt = stmt.where(Application.id == application_id)
+    apps = {a.id: a for a in session.scalars(stmt)}
+    if not apps or not generation:
+        return 0
+    query = select(DocSnapshot).where(
+        DocSnapshot.application_id.in_(list(apps)), DocSnapshot.base.is_not(None),
+        DocSnapshot.data_seq.is_not(None), DocSnapshot.data_seq < generation)  # fmt: skip
+    if row_ids is not None:
+        query = query.where(DocSnapshot.id.in_(list(row_ids)))
+    rows = list(session.scalars(query))
+    if not rows:
+        return 0
+    own = dict(session.execute(
+        select(AuditLog.subject, func.max(AuditLog.id))
+        .where(AuditLog.action.like(f"{_OWN}%"),
+               AuditLog.subject.in_([str(r.application_id) for r in rows]))
+        .group_by(AuditLog.subject)
+    ).all())  # fmt: skip
+    # Geraete aller Staende der Applikation: die Doku nutzt die Wege ihrer Verbindungen
+    devices: dict[int, set[int]] = defaultdict(set)
+    for app_id, data in session.execute(
+        select(DocSnapshot.application_id, DocSnapshot.footprint)
+        .where(DocSnapshot.application_id.in_({r.application_id for r in rows}))
+    ):  # fmt: skip
+        fp = footprint.read(data)
+        devices[app_id] |= set((fp or {}).get("devices") or [])
+    lowest = min(r.data_seq for r in rows)
+    found = data_state.changes(session, tenant_id, lowest, generation)
+    by_seq = {c.seq: c for c in found or []}
+    ctx = footprint.Context(session, found or [])
+    carried = 0
+    for r in rows:
+        app = apps[r.application_id]
+        key = (app.id, r.kind, r.variant)
+        if r.base != _base(app, r.variant, tenant, own.get(str(app.id))):
+            continue  # anderes als Daten geaendert: neu rechnen
+        fp = footprint.read(r.footprint)
+        todo = [by_seq.get(n) for n in range(r.data_seq + 1, generation + 1)]
+        if fp is None or None in todo:
+            _note(key, "ohne Fussabdruck" if fp is None else "Aenderungen nicht mehr bekannt")
+            continue
+        p = footprint.Print(fp, devices.get(app.id, set()))
+        why = next((w for c in todo for hit, w in [footprint.affected(p, c, ctx)] if hit), None)
+        if why:
+            _note(key, why)
+            continue
+        r.fingerprint = _join(r.base, generation)
+        r.data_seq = generation
+        carried += 1
+        with _lock:
+            _reasons.pop(key, None)
+    session.flush()
+    if carried or len(rows) > carried:
+        log.info("Mandant %s: Datenstand %s - %d Staende uebernommen (nicht betroffen), %d neu zu "
+                 "rechnen", tenant_id, generation, carried, len(rows) - carried)  # fmt: skip
+    return carried
+
+
+def _note(key: tuple[int, str, str], why: str) -> None:
+    with _lock:
+        _reasons[key] = why
+
+
+def reason(app_id: int, kind: str, var: str) -> str | None:
+    """Warum der Stand neu rechnen muss (0.141.0) - z. B. „Regel 12 (Urteil auf dem Weg)“."""
+    with _lock:
+        return _reasons.get((app_id, kind, var))
+
+
+def _carry(factory: sessionmaker[Session], tenant_id: int, application_id: int | None) -> int:
+    session = factory()
+    try:
+        done = carry(session, tenant_id, application_id)
+        session.commit()
+        return done
+    except Exception:  # noqa: BLE001 - Uebernehmen ist ein Abkuerzung, Rechnen geht immer
+        session.rollback()
+        log.exception("Mandant %s: Staende nicht uebernommen", tenant_id)
+        return 0
+    finally:
+        session.close()
+
+
 def warm(factory: sessionmaker[Session], tenant_id: int, application_id: int | None = None
          ) -> int:  # fmt: skip
     """Staende des Mandanten (bzw. der Applikation) vorrechnen, die nicht mehr passen bzw. noch
@@ -681,6 +835,10 @@ def warm(factory: sessionmaker[Session], tenant_id: int, application_id: int | N
     try:
         while True:
             number += 1
+            if count := _open_runs(factory, tenant_id):  # 0.141.0: erst nach den Laeufen
+                held = False
+                return _pause(tenant_id, count, done)
+            _carry(factory, tenant_id, application_id)  # 0.141.0: nicht betroffene uebernehmen
             session = factory()
             try:
                 todo = (_todo(session, tenant_id, application_id)
@@ -692,8 +850,13 @@ def warm(factory: sessionmaker[Session], tenant_id: int, application_id: int | N
                 log.info("Mandant %s: Durchgang %d des Vorrechnens - %d Staende von %d "
                          "Applikationen", tenant_id, number, len(todo),
                          len({t.key[0] for t in todo}))  # fmt: skip
-            over = False
+            over, paused = False, 0
             for position, item in enumerate(todo, 1):
+                if paused := _open_runs(factory, tenant_id):
+                    log.info("Mandant %s: Vorrechnen nach %d von %d Staenden angehalten - "
+                             "%d Laeufe offen", tenant_id, position - 1, len(todo),
+                             paused)  # fmt: skip
+                    break
                 if budget and time.monotonic() - started > budget:
                     log.info("Mandant %s: Vorrechnen nach %d Staenden beendet (Zeitbudget)",
                              tenant_id, done)  # fmt: skip
@@ -721,6 +884,9 @@ def warm(factory: sessionmaker[Session], tenant_id: int, application_id: int | N
                              app_id, "Doku" if kind == DOC else "Verbindungen",
                              time.monotonic() - t_item)  # fmt: skip
                 _round_step(tenant_id, app_id)
+            if paused:
+                held = False
+                return _pause(tenant_id, paused, done)
             if number > 1 or todo:
                 log.info("Mandant %s: Durchgang %d des Vorrechnens fertig (%d Staende)",
                          tenant_id, number, len(todo))  # fmt: skip
@@ -740,6 +906,25 @@ def warm(factory: sessionmaker[Session], tenant_id: int, application_id: int | N
                 _warm_locks[tenant_id].release()
 
 
+def _open_runs(factory: sessionmaker[Session], tenant_id: int) -> int:
+    from app.store import runs  # spaet: runs gehoert zum Worker
+
+    with factory() as session:
+        return runs.open_count(session, tenant_id)
+
+
+def _pause(tenant_id: int, count: int, done: int) -> int:
+    """Vorrechnen anhalten, solange Laeufe offen sind (0.141.0, Anwender: „Die Neu berechnungen
+    verhindern schnelles einlesen“): nach dem letzten Lauf geht es weiter (`app_refresh`)."""
+    from app.store import app_refresh
+
+    app_refresh.wait_for_runs(tenant_id, count)
+    with _lock:
+        _warm_again.discard(tenant_id)
+        _warm_locks[tenant_id].release()
+    return done
+
+
 def refresh_app(factory: sessionmaker[Session], tenant_id: int, application_id: int) -> int:
     """Staende einer Applikation gleich neu (0.139.0) - nach ihrem Speichern bzw. nach dem
     Einlesen ihrer Regeln, ohne auf einen laufenden Durchgang des Mandanten zu warten und ohne
@@ -750,6 +935,7 @@ def refresh_app(factory: sessionmaker[Session], tenant_id: int, application_id: 
         return 0
     from app import modules  # spaet: Module kennen die Store-Dateien
 
+    _carry(factory, tenant_id, application_id)  # 0.141.0: nicht betroffene uebernehmen
     session = factory()
     try:
         if not modules.enabled(session, tenant_id, "doku"):

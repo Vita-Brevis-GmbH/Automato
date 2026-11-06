@@ -23,7 +23,7 @@ import {
   type RunsDay,
   type System,
 } from "../../api";
-import { L } from "../../i18n";
+import { L, lang } from "../../i18n";
 import { FINDING_GROUPS, findingLabel } from "../../refs";
 import { fmtTime, Loading, RunStatusChip } from "../../ui";
 import { SUMMARY_PLATFORMS } from "../../Runs";
@@ -547,6 +547,31 @@ function DocProgress({ p }: { p: { done: number; total: number; seconds: number 
 
 // Berechnung fehlgeschlagen (0.133.2, Anwender: „Er bricht immer bei dieser Anzahl ab“): Fehler sichtbar statt still neu zu
 // beginnen – vorgerechnet wird erst wieder, wenn sich die Eingaben ändern; Einzelheiten im Log des Orchestrators
+// 0.141.0: Grund der Neuberechnung (vom Server deutsch, Schlüssel bleiben) in der Sprache der Oberfläche
+function reasonText(why: string): string {
+  const en: [RegExp, string][] = [
+    [/^Regel (\d+) \(Urteil auf dem Weg\)$/, "rule $1 (verdict on the path)"],
+    [/^Regel (\d+) \(any auf dem Weg\)$/, "rule $1 (any on the path)"],
+    [/^Regel (\d+) \(eigenes System\)$/, "rule $1 (own system)"],
+    [/^Regel (\d+) \(EPG\)$/, "rule $1 (EPG)"],
+    [/^Regel (\d+)$/, "rule $1"],
+    [/^Geraet$/, "device"],
+    [/^Adresse$/, "address"],
+    [/^EPG$/, "EPG"],
+    [/^alle$/, "all applications"],
+    [/^ohne Fussabdruck$/, "no footprint"],
+    [/^Aenderungen nicht mehr bekannt$/, "changes no longer known"],
+  ];
+  const de: [RegExp, string][] = [
+    [/^Geraet$/, "Gerät"],
+    [/^alle$/, "alle Applikationen"],
+    [/^Aenderungen nicht mehr bekannt$/, "Änderungen nicht mehr bekannt"],
+  ];
+  const map = lang === "de" ? de : en;
+  for (const [re, out] of map) if (re.test(why)) return why.replace(re, out);
+  return why;
+}
+
 function DocError({ a }: { a: DocStates["apps"][number] }) {
   const kind = (["connections", "doc"] as const).find((k) => a.kinds[k].error);
   const what = kind === "doc" ? L("Doku", "documentation") : L("Verbindungen", "connections");
@@ -650,6 +675,18 @@ export function DocsCard({ tenantId, onGo }: { tenantId: number; onGo: Go }) {
             {data.round.again && L(" · danach erneut", " · then again")}
           </span>
         )}
+        {(data.waiting_runs ?? 0) > 0 && (
+          <span
+            className="chip warn"
+            id="docs-waiting"
+            title={L(
+              "Befunde und Vorrechnen beginnen erst, wenn kein Lauf des Mandanten mehr wartet oder läuft – das Einlesen hat Vorrang",
+              "Findings and pre-computing start only once no run of the tenant is waiting or running – collecting comes first",
+            )}
+          >
+            {L(`wartet auf ${data.waiting_runs} Läufe`, `waiting for ${data.waiting_runs} runs`)}
+          </span>
+        )}
         {(data.refreshing ?? 0) > 0 && (
           <span className="chip info" id="docs-refreshing" title={L("Befunde der Applikationen werden nachgezogen", "Findings of the applications are being updated")}>
             {L("Befunde nachziehen", "Updating findings")}
@@ -703,6 +740,18 @@ export function DocsCard({ tenantId, onGo }: { tenantId: number; onGo: Go }) {
                   </span>
                   {a.kinds.connections.progress && <DocProgress p={a.kinds.connections.progress} />}
                   {a.error && <DocError a={a} />}
+                  {a.state === "stale" && (a.kinds.connections.reason || a.kinds.doc.reason) && (
+                    <span
+                      className="faint doc-reason"
+                      title={L(
+                        "Diese Änderung der Daten betrifft die Applikation – nicht betroffene Applikationen behalten ihren Stand",
+                        "This data change affects the application – unaffected applications keep their state",
+                      )}
+                    >
+                      {" "}
+                      · {reasonText(a.kinds.connections.reason || a.kinds.doc.reason || "")}
+                    </span>
+                  )}
                   {a.auto && (
                     <span className="faint" title={L("wird im Hintergrund vorgerechnet", "pre-computed in the background")}>
                       {" "}

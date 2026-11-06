@@ -9,6 +9,7 @@
 - nach einer Aenderung rechnet der Hintergrund die angesehenen Staende vor.
 """
 
+import copy
 import time
 
 import pytest
@@ -86,10 +87,17 @@ def test_stand_wiederverwendet_und_neu_nur_bei_aenderung(client, session_factory
     assert sorted(snapshots) == ["connections", "doc"]
     snapshots.clear()
     assert _doc(client, aid)["snapshot"]["fresh"] and snapshots == []
-    # neuer Lauf eines Quellsystems (gleiche Daten): ebenso
+    # neuer Lauf eines Quellsystems mit gleichen Daten: nichts neu (0.141.0, ADR 0049 - bis
+    # 0.140.0 rechnete jeder Lauf alles neu)
     sid = next(x["id"] for x in client.get(f"/systems?tenant_id={tid}", headers=tp.ADMIN).json()
                if x["name"] == "fw-01")  # fmt: skip
     tp._deliver(client, tid, sid, "fortigate", FW1)
+    assert snapshots == []
+    assert _doc(client, aid)["snapshot"]["fresh"] and snapshots == []
+    # mit geaenderter Regel der Applikation: neu (Doku und Verbindungen)
+    changed = copy.deepcopy(FW1)
+    changed["rules"][0]["services"] = ["tcp/443", "tcp/8443"]
+    tp._deliver(client, tid, sid, "fortigate", changed)
     assert sorted(snapshots) == ["connections", "doc"]
     snapshots.clear()
     assert _doc(client, aid)["snapshot"]["fresh"] and snapshots == []

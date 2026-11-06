@@ -2,7 +2,7 @@
 
 ## Status
 
-**Angenommen** (2026-11-06), umgesetzt in 0.140.0 – zur Abnahme durch den Anwender.
+**Angenommen** (2026-11-06), umgesetzt in 0.140.0, ergänzt in 0.141.0 (ADR 0049) – zur Abnahme durch den Anwender.
 
 Anwender 2026-11-06: „Die Frage ist auch, ob wir nicht anders die Wege berechnen müssen und so die
 Last minimieren. Wir rechnen heute nicht alle Wege durch und lassen auch sonst immer wieder viel
@@ -63,3 +63,8 @@ ADR 0047 (Vorrechnen in Durchgängen).
   (2000) bleibt einstellbar (0 = ohne Grenze).
 - Mehr Gegenstellen und Dienste je Regel = mehr Verbindungen je Applikation; dank Speicher und
   Klassen ist der einzelne Weg billig, die Zahl der Wege steigt aber.
+- Nachtrag 0.141.0 (Messung, künstlicher Mandant mit 50 Applikationen): ganze Wege wiederholen
+  sich zwischen Applikationen selten (1,8 % Treffer im Speicher der Wege); der Gewinn kommt aus
+  den geteilten Policies und Urteilen je Hop. Seit 0.141.0 teilen die Graphen auch den
+  Routing-Index und die Routen, Doku und Verbindungen ihre Grundlagen; der Datenstand ist der
+  Inhalt statt des letzten Laufs (ADR 0049).

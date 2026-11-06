@@ -70,7 +70,17 @@ from app.schemas.collector import (
     NormalizedObject,
     NormalizedRule,
 )
-from app.store import customers, l2, reconcile, rule_index, tenant_lock, topology, virtual
+from app.store import (
+    customers,
+    data_state,
+    l2,
+    reconcile,
+    rule_index,
+    stable_ids,
+    tenant_lock,
+    topology,
+    virtual,
+)
 from app.store import naming_profiles as profile_store
 from app.store import rules as rules_store
 
@@ -93,6 +103,9 @@ _SOURCE_BY_ADAPTER = {
     "netbox": SourceOfRecord.NETBOX,
     "infoblox": SourceOfRecord.INFOBLOX,
 }
+# Schluessel fuer die gleiche Kennung im naechsten Lauf (0.141.0, `stable_ids`)
+_RULE_KEY = [Rule.domain, Rule.vdom, Rule.external_id, Rule.name, Rule.ip_family]
+_NAT_KEY = [NatRule.nat_type, NatRule.vdom, NatRule.external_id, NatRule.name, NatRule.family]
 _PROTO_BY_NAME = {
     "tcp": Proto.TCP,
     "udp": Proto.UDP,
@@ -107,6 +120,12 @@ def persist_result(session: Session, run, result: CollectorResult, sot) -> None:
     # zuerst den Mandanten sperren (0.80.1): danach wird sein ganzer abgeleiteter Zustand neu
     # geschrieben - zwei Laeufe zugleich sperrten sich sonst gegenseitig (Deadlock)
     tenant_lock.hold(session, run.tenant_id)
+    # 0.141.0 (ADR 0049): gleiche Regel bzw. NAT = gleiche Kennung wie im letzten Lauf - die
+    # Doku verweist darauf und bleibt ohne Aenderung gueltig
+    rule_ids = stable_ids.previous(session, Rule.id, _RULE_KEY,
+                                   Rule.source_system_id == run.source_system_id)  # fmt: skip
+    nat_ids = stable_ids.previous(session, NatRule.id, _NAT_KEY,
+                                  NatRule.source_system_id == run.source_system_id)  # fmt: skip
     # Regeln und NAT des Quellsystems ersetzen (aktueller Stand) - per SQL, ohne jede Regel
     # mit ihren Kindern einzeln zu laden
     rules_store.delete_rules(session, Rule.source_system_id == run.source_system_id)
@@ -132,13 +151,13 @@ def persist_result(session: Session, run, result: CollectorResult, sot) -> None:
     device_objects = _replace_device_objects(session, run, result.objects, cache)
     rules = []
     for i, normalized in enumerate(result.rules, 1):
-        rules.append(_persist_rule(session, run, normalized, cache, device_objects))
+        rules.append(_persist_rule(session, run, normalized, cache, device_objects, rule_ids, i))
         if i % 500 == 0:
             session.flush()
     session.flush()
     _apply_object_catalog(cache, result.objects)
     for nat in result.nat_rules:
-        _persist_nat(session, run, nat)
+        _persist_nat(session, run, nat, nat_ids)
     if result.nat_rules:
         session.flush()
         _vip_targets(session, run, device_objects, cache)
@@ -165,6 +184,9 @@ def persist_result(session: Session, run, result: CollectorResult, sot) -> None:
         rule_index.rebuild(
             session, run.tenant_id, source_system_id=run.source_system_id, rules=rules
         )
+    # 0.141.0 (ADR 0049): Inhalt mit dem letzten Lauf vergleichen - nur eine Aenderung ergibt
+    # einen neuen Datenstand (Doku, Verbindungen, Routing-Filter)
+    data_state.record(session, run, result, rules)
     # Abweichungen Regel <-> Weg der Applikationen (0.59.0): seit 0.139.0 nicht mehr hier,
     # sondern zusammengefasst hinter dem Lauf (`app_refresh.schedule_runs`)
     # Kunden (ADR 0018): Zugehoerigkeit ist abgeleitet - nach jedem Lauf neu
@@ -440,6 +462,10 @@ def _replace_device_objects(
     """Firewall-Objekte des Quellsystems ersetzen (Inventar, ADR 0010)."""
     if run.source_system_id is None or run.tenant_id is None:
         return {}
+    ids = stable_ids.previous(  # 0.141.0: gleiche Kennung wie im letzten Lauf
+        session, DeviceObject.id,
+        [DeviceObject.vdom, DeviceObject.category, DeviceObject.family, DeviceObject.name],
+        DeviceObject.source_system_id == run.source_system_id)  # fmt: skip
     session.execute(
         delete(DeviceObject)
         .where(DeviceObject.source_system_id == run.source_system_id)
@@ -457,6 +483,7 @@ def _replace_device_objects(
         art = "svc" if category in SERVICE_CATEGORIES else "addr"
         values = list(dict.fromkeys(o.values or ([o.value] if o.value else [])))
         obj = DeviceObject(
+            id=ids.take(stable_ids.key(o.vdom, category, o.family, o.name)),
             tenant_id=run.tenant_id,
             source_system_id=run.source_system_id,
             category=category,
@@ -647,12 +674,16 @@ def _vip_targets(session: Session, run, device_objects: _DEVICE_OBJECTS, cache: 
             target.network_object_id = canonical.id if canonical is not None else None
 
 
-def _persist_nat(session: Session, run, nat: NormalizedNat) -> None:
+def _persist_nat(session: Session, run, nat: NormalizedNat,
+                 ids: stable_ids.Ids | None = None) -> None:  # fmt: skip
+    name = nat.name or nat.external_id
+    key = stable_ids.key(nat.nat_type, nat.vdom, nat.external_id, name, nat.family)
     session.add(
         NatRule(
+            id=ids.take(key) if ids is not None else None,
             tenant_id=run.tenant_id,
             source_system_id=run.source_system_id,
-            name=nat.name or nat.external_id,
+            name=name,
             external_id=nat.external_id,
             nat_type=nat.nat_type,
             ext_ip=nat.ext_ip,
@@ -679,11 +710,17 @@ def _persist_rule(
     nr: NormalizedRule,
     cache: "_Cache",
     device_objects: _DEVICE_OBJECTS | None = None,
+    ids: stable_ids.Ids | None = None,
+    sequence: int | None = None,
 ) -> Rule:
+    domain = _DOMAIN_BY_PLATFORM.get(nr.source_platform, RuleDomain.FIREWALL)
+    family = nr.family or _values_family([*nr.sources, *nr.destinations])
+    key = stable_ids.key(domain, nr.vdom, nr.external_id, nr.name, family)
     rule = Rule(
+        id=ids.take(key) if ids is not None else None,
         tenant_id=run.tenant_id,
         source_system_id=run.source_system_id,
-        domain=_DOMAIN_BY_PLATFORM.get(nr.source_platform, RuleDomain.FIREWALL),
+        domain=domain,
         external_id=nr.external_id,
         name=nr.name,
         action=RuleAction.ALLOW if nr.action == "allow" else RuleAction.DENY,
@@ -693,7 +730,10 @@ def _persist_rule(
         collector_run_id=run.id,
         protections=nr.protections or None,
         aci_scope=nr.aci_scope,
-        ip_family=nr.family or _values_family([*nr.sources, *nr.destinations]),
+        ip_family=family,
+        # 0.141.0: Reihenfolge auf dem Geraet ausdruecklich - mit gleicher Kennung je Regel
+        # (`stable_ids`) folgt sie nicht mehr aus der Kennung
+        sequence=sequence,
         vdom=nr.vdom,
         raw=nr.raw,
     )

@@ -147,6 +147,12 @@ def start(factory: sessionmaker, tz: str, interval: int) -> threading.Event:
                     log.info("Aufbewahrung: geloescht %s", counts)
             except Exception:
                 log.exception("Aufraeumen nach Frist fehlgeschlagen")
+            try:  # 0.141.0: Befunde und Vorrechnen, die auf Laeufe warteten, fortsetzen
+                from app.store import app_refresh
+
+                app_refresh.resume(factory)
+            except Exception:
+                log.exception("Wartende Befunde bzw. Vorrechnen nicht fortgesetzt")
             try:  # Datenqualitaet (ADR 0029): veraltete Quellsysteme auch ohne Lauf als Befund
                 data_quality.maybe_refresh(factory, get_settings())
             except Exception:

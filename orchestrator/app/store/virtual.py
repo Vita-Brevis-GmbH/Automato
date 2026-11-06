@@ -24,7 +24,13 @@ _PREFIX = re.compile(r"^[a-z]{2,3}_", re.IGNORECASE)
 
 def replace(session: Session, run, inv: VirtualInventory) -> int:
     """VMs und Portgruppen des vCenters ersetzen (aktueller Stand); Rueckgabe: Anzahl VMs."""
+    from app.store import stable_ids  # gleiche Kennung wie im letzten Lauf (0.141.0)
+
     sid = run.source_system_id
+    old_vms = stable_ids.previous(session, Vm.id, [Vm.uuid, Vm.name], Vm.source_system_id == sid)
+    old_pgs = stable_ids.previous(
+        session, Portgroup.id, [Portgroup.kind, Portgroup.switch, Portgroup.key, Portgroup.name],
+        Portgroup.source_system_id == sid)  # fmt: skip
     vm_ids = select(Vm.id).where(Vm.source_system_id == sid)
     session.execute(delete(VmIp).where(VmIp.vm_id.in_(vm_ids)))
     session.execute(delete(VmNic).where(VmNic.vm_id.in_(vm_ids)))
@@ -38,6 +44,7 @@ def replace(session: Session, run, inv: VirtualInventory) -> int:
     vms: list[Vm] = []
     for v in inv.vms:
         vm = Vm(
+            id=old_vms.take(stable_ids.key(v.uuid, v.name)),
             **base,
             **v.model_dump(exclude={"nics"}),
             collector_run_id=run.id,
@@ -46,7 +53,8 @@ def replace(session: Session, run, inv: VirtualInventory) -> int:
         vm.nics = [VmNic(**n.model_dump(exclude={"ips"}), ips=n.ips or None) for n in v.nics]
         vms.append(vm)
     session.add_all(vms)
-    session.add_all(Portgroup(**base, **p.model_dump()) for p in inv.portgroups)
+    session.add_all(Portgroup(id=old_pgs.take(stable_ids.key(p.kind, p.switch, p.key, p.name)),
+                              **base, **p.model_dump()) for p in inv.portgroups)  # fmt: skip
     session.flush()
     session.add_all(
         VmIp(tenant_id=run.tenant_id, vm_id=vm.id, nic_id=nic.id, ip=ip)

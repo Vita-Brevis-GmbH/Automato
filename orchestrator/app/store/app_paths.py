@@ -208,9 +208,11 @@ def _build(session: Session, app: Application, doc: dict | None, graph: paths.Gr
     limit = get_settings().app_traces_max if limit is None else limit
     tid = app.tenant_id
     started = time.monotonic()  # Zeit je Teil (0.132.1: „dauert sehr lange mehrere Stunden“)
-    doc = doc or applications.build_doc(session, app)
-    t_doc = time.monotonic()
+    # 0.141.0 (Messung: die Doku war 83 % der Zeit - sie baute Regeln, Relevanz, Graph und
+    # Policies ein zweites Mal auf): Doku und Verbindungen teilen die Daten des Mandanten
     data = appdoc.TenantData(session, tid)
+    doc = doc or applications.build_doc(session, app, data=data)
+    t_doc = time.monotonic()
     rule_ids = {h["rule_id"] for h in doc["hits"]}
     rules = {
         r.id: r
@@ -221,8 +223,12 @@ def _build(session: Session, app: Application, doc: dict | None, graph: paths.Gr
     cuts = _Cuts()  # was eine Grenze nicht prueft (0.140.0)
     conns, notes, without = _candidates(session, data, doc, rules, limit, cuts)
     t_cand = time.monotonic()
-    graph = graph or paths.Graph(session, tid)
-    checks = checks or policy_check.Checks.load(session, tid)
+    if graph is None:  # Graph der Doku (Relevanz, Wege der Doku) weiter nutzen
+        graph = data.relevance.graph
+    if checks is None:
+        on_path = vars(data).get("on_path")
+        checks = (on_path._checks if on_path is not None and on_path._checks is not None
+                  else policy_check.Checks.load(session, tid))  # fmt: skip
     out: list[dict] = []
     cut = bool(limit) and len(conns) > limit
     l3 = L3Outs(session, {k[0] for k in graph.nodes})

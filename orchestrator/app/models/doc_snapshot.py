@@ -8,7 +8,7 @@ berechenbar, nie Quelle - beim Löschen der Applikation fallen sie mit weg.
 
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, LargeBinary, String, UniqueConstraint
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, LargeBinary, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -33,3 +33,9 @@ class DocSnapshot(Base):
     viewed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
+    # 0.141.0 (ADR 0049): Abdruck ohne Datenstand, Datenstand beim Rechnen und Fussabdruck (was
+    # der Stand benutzt: Regeln, Geraete, Adressen, EPGs - JSON, zlib). Aendern sich nur Daten,
+    # die der Stand nicht benutzt, bleibt er gueltig (`store/footprint.py`)
+    base: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    data_seq: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    footprint: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)

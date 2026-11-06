@@ -28,6 +28,7 @@ from app.store import agents as agent_store
 from app.store import (
     app_refresh,
     customers,
+    data_state,
     ingest,
     reconcile,
     references,
@@ -191,6 +192,7 @@ def _finish_reference_run(session: Session, run, result: CollectorResult, actor)
         def finalize() -> None:
             tenant_lock.hold(session, run.tenant_id)  # vor allen Zeilen (0.80.1)
             run.rule_count = references.finalize_run(session, run, source)
+            data_state.record_reference(session, run)  # 0.141.0: nur bei anderem Inhalt neu
             reconcile.reconcile_tenant(session, run.tenant_id)
             # Suchtext der Regeln enthaelt DNS-Namen aus dem IPAM -> Index neu
             rule_index.rebuild(session, run.tenant_id)
@@ -290,8 +292,15 @@ def _after_run(session: Session, background: BackgroundTasks, factory: sessionma
         app_refresh.schedule_runs(background, factory, run.tenant_id, run.application_id,
                                   full=False)  # fmt: skip
         return
-    if run.status is RunStatus.COMPLETED:
-        app_refresh.schedule_runs(background, factory, run.tenant_id)
+    # 0.141.0 (Anwender: „Dies erst ausführen, wenn die Läufe durch sind“): erst nach dem
+    # letzten offenen Lauf des Mandanten - auch wenn dieser fehlschlug (die anderen haben
+    # eingespielt); ein Lauf ohne Aenderung am Inhalt rechnet danach nichts (ADR 0049)
+    if run.status not in runs.OPEN:
+        waiting = runs.open_count(session, run.tenant_id)
+        if waiting:
+            app_refresh.wait_for_runs(run.tenant_id, waiting)
+        else:
+            app_refresh.schedule_runs(background, factory, run.tenant_id)
 
 
 def _receive(

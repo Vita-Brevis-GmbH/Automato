@@ -51,10 +51,16 @@ def _apps(client, tid) -> dict[str, int]:
 
 
 def _new_run(session_factory, tid) -> None:
-    """Ein weiterer Lauf ist fertig (aendert den Abdruck aller Applikationen)."""
+    """Ein weiterer Lauf ist fertig, der etwas fuer alle Applikationen aendert (seit 0.141.0
+    zaehlt nur eine Aenderung am Inhalt, ADR 0049)."""
+    from app.models import DataChange
+    from app.store import data_state
+
     s = session_factory()
     s.add(CollectorRun(platform="fortigate", tenant_id=tid, status=RunStatus.COMPLETED,
                        finished_at=datetime.now(UTC)))  # fmt: skip
+    s.add(DataChange(tenant_id=tid, seq=data_state.generation(s, tid) + 1, parts=["test"],
+                     all=True, net=True, at=datetime.now(UTC)))  # fmt: skip
     s.commit()
     s.close()
 
@@ -250,7 +256,9 @@ def test_befunde_aus_dem_stand_der_verbindungen(client, session_factory, compute
     computed.clear()
     from test_app_paths import FW3
 
-    tp._deliver(client, tid, fw3, "fortigate", FW3)
+    changed = copy.deepcopy(FW3)  # seit 0.141.0 rechnet nur ein Lauf mit Aenderung (ADR 0049)
+    changed["rules"][0]["services"] = [*changed["rules"][0].get("services", []), "tcp/8443"]
+    tp._deliver(client, tid, fw3, "fortigate", changed)
     assert traced == [] and (ids["Web"], "connections") in computed
     assert unused()
     # von Hand („Abgleich neu berechnen“): wie bisher mit eigenen Wegen

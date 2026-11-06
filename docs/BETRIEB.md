@@ -1240,6 +1240,19 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
       neuer Lauf bzw. eine Änderung verwirft den Speicher. Grösse: `AUTOMATO_PATH_STORE_MB`
       (Vorgabe 256) – darüber werden die ältesten Wege bei Bedarf neu gerechnet. Im Log beim
       Wechsel des Datenstands: „Mandant 2: Wege-Speicher neu (… hits …, misses …)“.
+    - **Nur bei Änderung, nur Betroffenes, erst nach den Läufen (0.141.0, ADR 0049):** ein Lauf
+      ohne Änderung am Inhalt rechnet nichts (Log: „Quellsystem 7: Lauf ohne Änderung am
+      Datenstand“). Mit Änderung rechnen nur die Applikationen neu, die sie betrifft (z. B. eine
+      geänderte Regel, die sie zeigen bzw. auf ihren Wegen prüfen); die anderen übernehmen den
+      neuen Datenstand (Log: „Datenstand 12 – 140 Stände übernommen (nicht betroffen), 6 neu zu
+      rechnen“). Übersicht → Stand der Doku zeigt je veralteter Applikation den Grund (z. B.
+      „Regel 812 (Urteil auf dem Weg)“) und „wartet auf n Läufe“: Befunde und Vorrechnen beginnen
+      erst nach dem letzten wartenden bzw. laufenden Lauf des Mandanten und halten an, wenn
+      während des Rechnens ein Lauf dazukommt. Hängt ein Lauf, endet die Wartezeit mit seiner
+      Frist (`AUTOMATO_RUN_TIMEOUT_MINUTES`, `AUTOMATO_RUN_QUEUE_TIMEOUT_HOURS`). Angeschlossene
+      Netze, Interfaces, IPAM/DNS und Änderungen an Zonen, Kategorien oder Namensprofilen rechnen
+      wie bisher alle Applikationen. Kennungen von Regeln, NAT, Objekten und VMs bleiben über
+      Läufe gleich (Links bleiben gültig).
     - **Export und Druck (0.59.0):** der Export der Applikations-Doku enthält den Abschnitt
       „Verbindungen Ende zu Ende“ (Richtung, Quelle, Ziel, Dienst, Weg mit der entscheidenden
       Regel je Hop, Urteil, Abweichung bzw. Wege uneinheitlich); „Drucken / PDF“ zeigt je

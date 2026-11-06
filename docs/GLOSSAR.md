@@ -218,3 +218,4 @@ Neue Texte halten sich an diese Liste, damit derselbe Begriff überall gleich he
 | Regel nie gebraucht | Rule never needed |
 | unvollständig geprüft (Applikation) | not completely checked (application) |
 | Adressklasse, Wege-Speicher | address class, path store |
+| Datenstand, Fussabdruck, übernommen (nicht betroffen), wartet auf Läufe | data state, footprint, carried over (not affected), waiting for runs |

@@ -7,6 +7,36 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.141.0 – 2026-11-06
+
+Rückmeldung des Anwenders 2026-11-06: „Berechnungen starten, auch wenn noch einige Läufe in der
+Warteschlaufe stehen. Die Neu berechnungen verhindern schnelles einlesen. Dies erst ausführen,
+wenn die Läufe durch sind. Die Berechnungen nur anstossen, wenn was geändert hat, also nur die
+Wege berechnen, welche von der geänderten Firewall Regel betroffen sind.“ Auf den Vorschlag:
+„Je Applikation“. Abnahme: „Das wars mit der Abnahme von den 139er Stand“ (ADR 0049)
+
+- **Erst nach den Läufen:** Befunde und Vorrechnen beginnen erst, wenn beim Mandanten kein Lauf
+  mehr wartet oder läuft – nach dem letzten Lauf, auch wenn dieser fehlschlug. Kommt während des
+  Vorrechnens ein Lauf dazu, hält es nach der aktuellen Applikation an und macht danach weiter. Die
+  Übersicht zeigt „wartet auf n Läufe“. Hängende Läufe blockieren nicht (Fristen wie bisher);
+  Öffnen einer Applikation und „Regeln neu einlesen“ rechnen wie bisher sofort.
+- **Nur bei Änderung:** Der Datenstand ist der Inhalt, nicht mehr der Zeitpunkt des letzten
+  Laufs. Nach dem Einspielen vergleicht der Orchestrator je Quellsystem Regeln, Objekte, NAT,
+  Routing, Inventar, EPGs, VMs bzw. die Einträge der Referenzquelle mit dem letzten Lauf; ein Lauf
+  ohne Änderung rechnet nichts neu.
+- **Nur Betroffenes:** Jeder Stand der Doku merkt, welche Regeln, Geräte, EPGs und Adressen er
+  nutzt. Eine geänderte Regel (neu, geändert, gelöscht, verschoben) rechnet nur die Applikationen
+  neu, die sie zeigen bzw. auf ihren Wegen prüfen, deren Systeme sie trifft oder deren
+  Verbindungen sie auf einer Firewall des Wegs passt. Geänderte Routen bzw. NAT eines Geräts: die
+  Applikationen mit Wegen über das Gerät; angeschlossene Netze, Interfaces, IPAM/DNS: wie bisher
+  alle. Alle anderen behalten ihren Stand; die Übersicht nennt den Grund einer Neuberechnung.
+- **Gleiche Kennungen:** Regeln, NAT, Objekte, VMs und Portgruppen behalten beim erneuten
+  Einlesen ihre Kennung – Links bleiben gültig; die Reihenfolge der Regeln steht ausdrücklich.
+- **Schneller:** Doku und Verbindungen teilen Daten, Graph und Policies; alle Applikationen eines
+  Datenstands teilen den Routing-Index und die Routen. Messung (50 Applikationen, alle neu
+  gerechnet): 16 158 statt 41 444 Datenbankabfragen (−61 %), 39,3 statt 49,9 s; Abfragen der
+  Routen 1 405 statt 21 041. Bei unveränderten Daten entfällt die Berechnung ganz.
+
 ## 0.140.0 – 2026-11-06
 
 Rückmeldung des Anwenders 2026-11-06: „Wir rechnen heute nicht alle Wege durch und lassen auch

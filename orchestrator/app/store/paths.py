@@ -58,7 +58,7 @@ import json
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.i18n import L
@@ -198,6 +198,35 @@ class _Rib:
         return out
 
 
+@dataclass(frozen=True, slots=True)
+class _Route:
+    """Route als reine Daten (0.141.0): ohne Bindung an eine Sitzung - so teilen alle Graphen
+    eines Datenstands den Index und die geladenen Routen (`path_store`)."""
+
+    id: int
+    source_system_id: int
+    node: str
+    context: str
+    family: int
+    prefix: str
+    prefix_len: int
+    lo: str
+    hi: str
+    table: str
+    protocol: str | None
+    best: bool
+    distance: int | None
+    metric: int | None
+    next_hops: list | None
+    attrs: dict | None
+
+    @classmethod
+    def of(cls, r: TopoRoute) -> "_Route":
+        return cls(r.id, r.source_system_id, r.node, r.context, r.family, r.prefix, r.prefix_len,
+                   r.lo, r.hi, r.table, r.protocol, r.best, r.distance, r.metric, r.next_hops,
+                   r.attrs)  # fmt: skip
+
+
 class Graph:
     """Knoten, Adressen der Knoten (Interfaces, L3Out-SVIs) und IPAM-Namen eines Mandanten."""
 
@@ -260,11 +289,38 @@ class Graph:
         self._own_ips: dict[Key, set[str]] = {}
         self._rib_asked: Counter = Counter()  # Abfragen je Kontext bis zum Index
         self._loaded: dict[int, TopoRoute] = {}  # Routen aus dem Index, je Kennung
+        self._shared = self._share(session, tenant_id)
         self.exits = list(
             session.scalars(
                 select(TopoExit).where(TopoExit.tenant_id == tenant_id).order_by(TopoExit.id)
             )
         )
+
+    def _share(self, session: Session, tenant_id: int) -> dict | None:
+        """0.141.0 (Messung: 21 000 Abfragen der Routen fuer 50 Applikationen - jeder Graph lud
+        Index und Routen neu): im Wege-Speicher des Mandanten teilen alle Graphen den Index der
+        RIB, die geladenen Routen (als reine Daten), die VRF je Interface, die genaueren Routen
+        und Backup-Routen je Praefix und die Subnetze des Fabrics. Ein Lauf legt die Routen neu an
+        (neue Kennungen) - dann beginnt der geteilte Teil neu (hoechste Kennung der Routen)."""
+        from app.store import path_store  # spaet: path_store -> doc_snapshots -> ...
+
+        store = path_store.current(tenant_id)
+        if store is None:
+            return None
+        newest = session.scalar(select(func.max(TopoRoute.id)).where(
+            TopoRoute.tenant_id == tenant_id))  # fmt: skip
+        with store.lock:
+            shared = store.routing
+            if shared.get("newest", -1) != newest:
+                shared.clear()
+                shared["newest"] = newest
+            self._ribs = shared.setdefault("ribs", {})
+            self._rib_asked = shared.setdefault("asked", Counter())
+            self._loaded = shared.setdefault("loaded", {})
+            self._tables = shared.setdefault("tables", {})
+            self._inner_rows = shared.setdefault("inner", {})
+            self._backup_rows = shared.setdefault("backup", {})
+        return shared
 
     # -- Bezeichnungen --------------------------------------------------------------
 
@@ -428,10 +484,11 @@ class Graph:
     def _route_rows(self, ids: list[int]) -> list[TopoRoute]:
         """Routen zu Kennungen aus dem Index; einmal geladene bleiben im Graph."""
         missing = [i for i in ids if i not in self._loaded]
+        plain = self._shared is not None  # geteilt: reine Daten statt Zeilen der Sitzung
         for i in range(0, len(missing), 500):
             chunk = missing[i : i + 500]
             for r in self.session.scalars(select(TopoRoute).where(TopoRoute.id.in_(chunk))):
-                self._loaded[r.id] = r
+                self._loaded[r.id] = _Route.of(r) if plain else r
         return [self._loaded[i] for i in ids if i in self._loaded]
 
     def route(self, key: Key, ip, table: Table = 0) -> dict | None:
@@ -541,7 +598,7 @@ class Graph:
         out: list[dict] = []
         cache = (key, ip.version, route["prefix"])  # gleiches Praefix = gleiche Zeilen
         if cache not in self._backup_rows:
-            self._backup_rows[cache] = list(self.session.scalars(
+            rows = list(self.session.scalars(
                 select(TopoRoute)
                 .where(
                     TopoRoute.source_system_id == key[0],
@@ -552,6 +609,8 @@ class Graph:
                 )
                 .order_by(TopoRoute.table, TopoRoute.distance, TopoRoute.id)
             ))  # fmt: skip
+            shared = self._shared is not None
+            self._backup_rows[cache] = [_Route.of(r) for r in rows] if shared else rows
         for r in self._backup_rows[cache]:
             if table_of(r) != table or (r.table == "static" and not r.best):
                 continue  # andere VRF bzw. abgeschaltete statische Route
@@ -654,6 +713,8 @@ class Graph:
         """ACI-VRF-Knoten, deren EPG- bzw. BD-Subnetz die IP bzw. das ganze Netz enthaelt, mit
         dem Ort im Fabric (`Tenant|AP|EPG` bzw. BD); laengstes Subnetz je Knoten."""
         best: dict[Key, tuple[int, str]] = {}
+        if self._fabric_rows is None and self._shared is not None:
+            self._fabric_rows = self._shared.get("fabric")  # 0.141.0: geteilt
         if self._fabric_rows is None:
             rows = []
             stmt = select(InvSubnet).where(
@@ -674,6 +735,8 @@ class Graph:
                 )
                 rows.append((net, nkey, f"{where} ({s.prefix})"))
             self._fabric_rows = rows
+            if self._shared is not None:
+                self._shared["fabric"] = rows
         for net, nkey, text in self._fabric_rows:
             if key not in (None, nkey) or not within(ip, net):
                 continue

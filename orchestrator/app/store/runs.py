@@ -128,6 +128,29 @@ def open_for_application(session: Session, application_id: int) -> int:
     ) or 0  # fmt: skip
 
 
+def open_count(session: Session, tenant_id: int, now: datetime | None = None) -> int:
+    """Laeufe des Mandanten, die warten bzw. laufen (0.141.0, Anwender: „Die Neu berechnungen
+    verhindern schnelles einlesen. Dies erst ausführen, wenn die Läufe durch sind“) - ohne
+    haengende (laufend laenger als `run_timeout_minutes`, wartend laenger als
+    `run_queue_timeout_hours`; die beendet `expire_stale`). Nur lesend."""
+    settings = get_settings()
+    now = now or datetime.now(UTC)
+    running_limit = now - timedelta(minutes=settings.run_timeout_minutes)
+    queued_limit = now - timedelta(hours=settings.run_queue_timeout_hours)
+    count = 0
+    for status, started, queued in session.execute(
+        select(CollectorRun.status, CollectorRun.started_at, CollectorRun.queued_at).where(
+            CollectorRun.tenant_id == tenant_id, CollectorRun.status.in_(OPEN))
+    ):  # fmt: skip
+        if status is RunStatus.RUNNING:
+            since = _aware(started) or _aware(queued)
+            count += since is not None and since > running_limit
+        else:
+            since = _aware(queued)
+            count += since is not None and since > queued_limit
+    return count
+
+
 def blocking(session: Session, source_system_id: int) -> CollectorRun | None:
     """Offener Lauf (wartet/laeuft) dieses Quellsystems (haengende vorher mit
     `expire_stale` beenden)."""

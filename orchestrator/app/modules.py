@@ -147,7 +147,15 @@ MODULES: tuple[Module, ...] = (
             "Reads the devices (collector, agents, runs, schedule) - read-only",
         ),
         api=("jobs", "agents", "internal"),
-        store=("agents", "agent_package", "ingest", "runs", "run_text"),
+        store=(
+            "agents",
+            "agent_package",
+            "ingest",
+            "runs",
+            "run_text",
+            "stable_ids",
+            "data_state",
+        ),  # 0.141.0: Datenstand nach Inhalt (ADR 0049)
         views=("laeufe", "agents"),
         packages=("collectors",),
     ),  # fmt: skip
@@ -251,6 +259,7 @@ MODULES: tuple[Module, ...] = (
             "app_refresh",
             "app_rules_read",  # Regeln einer Applikation neu einlesen (0.139.0, ADR 0047)
             "doc_snapshots",  # Stand der Doku im Hintergrund (0.108.0, ADR 0037)
+            "footprint",  # was ein Stand benutzt - nur Betroffenes neu (0.141.0, ADR 0049)
             "docx_writer",
             "md_writer",
             "word_export",

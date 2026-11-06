@@ -52,6 +52,7 @@ class Store:
         self.size = 0
         self.checker: dict[str, dict] = {}  # Caches des Checkers (reine Daten)
         self.decisions: dict[str, dict] = {}  # Urteile je Hop, je Sprache
+        self.routing: dict = {}  # 0.141.0: Index der RIB, Routen (reine Daten) - `paths.Graph`
         self.hits = 0
         self.misses = 0
         self.used = time.monotonic()
