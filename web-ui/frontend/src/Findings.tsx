@@ -90,6 +90,9 @@ const DETAIL_LABEL: Record<string, string | null> = {
   // Wege uneinheitlich (0.73.0, vorher Regel ↔ Weg): Verbindungen stehen im Satz
   application: L("Applikation", "Application"),
   application_id: null,
+  // Unvollständig geprüft (0.140.0): die Kürzungen stehen im Satz
+  checked: L("geprüfte Verbindungen", "connections checked"),
+  cuts: null,
   connections: null,
   count: L("Verbindungen", "Connections"),
   // Parallele Firewalls (0.18.0/0.72.0): Felder und Werte stehen im Satz, Routen als Tabelle
@@ -249,6 +252,10 @@ function viewLinks(f: Finding): { label: string; view: View; params: ViewParams 
   if (f.type === "parallel_policy_route_mismatch")
     return [{ label: String(d.label ?? L("Policy-Route", "Policy route")), view: "routing",
               params: { tab: "policy", q: `${String(d.source ?? "")} ${String(d.name ?? d.seq ?? "")}`.trim() } }];
+  // 0.140.0: unvollständig geprüfte Applikation öffnen
+  if (f.type === "app_coverage" && d.application_id != null)
+    return [{ label: L(`Applikation ${String(d.application ?? "")} öffnen`, `Open application ${String(d.application ?? "")}`),
+              view: "apps", params: { app: String(d.application_id) } }];
   // 0.134.0: VIP ohne Ziel in NAT / VIPs öffnen
   if (f.type === "vip_target_missing" && d.name)
     return [{ label: L(`${String(d.name)} in NAT / VIPs`, `${String(d.name)} in NAT / VIPs`), view: "nat", params: { q: String(d.name) } }];

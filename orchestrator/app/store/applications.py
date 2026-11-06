@@ -1186,6 +1186,8 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
             "by_scope": by_scope,
             "findings": len(findings),
             "helpers": len(helpers),  # Hilfs-Contracts ueber L3Outs (ADR 0034)
+            # 0.140.0: Regeln, deren Weg eine Grenze nicht pruefen liess - sie bleiben stehen
+            "path_unchecked": len(data.on_path.unchecked) if "on_path" in vars(data) else 0,
         },
         "systems": systems,
         "epgs": epg_out,
@@ -1661,7 +1663,7 @@ def _app_findings(
     ):
         detail = f.detail if isinstance(f.detail, dict) else {}
         if (f.type in (FindingType.APP_CONNECTION_MISMATCH, FindingType.APP_CONTRACT_NARROWER,
-                       FindingType.APP_RULE_UNUSED)
+                       FindingType.APP_RULE_UNUSED, FindingType.APP_COVERAGE)
                 and detail.get("application_id") != app_id):  # fmt: skip
             continue  # Befund einer anderen Applikation (0.59.0, 0.78.2, 0.107.0)
         rule_id = detail.get("rule_id") if f.subject_kind == SubjectKind.RULE else None

@@ -215,7 +215,7 @@ def _refresh_pass(session: Session, tenant_id: int, step: str, types: frozenset,
 
 
 APP_TYPES = frozenset({FindingType.APP_CONNECTION_MISMATCH, FindingType.APP_CONTRACT_NARROWER,
-                       FindingType.APP_RULE_UNUSED})  # fmt: skip
+                       FindingType.APP_RULE_UNUSED, FindingType.APP_COVERAGE})  # fmt: skip
 APP_CONNECTIONS = 10  # Verbindungen je Befund im Detail
 APP_VARIANTS = 6  # Wege je Verbindung im Detail (0.73.0)
 
@@ -235,35 +235,37 @@ def _app_issues(session: Session, tenant_id: int, apps: list,
     import time
 
     from app.config import get_settings
-    from app.store import app_paths, paths, policy_check
+    from app.store import app_paths, path_store, paths, policy_check
 
     if not apps:
         return [], set()
-    limit = get_settings().app_findings_traces  # Wege je Applikation (0.130.0)
-    started = time.monotonic()
-    graph = paths.Graph(session, tenant_id)
-    checks = policy_check.Checks.load(session, tenant_id)
-    names = _source_names(session, tenant_id)
-    out: list[Issue] = []
-    failed: set[int] = set()
-    for n, app in enumerate(apps):
-        if budget and time.monotonic() - started > budget:
-            rest = apps[n:]
-            failed |= {a.id for a in rest}
-            _app_next[tenant_id] = rest[0].id
-            logging.getLogger(__name__).warning(
-                "Abweichungen Regel <-> Weg: %d von %d Applikationen nach %.0f s (Zeitbudget), "
-                "Rest beim naechsten Mal", n, len(apps), budget)  # fmt: skip
-            break
-        try:
-            with session.begin_nested():
-                result = app_paths.build(session, app, graph=graph, checks=checks,
-                                         zones=False, limit=limit)  # fmt: skip
-        except Exception:  # noqa: BLE001 - eine Applikation darf den Lauf nicht scheitern lassen
-            logging.getLogger(__name__).exception("Verbindungen von Applikation %s", app.id)
-            failed.add(app.id)
-            continue
-        out += _issues_of(session, app, result, names)
+    # Wege-Speicher des Mandanten (0.140.0, ADR 0048): Wege und Urteile je Hop einmal
+    with path_store.active(session, tenant_id):
+        limit = get_settings().app_findings_traces  # Wege je Applikation (0.130.0)
+        started = time.monotonic()
+        graph = paths.Graph(session, tenant_id)
+        checks = policy_check.Checks.load(session, tenant_id)
+        names = _source_names(session, tenant_id)
+        out: list[Issue] = []
+        failed: set[int] = set()
+        for n, app in enumerate(apps):
+            if budget and time.monotonic() - started > budget:
+                rest = apps[n:]
+                failed |= {a.id for a in rest}
+                _app_next[tenant_id] = rest[0].id
+                logging.getLogger(__name__).warning(
+                    "Abweichungen Regel <-> Weg: %d von %d Applikationen nach %.0f s (Zeitbudget), "
+                    "Rest beim naechsten Mal", n, len(apps), budget)  # fmt: skip
+                break
+            try:
+                with session.begin_nested():
+                    result = app_paths.build(session, app, graph=graph, checks=checks,
+                                             zones=False, limit=limit)  # fmt: skip
+            except Exception:  # noqa: BLE001 - eine Applikation darf den Lauf nicht scheitern lassen
+                logging.getLogger(__name__).exception("Verbindungen von Applikation %s", app.id)
+                failed.add(app.id)
+                continue
+            out += _issues_of(session, app, result, names)
     return out, failed
 
 
@@ -295,6 +297,7 @@ def _issues_of(session: Session, app, result: dict, names: dict[int, str]) -> li
         Rule.id.in_(list(wanted))))} if wanted else {}  # fmt: skip
     out += _narrower_issues(app, narrower, rules, names)
     out += _unused_issues(app, unused, rules, names)
+    out += _coverage_issues(app, result.get("coverage"))
     for rid, conns in per_rule.items():
         r = rules.get(rid)
         if r is None:
@@ -317,6 +320,20 @@ def _issues_of(session: Session, app, result: dict, names: dict[int, str]) -> li
             },
         ))  # fmt: skip
     return out
+
+
+def _coverage_issues(app, coverage: dict | None) -> list[Issue]:
+    """Applikation unvollstaendig geprueft (0.140.0, Anwender: „Wir rechnen heute nicht alle Wege
+    durch und lassen auch sonst immer wieder viel liegen, dies ist nicht zuverlaessig und daher
+    gefaehrlich“): was eine Grenze nicht geprueft hat - Befunde zu diesem Teil fehlen."""
+    if not coverage or coverage.get("complete", True):
+        return []
+    return [Issue(
+        FindingType.APP_COVERAGE, SubjectKind.APPLICATION, app.name, None, Severity.WARNING,
+        detail={"application_id": app.id, "application": app.name,
+                "checked": coverage.get("checked"), "total": coverage.get("total"),
+                "cuts": coverage.get("cuts") or {}},
+    )]  # fmt: skip
 
 
 def _rule_subject(r: Rule) -> tuple[str, str, dict]:

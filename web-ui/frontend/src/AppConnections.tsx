@@ -1034,6 +1034,23 @@ export default function ConnectionsCard({
         {s && (
           <span className="chips">
             <span className="chip">{L(`${s.total} Verbindungen`, `${s.total} connections`)}</span>
+            {data?.coverage && !data.coverage.complete && (
+              <span
+                className="chip crit"
+                id="conn-coverage"
+                title={L(
+                  "Eine Grenze hat einen Teil nicht geprüft (Hinweise unten) – für diesen Teil fehlen Befunde",
+                  "A limit left a part unchecked (notes below) – findings for that part are missing",
+                )}
+              >
+                {data.coverage.checked < data.coverage.total
+                  ? L(
+                      `unvollständig geprüft: ${data.coverage.checked} von ${data.coverage.total} Verbindungen`,
+                      `not completely checked: ${data.coverage.checked} of ${data.coverage.total} connections`,
+                    )
+                  : L("unvollständig geprüft", "not completely checked")}
+              </span>
+            )}
             {s.allow > 0 && <span className="chip ok">{L(`${s.allow} erlaubt`, `${s.allow} allowed`)}</span>}
             {s.blocked > 0 && <span className="chip crit">{L(`${s.blocked} gesperrt`, `${s.blocked} blocked`)}</span>}
             {s.open > 0 && (

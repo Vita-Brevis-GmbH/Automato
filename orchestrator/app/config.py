@@ -108,6 +108,10 @@ class Settings(BaseSettings):
     # Stand der Doku (im Hintergrund); die Befunde nach einem Lauf pruefen hoechstens
     # `app_findings_traces` je Applikation (Zeitgrenze oben). 0 = ohne Grenze
     app_traces_max: int = 2000
+    # Wege je Mandant im Speicher (0.140.0, `store/path_store.py`, gepackt): darueber fallen die
+    # aeltesten weg und werden bei Bedarf neu gerechnet - eine Grenze fuer den Speicher, nicht fuer
+    # die Pruefung
+    path_store_mb: int = 256
     app_findings_traces: int = 120
     # IPAM im Speicher (0.107.0, Anwender: „es braucht enorm lange, dann sind die Namen da“): so
     # viele Indizes der Referenzquellen (je Quelle und Lauf) bleiben je Prozess geladen statt je

@@ -350,6 +350,25 @@ def _variant(v: dict) -> str:
     return L(f"über {via} {verdict}", f"{verdict} via {via}")
 
 
+def _app_coverage(subject: str, d: dict) -> tuple[str, str]:
+    """Applikation unvollstaendig geprueft (0.140.0): was eine Grenze ausgelassen hat."""
+    from app.store.app_paths import cut_text
+
+    cuts = d.get("cuts") or {}
+    parts = "; ".join(cut_text(k, v) for k, v in cuts.items() if isinstance(v, dict))
+    app = _q(d.get("application") or subject)
+    return (
+        L(f"Applikation {app} nicht vollständig geprüft: {parts}.",
+          f"Application {app} not completely checked: {parts}."),
+        L("Für den nicht geprüften Teil fehlen Befunde (Abweichungen, Regeln nie gebraucht). "
+          "Grenze erhöhen (z. B. AUTOMATO_APP_TRACES_MAX, 0 = ohne Grenze) bzw. die Applikation "
+          "kleiner schneiden; danach rechnet sie neu.",
+          "Findings for the part not checked are missing (deviations, rules never needed). Raise "
+          "the limit (e.g. AUTOMATO_APP_TRACES_MAX, 0 = no limit) or split the application; it "
+          "is computed again afterwards."),
+    )  # fmt: skip
+
+
 def _app_narrower(subject: str, d: dict) -> tuple[str, str]:
     """Contract Richtung L3Out enger als die Firewall-Regeln (0.78.2)."""
     name = d.get("name") or subject
@@ -928,6 +947,7 @@ _TOPO_TEXT = {
     "app_connection_mismatch": _app_mismatch,
     "app_contract_narrower": _app_narrower,
     "app_rule_unused": _app_unused,
+    "app_coverage": _app_coverage,
     "link_speed_mismatch": _link,
     "link_duplex_mismatch": _link,
     "link_vlan_mismatch": _link,

@@ -26,9 +26,12 @@ from app.store import paths
 from app.store.relevance import IMPOSSIBLE
 
 OFF_PATH = "off_path"  # Ursache (`check(...)["cause"]`) neben denen der Relevanz
-MAX_PEERS = 3  # Gegenstellen je Regel und Seite, die geprueft werden
-MAX_VALUES = 2  # Adressen des Systems
-MAX_TRACES = 400  # Wege je Doku; danach bleiben die Regeln ungeprueft stehen
+# 0.140.0 (Anwender: „nicht zuverlaessig“): angehoben, seit die Wege je Mandant gemerkt werden
+# (`path_store`); bleibt eine Regel deshalb ungeprueft stehen, zaehlt die Doku sie
+# (`summary.path_unchecked`) - bis 0.139 3 Gegenstellen, 2 Adressen, 400 Wege, still
+MAX_PEERS = 64  # Gegenstellen je Regel und Seite, die geprueft werden
+MAX_VALUES = 8  # Adressen des Systems
+MAX_TRACES = 20000  # Wege je Doku; danach bleiben die Regeln ungeprueft stehen
 
 
 def _peer(fam: int, lo: int, hi: int) -> str:
@@ -53,6 +56,8 @@ class OnPath:
         self._checks = None
         self._peers: dict[tuple[int, str], list[str]] = {}
         self._active: dict[tuple[str, str], list[dict] | None] = {}
+        self.unchecked: set[int] = set()  # Regeln, die eine Grenze ungeprueft stehen liess
+        self._cut = False
 
     def peers(self, rule_id: int, role: str) -> list[str]:
         """Gegenstellen der Regel auf `role` (Hosts bzw. Netze, ohne any)."""
@@ -76,6 +81,7 @@ class OnPath:
         key = (src, dst)
         if key not in self._active:
             if len(self._active) >= MAX_TRACES:
+                self._cut = True
                 return None
             from app.store import app_paths, policy_check  # spaet: app_paths nutzt appdoc
 
@@ -96,14 +102,20 @@ class OnPath:
 
         if rule.domain != RuleDomain.FIREWALL:
             return None
-        peers = self.peers(rule.id, "src" if side == "dst" else "dst")[:MAX_PEERS]
-        own = list(dict.fromkeys(v for v in values if v))[:MAX_VALUES]
+        peers = self.peers(rule.id, "src" if side == "dst" else "dst")
+        own = list(dict.fromkeys(v for v in values if v))
         if not peers or not own:
+            return None
+        if len(peers) > MAX_PEERS or len(own) > MAX_VALUES:
+            self.unchecked.add(rule.id)  # nur ein Teil pruefbar: die Regel bleibt, gezaehlt
             return None
         for peer in peers:
             for ip in own:
                 src, dst = (peer, ip) if side == "dst" else (ip, peer)
+                self._cut = False
                 active = self._paths(src, dst)
+                if self._cut:
+                    self.unchecked.add(rule.id)
                 if active is None or app_paths.rule_nodes(rule, active):
                     return None  # Weg unbekannt bzw. ueber das Geraet der Regel
         a, b = (peers[0], own[0]) if side == "dst" else (own[0], peers[0])

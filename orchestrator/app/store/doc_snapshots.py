@@ -154,7 +154,16 @@ class Params:
 
 
 def compute(session: Session, app: Application, kind: str, params: Params) -> dict:
-    """Doku bzw. Verbindungen mit Plan neu rechnen - als JSON-faehiges Ergebnis."""
+    """Doku bzw. Verbindungen mit Plan neu rechnen - als JSON-faehiges Ergebnis. Mit dem
+    Wege-Speicher des Mandanten (0.140.0, ADR 0048): Wege, Policies und Urteile je Hop teilen
+    alle Applikationen eines Datenstands."""
+    from app.store import path_store
+
+    with path_store.active(session, app.tenant_id):
+        return _compute(session, app, kind, params)
+
+
+def _compute(session: Session, app: Application, kind: str, params: Params) -> dict:
     from app.store import app_paths, app_plan  # spaet: app_paths -> applications -> ...
     from app.store import applications as store
 

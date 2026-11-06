@@ -63,6 +63,7 @@ export const FINDING_LABEL: Record<string, string> = {
   app_connection_mismatch: L("Applikation: Wege uneinheitlich", "Application: inconsistent paths"),
   app_contract_narrower: L("Applikation: Contract enger als Firewall", "Application: contract narrower than firewall"),
   app_rule_unused: L("Applikation: Regel nie gebraucht", "Application: rule never needed"),
+  app_coverage: L("Applikation: unvollständig geprüft", "Application: not completely checked"),
   net_wider_than_routes: L("Netz der Regel grösser als die Routen", "Network of the rule wider than the routes"),
   bgp_expected_missing: L("BGP: erwartetes Netz kommt nicht an", "BGP: expected network does not arrive"),
   bgp_outside_filter: L("BGP: erhalten, obwohl der Filter sperrt", "BGP: received although the filter denies"),
@@ -196,6 +197,10 @@ export const FINDING_HINT: Record<string, string> = {
   app_rule_unused: L(
     "Regel einer Applikation auf einer Firewall bzw. im ACI, über die der Verkehr ihrer Verbindungen nach dem Routing nie geht",
     "Rule of an application on a firewall or in the ACI the traffic of its connections never passes according to the routing",
+  ),
+  app_coverage: L(
+    "Eine Grenze hat Verbindungen, Gegenstellen, Dienste bzw. Teile von Netzen der Applikation nicht geprüft – für diesen Teil fehlen Befunde",
+    "A limit left connections, peers, services or parts of networks of the application unchecked – findings for that part are missing",
   ),
   net_wider_than_routes: L(
     "Netz-Objekt einer Regel (z. B. 10.0.0.0/8), das die Firewall nicht als Ganzes routet – zuordnen: Zone, Anbindung, nur die Teile oder Weg nach dem Routing",
@@ -410,7 +415,7 @@ export const FINDING_GROUPS: { key: string; label: string; help: string; types: 
       "Verbindungen Ende zu Ende: über einen Weg offen, über einen anderen gesperrt; Regeln nie auf dem Weg",
       "End-to-end connections: open via one path, blocked via another; rules never on the path",
     ),
-    types: ["app_connection_mismatch", "app_contract_narrower", "app_rule_unused"],
+    types: ["app_connection_mismatch", "app_contract_narrower", "app_rule_unused", "app_coverage"],
   },
   {
     key: "aci",

@@ -878,6 +878,7 @@ export interface ApplicationDoc {
     helpers?: number; // Hilfs-Contracts über L3Outs, an den Firewall-Regeln (ADR 0034)
     outbound_broad?: number; // 0.103.0: ausgehende Firewall-Regeln mit breiter Quelle, nicht in der Doku
     to_internet?: number; // 0.114.1: Freigaben ins Internet, die das System nur über „all“ erfassen
+    path_unchecked?: number; // 0.140.0: Regeln, deren Weg eine Grenze nicht prüfen liess (bleiben stehen)
     ruleset?: { key: string; title: string; description?: string } | null; // 0.118.0: aktives Regelwerk
     filtered?: { key: string; title: string; count: number }[]; // 0.118.0: je Bedingung gezählt
   };
@@ -2173,6 +2174,8 @@ export interface AppConnections {
   summary: { total: number; allow: number; blocked: number; open: number; mismatch: number; inconsistent?: number; zone_violations?: number; asymmetric?: number; unused?: number };
   plan?: AppPlan;
   snapshot?: DocSnapshot; // 0.108.0
+  // 0.140.0: vollständig geprüft? sonst je Art, was eine Grenze ausgelassen hat (Befund app_coverage)
+  coverage?: { complete: boolean; checked: number; total: number; cuts: Record<string, { rules: number; missing: number }> };
   // 0.132.1: Dauer je Teil (Sekunden) und die langsamsten Wege
   timing?: {
     doc: number;

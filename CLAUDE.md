@@ -83,11 +83,15 @@ und wird erweitert. Details: `README.md`, `ARCHITECTURE.md`, `docs/adr/`.
   den Ordner seines Moduls, bestehende Dateien ziehen um, wenn sie ohnehin angepasst werden.
 - **Stand der Doku** (ADR 0037): was Doku oder Verbindungen verändert, muss den Fingerabdruck
   ändern (Audit-Eintrag, Lauf oder `store.touch(app)`); prüfen mit `AUTOMATO_TEST_DOC_SNAPSHOTS=1`.
+  Dasselbe gilt für den Wege-Speicher je Mandant (`store/path_store.py`, ADR 0048).
+- **Keine stillen Grenzen** (ADR 0048): eine Grenze, die Wege, Gegenstellen oder Dienste nicht
+  prüft, wird gezählt (`app_paths._Cuts` → Befund `app_coverage`) bzw. in der Doku ausgewiesen –
+  nie still kürzen.
 - Entscheide als ADR in `docs/adr/`, Risiken in `docs/RISKS.md`, Bedienung in `docs/BETRIEB.md`.
 
 ## Aktueller Stand
 
-0.139.3 – Einzelheiten je Bereich in `docs/STAND.md`, Produktiv-Installation in
+0.140.0 – Einzelheiten je Bereich in `docs/STAND.md`, Produktiv-Installation in
 `docs/INSTALLATION-PROD.md`, NetBox je Kunde in `docs/INSTALLATION-NETBOX-HOST.md`. Offene Punkte und nächste Arbeiten in `ROADMAP.md` („Roadmap nach
 Versionen“): Version 1 bis zur Produktivschaltung DC = **1.0.0** (R14), Version 2 = neuer Name und
 Cockpit (eigenes Projekt), Version 3 = Automatisierung.

@@ -1225,6 +1225,21 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
       mit „mehr Verbindungen als geprüft werden“. Ändern in der `.env` (`AUTOMATO_APP_TRACES_MAX=0`)
       und Orchestrator neu starten; die Stände der Doku rechnen danach neu. Grosse Applikationen
       brauchen entsprechend länger (die Doku rechnet im Hintergrund, Übersicht → Stand der Doku).
+    - **Unvollständig geprüft (0.140.0, ADR 0048):** keine Grenze kürzt mehr still. Greift eine
+      (Verbindungen je Applikation, mehr als 64 Gegenstellen je Regel und Seite, mehr als 16
+      Dienste je Regel, mehr als 32 genauer geroutete Teile eines Netzes, Fehler im Programm),
+      steht oben in den Verbindungen rot „unvollständig geprüft“, darunter je Art der Hinweis, und
+      unter Findings → Applikationen der Befund **„Applikation: unvollständig geprüft“** mit Link
+      zur Applikation. Für den nicht geprüften Teil fehlen Befunde. Abhilfe: Grenze erhöhen
+      (`AUTOMATO_APP_TRACES_MAX=0`) bzw. die Applikation kleiner schneiden. In der Doku zeigt
+      „n Regeln: Weg nicht geprüft“ Regeln, deren Weg eine Grenze nicht prüfen liess – sie
+      bleiben stehen (im Zweifel zeigen).
+    - **Wege einmal je Mandant (0.140.0, ADR 0048):** Doku, Verbindungen und Befunde aller
+      Applikationen teilen die Wege, die Policies und die Urteile je Hop eines Datenstands; das
+      Urteil je Hop gilt für alle Adressen derselben Klasse (gleiche Objekte der Policies). Ein
+      neuer Lauf bzw. eine Änderung verwirft den Speicher. Grösse: `AUTOMATO_PATH_STORE_MB`
+      (Vorgabe 256) – darüber werden die ältesten Wege bei Bedarf neu gerechnet. Im Log beim
+      Wechsel des Datenstands: „Mandant 2: Wege-Speicher neu (… hits …, misses …)“.
     - **Export und Druck (0.59.0):** der Export der Applikations-Doku enthält den Abschnitt
       „Verbindungen Ende zu Ende“ (Richtung, Quelle, Ziel, Dienst, Weg mit der entscheidenden
       Regel je Hop, Urteil, Abweichung bzw. Wege uneinheitlich); „Drucken / PDF“ zeigt je

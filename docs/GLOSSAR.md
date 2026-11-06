@@ -216,3 +216,5 @@ Neue Texte halten sich an diese Liste, damit derselbe Begriff überall gleich he
 | Modul (Kern, Einstellungen, Worker, Gateway, Analyse, Wegsucher, Findings, Doku, Design, Schreibpfad) | Module (core, settings, worker, gateway, analysis, path finder, findings, documentation, design, write path) |
 | Stand (der Doku), „Stand von …“, „wird im Hintergrund aktualisiert“, neu berechnen | Snapshot, “As of …”, “updating in the background”, recalculate |
 | Regel nie gebraucht | Rule never needed |
+| unvollständig geprüft (Applikation) | not completely checked (application) |
+| Adressklasse, Wege-Speicher | address class, path store |

@@ -954,6 +954,38 @@ def trace(
     with_rules: bool = True,
     balancers: bool = True,
 ) -> dict:
+    """Weg wie `_trace`; mit dem Wege-Speicher des Mandanten (0.140.0, `path_store`) je
+    Datenstand nur einmal gerechnet - Doku, Verbindungen und Befunde aller Applikationen teilen
+    ihn. Ohne gesetzten Speicher (z. B. Weg-Suche) wie bisher jedes Mal neu."""
+    from app.store import path_store
+
+    store = path_store.current(tenant_id)
+    args = (session, tenant_id, dst_text, src_text, start, slack, service, graph, checks,
+            backups, entries, with_rules, balancers)  # fmt: skip
+    if store is None:
+        return _trace(*args)
+    after = getattr(checks, "after", None)
+    key = ("trace", dst_text, src_text, start, slack, service, backups,
+           tuple(entries) if entries is not None else None, with_rules, balancers,
+           after)  # fmt: skip
+    return store.trace(key, lambda: _trace(*args))
+
+
+def _trace(
+    session: Session,
+    tenant_id: int,
+    dst_text: str,
+    src_text: str | None = None,
+    start: str | None = None,
+    slack: int = 1,
+    service: tuple[str, int | None] | None = None,
+    graph: "Graph | None" = None,
+    checks=None,
+    backups: bool = True,
+    entries: list[tuple[Key, str | None, str | None, str]] | None = None,
+    with_rules: bool = True,
+    balancers: bool = True,
+) -> dict:
     """Weg von der Quelle (bzw. dem Startpunkt) zum Ziel: je Pfad die Hops mit Ein- und
     Ausgang (Interface, Zone), Route bzw. Policy-Route und Next-Hop, dazu das Ende - die
     aktiven Wege und die Backup-Wege mit hoechstens `slack` Hops mehr; je FortiGate-Hop die

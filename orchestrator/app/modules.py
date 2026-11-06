@@ -217,6 +217,7 @@ MODULES: tuple[Module, ...] = (
             "path_vip",  # Ziel hinter einer VIP von aussen ueber die VIP (0.134.0)
             "return_path",  # Rueckweg je Weg, symmetrisch (0.134.0)
             "path_service",  # Dienst je Stelle: Client, Load Balancer, Server (0.137.0)
+            "path_store",  # Wege einmal je Mandant und Datenstand (0.140.0, ADR 0048)
         ),
         views=("wege",),
     ),  # fmt: skip

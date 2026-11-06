@@ -24,6 +24,7 @@ Contracts.
 """
 
 import ipaddress
+from bisect import bisect_right
 from collections import defaultdict
 from dataclasses import dataclass, field
 
@@ -132,6 +133,17 @@ class Checker:
         # koennen, mit dem Ergebnis der Interface-Pruefung - statt je Hop alle Policies
         self._by_ports: dict[tuple, list[tuple[_Policy, bool | None, bool | None]]] = {}
         self._index: dict[tuple, tuple[_AddrIndex, _AddrIndex]] = {}
+        # Adressklassen je Firewall/VDOM und Seite (0.140.0): Grenzen aller Adressen der Policies
+        self._classes: dict[tuple[int, str, str], dict[int, list[int]]] = {}
+
+    # Caches aus reinen Daten (keine Objekte der Datenbank) - teilbar zwischen Sitzungen
+    SHARED = ("_policies", "_known", "_sdwan", "_ifaces", "_by_ports", "_index", "_classes")
+
+    def share(self, state: dict[str, dict]) -> None:
+        """Caches mit dem Wege-Speicher des Mandanten teilen (0.140.0): die Policies je
+        Firewall/VDOM werden je Datenstand einmal geladen, nicht je Applikation."""
+        for name in self.SHARED:
+            setattr(self, name, state.setdefault(name, getattr(self, name)))
 
     # -- Laden -------------------------------------------------------------------
 
@@ -431,6 +443,28 @@ class Checker:
                     out.append((p, in_ok, out_ok))
             self._by_ports[key] = out
         return self._by_ports[key]
+
+    def addr_class(self, sid: int, vdom: str, role: str, ip) -> tuple | None:
+        """Adressklasse einer IP bzw. eines Netzes fuer die Policies einer Firewall/VDOM
+        (0.140.0, ADR 0048): Adressen zwischen denselben Grenzen aller Adressbereiche der Policies
+        auf dieser Seite treffen genau dieselben Objekte - ihr Urteil je Hop ist gleich. Dazu
+        Familie und privat/oeffentlich (Land, Internet Service, `_address`). Ein Netz: Klasse
+        seiner ersten und letzten Adresse (ganz bzw. teilweise enthalten ist damit bestimmt)."""
+        if ip is None:
+            return None
+        key = (sid, vdom, role)
+        bounds = self._classes.get(key)
+        if bounds is None:
+            edges: dict[int, set[int]] = defaultdict(set)
+            for p in self.policies(sid, vdom):
+                for fam, lo, hi, _any, _via in p.ranges.get(role, []):
+                    edges[fam].add(lo)
+                    edges[fam].add(hi + 1)
+            bounds = self._classes[key] = {f: sorted(v) for f, v in edges.items()}
+        lo, hi = span(ip)
+        edges_of = bounds.get(ip.version, [])
+        return (ip.version, bisect_right(edges_of, lo), bisect_right(edges_of, hi),
+                is_private(ip))  # fmt: skip
 
     def check(self, sid: int, vdom: str, ingress: dict | None, egress: dict | None, src, dst,
               service: tuple[str, int | None] | None, after: int = 0,
@@ -791,7 +825,16 @@ class Checks:
 
     @classmethod
     def load(cls, session: Session, tenant_id: int, after: int = 0) -> "Checks":
-        return cls(Checker(session, tenant_id), after=after)
+        """Mit dem Wege-Speicher des Mandanten (0.140.0, `path_store`): Policies und Urteile je
+        Hop nur einmal je Datenstand fuer alle Applikationen."""
+        from app.store import path_store
+
+        checker = Checker(session, tenant_id)
+        store = path_store.current(tenant_id)
+        if store is None or after:
+            return cls(checker, after=after)
+        checker.share(store.checker)
+        return cls(checker, cache=store.decisions_for(), after=after)
 
 
 def check_paths(session: Session, tenant_id: int, paths: list[dict], src, dst, service,
@@ -844,7 +887,10 @@ def check_paths(session: Session, tenant_id: int, paths: list[dict], src, dst, s
             ports = (ingress.get("interface"), ingress.get("zone"),
                      egress.get("interface"), egress.get("zone"))  # fmt: skip
             vip = (hop.get("nat") or {}).get("name")  # VIP an diesem Hop (0.132.1)
-            key = (sid, vdom, *ports, cur_src, hop_dst, cur_svc, vip)
+            # je Adressklasse statt je IP (0.140.0, ADR 0048): gleiche Klasse = gleiches Urteil
+            classes = (checker.addr_class(sid, vdom, "src", cur_src),
+                       checker.addr_class(sid, vdom, "dst", hop_dst))  # fmt: skip
+            key = (sid, vdom, *ports, *classes, cur_svc, vip, checks.after)
             if key not in cache:
                 cache[key] = checker.check(sid, vdom, ingress, egress, cur_src, hop_dst, cur_svc,
                                            checks.after, vip)  # fmt: skip

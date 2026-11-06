@@ -7,6 +7,31 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.140.0 – 2026-11-06
+
+Rückmeldung des Anwenders 2026-11-06: „Wir rechnen heute nicht alle Wege durch und lassen auch
+sonst immer wieder viel liegen, dies ist nicht zuverlässig und daher gefährlich. Die Frage ist, ob
+das Tool nicht für so grosse Umgebungen bereit ist.“ Auf den Vorschlag in drei Stufen: „Alle drei
+Stufen in 140 umsetzen.“ (ADR 0048)
+
+- **Keine stillen Grenzen:** Jede Grenze, die greift, wird gezählt – Verbindungen je
+  Applikation, Gegenstellen je Regel, Dienste je Regel, genauer geroutete Teile eines Netzes,
+  Fehler im Programm. Die Applikation ist dann „unvollständig geprüft“: rotes Zeichen und Hinweise
+  in den Verbindungen, Befund **„Applikation: unvollständig geprüft“** unter Findings →
+  Applikationen mit Link zur Applikation. Die Doku zeigt „n Regeln: Weg nicht geprüft“, wenn eine
+  Grenze den Weg einer Regel nicht prüfen liess. Bis 0.139 fielen dabei Gegenstellen (mehr als 6
+  je Regel), Dienste (mehr als 3) und Teile von Netzen (mehr als 8) ohne Hinweis weg.
+- **Grenzen angehoben:** 64 Gegenstellen je Regel und Seite (bisher 6), 16 Dienste je Regel (3),
+  32 genauer geroutete Teile (8), alle Subnetze einer externen EPG bis 64 (3); Wegprüfung der Doku
+  64 Gegenstellen, 8 Adressen je System, 20 000 Wege (3, 2, 400).
+- **Wege einmal je Mandant:** Doku, Verbindungen und Befunde aller Applikationen teilen die Wege,
+  die geladenen Policies und die Urteile je Hop eines Datenstands – der Weg vom Monitoring, AD
+  oder Backup zu einem Server wird einmal gerechnet, nicht in jeder Applikation neu. Ein neuer Lauf
+  bzw. eine Änderung verwirft den Speicher. Grösse `AUTOMATO_PATH_STORE_MB` (Vorgabe 256).
+- **Urteile je Adressklasse:** Adressen, die dieselben Objekte der Policies treffen, haben
+  dasselbe Urteil je Hop – es wird je Klasse einmal gerechnet und für alle Server eines Netzes
+  wiederverwendet (exakt, keine Näherung).
+
 ## 0.139.3 – 2026-11-06
 
 Rückmeldung des Anwenders 2026-11-06 zu 0.139.2: Fehler „Failed to fetch“ nicht mehr aufgetaucht.

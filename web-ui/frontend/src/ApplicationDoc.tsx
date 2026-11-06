@@ -622,6 +622,18 @@ export default function ApplicationDocView({
               {L(`${f.count} ausgelassen: ${f.title}`, `${f.count} omitted: ${f.title}`)}
             </span>
           ))}
+          {(s.path_unchecked ?? 0) > 0 && (
+            <span
+              className="chip warn"
+              id="app-path-unchecked"
+              title={L(
+                "Für diese Regeln hat eine Grenze den Weg nicht (ganz) geprüft – sie stehen in der Doku, auch wenn ihre Firewall vielleicht nicht auf dem Weg liegt",
+                "A limit did not (fully) check the path of these rules – they stay in the documentation even if their firewall may not be on the path",
+              )}
+            >
+              {L(`${s.path_unchecked} Regeln: Weg nicht geprüft`, `${s.path_unchecked} rules: path not checked`)}
+            </span>
+          )}
           {s.ruleset && (
             <a className="faint" id="app-ruleset" href="#dict" style={{ fontSize: 12 }} title={s.ruleset.description || L("Regelwerk der Applikations-Doku (Namensprofile)", "Ruleset of the application documentation (naming profiles)")}>
               {L(`Regelwerk: ${s.ruleset.title}`, `Ruleset: ${s.ruleset.title}`)}

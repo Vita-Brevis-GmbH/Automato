@@ -68,7 +68,7 @@ def _doc_snapshots_off():
     `AUTOMATO_TEST_DOC_SNAPSHOTS=1` laesst alle Tests mit dem Stand laufen (Fingerabdruck).
     Vorrechnen aller Applikationen (`doc_warm_all`, 0.133.2) nur, wo ein Test es einschaltet."""
     from app.config import get_settings
-    from app.store import bgp_cache, doc_snapshots
+    from app.store import bgp_cache, doc_snapshots, path_store
 
     settings = get_settings()
     previous = settings.doc_snapshots, settings.doc_warm_all
@@ -76,10 +76,12 @@ def _doc_snapshots_off():
     settings.doc_warm_all = False
     bgp_cache.clear()  # 0.131.0: Stand der Routing-Filter je Test neu (gleiche Mandanten-IDs)
     doc_snapshots._failed.clear()  # 0.133.2: Fehler je Stand (gleiche IDs je Test)
+    path_store.clear()  # 0.140.0: Wege je Mandant - je Test neu (gleiche Mandanten-IDs)
     yield
     settings.doc_snapshots, settings.doc_warm_all = previous
     bgp_cache.clear()
     doc_snapshots._failed.clear()
+    path_store.clear()
 
 
 def _worker_url(url: str):

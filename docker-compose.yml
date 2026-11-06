@@ -145,6 +145,8 @@ services:
       AUTOMATO_APP_FINDINGS_SECONDS: ${AUTOMATO_APP_FINDINGS_SECONDS:-120}
       AUTOMATO_APP_TRACES_MAX: ${AUTOMATO_APP_TRACES_MAX:-2000}
       AUTOMATO_APP_FINDINGS_TRACES: ${AUTOMATO_APP_FINDINGS_TRACES:-120}
+      # Wege je Mandant im Speicher (0.140.0, ADR 0048): MB, darueber werden die aeltesten neu gerechnet
+      AUTOMATO_PATH_STORE_MB: ${AUTOMATO_PATH_STORE_MB:-256}
       # Agent-Kanal nur ueber das mTLS-Agent-Gateway (Profil agent-gateway): off | require | bind
       AUTOMATO_INTERNAL_MTLS_MODE: ${AUTOMATO_INTERNAL_MTLS_MODE:-off}
       AUTOMATO_AGENT_GATEWAY_SECRET: ${AUTOMATO_AGENT_GATEWAY_SECRET:-}

@@ -22,6 +22,7 @@ CHECK = Check(
             FindingType.APP_CONNECTION_MISMATCH,
             FindingType.APP_CONTRACT_NARROWER,
             FindingType.APP_RULE_UNUSED,
+            FindingType.APP_COVERAGE,
         }
     ),
     None,

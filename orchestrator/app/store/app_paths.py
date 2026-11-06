@@ -76,14 +76,60 @@ from app.store import nat as nat_store
 from app.store.topology import endpoint, is_net, within
 
 MAX_TRACES = 120  # Wege je Applikation in den Befunden (Vorgabe, `app_findings_traces`)
-MAX_COUNTER = 6  # Gegenstellen je Regel und Seite
-MAX_PARTS = 8  # genauer geroutete Teile eines Netzes als eigene Verbindungen (0.79.1)
-MAX_SERVICES = 3  # Dienste je Regel
+# Grenzen je Regel (0.140.0, Anwender: „Wir rechnen heute nicht alle Wege durch … dies ist nicht
+# zuverlaessig und daher gefaehrlich“): angehoben, seit die Wege je Mandant gemerkt werden
+# (`path_store`); greift eine doch, zaehlt `_Cuts` sie - die Applikation gilt dann als
+# unvollstaendig geprueft (Befund `app_coverage`), nichts faellt mehr still weg
+MAX_COUNTER = 64  # Gegenstellen je Regel und Seite (bis 0.139: 6)
+MAX_PARTS = 32  # genauer geroutete Teile eines Netzes, eigene Verbindungen (0.79.1; bis 0.139: 8)
+MAX_SERVICES = 16  # Dienste je Regel (bis 0.139: 3)
 MAX_SYSTEMS = 12  # genannte Systeme je Seite
 _SKIP = ("any", "vzany", "pref_group")  # unspezifisch: Regel ohne Verbindung
 _BLOCK = ("deny", "implicit_deny")
 
 log = logging.getLogger(__name__)
+
+
+class _Cuts:
+    """Was eine Grenze nicht prueft (0.140.0): je Art die betroffenen Regeln und wie viele
+    Gegenstellen, Dienste bzw. Teile fehlen - fuer `coverage` und den Befund `app_coverage`."""
+
+    KINDS = ("counter", "services", "parts", "limit", "failed")
+
+    def __init__(self) -> None:
+        self.rules: dict[str, set[int]] = defaultdict(set)
+        self.missing: dict[str, int] = defaultdict(int)
+
+    def add(self, kind: str, rule_id: int | None, missing: int) -> None:
+        if missing <= 0:
+            return
+        if rule_id is not None:
+            self.rules[kind].add(rule_id)
+        self.missing[kind] += missing
+
+    def out(self) -> dict:
+        return {k: {"rules": len(self.rules[k]), "missing": self.missing[k]}
+                for k in self.KINDS if self.missing.get(k)}  # fmt: skip
+
+
+def cut_text(kind: str, x: dict) -> str:
+    """Kuerzung lesbar (Hinweis in den Verbindungen, Befund `app_coverage`)."""
+    n, rules = x.get("missing", 0), x.get("rules", 0)
+    return {
+        "counter": L(f"{n} Gegenstellen von {rules} Regeln nicht geprüft (mehr als {MAX_COUNTER} "
+                     "je Regel und Seite)", f"{n} peers of {rules} rules not checked (more than "
+                     f"{MAX_COUNTER} per rule and side)"),
+        "services": L(f"{n} Dienste von {rules} Regeln nicht geprüft (mehr als {MAX_SERVICES} je "
+                      "Regel)", f"{n} services of {rules} rules not checked (more than "
+                      f"{MAX_SERVICES} per rule)"),
+        "parts": L(f"{n} genauer geroutete Teile von Netzen nicht geprüft (mehr als {MAX_PARTS} je "
+                   "Netz)", f"{n} more specifically routed parts of networks not checked (more "
+                   f"than {MAX_PARTS} per network)"),
+        "limit": L(f"{n} Verbindungen nicht geprüft (Grenze AUTOMATO_APP_TRACES_MAX)",
+                   f"{n} connections not checked (limit AUTOMATO_APP_TRACES_MAX)"),
+        "failed": L(f"{n} Wege wegen eines Fehlers im Programm nicht berechnet",
+                    f"{n} paths not computed because of a program error"),
+    }[kind]  # fmt: skip
 
 
 @dataclass
@@ -172,7 +218,8 @@ def _build(session: Session, app: Application, doc: dict | None, graph: paths.Gr
             select(Rule).where(Rule.id.in_(rule_ids)).options(selectinload(Rule.services))
         )
     }
-    conns, notes, without = _candidates(session, data, doc, rules, limit)
+    cuts = _Cuts()  # was eine Grenze nicht prueft (0.140.0)
+    conns, notes, without = _candidates(session, data, doc, rules, limit, cuts)
     t_cand = time.monotonic()
     graph = graph or paths.Graph(session, tid)
     checks = checks or policy_check.Checks.load(session, tid)
@@ -245,6 +292,7 @@ def _build(session: Session, app: Application, doc: dict | None, graph: paths.Gr
             out.append(conn)
         # Netz als Ziel (0.79.1, Anwender): genauer geroutete Teile (z. B. ueber einen anderen
         # L3Out als die 0/0-Route, die das ganze Netz enthaelt) als eigene Verbindungen
+        cuts.add("parts", None, len(conn["parts"]) - MAX_PARTS)
         for prefix in conn["parts"][:MAX_PARTS]:
             part = _Conn(_copy(c.src), _copy(c.dst), c.service, c.direction, dict(c.rules),
                          list(c.starts), c.reverse, specific=set(c.specific))  # fmt: skip
@@ -288,6 +336,10 @@ def _build(session: Session, app: Application, doc: dict | None, graph: paths.Gr
                 f"{', '.join(labels[:3])}{more}",
             )
         )
+    cuts.add("failed", None, len(failed))
+    for kind in ("counter", "services", "parts"):  # Grenzen je Regel (0.140.0): nie still
+        if kind in cuts.out():
+            notes.append(cut_text(kind, cuts.out()[kind]))
     t_traces = time.monotonic()
     order = {"deny": 0, "depends": 1, "unknown": 2, "allow": 3}
     out.sort(key=lambda c: (not c["mismatch"], order.get(c["verdict"], 2)))
@@ -318,6 +370,14 @@ def _build(session: Session, app: Application, doc: dict | None, graph: paths.Gr
             "unused": len({x["rule_id"] for x in unused}),  # 0.107.0
         },
         "unused": unused,
+        # Vollstaendigkeit (0.140.0): geprueft von allen, was eine Grenze ausliess - nicht
+        # vollstaendig = Befund `app_coverage`
+        "coverage": {
+            "complete": not cuts.out(),
+            "checked": traced,
+            "total": len(conns),
+            "cuts": cuts.out(),
+        },  # fmt: skip
         "without": sorted(missing, key=lambda x: x["label"].lower()),
         "members": members(doc),
         # 0.78.2: L3Out-Contracts, die weniger oeffnen als die Firewall (Befund)
@@ -434,12 +494,14 @@ def _why(key: str) -> str:
 
 def _candidates(
     session: Session, data: appdoc.TenantData, doc: dict, rules: dict[int, Rule],
-    limit: int = MAX_TRACES,
+    limit: int = MAX_TRACES, cuts: _Cuts | None = None,
 ) -> tuple[dict[tuple, _Conn], list[str], dict[int, set[str]]]:  # fmt: skip
+    cuts = cuts if cuts is not None else _Cuts()
     systems = {x["key"]: x for x in doc["systems"]} | _epg_systems(session, doc)
     ranges, anys = _ranges(session, set(rules))
     without: dict[int, set[str]] = defaultdict(set)  # Regel -> Gruende ohne Verbindung
     counters: dict[str, list[_Side]] = {}
+    counted: set[str] = set()  # Regel und Seite: Kuerzung der Dienste einmal zaehlen
     conns: dict[tuple, _Conn] = {}
     skipped: set[str] = set()
     by_label = {epg_store.inventory_label(e): e for e in data.epgs_by_id.values()
@@ -476,16 +538,16 @@ def _candidates(
         if rule.domain == RuleDomain.ACI_CONTRACT:
             key = f"aci:{rule.id}:{h['side']}:{h.get('epg') or h['system']}"
             if key not in counters:
-                counters[key] = _aci_counter(session, data, h)
+                counters[key] = _aci_counter(session, data, h, cuts, rule.id)
             own_ips = _nic_ips(system, h.get("epg"))
         else:
             key = f"fw:{rule.id}:{h['side']}"
             cp_side = _other(h["side"])
             if key not in counters:
-                counters[key] = _fw_counter(ranges.get((rule.id, cp_side), []))
+                counters[key] = _fw_counter(ranges.get((rule.id, cp_side), []), cuts, rule.id)
                 if not counters[key] and anys.get((rule.id, cp_side)):
                     # any (0.127.0, Anwender: Regeln nach extern ueber L3Outs fehlten im Plan)
-                    counters[key] = _fw_any(data, rule, cp_side, anys[(rule.id, cp_side)])
+                    counters[key] = _fw_any(data, rule, cp_side, anys[(rule.id, cp_side)], cuts)
             own_ips = _own_ips(system, h.get("value"))
             entry = _entry(data, rule, h)  # ueber VIP bzw. Load Balancer (0.79.0)
             if entry is not None:
@@ -497,6 +559,11 @@ def _candidates(
             without[rule.id].add(_why("counter_aci" if aci else "counter"))
             continue
         services = _named(h["services"]) if h.get("reverse") else _services(rule)
+        if len(services) > MAX_SERVICES:  # 0.140.0: gezaehlt statt still gekuerzt
+            if key not in counted:
+                counted.add(key)
+                cuts.add("services", rule.id, len(services) - MAX_SERVICES)
+            services = services[:MAX_SERVICES]
         if front is not None:
             # Port des Clients statt des Ports nach der Port-Weiterleitung (0.137.0)
             services = list(dict.fromkeys(_client_service(front, x) for x in services))
@@ -570,6 +637,7 @@ def _candidates(
     # Verbindungen zu any zuletzt (0.130.0): ueber der Grenze fallen zuerst sie weg
     merged = dict(sorted(merged.items(), key=lambda kv: kv[1].probe))
     if limit and len(merged) > limit:
+        cuts.add("limit", None, len(merged) - limit)
         for c in list(merged.values())[limit:]:
             for rid in c.rules:
                 without[rid].add(_why("limit"))
@@ -763,7 +831,8 @@ def _ranges(session: Session, rule_ids: set[int]) -> tuple[Ranges, dict[tuple[in
     return out, anys
 
 
-def _fw_any(data: appdoc.TenantData, rule: Rule, side: str, families: set[int]) -> list[_Side]:
+def _fw_any(data: appdoc.TenantData, rule: Rule, side: str, families: set[int],
+            cuts: _Cuts | None = None) -> list[_Side]:  # fmt: skip
     """Gegenstelle any einer Firewall-Regel (0.127.0, Anwender: „viele Firewall Regeln nach
     extern, über L3Os, diese werden aber nicht angezeigt im Netzwerkplan“): was hinter Interface
     bzw. Zone der Regel auf dieser Seite liegt - die Netze dorthin (Routing bzw. Anbindung),
@@ -783,17 +852,20 @@ def _fw_any(data: appdoc.TenantData, rule: Rule, side: str, families: set[int]) 
     wide = [n for n in nets if ipaddress.ip_network(n).prefixlen < (29 if ":" not in n else 125)]
     nets = wide or nets
     if nets:
+        if cuts is not None:
+            cuts.add("counter", rule.id, len(nets) - MAX_COUNTER)
         return [_Side(n, f"any → {n}", "any") for n in nets[:MAX_COUNTER]]
     text = f"any → {found['text']}" if found and found.get("text") else "any"
     return [_Side("0.0.0.0/0" if fam == 4 else "::/0", text, "any") for fam in sorted(families)]
 
 
-def _fw_counter(ranges: list[tuple]) -> list[_Side]:
+def _fw_counter(ranges: list[tuple], cuts: _Cuts | None = None,
+                rule_id: int | None = None) -> list[_Side]:  # fmt: skip
     """Gegenstellen einer Firewall-Regel: Host bzw. Netz (als Ganzes); ein Bereich, der kein
-    Netz ist, mit seiner ersten Adresse."""
+    Netz ist, mit seiner ersten Adresse. Mehr als `MAX_COUNTER`: gezaehlt (0.140.0)."""
     out: list[_Side] = []
     seen: set[str] = set()
-    for fam, lo, hi, via in ranges:
+    for i, (fam, lo, hi, via) in enumerate(ranges):
         cls = ipaddress.IPv4Address if fam == 4 else ipaddress.IPv6Address
         first, last = cls(lo), cls(hi)
         nets = list(ipaddress.summarize_address_range(first, last))
@@ -811,15 +883,22 @@ def _fw_counter(ranges: list[tuple]) -> list[_Side]:
             label = f"{label} ({text})"
         out.append(_Side(text, label, "object"))
         if len(out) >= MAX_COUNTER:
+            rest = {(f, a, b) for f, a, b, _v in ranges[i + 1 :]}
+            if cuts is not None:
+                cuts.add("counter", rule_id, len(rest))
             break
     return out
 
 
-def _aci_counter(session: Session, data: appdoc.TenantData, h: dict) -> list[_Side]:
+def _aci_counter(session: Session, data: appdoc.TenantData, h: dict, cuts: _Cuts | None = None,
+                 rule_id: int | None = None) -> list[_Side]:  # fmt: skip
     """Gegenstellen eines Contracts im Scope (`parties`, 0.43.2): EPG mit einer IP ihrer VMs
     (Portgruppe) bzw. Endpunkte, sonst ihr Subnetz; externe EPG mit ihren Subnetzen (ohne
     0.0.0.0/0; nur mit 0.0.0.0/0 seit 0.127.0 dieses - der Weg ueber ihren L3Out)."""
-    dns = list(dict.fromkeys((h.get("parties") or {}).get("counter") or []))[:MAX_COUNTER]
+    dns = list(dict.fromkeys((h.get("parties") or {}).get("counter") or []))
+    if cuts is not None:
+        cuts.add("counter", rule_id, len(dns) - MAX_COUNTER)
+    dns = dns[:MAX_COUNTER]
     if not dns:
         return []
     epgs = {e.dn: e for e in session.scalars(select(Epg).where(Epg.tenant_id == data.tenant_id,
@@ -836,7 +915,11 @@ def _aci_counter(session: Session, data: appdoc.TenantData, h: dict) -> list[_Si
             if nets and not any(n.prefixlen for n in nets):
                 nets = nets[:2]  # nur 0.0.0.0/0 (Internet, 0.127.0): ueber den L3Out pruefen
             else:
-                nets = [n for n in nets if n.prefixlen][:3]
+                # 0.140.0: alle Subnetze bis MAX_COUNTER (bis 0.139 nur die ersten 3, still)
+                nets = [n for n in nets if n.prefixlen]
+                if cuts is not None:
+                    cuts.add("counter", rule_id, len(nets) - MAX_COUNTER)
+                nets = nets[:MAX_COUNTER]
             label = f"{L('externe EPG', 'external EPG')} {e.l3out}|{e.name}"
             out += [_Side(str(net), f"{label} ({net})", "external", l3out=e.l3out)
                     for net in nets]  # fmt: skip
@@ -888,7 +971,7 @@ def _services(rule: Rule) -> list[tuple[str, int | None] | None]:
             out.append(svc)
     if not out or None in out:
         return [None]
-    return out[:MAX_SERVICES]
+    return out  # gekuerzt (und gezaehlt) beim Aufrufer (0.140.0)
 
 
 def _named(text: str) -> list[tuple[str, int | None] | None]:
@@ -911,7 +994,7 @@ def _named(text: str) -> list[tuple[str, int | None] | None]:
             out.append(svc)
     if not out or None in out:
         return [None]
-    return out[:MAX_SERVICES]
+    return out  # gekuerzt (und gezaehlt) beim Aufrufer (0.140.0)
 
 
 def _start(data: appdoc.TenantData, rule: Rule, h: dict, by_label: dict[str, Epg]) -> str | None:

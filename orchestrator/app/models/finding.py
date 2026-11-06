@@ -84,6 +84,9 @@ class FindingType(enum.StrEnum):
     # 0.107.0 (Anwender): Regel einer Applikation auf einem Geraet, ueber das der Weg ihrer
     # Verbindungen nicht geht - sie wird fuer diesen Verkehr nie gebraucht
     APP_RULE_UNUSED = "app_rule_unused"
+    # 0.140.0 (Anwender: „nicht zuverlaessig und daher gefaehrlich“): eine Grenze hat Verbindungen,
+    # Gegenstellen, Dienste bzw. Teile von Netzen der Applikation nicht geprueft
+    APP_COVERAGE = "app_coverage"
     # Verkabelung (0.62.0, ADR 0025, `store/cabling`): Verbindung zwischen zwei gelesenen
     # Switches mit abweichender Konfiguration bzw. nur von einer Seite gemeldet
     LINK_SPEED_MISMATCH = "link_speed_mismatch"
@@ -161,6 +164,7 @@ class SubjectKind(enum.StrEnum):
     SOURCE = "source"  # Quellsystem (Name; Datenqualitaet, ADR 0029)
     PATH = "path"  # Weg `<Quelle> → <Ziel>` (von Hand erfasst, 0.109.0)
     NETBOX = "netbox"  # Objekt in der Ziel-NetBox (`<NetBox>|<Art>|<Schluessel>`, 0.115.0)
+    APPLICATION = "application"  # Applikation (Name, 0.140.0)
 
 
 class Finding(Base):
