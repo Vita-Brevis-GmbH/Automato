@@ -110,6 +110,10 @@ class _Conn:
     # Gegenstelle any der Firewall-Regel (0.127.0): geprueft mit dem, was hinter ihrem Interface
     # liegt - liegt die Firewall nicht auf dem Weg, ist das kein Befund „nie gebraucht“
     probe: bool = False
+    # Regeln, die das System konkret nennen (Host, Gruppe, Netz der EPG, direkt zugeordnet) -
+    # nur sie sind „nie gebraucht“, wenn ihr Geraet nicht auf dem Weg liegt (0.139.3); eine Regel
+    # ueber ein breites Netz (z. B. 10.0.0.0/8) gehoert dann einfach nicht zur Applikation
+    specific: set[int] = field(default_factory=set)
 
 
 PROGRESS_SECONDS = 60  # Fortschritt im Log hoechstens so oft (0.133.1)
@@ -182,12 +186,15 @@ def _build(session: Session, app: Application, doc: dict | None, graph: paths.Gr
 
     def keep(conn: dict) -> bool:
         """Verbindung zeigen? Nicht, wenn keine ihrer Regeln auf ihrem Weg liegt."""
+        foreign = conn.pop("foreign", [])
+        for rid in foreign:  # breite Regel abseits des Wegs: Grund unter „ohne Verbindung“
+            without[rid].add(_why("foreign"))
         hops = " → ".join(h["label"] for h in conn["hops"]) or "–"
         ends = {"src": conn["src"]["label"], "dst": conn["dst"]["label"]}
         unused.extend({"rule_id": x["rule_id"], "label": x["label"], "device": x["device"],
                        **ends, "service": conn["service"], "path": hops}
                       for x in conn["unused"])  # fmt: skip
-        return bool(conn["rules"]) or not conn["unused"]
+        return bool(conn["rules"]) or not (conn["unused"] or foreign)
 
     t_setup = time.monotonic()
     slow: list[tuple[float, str]] = []
@@ -227,8 +234,8 @@ def _build(session: Session, app: Application, doc: dict | None, graph: paths.Gr
             log.info("Applikation %s: %d von %d Wegen in %.0f s", app.id, traced, len(todo),
                      logged - t_setup)  # fmt: skip
         if c.probe:  # any: Firewall nicht auf dem Weg nach dem Routing - kein Befund (0.127.0)
-            for x in conn["unused"]:
-                without[x["rule_id"]].add(_why("probe_off_path"))
+            for rid in [x["rule_id"] for x in conn["unused"]] + conn.pop("foreign", []):
+                without[rid].add(_why("probe_off_path"))
             conn["unused"] = []
             if not conn["rules"]:
                 continue
@@ -240,7 +247,7 @@ def _build(session: Session, app: Application, doc: dict | None, graph: paths.Gr
         # L3Out als die 0/0-Route, die das ganze Netz enthaelt) als eigene Verbindungen
         for prefix in conn["parts"][:MAX_PARTS]:
             part = _Conn(_copy(c.src), _copy(c.dst), c.service, c.direction, dict(c.rules),
-                         list(c.starts), c.reverse)  # fmt: skip
+                         list(c.starts), c.reverse, specific=set(c.specific))  # fmt: skip
             part.dst.ip, part.dst.label = prefix, f"{c.dst.label} › {prefix}"
             child = one(part, False)
             if child is None:
@@ -417,6 +424,10 @@ def _why(key: str) -> str:
         "probe_off_path": L("Gegenstelle any: der Weg nach dem Routing führt nicht über die "
                             "Firewall der Regel", "peer any: the path by the routing does not "
                             "pass the firewall of the rule"),
+        "foreign": L("Regel über ein Netz (nennt das System nicht): der Weg führt nicht über "
+                     "ihr Gerät – gehört nicht zur Applikation, kein Befund", "rule via a network "
+                     "(does not name the system): the path does not pass its device – does not "
+                     "belong to the application, no finding"),
         "limit": L("mehr Verbindungen als geprüft werden", "more connections than are checked"),
     }[key]  # fmt: skip
 
@@ -508,6 +519,8 @@ def _candidates(
                 else:
                     _add_system(conn.dst if h["direction"] == "in" else conn.src, system)
                 conn.rules.setdefault(rule.id)
+                if h["scope"] not in appdoc.BROAD:
+                    conn.specific.add(rule.id)
                 # Hilfs-Contracts der Firewall-Regel (ADR 0034) mit diesem Dienst: pruefen mit,
                 # wie bisher der Contract zum Netz der externen EPG
                 for x in h.get("helpers") or []:
@@ -515,6 +528,8 @@ def _candidates(
                         offered = _services(rules[helper]) if helper in rules else []
                         if None in offered or svc in offered:
                             conn.rules.setdefault(helper)
+                            if h["scope"] not in appdoc.BROAD:
+                                conn.specific.add(helper)
                 start = _start(data, rule, h, by_label)
                 if start and start not in conn.starts:
                     conn.starts.append(start)
@@ -539,6 +554,7 @@ def _candidates(
         hosts = [m for m in merged.values() if m is not c and _same_end(m, c, net)]
         for m in hosts:
             m.rules.update(c.rules)
+            m.specific |= c.specific
             m.starts += [s for s in c.starts if s not in m.starts]
         if hosts:
             del merged[k]
@@ -616,6 +632,7 @@ def _client_service(vip: NatRule | None, svc):
 def _merge(m: _Conn, c: _Conn) -> None:
     m.reverse = m.reverse and c.reverse
     m.rules.update(c.rules)
+    m.specific |= c.specific
     m.starts += [s for s in c.starts if s not in m.starts]
     for a, b in ((m.src, c.src), (m.dst, c.dst)):
         for name, key in zip(b.systems, b.keys or [None] * len(b.systems), strict=False):
@@ -945,8 +962,12 @@ def _connection(
     # Regel auf einem Geraet, ueber das der (bis zum Ziel bekannte) Weg nicht geht: diese
     # Verbindung braucht sie nie (0.107.0, Anwender: „eher ein Finding … aber eigentlich sollte
     # dies nicht dort auftauchen“) - nicht bei der Verbindung, sondern Befund `app_rule_unused`
-    unused = [x for x in states if x["state"] == "off_path"] if reached else []
-    states = [x for x in states if x not in unused]
+    off = [x for x in states if x["state"] == "off_path"] if reached else []
+    states = [x for x in states if x not in off]
+    # nur konkrete Regeln sind „nie gebraucht“ (0.139.3, Anwender: Monitoring-Regel mit
+    # 10.0.0.0/8 bei einem Server, „seine IP steht dort nicht drin“) - breite gehoeren nicht dazu
+    unused = [x for x in off if x["rule_id"] in c.specific]
+    foreign = [x["rule_id"] for x in off if x["rule_id"] not in c.specific]
     mismatch = _mismatch(states, verdict, text, reached)
     variants = path_variants(res["paths"])
     parts = _net_parts(c, first)
@@ -968,6 +989,7 @@ def _connection(
         "hops": hops,
         "rules": states,
         "unused": unused,
+        "foreign": foreign,  # breite Regeln abseits des Wegs (nur fuer `build`, 0.139.3)
         "mismatch": mismatch,
         # Wege uneinheitlich (0.73.0): je Weg bzw. Firewall im Verbund das Urteil
         "variants": variants if len(variants) > 1 else [],

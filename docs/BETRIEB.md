@@ -1179,7 +1179,11 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
       andere Firewall mit denselben Regeln), gehört die Regel nicht zur Verbindung – keine
       Abweichung, sondern unten „Nie auf dem Weg ihres Verkehrs …“ und der Befund
       **„Applikation: Regel nie gebraucht“** (Hinweis, Findings → Applikationen, mit dem Weg, den
-      der Verkehr nimmt). Verbindungen nur aus solchen Regeln entfallen. Kommt die Quelle von
+      der Verkehr nimmt). Seit 0.139.3 nur für Regeln, die das System konkret nennen (Host,
+      Gruppe, Netz der EPG, direkt zugeordnet): eine Regel über ein breites Netz (z. B.
+      10.0.0.0/8 für das Monitoring) abseits des Wegs gehört nicht zur Applikation – kein Befund,
+      der Grund steht unter „Regeln ohne Verbindung“. Verbindungen nur aus solchen Regeln
+      entfallen. Kommt die Quelle von
       ausserhalb (Internet, Partner), beginnt der Weg dort, wo der **Rückweg** vom Ziel das
       gelesene Netz verlässt (z. B. `wan1` der Internet-Firewall) – nicht mehr auf irgendeinem
       Gerät mit einer Regel dafür. Die Doku nach Kategorien zeigt die Regel weiter.

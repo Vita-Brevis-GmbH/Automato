@@ -7,6 +7,24 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.139.3 – 2026-11-06
+
+Rückmeldung des Anwenders 2026-11-06 zu 0.139.2: Fehler „Failed to fetch“ nicht mehr aufgetaucht.
+Unter Findings → Applikationen „Regel nie gebraucht“ 3255 von 4153 Findings – darunter z. B. eine
+Monitoring-Regel mit 10.0.0.0/8 bei einem Server, der sie nicht braucht: „Seine IP steht dort
+nicht drin, also frage ich mich über den Sinn des Findings.“
+
+- **„Regel nie gebraucht“ nur für konkrete Regeln:** Der Befund entsteht nur noch für Regeln, die
+  das System konkret nennen (Host, Gruppe, Netz der EPG bzw. direkt zugeordnet) und deren
+  Firewall nicht auf dem Weg liegt – eine solche Regel ist ein Kandidat zum Aufräumen. Eine
+  Regel, die das System nur über ein breites Netz umfasst (z. B. 10.0.0.0/8), gehört bei einem
+  Weg abseits ihrer Firewall nicht zur Applikation: kein Befund, keine Verbindung, der Grund
+  steht unter „Regeln ohne Verbindung“ („Regel über ein Netz … gehört nicht zur Applikation“).
+  So war der Befund gedacht (ADR 0043); seit 0.139.1 zählen die Befunde alle Verbindungen statt
+  der ersten 120 je Applikation, dadurch fielen die breiten Regeln erst jetzt in der Menge auf.
+- Die Befunde rechnen nach dem Update mit dem neuen Stand der Verbindungen neu; danach sollten
+  unter „Regel nie gebraucht“ nur noch konkrete Regeln stehen.
+
 ## 0.139.2 – 2026-11-06
 
 Befund des Anwenders 2026-11-06: „Doku laden: Failed to fetch“ ohne Fehler im Log; in der

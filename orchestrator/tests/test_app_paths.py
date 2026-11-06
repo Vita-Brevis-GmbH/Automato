@@ -172,6 +172,40 @@ def test_durchgehend_gesperrt_ist_kein_befund(client):
     assert "geht nicht über fw-03" in f["message"]
 
 
+def test_breite_regel_abseits_des_wegs_ist_kein_befund(client, monkeypatch):
+    """0.139.3 (Anwender: 3255 von 4153 Findings „Regel nie gebraucht“ - eine Monitoring-Regel mit
+    10.0.0.0/8 bei einem Server, „seine IP steht dort nicht drin“): nennt die Regel das System
+    nicht, sondern nur ein Netz darum, gehoert sie nicht zur Applikation, wenn ihr Geraet nicht auf
+    dem Weg liegt - kein Befund, nur der Grund unter „Regeln ohne Verbindung“. Die konkrete Regel
+    auf fw-03 bleibt „nie gebraucht“."""
+    from app.store import appdoc_path
+
+    # die Doku prueft den Weg je Regel nur begrenzt (MAX_TRACES) - hier gar nicht, wie bei
+    # grossen Applikationen jenseits der Grenze: die breite Regel steht in der Doku
+    monkeypatch.setattr(appdoc_path, "MAX_TRACES", 0)
+    tid = client.post("/tenants", json={"name": "Kunde A"}, headers=tp.ADMIN).json()["id"]
+    fw3 = copy.deepcopy(FW3)
+    # Monitoring im LAN hinter fw-02 auf alles in 10.0.0.0/8 - der Server liegt darin
+    fw3["rules"].append(_fw("32", "monitoring", "10.60.0.9", "10.0.0.0/8", 5666, "any", "any",
+                            (None, None)))  # fmt: skip
+    for name, platform, result in (
+        ("fw-01", "fortigate", FW1),
+        ("fw-02", "fortigate", FW2),
+        ("fw-03", "fortigate", fw3),
+        ("apic-01", "cisco_aci", APIC),
+    ):
+        tp._deliver(client, tid, tp._system(client, tid, name, platform), platform, result)
+    out = _connections(client, tid)
+    assert {x["label"] for x in out["unused"]} == {"Policy 31 „web-lan-alt“"}
+    assert all(c["service"] != "tcp/5666" for c in out["connections"])
+    without = {x["label"]: x["reasons"] for x in out["without"]}
+    assert without["Policy 32 „monitoring“"] == [
+        "Regel über ein Netz (nennt das System nicht): der Weg führt nicht über ihr Gerät – "
+        "gehört nicht zur Applikation, kein Befund"]  # fmt: skip
+    r = client.get("/findings", params={"tenant_id": tid, "type": "app_rule_unused"})
+    assert [f["subject_id"] for f in r.json()] == ["web-lan-alt · Applikation Web"]
+
+
 # Internet → Server (0.107.0, Anwender: „Wege, welche Routing technisch keinen Sinn ergeben“):
 # fw-02 hat ein eigenes WAN und dieselbe Regel wie fw-01; der Server antwortet aber ueber fw-01
 # (Default-Route wan1/wan2) - dort kommt der Verkehr herein, nicht ueber fw-02
