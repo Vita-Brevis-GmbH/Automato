@@ -579,7 +579,10 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
         die Firewall verwirft die Antwort, asymmetrisches Routing) oder nicht prüfbar ist
         („Rückweg ?“, z. B. ohne Quell-IP); der Hinweis beim Darüberfahren nennt den Rückweg.
         Nur das Routing zählt, ACI-Knoten und Router nicht, im Verbund genügt derselbe
-        Verbund. Hinter dem Load Balancer antwortet der Server dem Load Balancer, nach einem
+        Verbund, bei Session-Sync (FGSP) der Partner (seit 0.141.1). Ist der Rückweg nicht
+        symmetrisch, steht über der Hop-Tabelle je Abschnitt „Rückweg von → an“ Hop für Hop
+        (seit 0.141.1): rot die Firewall, die nicht auf dem Hinweg liegt, grün die des Hinwegs,
+        darunter „Hinweg über …“; mehrere Rückwege mit „bzw.“. Hinter dem Load Balancer antwortet der Server dem Load Balancer, nach einem
         SNAT der Adresse des Pools. Sind nicht alle Wege symmetrisch, nennt ein Hinweis oben
         den einzig möglichen. Antwortet eine Adresse ausserhalb der gelesenen Geräte (Internet),
         kommt die Antwort über den Ausgang des Hinwegs zurück (seit 0.136.0); hängt die Quelle
@@ -1205,8 +1208,9 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
       dieselben Firewalls zurückgeht (ACI-Knoten und Router zählen nicht, im Verbund derselbe
       Verbund). Sonst steht in der Zeile „Rückweg über andere Firewall“ (Hinweis: über welche),
       im Kopf der Karte „N Rückweg über andere Firewall“, als Filter unter *Hinweise* und bei
-      „nur Auffälliges“; das Detail nennt den Rückweg („Rückweg ✓“, „Rückweg ?“ mit Grund). Bei
-      mehreren aktiven Wegen genügt einer über eine andere Firewall. Kein Befund.
+      „nur Auffälliges“; das Detail nennt den Rückweg („Rückweg ✓“, „Rückweg ?“ mit Grund) und
+      zeigt ihn seit 0.141.1 Hop für Hop wie die Weg-Suche (andere Firewall rot). Bei mehreren
+      aktiven Wegen genügt einer über eine andere Firewall. Kein Befund.
     - **Als Befund (0.59.0, seit 0.73.0 nur bei uneinheitlichen Wegen):** je erlaubender Regel
       und Applikation ein Befund „Applikation: Wege uneinheitlich“ (Findings → Applikationen,
       auch in der Applikations-Doku bei den Befunden) mit den Verbindungen und dem Urteil je

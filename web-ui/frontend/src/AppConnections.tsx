@@ -23,7 +23,7 @@ import {
 import { Fold, FoldTitle } from "./fold";
 import { NetAssignChip, NetAssignDialog } from "./modules/wege/NetAssign";
 import PathExplainDrawer from "./PathExplain";
-import { Verdict, VERDICT } from "./Paths";
+import { ReturnLegs, Verdict, VERDICT } from "./Paths";
 import { Dash, download, Empty, ErrorBox, ExportLangSelect, Icon, Loading, Note } from "./ui";
 import { L } from "./i18n";
 import { SnapshotBar } from "./SnapshotBar";
@@ -416,6 +416,7 @@ function ConnDetail({ c, onRule, onExplain }: { c: AppConnection; onRule: (id: n
                 : L("Rückweg ?", "Return ?")}
           </span>{" "}
           <span className="faint">{c.return.text}</span>
+          {c.return.state !== "symmetric" && <ReturnLegs r={c.return} />}
         </div>
       )}
       <Variants c={c} />

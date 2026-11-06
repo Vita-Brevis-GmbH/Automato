@@ -2072,7 +2072,7 @@ export interface AppConnection {
   inconsistent: boolean;
   notes: string[];
   // 0.136.0: Rückweg über dieselben Firewalls (ausser ACI und Verbund) aus den aktiven Wegen
-  return?: { state: "symmetric" | "asymmetric" | "unknown"; text: string; firewalls?: string[] } | null;
+  return?: ReturnInfo | null;
   // 0.137.0: Ports entlang des Wegs (Client, VIP, Load Balancer, Server), wenn sie sich ändern
   service_chain?: ServiceStage[] | null;
   // logische Zonen (0.78.0, ADR 0024): Quelle/Ziel, Kette des Wegs, Absichten mit Urteil
@@ -2748,6 +2748,27 @@ export interface TraceBoundary {
   state?: string | null;
   exit?: { id: number; name: string; kind: string };
 }
+// Rückweg (0.134.0); 0.141.1: je Abschnitt die Rückwege Hop für Hop, Firewalls markiert, die nicht auf dem Hinweg liegen
+export interface ReturnHop {
+  label: string;
+  kind?: string;
+  firewall: boolean;
+  other: boolean; // Firewall, die nicht auf dem Hinweg liegt (auch nicht im Verbund bzw. als Session-Sync-Partner)
+}
+export interface ReturnLeg {
+  from: string;
+  to: string;
+  forward: string[]; // Firewalls des Hinwegs
+  paths: ReturnHop[][];
+  more?: number;
+  state: "symmetric" | "asymmetric" | "unknown";
+}
+export interface ReturnInfo {
+  state: "symmetric" | "asymmetric" | "unknown";
+  text: string;
+  firewalls?: string[];
+  legs?: ReturnLeg[];
+}
 export interface TracePath {
   via_exit?: boolean; // Ziel ist eine Anbindung: der Weg geht über sie hinaus
   exit_start?: string; // Quelle ist eine Anbindung an mehreren Firewalls: Start dieses Wegs
@@ -2758,7 +2779,7 @@ export interface TracePath {
   extra?: number | null; // Hops mehr als der kürzeste Weg mit Ziel (0 = gleich lang; null = ohne Ziel)
   policy?: { verdict: "allow" | "deny" | "depends" | "unknown"; text: string } | null; // Regeln auf dem Weg
   // 0.134.0: Rückweg über dieselben Firewalls (ausser ACI und Verbund)?
-  return?: { state: "symmetric" | "asymmetric" | "unknown"; text: string; firewalls?: string[] };
+  return?: ReturnInfo;
   hops: TraceHop[];
   zones?: TraceZoneStep[]; // Zonen auf dem Weg (0.57.0)
   l2_src?: L2Segment; // vom Anschluss der Quelle zum ersten Hop (0.64.0)

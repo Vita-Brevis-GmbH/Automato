@@ -778,3 +778,45 @@ def test_rueckweg_ueber_andere_firewall(monkeypatch):
     result = {"paths": [{"kind": "active", "hops": [hop(1, "fw-a")]}], "notes": []}
     return_path.annotate(None, 1, None, result, None, "10.40.0.80")
     assert result["paths"][0]["return"]["state"] == "unknown"
+
+
+def test_rueckweg_parallele_firewalls_und_anzeige(monkeypatch):
+    """0.141.1 (Anwender: „Rückweg über eine andere Firewall: Bei mir sehe ich die Meldung, aber
+    es zeigt mir nicht den Rückweg an, welcher falsch sein soll“ und „Berücksichtigen der
+    Parallelen Wege (ACI mehrere Leafs, Firewall Verbunde mit Sessionsync)“): Session-Sync-
+    Partner zählen wie ein Verbund als dieselbe Firewall, ACI-Knoten nie; je Abschnitt steht der
+    Rückweg Hop für Hop da, die fremde Firewall markiert."""
+    from app.store import return_path
+
+    def hop(sid, label, kind="firewall"):
+        return {"kind": kind, "source_system_id": sid, "context": "root", "label": label,
+                "key": f"{sid}|root"}  # fmt: skip
+
+    class Graph:
+        def connected_nodes(self, _ip):
+            return []
+
+    graph = Graph()
+    graph._return_scope = lambda sid: {6: 2}.get(sid, sid)  # fw-b2 synct mit fw-b (FGSP)
+    backs = {"10.40.0.80": [hop(9, "apic · VRF T:V", "vrf"), hop(6, "fw-b2"), hop(1, "fw-a")]}
+
+    def fake_trace(session, tid, dst, src, start, slack, service, **kw):
+        return {"paths": [{"kind": "active", "hops": backs.get(src, [])}]}
+
+    monkeypatch.setattr(return_path.paths_store, "trace", fake_trace)
+    forward = [hop(1, "fw-a"), hop(2, "fw-b"), hop(8, "apic · VRF T:V", "vrf")]
+    result = {"paths": [{"kind": "active", "hops": forward}], "notes": []}
+    return_path.annotate(None, 1, graph, result, "203.0.113.50", "10.40.0.80")
+    ret = result["paths"][0]["return"]
+    assert ret["state"] == "symmetric", ret  # Session-Sync-Partner, anderer Leaf: gleich
+
+    backs["10.40.0.80"] = [hop(7, "fw-x"), hop(1, "fw-a")]
+    graph = Graph()
+    graph._return_scope = lambda sid: sid
+    result = {"paths": [{"kind": "active", "hops": forward}], "notes": []}
+    return_path.annotate(None, 1, graph, result, "203.0.113.50", "10.40.0.80")
+    ret = result["paths"][0]["return"]
+    assert ret["state"] == "asymmetric"
+    (leg,) = ret["legs"]
+    assert leg["state"] == "asymmetric" and leg["forward"] == ["fw-a", "fw-b"]
+    assert [(h["label"], h["other"]) for h in leg["paths"][0]] == [("fw-x", True), ("fw-a", False)]

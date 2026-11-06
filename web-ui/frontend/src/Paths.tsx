@@ -43,7 +43,7 @@ import {
   TraceZoneStep,
   VipServer,
 } from "./api";
-import type { ServiceAt, ServiceStage } from "./api";
+import type { ReturnInfo, ServiceAt, ServiceStage } from "./api";
 import type { View, ViewParams } from "./App";
 import { NatDrawer } from "./Nat";
 import PathExplainDrawer from "./PathExplain";
@@ -257,6 +257,57 @@ function ReturnChip({ r }: { r: NonNullable<TracePath["return"]> }) {
     <span className={`chip ${cls} path-return`} data-return={r.state} title={r.text}>
       {label}
     </span>
+  );
+}
+
+// 0.141.1 (Anwender: „ich sehe die Meldung, aber es zeigt mir nicht den Rückweg an, welcher falsch sein soll“): je
+// Abschnitt der Rückweg Hop für Hop – Firewalls rot, die nicht auf dem Hinweg liegen (Verbund und Session-Sync-Partner
+// zählen als dieselbe), grün die des Hinwegs
+export function ReturnLegs({ r }: { r: ReturnInfo }) {
+  if (!r.legs?.length) return null;
+  return (
+    <div className="return-legs" data-return={r.state} style={{ padding: "4px 16px 8px" }}>
+      {r.legs.map((leg, i) => (
+        <div key={i} className="return-leg" data-state={leg.state} style={{ marginTop: 2 }}>
+          <span className="faint">{L(`Rückweg ${leg.from} → ${leg.to}:`, `Return ${leg.from} → ${leg.to}:`)}</span>{" "}
+          {leg.paths.length === 0 ? (
+            <span className="chip">{L("kein Rückweg gefunden", "no return path found")}</span>
+          ) : (
+            leg.paths.map((hops, j) => (
+              <span key={j} className="return-path">
+                {j > 0 && <span className="faint"> {L("bzw.", "or")} </span>}
+                {hops.map((h, k) => (
+                  <Fragment key={k}>
+                    {k > 0 && " → "}
+                    {h.firewall ? (
+                      <span
+                        className={`chip ${h.other ? "crit" : "ok"} return-fw`}
+                        data-other={h.other ? "1" : "0"}
+                        title={
+                          h.other
+                            ? L("Firewall nicht auf dem Hinweg – sie kennt die Sitzung nicht und verwirft die Antwort", "Firewall not on the forward path – it does not know the session and drops the reply")
+                            : L("Firewall des Hinwegs (bzw. ihr Verbund oder Session-Sync-Partner)", "Firewall of the forward path (or its parallel group or session-sync partner)")
+                        }
+                      >
+                        {h.label}
+                      </span>
+                    ) : (
+                      <span>{h.label}</span>
+                    )}
+                  </Fragment>
+                ))}
+              </span>
+            ))
+          )}
+          {(leg.more ?? 0) > 0 && <span className="faint"> {L(`+${leg.more} weitere`, `+${leg.more} more`)}</span>}
+          {leg.state === "asymmetric" && (
+            <div className="faint return-forward">
+              {L(`Hinweg über ${leg.forward.join(" → ") || "–"}`, `Forward via ${leg.forward.join(" → ") || "–"}`)}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -1590,6 +1641,7 @@ function TraceCard({
           </button>
         )}
       </div>
+      {path.return && path.return.state !== "symmetric" && <ReturnLegs r={path.return} />}
       <div className="card-body scroll">
         <table className="compact">
           <thead>

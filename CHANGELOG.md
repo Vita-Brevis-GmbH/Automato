@@ -7,6 +7,22 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.141.1 – 2026-11-06
+
+Rückmeldung des Anwenders 2026-11-06: „Wegsuche: Rückweg über eine andere Firewall: Bei mir
+sehe ich die Meldung, aber es zeigt mir nicht den Rückweg an, welcher falsch sein soll.
+Berücksichtigen der Parallelen Wege (ACI mehrere Leafs, Firewall Verbunde mit Sessionsync)“
+
+- **Rückweg sichtbar:** Ist der Rückweg nicht symmetrisch, zeigen Weg-Suche (über der
+  Hop-Tabelle) und Verbindungen der Applikations-Doku (im Detail) je Abschnitt „Rückweg von → an“
+  Hop für Hop; die Firewall, die nicht auf dem Hinweg liegt, ist rot markiert, die des Hinwegs
+  grün, darunter „Hinweg über …“. Mehrere Rückwege (ECMP) stehen nebeneinander („bzw.“, bis 3,
+  dann „+n weitere“).
+- **Parallele Firewalls:** Session-Sync-Partner (FGSP) zählen wie die Mitglieder eines Verbunds
+  als dieselbe Firewall – geht die Antwort über den Partner zurück, ist der Rückweg symmetrisch.
+  Mehrere Leafs bzw. Knoten des ACI und Router zählen wie bisher nicht; nacheinander
+  durchlaufene Partner zählen als ein Durchgang.
+
 ## 0.141.0 – 2026-11-06
 
 Rückmeldung des Anwenders 2026-11-06: „Berechnungen starten, auch wenn noch einige Läufe in der

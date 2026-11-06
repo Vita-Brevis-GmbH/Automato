@@ -12,9 +12,16 @@ Rückweg mit - nur das Routing, ohne Policies (die Antwort erlaubt die Sitzung):
   Quelle). Ohne Load Balancer antwortet das Ziel nach dem DNAT an die Quelle. Nach einem SNAT
   antwortet es der Adresse des Pools (sie gehört der Firewall mit dem SNAT), von dieser Firewall
   geht die Antwort an die Quelle zurück.
-- **Vergleich:** die Firewalls des Abschnitts (Verbund = derselbe Verbund, gleich welches
-  Mitglied) müssen rückwärts dieselben sein. ACI-Knoten und Router zählen nicht.
-- **Ergebnis** je Weg `return` = {state: symmetric | asymmetric | unknown, text, firewalls};
+- **Vergleich:** die Firewalls des Abschnitts müssen rückwärts dieselben sein. Parallele
+  Firewalls zählen als eine (0.141.1, Anwender: „Berücksichtigen der Parallelen Wege (ACI
+  mehrere Leafs, Firewall Verbunde mit Sessionsync)“): derselbe Verbund bzw. Session-Sync-Partner
+  (FGSP, `exits._scopes`) - gleich welches Mitglied. ACI-Knoten (alle Leafs einer VRF) und Router
+  zählen nicht.
+- **Anzeige** (0.141.1, Anwender: „ich sehe die Meldung, aber es zeigt mir nicht den Rückweg
+  an, welcher falsch sein soll“): je Abschnitt die Rückwege Hop für Hop (`return.legs`), die
+  Firewalls darin markiert, die nicht auf dem Hinweg liegen.
+- **Ergebnis** je Weg `return` = {state: symmetric | asymmetric | unknown, text, firewalls,
+  legs (nicht symmetrisch)};
   sind nicht alle Wege symmetrisch, ein Hinweis, welcher der einzig mögliche ist.
 - **Antwort von aussen** (0.136.0): hängt der Antwortende an keinem gelesenen Gerät (Internet,
   Partner), kommt die Antwort über den Ausgang des Hinwegs zurück, von dort nach dem Routing.
@@ -34,15 +41,37 @@ FIREWALLS = ("firewall", "vdom")
 MAX_PATHS = 8  # Wege je Suche mit Rückweg
 
 
-def _ident(h: dict) -> tuple:
-    """Firewall eines Hops - im Verbund der Verbund (gleich welches Mitglied)."""
+def _ident(h: dict, scope=None) -> tuple:
+    """Firewall eines Hops - im Verbund der Verbund, bei Session-Sync-Partnern (FGSP) der Partner-
+    Verbund (`scope`, 0.141.1), gleich welches Mitglied."""
+    if scope is not None and h.get("source_system_id") is not None:
+        return ("fw", scope(h["source_system_id"]), h.get("context"))
     if h.get("group"):
         return ("group", h["group"], h.get("context"))
     return ("node", h.get("source_system_id"), h.get("context"))
 
 
-def _firewalls(hops: list[dict]) -> list[tuple[tuple, str]]:
-    return [(_ident(h), h.get("label") or "?") for h in hops if h.get("kind") in FIREWALLS]
+def _scope(graph):
+    """Quellsystem -> Vertreter seiner parallelen Firewalls (Verbund, Session-Sync) - je Graph
+    einmal (`exits._scopes`)."""
+    if graph is None:
+        return None
+    found = graph.__dict__.get("_return_scope")
+    if found is None:
+        from app.store import exits  # spaet: exits -> paths
+
+        found = graph.__dict__["_return_scope"] = exits._scopes(graph)
+    return found
+
+
+def _firewalls(hops: list[dict], scope=None) -> list[tuple[tuple, str]]:
+    return [(_ident(h, scope), h.get("label") or "?") for h in hops if h.get("kind") in FIREWALLS]
+
+
+def _hops(hops: list[dict], scope=None) -> list[tuple]:
+    """Hops eines Rückwegs zum Merken: (Firewall | None, Bezeichnung, Art)."""
+    return [(_ident(h, scope) if h.get("kind") in FIREWALLS else None, h.get("label") or "?",
+             h.get("kind")) for h in hops]  # fmt: skip
 
 
 def _snat_hop(hops: list[dict]) -> tuple[int, dict] | None:
@@ -80,7 +109,8 @@ def _legs(path: dict, source: str, dst: str) -> list[tuple[list, str, str]]:
 
 
 def _segments(path: dict, source: str, dst: str) -> list[tuple]:
-    """Rückwege zum Vergleichen: (Hops vorwärts, Start-Knoten | None, von, an, ohne Firewall).
+    """Rückwege zum Vergleichen: (Hops vorwärts, Start-Knoten | None, von, an, ohne Firewall -
+    der Hop mit dem SNAT).
     Nach einem SNAT antwortet das Ziel der Adresse des Pools - sie gehört der Firewall mit dem
     SNAT, diese gibt die Antwort an den Client weiter (von ihr aus geprüft)."""
     out = []
@@ -92,7 +122,7 @@ def _segments(path: dict, source: str, dst: str) -> list[tuple]:
         j, part = found
         out.append((hops[: j + 1], part["key"], None, to, None))
         if hops[j + 1 :]:
-            out.append((hops[j + 1 :], None, frm, str(part["snat"]["to"]), _ident(part)))
+            out.append((hops[j + 1 :], None, frm, str(part["snat"]["to"]), part))
     return out
 
 
@@ -113,7 +143,26 @@ def _exit_entry(hops: list[dict]) -> tuple | None:
 
 
 def _same(forward: list[tuple], back: list[tuple]) -> bool:
-    return [f for f, _ in forward] == [b for b, _ in reversed(back)]
+    return _squash([f for f, _ in forward]) == _squash([b for b, _ in reversed(back)])
+
+
+def _squash(idents: list[tuple]) -> list[tuple]:
+    """Aufeinanderfolgende gleiche Firewalls einmal (Partner nacheinander = ein Durchgang)."""
+    out: list[tuple] = []
+    for x in idents:
+        if not out or out[-1] != x:
+            out.append(x)
+    return out
+
+
+MAX_SHOWN = 3  # Rückwege je Abschnitt in der Anzeige
+
+
+def _shown(back: list[tuple], forward: set[tuple]) -> list[dict]:
+    """Rückweg zur Anzeige: je Hop Bezeichnung, Art und ob eine Firewall auf dem Hinweg fehlt."""
+    return [{"label": label, "kind": kind, "firewall": ident is not None,
+             "other": ident is not None and ident not in forward}
+            for ident, label, kind in back]  # fmt: skip
 
 
 def annotate(session: Session, tenant_id: int, graph, result: dict, src: str | None,
@@ -183,12 +232,21 @@ def summary(found: list[dict]) -> dict | None:
         text = bad[0]["text"]
         if len(rets) > 1:
             text += L(f" ({len(bad)} von {len(rets)} Wegen)", f" ({len(bad)} of {len(rets)} paths)")
-        return {"state": "asymmetric", "text": text, "firewalls": bad[0].get("firewalls") or []}
+        return _with_legs({"state": "asymmetric", "text": text,
+                           "firewalls": bad[0].get("firewalls") or []}, bad[0])  # fmt: skip
     if all(r["state"] == "symmetric" for r in rets):
         return {"state": "symmetric", "text": rets[0]["text"],
                 "firewalls": rets[0].get("firewalls") or []}  # fmt: skip
     unsure = next(r for r in rets if r["state"] != "symmetric")
-    return {"state": "unknown", "text": unsure["text"], "firewalls": unsure.get("firewalls") or []}
+    return _with_legs({"state": "unknown", "text": unsure["text"],
+                       "firewalls": unsure.get("firewalls") or []}, unsure)  # fmt: skip
+
+
+def _with_legs(out: dict, ret: dict) -> dict:
+    """Abschnitte nur, wo der Rückweg nicht symmetrisch ist (0.141.1) - nur dort angezeigt."""
+    if ret.get("legs"):
+        out["legs"] = ret["legs"]
+    return out
 
 
 def _from_last_connected(graph, hops: list[dict], to: str) -> list[dict]:
@@ -208,9 +266,11 @@ def _from_last_connected(graph, hops: list[dict], to: str) -> list[dict]:
 
 
 def _check(session, tenant_id, graph, path: dict, source: str, target: str, cache) -> dict:
-    texts, firewalls, state = [], [], "symmetric"
+    texts, firewalls, state, legs = [], [], "symmetric", []
+    scope = _scope(graph)
     for hops, start, frm, to, skip in _segments(path, source, target):
         firewalls += [label for _, label in _firewalls(hops) if label not in firewalls]
+        skip = _ident(skip, scope) if skip is not None else None  # Firewall mit dem SNAT
         try:
             endpoint(to)
             if frm is not None:
@@ -218,7 +278,7 @@ def _check(session, tenant_id, graph, path: dict, source: str, target: str, cach
         except ValueError:
             state = "unknown" if state == "symmetric" else state
             continue
-        forward = _firewalls(_from_last_connected(graph, hops, to))
+        forward = _firewalls(_from_last_connected(graph, hops, to), scope)
         if not forward:
             continue
         entry = _exit_entry(hops) if start is None else None
@@ -232,18 +292,30 @@ def _check(session, tenant_id, graph, path: dict, source: str, target: str, cach
                 back = paths_store.trace(session, tenant_id, to, frm, None, 0, None,
                                          graph=graph, backups=False, with_rules=False,
                                          balancers=False, entries=[entry])  # fmt: skip
-            cache[key] = [_firewalls(b.get("hops") or []) for b in back.get("paths") or []
+            cache[key] = [_hops(b.get("hops") or [], scope) for b in back.get("paths") or []
                           if b.get("kind") != "backup"]  # fmt: skip
-        backs = [[x for x in b if x[0] != skip] for b in cache[key]]
+        full = [[x for x in b if x[0] is None or x[0] != skip] for b in cache[key]]
+        backs = [[(x[0], x[1]) for x in b if x[0] is not None] for b in full]
         where = frm or next((label for f, label in forward[::-1]), "?")
+        idents = {f for f, _ in forward}
+        leg = {
+            "from": where,
+            "to": to,
+            "forward": [label for _, label in forward],
+            "paths": [_shown(b, idents) for b in full[:MAX_SHOWN]],
+            "more": max(0, len(full) - MAX_SHOWN),
+        }
         if not backs:
             texts.append(L(f"kein Rückweg von {where} zu {to} gefunden",
                            f"no return path from {where} to {to} found"))  # fmt: skip
             state = "unknown" if state == "symmetric" else state
+            legs.append({**leg, "state": "unknown"})
             continue
         if any(_same(forward, b) for b in backs):
+            legs.append({**leg, "state": "symmetric"})
             continue
         state = "asymmetric"
+        legs.append({**leg, "state": "asymmetric"})
         other = " → ".join(label for _, label in backs[0]) or L("keine Firewall", "no firewall")
         texts.append(L(f"Antwort von {where} an {to} über {other}",
                        f"reply from {where} to {to} via {other}"))  # fmt: skip
@@ -255,4 +327,5 @@ def _check(session, tenant_id, graph, path: dict, source: str, target: str, cach
     else:
         text = L("Rückweg nicht ganz prüfbar – ", "Return path not fully checkable – ")
         text += "; ".join(texts) or L("Adresse unbekannt", "address unknown")
-    return {"state": state, "text": text, "firewalls": firewalls}
+    out = {"state": state, "text": text, "firewalls": firewalls}
+    return _with_legs(out, {"legs": legs}) if state != "symmetric" else out
