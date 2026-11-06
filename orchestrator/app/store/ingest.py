@@ -149,9 +149,12 @@ def persist_result(session: Session, run, result: CollectorResult, sot) -> None:
             cache.endpoint(raw)
     session.flush()
     device_objects = _replace_device_objects(session, run, result.objects, cache)
+    # 0.141.2: Kennungen fuer alle Regeln vorab - auch umbenannte behalten ihre (Policy-ID)
+    planned = rule_ids.plan([_rule_key(nr) for nr in result.rules], loose=_rule_loose)
     rules = []
     for i, normalized in enumerate(result.rules, 1):
-        rules.append(_persist_rule(session, run, normalized, cache, device_objects, rule_ids, i))
+        rules.append(_persist_rule(session, run, normalized, cache, device_objects, sequence=i,
+                                   rule_id=planned[i - 1]))  # fmt: skip
         if i % 500 == 0:
             session.flush()
     session.flush()
@@ -704,20 +707,32 @@ def _persist_nat(session: Session, run, nat: NormalizedNat,
     )
 
 
+def _rule_key(nr: NormalizedRule) -> tuple:
+    """Fachlicher Schluessel einer Regel fuer die gleiche Kennung (`_RULE_KEY`)."""
+    domain = _DOMAIN_BY_PLATFORM.get(nr.source_platform, RuleDomain.FIREWALL)
+    family = nr.family or _values_family([*nr.sources, *nr.destinations])
+    return stable_ids.key(domain, nr.vdom, nr.external_id, nr.name, family)
+
+
+def _rule_loose(key: tuple) -> tuple | None:
+    """Schluessel ohne Namen (0.141.2): umbenannte Regel = gleiche Policy-ID bzw. DN."""
+    domain, vdom, external_id, _name, family = key
+    return None if not external_id else (domain, vdom, external_id, family)
+
+
 def _persist_rule(
     session: Session,
     run,
     nr: NormalizedRule,
     cache: "_Cache",
     device_objects: _DEVICE_OBJECTS | None = None,
-    ids: stable_ids.Ids | None = None,
     sequence: int | None = None,
+    rule_id: int | None = None,
 ) -> Rule:
     domain = _DOMAIN_BY_PLATFORM.get(nr.source_platform, RuleDomain.FIREWALL)
     family = nr.family or _values_family([*nr.sources, *nr.destinations])
-    key = stable_ids.key(domain, nr.vdom, nr.external_id, nr.name, family)
     rule = Rule(
-        id=ids.take(key) if ids is not None else None,
+        id=rule_id,
         tenant_id=run.tenant_id,
         source_system_id=run.source_system_id,
         domain=domain,

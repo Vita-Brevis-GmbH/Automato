@@ -87,10 +87,53 @@ def reconcile_tenant(session: Session, tenant_id: int | None) -> dict[str, int]:
     for check in checks.active(session, tenant_id):
         issues += checks.run(check, session, tenant_id, cx)
     _sync_findings(session, tenant_id, issues, keep=lambda f: f.type in APP_TYPES)
+    _app_rule_refs(session, tenant_id)  # 0.141.2: Befunde der Applikationen auf den Stand
     counts: dict[str, int] = defaultdict(int)
     for issue in {i.key: i for i in issues}.values():
         counts[issue.type.value] += 1
     return dict(counts)
+
+
+def _app_rule_refs(session: Session, tenant_id: int) -> None:
+    """Regel der Befunde der Applikationen nachfuehren (0.141.2, Anwender: Klick auf die Regel in
+    den Findings - „404“). Diese Befunde rechnen erst nach den Laeufen bzw. mit dem Vorrechnen
+    neu; bis dahin verweisen sie auf die Kennung beim Rechnen. Hat die Regel eine neue Kennung
+    (gleiches Quellsystem, Policy-ID bzw. DN, VDOM, Name), zeigt der Befund auf sie; gibt es sie
+    nicht mehr, faellt der Befund weg (er trifft nicht mehr zu)."""
+    stmt = select(Finding).where(Finding.tenant_id == tenant_id,
+                                 Finding.type.in_(list(APP_TYPES)))  # fmt: skip
+    found = [
+        f
+        for f in session.scalars(stmt)
+        if isinstance(f.detail, dict) and isinstance(f.detail.get("rule_id"), int)
+    ]
+    if not found:
+        return
+    ids = sorted({f.detail["rule_id"] for f in found})
+    alive: set[int] = set()
+    for i in range(0, len(ids), 500):
+        alive |= set(session.scalars(select(Rule.id).where(Rule.id.in_(ids[i : i + 500]))))
+    gone = [f for f in found if f.detail["rule_id"] not in alive]
+    if not gone:
+        return
+    successors: dict[tuple, list[int]] = defaultdict(list)
+    exts = sorted({str(f.detail.get("external_id")) for f in gone if f.detail.get("external_id")})
+    for i in range(0, len(exts), 500):
+        for rid, sid, ext, vdom, name in session.execute(
+            select(Rule.id, Rule.source_system_id, Rule.external_id, Rule.vdom, Rule.name)
+            .where(Rule.tenant_id == tenant_id, Rule.external_id.in_(exts[i : i + 500]))
+        ):  # fmt: skip
+            successors[(sid, ext, vdom)].append(rid)
+            successors[(sid, ext, vdom, name)].append(rid)
+    for f in gone:
+        d = f.detail
+        base = (d.get("source_system_id"), d.get("external_id"), d.get("vdom"))
+        hit = successors.get((*base, d.get("name"))) or successors.get(base) or []
+        if len(hit) == 1:
+            f.detail = {**d, "rule_id": hit[0]}  # neues dict: JSON-Spalte als geaendert
+        else:
+            session.delete(f)
+    session.flush()
 
 
 # -- Regel-Endpunkte (kanonische Werte-Ebene) ---------------------------------

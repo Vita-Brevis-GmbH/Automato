@@ -1,5 +1,6 @@
 import { ReactNode, useEffect, useState } from "react";
 import {
+  ApiError,
   decidePair,
   Endpoint,
   fetchRuleDetail,
@@ -346,7 +347,19 @@ export default function RuleDetailDrawer({
       }
       onClose={onClose}
     >
-      <ErrorBox error={error} />
+      {error instanceof ApiError && error.status === 404 ? (
+        // 0.141.2 (Anwender: Klick auf die Regel in den Findings – „404“): Regel gibt es nicht mehr
+        <Note warn>
+          <span id="rule-gone">
+            {L(
+              `Diese Regel gibt es nicht mehr (Kennung ${ruleId}) – sie wurde auf dem Gerät gelöscht bzw. seit dem Befund neu eingelesen. Befunde und Doku ziehen nach den Läufen nach.`,
+              `This rule no longer exists (ID ${ruleId}) – it was deleted on the device or re-read since the finding. Findings and documentation catch up after the runs.`,
+            )}
+          </span>
+        </Note>
+      ) : (
+        <ErrorBox error={error} />
+      )}
       {!detail && !error && <Loading />}
       {detail && (
         <>

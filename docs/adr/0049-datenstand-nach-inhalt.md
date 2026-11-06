@@ -67,3 +67,17 @@ welche von der geänderten Firewall Regel betroffen sind.“ Auf den Vorschlag (
 - Wie bisher nur lesend gegenüber den Geräten; `data_state`/`data_change` sind abgeleitete Daten.
 - Neue Teile eines Laufs (neue Felder im Collector) zählen ohne Eintrag in `SCOPES` als „jede
   Applikation“ – neue Abkürzungen nur mit Begründung und Test.
+
+## Nachtrag 0.141.2 (2026-11-06)
+
+Befund des Anwenders: Klick auf die Regel in den Findings – „404“. Die Befunde der Applikationen
+rechnen erst nach den Läufen neu (Entscheid 1) und verweisen bis dahin auf die Kennung beim
+Rechnen.
+
+- Mehrere Regeln mit gleichem Schlüssel behalten ihre Kennungen in ihrer Reihenfolge (bis 0.141.1
+  nur die erste); eine umbenannte Regel behält ihre Kennung über die Policy-ID bzw. DN, wenn genau
+  eine alte und eine neue Regel dazu passen (`stable_ids.Ids.plan`).
+- Beim Einlesen (`reconcile._app_rule_refs`) zeigen Befunde der Applikationen auf die Regel mit
+  neuer Kennung (gleiches Quellsystem, Policy-ID bzw. DN, VDOM, Name) bzw. fallen weg, wenn es die
+  Regel nicht mehr gibt. Das Detail einer nicht mehr vorhandenen Regel sagt das statt eines
+  Fehlers.

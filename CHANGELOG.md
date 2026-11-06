@@ -7,6 +7,24 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 0.141.2 – 2026-11-06
+
+Befund des Anwenders 2026-11-06: Klick auf die Firewall-Regel in den Findings – „/api/rules/…
+Failed to load resource: 404“.
+
+- **Ursache:** Die Befunde der Applikationen („Regel nie gebraucht“, Abweichungen Regel ↔ Weg)
+  rechnen seit 0.141.0 erst nach den Läufen bzw. mit dem Vorrechnen neu und verweisen bis dahin
+  auf die Kennung der Regel beim Rechnen. Wurde die Regel inzwischen umbenannt, gelöscht oder –
+  bei mehreren Regeln mit gleichem Schlüssel (z. B. ACI-Filter eines Subjects) – neu angelegt,
+  zeigte der Link ins Leere.
+- **Befunde folgen der Regel:** Gleich beim Einlesen zeigt der Befund auf die Regel mit neuer
+  Kennung (gleiches Quellsystem, Policy-ID bzw. DN, VDOM, Name); gibt es sie nicht mehr, fällt der
+  Befund weg (er trifft nicht mehr zu).
+- **Gleiche Kennungen auch hier:** Umbenannte Regeln (gleiche Policy-ID) und mehrere Regeln mit
+  gleichem Schlüssel behalten beim erneuten Einlesen ihre Kennungen (ADR 0049 Nachtrag).
+- **Klare Meldung:** Öffnet ein Link eine Regel, die es nicht mehr gibt, steht im Detail „Diese
+  Regel gibt es nicht mehr …“ statt eines Fehlers.
+
 ## 0.141.1 – 2026-11-06
 
 Rückmeldung des Anwenders 2026-11-06: „Wegsuche: Rückweg über eine andere Firewall: Bei mir
