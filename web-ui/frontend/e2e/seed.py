@@ -21,6 +21,7 @@ import test_ip_family as ipf  # noqa: E402
 import test_parallel as par  # noqa: E402
 import test_paths as tp  # noqa: E402
 import test_policy_check as pc  # noqa: E402
+import test_router_boundary as rb  # noqa: E402
 import test_routing as rt  # noqa: E402
 import test_search_nat as sn  # noqa: E402
 import test_services as sv  # noqa: E402
@@ -29,6 +30,43 @@ import test_vdom as vd  # noqa: E402
 import test_virtual_server as vs  # noqa: E402
 
 TOKEN = {"X-Internal-Token": "dev-only-token"}
+
+
+def _bgp_filters(routing: dict) -> None:
+    """FortiGate fw-05 (0.113.0): Konfiguration des ISP-Nachbarn, Filter, gelernt-von der Pfade."""
+    for r in routing["routes"]:
+        if r["table"] == "bgp":
+            r["attrs"] = {**r.get("attrs", {}), "learned_from": r["next_hops"][0]["ip"]}
+    isp = next(p for p in routing["peers"] if p["peer_ip"] == "198.51.100.1")
+    isp["attrs"] = {"config": {"remote_as": "64500", "description": "ISP A",
+                               "filters": {"in": {"prefix_list": "PL_ISP_IN"},
+                                           "out": {"prefix_list": "PL_DC"}}}}  # fmt: skip
+
+    def obj(kind, name, rules):
+        return {"node": "fw-05", "context": "root", "kind": kind, "name": name, "family": 4,
+                "data": {"rules": rules}}  # fmt: skip
+
+    routing["bgp"] = [
+        {"node": "fw-05", "context": "root", "kind": "bgp", "name": "bgp",
+         "data": {"as": "65001", "router_id": "10.20.0.1", "redistribute": [{"name": "connected"}],
+                  "neighbors": {"198.51.100.1": {}, "198.51.100.13": {"shutdown": True}}}},
+        obj("prefix_list", "PL_ISP_IN", [
+            {"id": 1, "action": "permit", "prefix": "0.0.0.0/0"},
+            {"id": 2, "action": "permit", "prefix": "203.0.113.0/24"}]),
+        obj("prefix_list", "PL_DC", [{"id": 1, "action": "permit", "prefix": "10.20.0.0/16",
+                                      "le": 24}]),
+    ]  # fmt: skip
+
+
+def _route_control(routing: dict) -> dict:
+    """APIC (0.113.0): L3O_inet mit erzwungenem Import (0/0 aggregate) und Export 10.20.0.0/24."""
+    out = json.loads(json.dumps(routing))
+    out["l3outs"][0]["route_control"] = {
+        "enforce": ["export", "import"],
+        "import": [{"prefix": "0.0.0.0/0", "epg": "EN_inet", "aggregate": True}],
+        "export": [{"prefix": "10.20.0.0/24", "epg": "EN_inet"}],
+    }
+    return out
 
 
 def run(app) -> None:
@@ -142,6 +180,24 @@ def run(app) -> None:
     ]
     inventory = {"devices": [{"name": "fw-05", "role": "firewall"}], "interfaces": ports}
     routing = json.loads(json.dumps(rt.FW["routing"]).replace('"fw-01"', '"fw-05"'))
+    # BGP-Filter (0.113.0, ADR 0041): der ISP-Nachbar mit Prefix-Liste ein (Default-Route und
+    # 203.0.113.0/24 - kommt nicht an) und aus (10.20.0.0/16 bis /24), redistribute connected
+    _bgp_filters(routing)
+    # Verlauf des Routings (ADR 0030): ein Lauf davor mit anderem Stand - Default nur ueber
+    # wan1, BGP-Nachbar Idle, dazu 10.98.0.0/16; der Lauf danach ist der Stand der Tests
+    before = json.loads(json.dumps(routing))
+    default = next(
+        r
+        for r in before["routes"]
+        if r["context"] == "root" and r["prefix"] == "0.0.0.0/0" and r["table"] == "rib"
+    )
+    default["next_hops"] = default["next_hops"][:1]
+    before["peers"][0]["state"] = "Idle"
+    before["routes"].append({"node": "fw-05", "context": "root", "prefix": "10.98.0.0/16",
+                             "table": "static", "protocol": "static", "distance": 10,
+                             "next_hops": [{"ip": "10.20.0.254", "interface": "srv"}],
+                             "attrs": {"seq-num": 9}})  # fmt: skip
+    run_result(fw5, "fortigate", inventory=inventory, routing=before)
     run_result(
         fw5, "fortigate", rules=vd.RESULT["rules"], objects=vd.RESULT["objects"],
         nat_rules=vd.RESULT["nat_rules"], inventory=inventory, routing=routing,
@@ -250,7 +306,7 @@ def run(app) -> None:
     inventory = {**st.INVENTORY, "interfaces": [trunk]}
     run_result(
         apic, "cisco_aci", rules=contracts, objects=filters, inventory=inventory, epgs=epgs,
-        routing=rt.APIC["routing"],
+        routing=_route_control(rt.APIC["routing"]),
     )  # fmt: skip
 
     # vCenter: VM hinter H_web01 (10.10.10.5) an der Portgruppe der EPG EG_db (ACI-VMM-Name)
@@ -364,7 +420,12 @@ def run(app) -> None:
         "arps": [{"device": "sw-core-01", "ip": "10.20.0.15", "mac": "a0:b1:c2:d3:e4:f5",
                   "interface": "Vl20"},
                  {"device": "sw-core-01", "ip": "10.30.0.10", "mac": "a0:b1:c2:00:30:10",
-                  "interface": "Vl30"}],
+                  "interface": "Vl30"},
+                 # IPv6-Nachbarn (0.94.0): global und Link-local des physischen Servers
+                 {"device": "sw-core-01", "ip": "2001:db8:20::15", "mac": "a0:b1:c2:d3:e4:f5",
+                  "interface": "Vl20"},
+                 {"device": "sw-core-01", "ip": "fe80::a2b1:c2ff:fed3:e4f5",
+                  "mac": "a0:b1:c2:d3:e4:f5", "interface": "Vl20"}],
     }  # fmt: skip
     run_result(sw, "cisco_switch", inventory=switches, message="Switches: 2 gelesen")
 
@@ -404,3 +465,21 @@ def run(app) -> None:
     policy = {"tenant_id": tid, "src_zone_id": lan, "dst_zone_id": dmz, "intent": "deny",
               "note": "nur über den Proxy"}  # fmt: skip
     ok(c.put("/zones/policy", json=policy))
+
+    # Routing bis an die Firmengrenze (ADR 0032) in einer eigenen Umgebung (ID 2), damit die
+    # Zahlen der übrigen Tests bleiben: fw-01 -> Core-Router -> Aussenrouter mit eBGP zu zwei
+    # Providern (Quelle „Router Zürich“, Switches & Router; Daten aus test_router_boundary)
+    rtid = ok(c.post("/tenants", json={"name": "Umgebung Router", "code": "UR"}), 201)["id"]
+    for name, platform, result, extra in (
+        ("fw-01", "fortigate", rb.FW, {"base_url": "https://fw-01.example.ch"}),
+        ("Router Zürich", "cisco_switch", rb.ROUTERS,
+         {"read_scope": "10.255.0.1\n10.255.0.2", "username": "ro", "password": "x"}),
+    ):  # fmt: skip
+        sid = ok(c.post("/systems", json={"tenant_id": rtid, "name": name, "platform": platform,
+                                          **extra}), 201)["id"]  # fmt: skip
+        body = {"platform": platform, "tenant_id": rtid, "source_system_id": sid}
+        run_id = ok(c.post("/jobs/collect", json=body), 202)["run_id"]
+        res = {k: v for k, v in result.items() if k != "status"}
+        r = ok(c.post(f"/internal/collector-runs/{run_id}/result", headers=TOKEN,
+                      json={"status": "completed", **res}))  # fmt: skip
+        assert r["status"] == "completed", r

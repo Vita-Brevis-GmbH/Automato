@@ -12,6 +12,8 @@ Weniger speichern heisst auch: nicht ewig. Je Art eine Frist in Tagen (0 = nie l
 - **Audit** (`retention_audit_days`, 365): Eintraege aelter als die Frist.
 - **Endpunkte der Switches** (`retention_l2_days`, 30, seit 0.63.0): MAC- und ARP-Eintraege, die
   so lange kein Lauf mehr gesehen hat (der aktuelle Stand je Switch bleibt).
+- **Verlauf des Routings** (`retention_topo_changes_days`, 180, ADR 0030): Aenderungen an Routen,
+  BGP-Nachbarn, HA usw. aelter als die Frist (der aktuelle Routing-Stand bleibt).
 
 `purge` loescht und schreibt selbst einen Audit-Eintrag `retention.purged` mit den Zahlen - der
 neuste ist zugleich „zuletzt aufgeraeumt“. Der Zeitplan ruft `maybe_purge` auf (hoechstens einmal
@@ -38,6 +40,7 @@ from app.models import (
     SourceSystem,
     SyncPlan,
     SyncStatus,
+    TopoChange,
     Vm,
 )
 
@@ -55,6 +58,7 @@ class Policy:
     sync_days: int
     audit_days: int
     l2_days: int = 30
+    topo_changes_days: int = 180
 
     @classmethod
     def of(cls, settings) -> "Policy":
@@ -63,11 +67,14 @@ class Policy:
             max(settings.retention_sync_days, 0),
             max(settings.retention_audit_days, 0),
             max(getattr(settings, "retention_l2_days", 30), 0),
+            max(getattr(settings, "retention_topo_changes_days", 180), 0),
         )
 
     @property
     def active(self) -> bool:
-        return any((self.runs_days, self.sync_days, self.audit_days, self.l2_days))
+        return any(
+            (self.runs_days, self.sync_days, self.audit_days, self.l2_days, self.topo_changes_days)
+        )
 
 
 def _aware(value: datetime | None) -> datetime | None:
@@ -139,6 +146,12 @@ def _old_l2(session: Session, cutoff: datetime) -> int:
     )
 
 
+def _old_topo_changes(session: Session, cutoff: datetime) -> int:
+    """Eintraege im Verlauf des Routings aelter als die Frist."""
+    stmt = select(func.count()).select_from(TopoChange).where(TopoChange.at < cutoff)
+    return session.scalar(stmt) or 0
+
+
 def _chunks(ids: list, size: int = CHUNK):
     for i in range(0, len(ids), size):
         yield ids[i : i + size]
@@ -151,11 +164,13 @@ def due(session: Session, policy: Policy, now: datetime | None = None) -> dict[s
     plans = _cutoff(policy.sync_days, now)
     entries = _cutoff(policy.audit_days, now)
     l2 = _cutoff(policy.l2_days, now)
+    topo = _cutoff(policy.topo_changes_days, now)
     return {
         "runs": len(_old_runs(session, runs)) if runs else 0,
         "sync_plans": len(_old_plans(session, plans)) if plans else 0,
         "audit": _old_audit(session, entries) if entries else 0,
         "l2": _old_l2(session, l2) if l2 else 0,
+        "topo_changes": _old_topo_changes(session, topo) if topo else 0,
     }
 
 
@@ -164,7 +179,7 @@ def purge(
 ) -> dict[str, int]:
     """Loeschen, was ueber der Frist ist; Rueckgabe = Anzahl je Art (Aufrufer committet)."""
     now = now or datetime.now(UTC)
-    counts = {"runs": 0, "sync_plans": 0, "audit": 0, "l2": 0}
+    counts = {"runs": 0, "sync_plans": 0, "audit": 0, "l2": 0, "topo_changes": 0}
     if cutoff := _cutoff(policy.runs_days, now):
         ids = _old_runs(session, cutoff)
         for chunk in _chunks(ids):
@@ -186,6 +201,9 @@ def purge(
         counts["l2"] = _old_l2(session, cutoff)
         for model in (MacEntry, ArpEntry):
             session.execute(delete(model).where(model.last_seen < cutoff))
+    if cutoff := _cutoff(policy.topo_changes_days, now):
+        counts["topo_changes"] = _old_topo_changes(session, cutoff)
+        session.execute(delete(TopoChange).where(TopoChange.at < cutoff))
     audit.record(
         session,
         actor=actor,
@@ -197,6 +215,7 @@ def purge(
             "sync_days": policy.sync_days,
             "audit_days": policy.audit_days,
             "l2_days": policy.l2_days,
+            "topo_changes_days": policy.topo_changes_days,
         },
     )
     return counts
@@ -210,7 +229,7 @@ def last_purge(session: Session) -> dict | None:
     if row is None:
         return None
     detail = audit.decode_detail(row) or {}
-    counts = {k: detail.get(k, 0) for k in ("runs", "sync_plans", "audit", "l2")}
+    counts = {k: detail.get(k, 0) for k in ("runs", "sync_plans", "audit", "l2", "topo_changes")}
     return {"at": _aware(row.timestamp), "actor": row.actor, "counts": counts}
 
 

@@ -30,6 +30,8 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
+from app.i18n import L
+
 CA_DAYS = 3650
 SERVER_DAYS = 825
 RENEW_DAYS = 60  # vorher neu ausstellen (aufbau.sh pruefen warnt ab 30 Tagen)
@@ -236,11 +238,17 @@ def issue(
     renew: bool = False,
     now: datetime | None = None,
 ) -> list[str]:
-    """CA und Server-Zertifikate anlegen bzw. erneuern; Rueckgabe = erledigte Schritte."""
+    """CA und Server-Zertifikate anlegen bzw. erneuern; Rueckgabe = erledigte Schritte (fuer
+    die CLI, in deren Sprache)."""
     base = Path(directory)
     now = now or datetime.now(UTC)
     ca_key, ca_cert, created = _ca(base, now)
-    steps = [("CA angelegt" if created else "CA vorhanden") + f" (gültig bis {_day(ca_cert)})"]
+    until = _day(ca_cert)
+    steps = [
+        L(f"CA angelegt (gültig bis {until})", f"CA created (valid until {until})")
+        if created
+        else L(f"CA vorhanden (gültig bis {until})", f"CA present (valid until {until})")
+    ]
     ca_pem = ca_cert.public_bytes(serialization.Encoding.PEM)
     for folder in (*SERVICES, CLIENT):
         (base / folder).mkdir(parents=True, exist_ok=True)
@@ -258,12 +266,16 @@ def issue(
             and _signed_by(crt_path, ca_cert)
         )
         if fresh and not renew:
-            steps.append(f"{service}: vorhanden (gültig bis {info.not_after:%d.%m.%Y})")
+            until = f"{info.not_after:%d.%m.%Y}"
+            steps.append(L(f"{service}: vorhanden (gültig bis {until})",
+                           f"{service}: present (valid until {until})"))  # fmt: skip
             continue
         key, cert = _server(ca_key, ca_cert, service, names, now)
         _write_key(key_path, key, OWNER.get(service))
         _write_cert(crt_path, cert)
-        steps.append(f"{service}: ausgestellt für {', '.join(names)} (gültig bis {_day(cert)})")
+        names_text, until = ", ".join(names), _day(cert)
+        steps.append(L(f"{service}: ausgestellt für {names_text} (gültig bis {until})",
+                       f"{service}: issued for {names_text} (valid until {until})"))  # fmt: skip
     return steps
 
 

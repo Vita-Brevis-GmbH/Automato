@@ -11,20 +11,31 @@ import logging
 import time
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app import audit, credentials
 from app.auth import mtls
 from app.config import get_settings
-from app.db import get_session
+from app.db import get_session, get_session_factory
+from app.i18n import german
 from app.models import REFERENCE_PLATFORMS, CollectorRun, RunStatus, SourceSystem, Tenant
 from app.schemas.collector import CollectorResult, ReferenceBatch
 from app.sot import build_adapter
 from app.store import agents as agent_store
-from app.store import customers, ingest, reconcile, references, rule_index, tenant_lock
+from app.store import (
+    app_refresh,
+    customers,
+    data_state,
+    ingest,
+    reconcile,
+    references,
+    rule_index,
+    runs,
+    tenant_lock,
+)
 
 log = logging.getLogger(__name__)
 
@@ -51,26 +62,38 @@ def require_internal_token(x_internal_token: str = Header()) -> None:
     "/collector-runs/{run_id}/target",
     dependencies=[Depends(require_internal_token)],
 )
-def run_target(run_id: str, session: Session = Depends(get_session, scope="function")) -> dict:
+def run_target(
+    run_id: str,
+    x_run_claim: str | None = Header(default=None),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
     """Ziel eines zentralen Laufs inkl. Zugangsdaten (nur fuer den zentralen Worker).
 
     Laeufe ueber einen Agenten bekommen ihr Ziel ausschliesslich beim Abholen (next-run).
+    `X-Run-Claim` (0.109.1, Celery-Task des Workers): ein erneut geschickter Lauf wird nur
+    einmal gelesen - ein zweiter Auftrag bekommt `skip` (`runs.claim`).
     """
-    run = session.get(CollectorRun, run_id)
+    run = session.get(CollectorRun, run_id, with_for_update=True)
     if run is None:
         raise HTTPException(status_code=404, detail="run not found")
     if run.execution != "inprocess":
         raise HTTPException(status_code=403, detail="run is executed by an agent")
-    if run.status is RunStatus.QUEUED:  # zentraler Worker beginnt: wie das Abholen beim Agenten
-        run.status = RunStatus.RUNNING
-        run.started_at = datetime.now(UTC)
+    # zentraler Worker beginnt: wie das Abholen beim Agenten
+    if not runs.claim(run, x_run_claim):
+        return {"target": None, "skip": True}
     src = session.get(SourceSystem, run.source_system_id) if run.source_system_id else None
     if src is None:
         return {"target": None}
     try:
-        return {"target": agent_store.target_for(src, None)}
+        target = agent_store.target_for(src, None)
+        if run.scope:  # 0.139.0: nur Regeln
+            target["scope"] = run.scope
+        return {"target": target}
     except credentials.CredentialsUnavailable as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        # Lauf mit Grund beenden (0.113.2): der Worker liest ohne Ziel nicht - sonst wartete
+        # er bis zur Frist und wuerde immer wieder geschickt
+        runs.fail(session, run, f"Zugangsdaten nicht verfügbar: {exc}", actor="system:worker")
+        return {"target": None, "skip": True}
 
 
 class ResultAck(BaseModel):
@@ -78,7 +101,10 @@ class ResultAck(BaseModel):
 
     run_id: str
     status: str
-    message: str | None = None
+    message: str | None = None  # gespeicherte Meldung (deutsch)
+    # dieselbe in der Sprache der Anfrage (`Accept-Language` des Agenten, 0.90.0) - fuer seine
+    # Konsole; nur wenn uebersetzt (sonst fehlt das Feld), gespeichert wird nur die deutsche
+    shown: str | None = None
 
 
 def _settled(run, result: CollectorResult) -> bool:
@@ -138,32 +164,39 @@ def submit_references(
         raise HTTPException(status_code=409, detail="run already finished")
     if not run.tenant_id or not run.source_system_id:
         raise HTTPException(status_code=422, detail="run has no tenant/source system")
-    references.add_batch(session, run, batch.records)
+    with german():  # gespeichert deutsch, gleich welche Sprache der Agent schickt
+        references.add_batch(session, run, batch.records)
 
 
 def _finish_reference_run(session: Session, run, result: CollectorResult, actor) -> "ResultAck":
     """Referenzlauf abschliessen: Stand uebernehmen (oder verwerfen), Mandant neu abgleichen."""
-    run.finished_at = datetime.now(UTC)
-    run.message = result.message
     source = session.get(SourceSystem, run.source_system_id) if run.source_system_id else None
     received = references.run_count(session, run.id)
-    if result.status == "completed" and result.reference_count not in (None, received):
+    incomplete = result.status == "completed" and result.reference_count not in (None, received)
+    if run.status is RunStatus.FAILED and incomplete:
+        # schon abgebrochen (z. B. von Hand) und nicht vollstaendig: Grund des Abbruchs bleibt
+        # stehen statt „Teil-Upload unvollstaendig (0 von …)“ (0.113.2)
+        references.discard_run(session, run)
+        return ResultAck(run_id=run.id, status=run.status.value, message=run.message)
+    if incomplete:
         result = result.model_copy(
             update={
                 "status": "failed",
                 "message": f"Teil-Upload unvollstaendig ({received} von {result.reference_count})",
             }
         )
-        run.message = result.message
+    run.finished_at = datetime.now(UTC)
+    run.message = result.message
     if result.status == "completed" and source is not None and run.tenant_id:
 
         def finalize() -> None:
             tenant_lock.hold(session, run.tenant_id)  # vor allen Zeilen (0.80.1)
             run.rule_count = references.finalize_run(session, run, source)
+            data_state.record_reference(session, run)  # 0.141.0: nur bei anderem Inhalt neu
             reconcile.reconcile_tenant(session, run.tenant_id)
             # Suchtext der Regeln enthaelt DNS-Namen aus dem IPAM -> Index neu
             rule_index.rebuild(session, run.tenant_id)
-            reconcile.refresh_app_findings(session, run.tenant_id)  # Regel <-> Weg
+            # Regel <-> Weg: seit 0.139.0 hinter dem Lauf (`app_refresh.schedule_runs`)
             customers.derive(session, run.tenant_id)  # Kunden (ADR 0018)
 
         error = _attempt(run, finalize, session)
@@ -217,20 +250,67 @@ def _entry_count(result: CollectorResult) -> int:
     return len(result.inventory.devices) if result.inventory is not None else 0
 
 
-@router.post("/collector-runs/{run_id}/result", response_model=ResultAck)
+@router.post(
+    "/collector-runs/{run_id}/result", response_model=ResultAck, response_model_exclude_unset=True
+)
 def submit_result(
     run_id: str,
     result: CollectorResult,
+    background: BackgroundTasks,
     x_internal_token: str | None = Header(default=None),
     x_agent_token: str | None = Header(default=None),
     channel: mtls.Channel = Depends(mtls.agent_channel),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ) -> ResultAck:
     """Ergebnis abliefern: zentraler Worker mit internem Token, Agent mit seinem eigenen
     Token - dann nur fuer einen Lauf, den genau dieser Agent abgeholt hat (ADR 0009).
 
     Seit 0.80.1 nacheinander (`tenant_lock.slot`): wer wartet, gibt seine Verbindung vorher
-    zurueck; ein schon abgeschlossener Lauf wird ohne Warten quittiert."""
+    zurueck; ein schon abgeschlossener Lauf wird ohne Warten quittiert.
+
+    Gespeichert wird deutsch, auch wenn der Agent eine andere Sprache schickt (`german`); die
+    Quittung bringt die Meldung zusaetzlich in seiner Sprache (`shown`, ADR 0028 Schritt 4)."""
+    with german():
+        ack = _receive(session, run_id, result, x_internal_token, x_agent_token, channel)
+    run = session.get(CollectorRun, run_id)
+    if run is not None and run.tenant_id:
+        _after_run(session, background, factory, run)
+    shown = runs.show_message(ack.message)
+    return ack if shown == ack.message else ack.model_copy(update={"shown": shown})
+
+
+def _after_run(session: Session, background: BackgroundTasks, factory: sessionmaker,
+               run: CollectorRun) -> None:  # fmt: skip
+    """Nach dem Lauf im Hintergrund (0.139.0, `app_refresh.schedule_runs`): Befunde Regel <->
+    Weg, Doku und Routing-Filter - zusammengefasst ueber mehrere Laeufe. Lauf nur der Regeln
+    einer Applikation: nur diese, sobald ihr letzter Teil-Lauf fertig ist (auch wenn einer
+    fehlschlug - die anderen haben eingespielt)."""
+    if run.scope == runs.RULES and run.application_id:
+        if run.status in runs.OPEN or runs.open_for_application(session, run.application_id):
+            return
+        app_refresh.schedule_runs(background, factory, run.tenant_id, run.application_id,
+                                  full=False)  # fmt: skip
+        return
+    # 0.141.0 (Anwender: „Dies erst ausführen, wenn die Läufe durch sind“): erst nach dem
+    # letzten offenen Lauf des Mandanten - auch wenn dieser fehlschlug (die anderen haben
+    # eingespielt); ein Lauf ohne Aenderung am Inhalt rechnet danach nichts (ADR 0049)
+    if run.status not in runs.OPEN:
+        waiting = runs.open_count(session, run.tenant_id)
+        if waiting:
+            app_refresh.wait_for_runs(run.tenant_id, waiting)
+        else:
+            app_refresh.schedule_runs(background, factory, run.tenant_id)
+
+
+def _receive(
+    session: Session,
+    run_id: str,
+    result: CollectorResult,
+    x_internal_token: str | None,
+    x_agent_token: str | None,
+    channel: mtls.Channel,
+) -> ResultAck:
     run, actor = _authorized_run(session, run_id, x_internal_token, x_agent_token, channel)
     if _settled(run, result):
         return ResultAck(run_id=run.id, status=run.status.value, message=run.message)

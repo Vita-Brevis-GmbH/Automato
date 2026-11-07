@@ -99,9 +99,14 @@ def test_export_svg_und_drawio(client):
     plain = client.get(base, params={"rules": "false"}).text
     assert 'id="regeln"' in svg.text and 'id="regeln"' not in plain
     assert client.get(base, params={"format": "pdf"}).status_code == 422
+    # 0.130.0: die Verbindungen des Filters im Rumpf (mehr als in eine Adresse passen)
+    posted = client.post(base, json={"format": "drawio", "keys": [key]})
+    assert posted.status_code == 200 and posted.text == one.text
+    assert client.post(base, json={"format": "pdf"}).status_code == 422
     # nicht fuer Kunden-Benutzer
     cust = {"X-Dev-Roles": "customer", "X-Dev-Customers": "1"}
     assert client.get(base, headers=cust).status_code == 403
+    assert client.post(base, json={}, headers=cust).status_code == 403
 
 
 def _side(ip, label, kind="object"):
@@ -289,3 +294,83 @@ def test_load_balancer_in_der_epg_seiner_vip():
     assert nodes["hop:1|root"]["lines"] == ["VIP V-EXT_shop → 10.30.0.50"]
     assert lbn["verdict"] == "allow"
     assert 'automato_kind="Load Balancer"' in app_plan.drawio(plan, "Plan")
+
+
+def test_verbindung_zwischen_epgs_der_applikation(client):
+    """0.130.0 (Anwender: „Verbindungen zwischen den EPGs eines APs werden im Netzwerkplan nicht
+    dargestellt“): EPG_web -> EPG_db (Contract CT_db) in derselben VRF - die Linie endet am Kasten
+    der EPG im Rahmen der Applikation, keine eigene Gegenstelle."""
+    import copy
+
+    import test_aci_relevance as ar
+    import test_paths as tp
+    from test_app_paths import APIC, FW1, FW2, FW3, TE
+
+    db = f"{TE}/ap-AP1/epg-EPG_db"
+    apic = copy.deepcopy(APIC)
+    apic["epgs"].append({"name": "EPG_db", "dn": db, "tenant": "TE", "ap": "AP1", "bd": "BD_db",
+                         "vrf": "VRF1", "bd_subnets": ["10.50.2.1/24"],
+                         "endpoints": [{"ip": "10.50.2.20"}]})  # fmt: skip
+    apic["rules"].append({"source_platform": "cisco_aci", "external_id": f"{TE}/brc-CT_db/SJ_1",
+                          "name": "CT_db", "action": "allow", "sources": [f"epg:{ar.WEB}"],
+                          "destinations": [f"epg:{db}"], "services": ["tcp/3306"],
+                          "aci_scope": "context",
+                          "raw": {"name": "CT_db", "kind": "contract",
+                                  "scope": "context"}})  # fmt: skip
+    tid = client.post("/tenants", json={"name": "Kunde A"}, headers=tp.ADMIN).json()["id"]
+    for name, platform, result in (
+        ("fw-01", "fortigate", FW1),
+        ("fw-02", "fortigate", FW2),
+        ("fw-03", "fortigate", FW3),
+        ("apic-01", "cisco_aci", apic),
+    ):
+        sid = tp._system(client, tid, name, platform)
+        tp._deliver(client, tid, sid, platform, result)  # fmt: skip
+    body = {"name": "Web", "members": [{"kind": "epg", "ref": ar.WEB}, {"kind": "epg", "ref": db}]}
+    aid = client.post(f"/applications?tenant_id={tid}", json=body, headers=OP).json()["id"]
+    out = client.get(f"/applications/{aid}/connections").json()
+    inner = [c for c in out["connections"] if c["service"] == "tcp/3306"]
+    assert len(inner) == 1 and inner[0]["verdict"] == "allow"
+    plan = out["plan"]
+    nodes = {n["id"]: n for n in plan["nodes"]}
+    web, dbn = nodes["epg:TE/AP1/EPG_web"], nodes["epg:TE/AP1/EPG_db"]
+    assert (web["role"], dbn["role"]) == ("own", "own")
+    assert not [n for n in plan["nodes"] if n["id"] == "peer:10.50.1.10"]  # keine Gegenstelle
+    pairs = {frozenset((e["a"], e["b"])): e for e in plan["edges"]}
+    # 0.131.0 (Anwender: „die Verbindung sollte direkt zwischen den beiden EPGs zu sehen sein,
+    # das AP Feld entsprechend vergrössern“): nur die VRF dazwischen - die Linie geht direkt von
+    # EPG zu EPG, der Contract steht an der Linie, sie laeuft links im (breiteren) Rahmen
+    vrf = "hop:4|TE:VRF1"
+    assert frozenset((dbn["id"], vrf)) not in pairs and frozenset((vrf, web["id"])) not in pairs
+    edge = pairs[frozenset((web["id"], dbn["id"]))]
+    assert "tcp/3306" in edge["label"] and "CT_db" in edge["label"], edge["label"]
+    assert edge["rules"] and edge["sides"] == ["l", "l"]
+    (frame,) = plan["groups"]
+    assert set(frame["nodes"]) == {web["id"], dbn["id"]}
+    left = min(x for x, _ in edge["points"])
+    assert frame["x"] < left < web["x"] and frame["w"] > web["w"] + 16
+    assert len(edge["via"]) == 2  # Stuetzpunkte fuer draw.io
+
+
+def test_verbund_nur_einmal_im_plan():
+    """0.133.0 (Anwender: „Im Netzwerkplan sehe ich zwischendurch noch, dass der eine Firewall
+    Verbund zwei mal auf der Map auftaucht“): der Hop eines Verbunds traegt den Schluessel der
+    ersten Firewall darin - je nach Weg fw-a oder fw-b; der Plan zeigt den Verbund einmal."""
+    app = _side("10.1.0.10", "vm-app", "system")
+    a, b = _side("10.9.0.5", "Admin"), _side("10.9.0.6", "Backup")
+
+    def verbund(first):
+        hop = _hop(first, "Verbund Nord", "outside", "inside")
+        return hop | {"group": "Nord"}
+
+    conns = [_conn("a", "in", a, app, [verbund("1|root")]),
+             _conn("b", "in", b, app, [verbund("2|root")], service="tcp/443")]  # fmt: skip
+    plan = app_plan.build(conns)
+    fws = [n for n in plan["nodes"] if n["role"] == "hop"]
+    assert [(n["id"], n["label"]) for n in fws] == [("hop:grp:Nord|root", "Verbund Nord")]
+    assert sorted(fws[0]["conns"]) == ["a", "b"]
+    # ohne Verbund bleibt es je Firewall ein Knoten
+    fw_a, fw_b = _hop("1|root", "fw-a", "o", "i"), _hop("2|root", "fw-b", "o", "i")
+    plain = app_plan.build([_conn("a", "in", a, app, [fw_a]), _conn("b", "in", b, app, [fw_b])])
+    assert sorted(n["id"] for n in plain["nodes"] if n["role"] == "hop") == [
+        "hop:1|root", "hop:2|root"]  # fmt: skip

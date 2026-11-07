@@ -31,6 +31,7 @@ WRITABLE = frozenset(
         "dcim/device-types",
         "dcim/devices",
         "dcim/interfaces",
+        "dcim/cables",  # Abschnitt Verkabelung (ADR 0031)
         "ipam/vrfs",
         "ipam/vlan-groups",
         "ipam/vlans",

@@ -70,6 +70,11 @@ class ZoneContext:
             return
         info = self.info
         src_ids, dst_ids = _zones_of(self.index, src), _zones_of(self.index, dst)
+        # hinter VIP bzw. Load Balancer (0.117.0): Zielzone aus den Servern am Ende des Wegs
+        behind = sorted({z for ip in (result.get("target") or {}).get("ips") or []
+                         for z in _zones_of(self.index, ip)})  # fmt: skip
+        if behind:
+            dst_ids = behind
         for path in result.get("paths") or []:
             chain: list[dict] = []
             if len(src_ids) == 1:

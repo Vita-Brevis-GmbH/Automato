@@ -7,6 +7,10 @@ Login-Domaene, fehlendes API-Recht, gesperrtes Konto. Darum: Fehlertext des Gera
 Benutzername und Passwort-Hinweise (Leerzeichen am Rand, Nicht-ASCII-Zeichen) nur lokal
 (`--check` auf der Station, `local=True`) - nie in die Lauf-Meldung an den Orchestrator,
 dort sind Zugangsdaten nur schreibbar (ADR 0009). Das Passwort selbst erscheint nie.
+
+Zweisprachig (0.90.0, ADR 0028 Schritt 4): im Lauf deutsch (der Orchestrator speichert die
+Meldung und uebersetzt beim Abruf, `orchestrator/app/store/run_text.py` - dort dieselben
+englischen Texte), bei `--check` in der Sprache der Konsole (`AUTOMATO_LANG`).
 """
 
 import re
@@ -15,38 +19,72 @@ import httpx
 
 from collectors.common import http
 from collectors.common.dto import Target
+from collectors.common.i18n import L
 from collectors.config import get_settings
 
+# Hinweis je Plattform (deutsch, englisch) - Paare statt L() auf Modulebene (Sprache zur Laufzeit)
 _HINTS = {
     "avi": (
         "Avi-Benutzer/-Passwort im Web-UI neu setzen; das Konto braucht eine Rolle mit nur "
         "Leserechten (Virtual Service, VS VIP, Pool, Pool Group, VRF Context, Application "
-        "Profile, Tenant) und Zugriff auf die Tenants im Lesebereich"
+        "Profile, Tenant) und Zugriff auf die Tenants im Lesebereich",
+        "set the Avi user/password again in the web UI; the account needs a role with read-only "
+        "rights (Virtual Service, VS VIP, Pool, Pool Group, VRF Context, Application Profile, "
+        "Tenant) and access to the tenants in the read scope",
     ),
     "vmware": (
         "vCenter-Benutzer/-Passwort im Web-UI neu setzen (SSO-Konto als benutzer@vsphere.local "
         "bzw. DOMAENE\\benutzer); das Konto braucht nur die Rolle Read-only (oberste Ebene, "
-        "an untergeordnete Objekte weitergegeben)"
+        "an untergeordnete Objekte weitergegeben)",
+        "set the vCenter user/password again in the web UI (SSO account as user@vsphere.local "
+        "or DOMAIN\\user); the account only needs the role Read-only (top level, propagated to "
+        "child objects)",
     ),
     "cisco_aci": (
         "APIC-Benutzer/-Passwort im Web-UI neu setzen; Remote-Benutzer (LDAP/RADIUS/TACACS) "
-        "als apic#<Login-Domaene>\\<Benutzer>; Konto am APIC aktiv und Passwort nicht abgelaufen?"
+        "als apic#<Login-Domaene>\\<Benutzer>; Konto am APIC aktiv und Passwort nicht abgelaufen?",
+        "set the APIC user/password again in the web UI; remote users (LDAP/RADIUS/TACACS) as "
+        "apic#<login domain>\\<user>; is the account active on the APIC and the password not "
+        "expired?",
     ),
     "infoblox": (
         "Infoblox-Benutzer/-Passwort im Web-UI neu setzen; die Admin-Gruppe des Benutzers braucht "
         "'API' unter Allowed Interfaces (AD-/RADIUS-Benutzer: Remote-Admin-Gruppe mit API-Recht); "
-        "neues Konto: erst einmal in der NIOS-GUI anmelden (Passwortwechsel)"
+        "neues Konto: erst einmal in der NIOS-GUI anmelden (Passwortwechsel)",
+        "set the Infoblox user/password again in the web UI; the user's admin group needs 'API' "
+        "under Allowed Interfaces (AD/RADIUS users: remote admin group with API permission); new "
+        "account: log in to the NIOS GUI once first (password change)",
     ),
     "fortigate": (
         "API-Token im Web-UI neu setzen; Trusted Hosts des REST-API-Admins muessen den "
-        "Agent-Rechner enthalten"
+        "Agent-Rechner enthalten",
+        "set the API token again in the web UI; the trusted hosts of the REST API admin must "
+        "include the agent machine",
     ),
-    "netbox": "Lese-Token im Web-UI neu setzen (NetBox v2-Token: nbt_<Schluessel>.<Token>)",
+    "netbox": (
+        "Lese-Token im Web-UI neu setzen (NetBox v2-Token: nbt_<Schluessel>.<Token>)",
+        "set the read token again in the web UI (NetBox v2 token: nbt_<key>.<token>)",
+    ),
     "cisco_switch": (
         "SSH-Benutzer/-Passwort im Web-UI neu setzen; das Konto braucht nur Leserechte (IOS "
         "privilege 1 bzw. eine View mit den show-Befehlen, NX-OS-Rolle network-operator, Junos-"
-        "Klasse read-only, Catalyst 1200/1300 Stufe 1), Anmeldung mit Passwort "
-        "(keyboard-interactive bzw. password) muss erlaubt sein"
+        "Klasse read-only, Catalyst 1200/1300 Stufe 1, Arista-Rolle network-operator, AOS-CX-"
+        "Gruppe operators), Anmeldung mit Passwort "
+        "(keyboard-interactive bzw. password) muss erlaubt sein",
+        "set the SSH user/password again in the web UI; the account only needs read rights (IOS "
+        "privilege 1 or a view with the show commands, NX-OS role network-operator, Junos class "
+        "read-only, Catalyst 1200/1300 level 1, Arista role network-operator, AOS-CX group "
+        "operators), login with password (keyboard-interactive or password) must be allowed",
+    ),
+    # Switches & Router mit Zugang SNMPv3 (ADR 0033)
+    "snmp": (
+        "SNMPv3-Benutzer im Web-UI pruefen (Benutzer, Auth-/Priv-Protokoll und Passwoerter wie "
+        "auf dem Geraet, nur authPriv mit SHA bzw. SHA-2 und AES); der Benutzer braucht eine "
+        "Gruppe nur mit Lese-View (keine Write-View), die Adresse des Agenten muss in der ACL des "
+        "SNMP-Agenten stehen",
+        "check the SNMPv3 user in the web UI (user, auth/priv protocol and passwords as on the "
+        "device, only authPriv with SHA or SHA-2 and AES); the user needs a group with a read view "
+        "only (no write view), the agent's address must be in the ACL of the SNMP agent",
     ),
 }
 # vCenter: Rolle Read-only reicht (System.View/System.Read) - fehlt sie, ist sie meist am
@@ -56,8 +94,20 @@ _VSPHERE_PERMISSION = (
     "Inventars) zuweisen, mit 'An untergeordnete Objekte weitergeben' (Propagate to children) - "
     "oder unter Verwaltung > Zugriffssteuerung > Globale Berechtigungen, ebenfalls mit "
     "Weitergabe; ohne Weitergabe gilt eine globale Berechtigung nicht fuer das Inventar. "
-    "Ist das Konto ueber eine SSO-/AD-Gruppe berechtigt: Mitgliedschaft pruefen"
+    "Ist das Konto ueber eine SSO-/AD-Gruppe berechtigt: Mitgliedschaft pruefen",
+    "in vCenter assign the role Read-only to the account on the vCenter object (top level of "
+    "the inventory), with 'Propagate to children' - or under Administration > Access Control > "
+    "Global Permissions, also with propagation; without propagation a global permission does "
+    "not apply to the inventory. If the account is authorized via an SSO/AD group: check the "
+    "membership",
 )
+
+
+def _hint(platform: str) -> str | None:
+    pair = _HINTS.get(platform)
+    return L(*pair) if pair else None
+
+
 _TAGS = re.compile(r"<[^>]+>")
 _SPACE = re.compile(r"\s+")
 
@@ -65,14 +115,22 @@ _SPACE = re.compile(r"\s+")
 def device_error(
     exc: Exception, platform: str, target: Target | None = None, local: bool = False
 ) -> str:
-    """Fehlermeldung eines Geraete-Zugriffs; bei 401/403 mit Ursache und Hinweis."""
+    """Fehlermeldung eines Geraete-Zugriffs; bei 401/403 mit Ursache und Hinweis. Sprache nach
+    `collectors.common.i18n`: im Lauf deutsch (gespeichert), bei `--check` die der Konsole."""
     vsphere = _vsphere_fault(exc)
     if vsphere:
         return vsphere
+    zone = _zone_transfer_error(exc)
+    if zone:
+        return zone
+    snmp = _snmp_error(exc, platform, target, local)
+    if snmp:
+        return snmp
     ssh = _ssh_error(exc, platform, target, local)
     if ssh:
         return ssh
     base = http.describe_error(exc)
+    reports = L("Geraet meldet", "Device reports")
     if not (
         isinstance(exc, httpx.HTTPStatusError)
         and exc.response.status_code in (401, 403)
@@ -82,42 +140,137 @@ def device_error(
         if isinstance(exc, httpx.HTTPStatusError) and not _from_orchestrator(exc):
             text = _device_text(exc.response)
             if text:
-                return f"{base}. Geraet meldet: {text}"
+                return f"{base}. {reports}: {text}"
         return base
-    parts = [f"Anmeldung abgelehnt ({base})"]
+    parts = [L(f"Anmeldung abgelehnt ({base})", f"Login rejected ({base})")]
     text = _device_text(exc.response)
     if text:
-        parts.append(f"Geraet meldet: {text}")
+        parts.append(f"{reports}: {text}")
     if local and target is not None:
         parts.extend(_credential_notes(platform, target))
-    hint = _HINTS.get(platform)
+    hint = _hint(platform)
     if hint:
-        parts.append(f"Hinweis: {hint}")
+        parts.append(f"{_note()}: {hint}")
     return ". ".join(parts)
+
+
+def _note() -> str:
+    return L("Hinweis", "Note")
+
+
+# DNS-Server per Zonentransfer (ADR 0045): Freigabe auf dem Server und Weg TCP 53
+_ZONE_TRANSFER = (
+    "auf dem DNS-Server den Zonentransfer fuer die Adresse von Automato bzw. des Agenten "
+    "erlauben (AD: DNS-Manager > Zone > Eigenschaften > Zonenuebertragungen > 'Nur an folgende "
+    "Server'); Zone auf diesem Server vorhanden und Name richtig?",
+    "allow the zone transfer for the address of Automato or the agent on the DNS server (AD: "
+    "DNS Manager > zone > Properties > Zone Transfers > 'Only to the following servers'); is the "
+    "zone on this server and is the name right?",
+)
+_TCP53 = (
+    "TCP 53 von Automato bzw. dem Agenten zum DNS-Server freigeben (Zonentransfer laeuft "
+    "ueber TCP)",
+    "open TCP 53 from Automato or the agent to the DNS server (zone transfers use TCP)",
+)
+
+
+def _zone_transfer_error(exc: Exception) -> str | None:
+    """Zonentransfer gescheitert (`sot_gateway.adapters.dns_zone.ZoneTransferError`)."""
+    if type(exc).__name__ != "ZoneTransferError":
+        return None
+    zone, server = getattr(exc, "zone", "?"), getattr(exc, "server", "?")
+    reason, detail = getattr(exc, "reason", ""), getattr(exc, "detail", "")
+    allow, path = f"{_note()}: {L(*_ZONE_TRANSFER)}", f"{_note()}: {L(*_TCP53)}"
+    if reason == "refused":
+        return L(f"Zonentransfer von {zone} abgelehnt ({detail})",
+                 f"zone transfer of {zone} refused ({detail})") + f". {allow}"  # fmt: skip
+    if reason == "closed":
+        return (
+            L(
+                f"{server} hat die Verbindung beim Zonentransfer von {zone} ohne Antwort beendet - "
+                "meist ist der Transfer fuer diese Adresse nicht erlaubt",
+                f"{server} closed the connection without an answer during the zone transfer of "
+                f"{zone} - usually the transfer is not allowed for this address",
+            )
+            + f". {allow}"
+        )
+    if reason == "timeout":
+        silent = L(f"keine Antwort von {server} beim Zonentransfer von {zone}",
+                   f"no response from {server} during the zone transfer of {zone}")  # fmt: skip
+        return f"{silent}. {path}"
+    if reason == "connect":
+        refused = L(f"{server}: Verbindung abgelehnt (DNS-Dienst aus bzw. falscher Port)",
+                    f"{server}: connection refused (DNS service off or wrong port)")  # fmt: skip
+        return f"{refused}. {path}"
+    if reason == "dns":
+        return L(f"{server} nicht aufloesbar ({detail})", f"{server} not resolvable ({detail})")
+    if reason == "invalid":
+        return L(f"keine gueltige Antwort auf den Zonentransfer von {zone}: {detail}",
+                 f"no valid answer to the zone transfer of {zone}: {detail}")  # fmt: skip
+    return L(f"Netzwerkfehler beim Zonentransfer von {zone}: {detail}",
+             f"network error during the zone transfer of {zone}: {detail}")  # fmt: skip
+
+
+def _snmp_error(exc: Exception, platform: str, target: Target | None, local: bool) -> str | None:
+    """SNMPv3 (Switches, ADR 0033): Anmeldung (USM), keine Antwort, Konfiguration als ein Satz."""
+    name = type(exc).__name__
+    if name == "SnmpAuthError":
+        parts = [L("Anmeldung abgelehnt (SNMPv3: Benutzer, Passwoerter bzw. Protokolle passen "
+                   "nicht zum Geraet)",
+                   "Login rejected (SNMPv3: user, passwords or protocols do not match the "
+                   "device)")]  # fmt: skip
+        if str(exc):  # Art der Ablehnung (unbekannter Benutzer, Digest, Entschluesselung)
+            parts.append(L(f"Geraet meldet: {exc}", f"Device reports: {exc}"))
+        if local and target is not None:
+            parts.extend(_credential_notes(platform, target))
+        return ". ".join([*parts, f"{_note()}: {_hint('snmp')}"])
+    if name == "SnmpTimeout":
+        silent = L(
+            "keine Antwort per SNMPv3 (UDP): Geraet nicht erreichbar, Weg bzw. ACL gesperrt oder "
+            "SNMP aus - manche Geraete antworten bei unbekanntem Benutzer bzw. falschem Passwort "
+            "gar nicht",
+            "no response via SNMPv3 (UDP): device not reachable, path or ACL blocked or SNMP off - "
+            "some devices do not answer at all for an unknown user or a wrong password",
+        )
+        return f"{silent}. {_note()}: {_hint('snmp')}"
+    if name in ("SnmpConfigError", "SnmpUnavailable"):
+        return str(exc)
+    if name == "SnmpError":
+        return L(f"SNMP-Fehler: {exc}", f"SNMP error: {exc}")
+    return None
 
 
 def _ssh_error(exc: Exception, platform: str, target: Target | None, local: bool) -> str | None:
     """SSH (Switches, paramiko): Anmeldung, Host-Schluessel, Erreichbarkeit als ein Satz."""
     name = type(exc).__name__
     if name in ("AuthenticationException", "BadAuthenticationType"):
-        parts = ["Anmeldung abgelehnt (SSH: Benutzer oder Passwort falsch bzw. Passwort-Anmeldung "
-                 "nicht erlaubt)"]  # fmt: skip
+        parts = [L("Anmeldung abgelehnt (SSH: Benutzer oder Passwort falsch bzw. Passwort-"
+                   "Anmeldung nicht erlaubt)",
+                   "Login rejected (SSH: user or password wrong, or password login not "
+                   "allowed)")]  # fmt: skip
         if local and target is not None:
             parts.extend(_credential_notes(platform, target))
-        return ". ".join([*parts, f"Hinweis: {_HINTS['cisco_switch']}"])
-    if name == "HostKeyChanged":
+        return ". ".join([*parts, f"{_note()}: {_hint('cisco_switch')}"])
+    if name in ("HostKeyChanged", "UnsupportedDevice"):
         return str(exc)
     if name == "SessionLoginFailed":  # Catalyst 1200/1300: Anmeldung in der Sitzung (0.68.0)
         return (
-            f"Anmeldung abgelehnt (SSH-Sitzung: „User Name:“/„Password:“). Hinweis: "
-            f"{_HINTS['cisco_switch']}"
+            L(
+                "Anmeldung abgelehnt (SSH-Sitzung: „User Name:“/„Password:“)",
+                "Login rejected (SSH session: “User Name:”/“Password:”)",
+            )
+            + f". {_note()}: {_hint('cisco_switch')}"
         )
     if name == "NoValidConnectionsError":
-        return "nicht erreichbar: Verbindung zu Port 22 abgelehnt (SSH aus bzw. Weg gesperrt)"
+        return L(
+            "nicht erreichbar: Verbindung zu Port 22 abgelehnt (SSH aus bzw. Weg gesperrt)",
+            "not reachable: connection to port 22 refused (SSH off or path blocked)",
+        )
     if name in ("TimeoutError", "timeout") and platform == "cisco_switch":
-        return f"nicht erreichbar bzw. keine Antwort: {exc}".rstrip(": ")
+        what = L("nicht erreichbar bzw. keine Antwort", "not reachable or no response")
+        return f"{what}: {exc}".rstrip(": ")
     if name == "SSHException":
-        return f"SSH-Fehler: {exc}"
+        return L(f"SSH-Fehler: {exc}", f"SSH error: {exc}")
     return None
 
 
@@ -126,26 +279,37 @@ def _vsphere_fault(exc: Exception) -> str | None:
     des mehrzeiligen Fault-Abbilds."""
     name = type(exc).__name__.rsplit(".", 1)[-1]
     if name == "InvalidLogin":
-        hint = _HINTS["vmware"]
-        return f"Anmeldung abgelehnt (vCenter: Benutzer oder Passwort falsch). Hinweis: {hint}"
+        rejected = L(
+            "Anmeldung abgelehnt (vCenter: Benutzer oder Passwort falsch)",
+            "Login rejected (vCenter: user or password wrong)",
+        )
+        return f"{rejected}. {_note()}: {_hint('vmware')}"
     if name != "NoPermission":
         return None
     obj = getattr(exc, "object", None)
     moid = getattr(obj, "_moId", None)
-    where = f"{type(obj).__name__}:{moid}" if moid else "einem Inventar-Objekt"
+    where = (
+        f"{type(obj).__name__}:{moid}"
+        if moid
+        else L("einem Inventar-Objekt", "an inventory object")
+    )
     if moid == "group-d1":  # Wurzelordner jedes vCenters
-        where += " (oberste Ebene des Inventars)"
+        where += L(" (oberste Ebene des Inventars)", " (top level of the inventory)")
     privileges = sorted(
         {
             p
             for entry in getattr(exc, "missingPrivileges", None) or []
             for p in getattr(entry, "privilegeIds", None) or []
         }
-        or {getattr(exc, "privilegeId", None) or "Leserecht"}
+        or {getattr(exc, "privilegeId", None) or L("Leserecht", "read permission")}
     )
+    missing = ", ".join(privileges)
     return (
-        f"Keine Berechtigung im vCenter: dem Konto fehlt {', '.join(privileges)} auf {where}. "
-        f"Hinweis: {_VSPHERE_PERMISSION}"
+        L(
+            f"Keine Berechtigung im vCenter: dem Konto fehlt {missing} auf {where}",
+            f"No permission in vCenter: the account lacks {missing} on {where}",
+        )
+        + f". {_note()}: {L(*_VSPHERE_PERMISSION)}"
     )
 
 
@@ -177,20 +341,29 @@ def _device_text(response: httpx.Response) -> str:
 
 
 def _credential_notes(platform: str, target: Target) -> list[str]:
+    """Nur lokal (`--check`): Hinweise zu Benutzer und Passwort, nie das Passwort selbst."""
     notes = []
     user = target.username or ""
     if user:
-        notes.append(f"Benutzer: '{user}'")
+        notes.append(L(f"Benutzer: '{user}'", f"User: '{user}'"))
         if platform == "cisco_aci" and "\\" in user and not user.lower().startswith("apic#"):
             notes.append(
-                "Benutzer mit Domaene: am APIC als apic#<Login-Domaene>\\<Benutzer> angeben"
-            )
+                L("Benutzer mit Domaene: am APIC als apic#<Login-Domaene>\\<Benutzer> angeben",
+                  "User with domain: enter it on the APIC as apic#<login domain>\\<user>")
+            )  # fmt: skip
     password = target.password or ""
     if password and password != password.strip():
-        notes.append("Passwort beginnt oder endet mit Leerzeichen (beim Einfuegen mitkopiert?)")
+        notes.append(
+            L(
+                "Passwort beginnt oder endet mit Leerzeichen (beim Einfuegen mitkopiert?)",
+                "Password starts or ends with a space (copied along when pasting?)",
+            )
+        )
     if password and not password.isascii():
         notes.append(
-            "Passwort enthaelt Zeichen ausserhalb ASCII (z. B. Umlaute) - manche Geraete "
-            "lehnen sie bei der API-Anmeldung ab"
-        )
+            L("Passwort enthaelt Zeichen ausserhalb ASCII (z. B. Umlaute) - manche Geraete "
+              "lehnen sie bei der API-Anmeldung ab",
+              "Password contains characters outside ASCII (e.g. umlauts) - some devices reject "
+              "them at the API login")
+        )  # fmt: skip
     return notes

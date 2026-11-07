@@ -28,7 +28,8 @@ class RulePairOut(BaseModel):
     rule_id: int
     name: str
     family: str | None = None
-    # same (gleiche Objektnamen, Services, Interfaces) | similar (Abweichungen) | confirmed
+    # same (gleiche Objektnamen, Services, Interfaces) | similar (Abweichungen) | confirmed |
+    # auto (aehnlich, automatisch bestaetigt - Mandant `rule_pairs_auto`, 0.138.0)
     # (von Hand bestaetigt, Abweichungen in diff)
     match: str
     diff: list[str] = []  # src | dst | service | name | zone
@@ -46,6 +47,7 @@ class RuleSummaryOut(BaseModel):
     by_src_zone: list[tuple[str, int]] = []
     by_action: dict[str, int] = {}
     by_vdom: list[tuple[str, int]] = []  # FortiGate-VDOMs mit Anzahl Regeln (ADR 0019)
+    by_source: list[tuple[int, int]] = []  # Quellsystem -> Anzahl Regeln (0.117.0)
 
 
 class RuleOut(BaseModel):

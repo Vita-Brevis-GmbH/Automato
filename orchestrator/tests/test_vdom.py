@@ -178,7 +178,7 @@ def test_paare_und_entscheidungen_je_vdom(client, session_factory):
     # Ablehnen in root laesst kunde-a unberuehrt - auch nach einem neuen Lauf
     body = {"partner_id": rules[("root", "web-v6")]["id"], "decision": "rejected"}
     r = client.post(f"/rules/{rules[('root', 'web')]['id']}/pair", json=body, headers=operator)
-    assert r.status_code == 204
+    assert r.status_code == 200
     _ingest(client, tid, sid)
     rules = _rules(client, tid)
     assert rules[("root", "web")]["pair"] is None

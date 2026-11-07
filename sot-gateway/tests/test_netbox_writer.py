@@ -50,6 +50,15 @@ def test_nur_erlaubte_objekttypen_und_eigener_host():
     assert len(sent) == 1  # Blockiertes wurde nie gesendet
 
 
+def test_kabel_schreibbar_fuer_die_verkabelung():
+    """ADR 0031: Abschnitt Verkabelung legt Kabel an - nur `dcim/cables`, nicht die Enden."""
+    writer, sent = _writer(lambda r: httpx.Response(201, json=[{"id": 1}]))
+    writer.create("dcim/cables", [{"a_terminations": [], "b_terminations": []}])
+    with pytest.raises(WriteNotAllowed):
+        writer.create("dcim/cable-terminations", [{}])
+    assert [r.url.path for r in sent] == ["/api/dcim/cables/"]
+
+
 def test_fehler_von_netbox_mit_meldung():
     writer, _ = _writer(lambda r: httpx.Response(400, json=[{"vid": ["exists"]}]))
     with pytest.raises(NetBoxWriteError) as exc:

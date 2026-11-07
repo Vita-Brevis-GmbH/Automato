@@ -1,7 +1,8 @@
 // Routing (ADR 0019): gelesene Routing-Tabellen je Firewall bzw. FortiGate-VDOM und je
 // ACI-VRF auf den Border-Leafs, BGP-Pfade (auch Backup), Nachbarn, HA/Session-Sync,
 // Policy-Routen/SD-WAN, L3Outs und Anbindungen; IPs mit Namen aus dem IPAM. Die Weg-Suche
-// ist seit 0.35.0 eine eigene Ansicht (`Paths.tsx`).
+// ist seit 0.35.0 eine eigene Ansicht (`Paths.tsx`). Reiter „Verlauf“ (ADR 0030): Änderungen
+// am Routing von Lauf zu Lauf.
 import { useEffect, useRef, useState } from "react";
 import {
   ContextKind,
@@ -13,15 +14,26 @@ import {
   Redundancy,
   fetchExits,
   fetchExitSuggestions,
+  checkPrefixes,
+  fetchLearnedPrefixes,
+  fetchFilteredPrefixes,
+  FilteredPrefixes,
+  LearnedPrefixes,
+  PrefixCheck,
+  fetchFirewallChoices,
   fetchHa,
   fetchL3Outs,
+  FirewallChoice,
+  L3OutBehind,
   fetchParallelGroups,
   fetchPeers,
   fetchPolicyRoutes,
   fetchRoutes,
+  fetchRoutingChanges,
   fetchRoutingSummary,
   Labeled,
   NextHop,
+  Page,
   ParallelGroup,
   PolicyHit,
   Resolved,
@@ -31,23 +43,32 @@ import {
   TopoL3Out,
   TopoPeer,
   TopoPolicyRoute,
+  TopoChange,
+  TopoChangeKind,
+  TopoChangeType,
   TopoExit,
   TopoExitIn,
   TopoRoute,
   TracePort,
+  removeL3OutFirewall,
+  setL3OutFirewall,
   updateExit,
 } from "./api";
 import { Pager, useDebounced } from "./Objects";
+import { NetAssignList } from "./modules/wege/NetAssign";
+import { BgpConfig, BgpPeerDrawer, FilterCell, RouteControlCell, RouteControlDrawer } from "./modules/analyse/BgpFilters";
 import TopologyTab from "./Topology";
 import { FoldTitle, useFolds } from "./fold";
-import { Dash, Empty, ErrorBox, Icon, Loading, Note, PageHead, SharedChip } from "./ui";
+import { Dash, Empty, ErrorBox, fmtTime, Icon, Loading, Note, PageHead, SharedChip } from "./ui";
 import { L } from "./i18n";
+import { findingLabel } from "./refs";
 
 const PAGE = 200;
 
-type Tab = "routes" | "peers" | "ha" | "parallel" | "policy" | "l3out" | "exits" | "topology";
+type Tab = "routes" | "changes" | "peers" | "ha" | "parallel" | "policy" | "l3out" | "exits" | "topology";
 const TABS: { key: Tab; label: string }[] = [
   { key: "routes", label: L("Routen", "Routes") },
+  { key: "changes", label: L("Verlauf", "History") },
   { key: "peers", label: L("BGP-Nachbarn", "BGP neighbors") },
   { key: "ha", label: L("HA & Session-Sync", "HA & session sync") },
   { key: "parallel", label: L("Parallele Firewalls", "Parallel firewalls") },
@@ -67,6 +88,7 @@ const KIND_LABEL: Record<ContextKind, string> = {
   firewall: "Firewall",
   vdom: "VDOM",
   vrf: L("VRF (Border-Leaf)", "VRF (border leaf)"),
+  l3: L("Router/L3-Switch", "Router/L3 switch"), // ADR 0032
 };
 
 // Name(n) einer IP aus dem IPAM; ohne Namen das Netz (Beschreibung) – blass
@@ -137,10 +159,11 @@ export function Missing({ items }: { items: string[] | null | undefined }) {
 }
 
 // System · Kontext: „fw-01 · VDOM root“, eine Firewall nur mit root heisst wie die Firewall,
-// ACI „leaf-101 · VRF T:V“ (darunter der APIC); Hostname, wenn er vom Quellsystem abweicht
+// ACI „leaf-101 · VRF T:V“ (darunter der APIC); Router „rt-01“ bzw. „rt-01 · VRF x“ (darunter
+// die Quelle Switches & Router, ADR 0032); Hostname, wenn er vom Quellsystem abweicht
 export function where(x: Labeled) {
   const label = x.label || `${x.source ?? x.node} · ${x.context}`;
-  const sub = x.display === "vrf" ? x.source : x.node !== x.source ? x.node : null;
+  const sub = x.display === "vrf" || x.display === "l3" ? x.source : x.node !== x.source ? x.node : null;
   return (
     <>
       <b>{label}</b>
@@ -167,10 +190,11 @@ export function matchText(match: Record<string, unknown> | null | undefined): st
 
 // 0.75.0 (Anwender: man muss scrollen, um die Reiter zu sehen): standardmässig zugeklappt,
 // zugeklappt bleiben Zahlen und nicht lesbare Kontexte sichtbar
-function ContextCard({ summary }: { summary: RoutingSummary }) {
+function ContextCard({ summary, onHistory }: { summary: RoutingSummary; onHistory: () => void }) {
   const { fold } = useFolds(FOLD_KEY);
   const f = fold("contexts", false);
   const unread = summary.contexts.filter((c) => c.missing?.length).length;
+  const changes = summary.changes_7d ?? 0;
   return (
     <div className="card" id="routing-contexts">
       <div className="card-head">
@@ -195,6 +219,19 @@ function ContextCard({ summary }: { summary: RoutingSummary }) {
           >
             {unread} {L("mit nicht Lesbarem", "with unreadable parts")}
           </span>
+        )}
+        {changes > 0 && (
+          <button
+            className="chip info linkchip"
+            id="routing-changes-7d"
+            title={L(
+              "Änderungen am Routing (Routen, BGP-Nachbarn, HA …) in den letzten 7 Tagen – Verlauf öffnen",
+              "Routing changes (routes, BGP neighbors, HA …) in the last 7 days – open the history",
+            )}
+            onClick={onHistory}
+          >
+            {L(`${changes} Routing-Änderungen (7 Tage)`, `${changes} routing changes (7 days)`)}
+          </button>
         )}
       </div>
       {f.open && (
@@ -400,12 +437,14 @@ function RoutesTab({
   vrfs,
   mgmt,
   initial = {},
+  onHistory,
 }: {
   tenantId: number;
   nodes: RoutingNode[];
   vrfs: number[];
   mgmt: boolean;
   initial?: { q?: string; table?: string; context?: string }; // aus einem Link (Befund)
+  onHistory: (q: string, context: string) => void; // Verlauf einer Route öffnen (ADR 0030)
 }) {
   const [q, setQ] = useState(initial.q ?? "");
   const [ip, setIp] = useState("");
@@ -538,6 +577,20 @@ function RoutesTab({
                       <td>{where(r)}</td>
                       <td className="mono">
                         <b>{r.prefix}</b>
+                        {r.changed_at && (
+                          <div>
+                            <button
+                              className="chip info linkchip"
+                              title={L(
+                                "letzte Änderung laut Verlauf (neu bzw. geändert) – Verlauf dieser Route öffnen",
+                                "last change according to the history (new or changed) – open the history of this route",
+                              )}
+                              onClick={() => onHistory(r.prefix, `${r.source_system_id}|${r.context}`)}
+                            >
+                              {L("geändert", "changed")} {fmtTime(r.changed_at)}
+                            </button>
+                          </div>
+                        )}
                       </td>
                       <td>{vrfOf === 0 ? <span className="faint">0</span> : <VrfChip vrf={vrfOf} />}</td>
                       <td>
@@ -657,18 +710,36 @@ function RowFilter({
 
 const labelOf = (x: Labeled) => x.label || `${x.source ?? x.node} · ${x.context}`;
 
-function PeersTab({ tenantId }: { tenantId: number }) {
+// 0.131.0 (Anwender: „bei den Routingfilters … per Link zu der Info gelangen“): aus einem Befund mit `peer`
+// (IP des Nachbarn), `system` und `context` öffnet sich Soll/Ist dieses Nachbarn
+function PeersTab({ tenantId, initial = {} }: { tenantId: number; initial?: Record<string, string> }) {
   const { rows: all, error } = useList<TopoPeer>(() => fetchPeers(tenantId), [tenantId]);
   const [state, setState] = useState("");
   const f = useRowFilter(
     all,
     (p) => [labelOf(p), p.peer_ip, p.peer, p.peer_node, p.local_ip, p.remote_as, p.state],
     labelOf,
+    initial.peer ?? "",
   );
   const up = (p: TopoPeer) => (p.state ?? "").toLowerCase() === "established";
   const rows = f.shown?.filter((p) => !state || (state === "up") === up(p)) ?? null;
+  const [open, setOpen] = useState<number | null>(null); // Soll/Ist eines Nachbarn (0.113.0)
+  const [linked, setLinked] = useState(false);
+  useEffect(() => {
+    if (linked || !all || !initial.peer) return;
+    const hit = all.find(
+      (p) =>
+        p.peer_ip === initial.peer &&
+        (!initial.system || String(p.source_system_id) === initial.system) &&
+        (!initial.context || p.context === initial.context),
+    );
+    setLinked(true);
+    if (hit?.attrs?.config) setOpen(hit.id);
+  }, [all, initial, linked]);
+  const configured = (all ?? []).some((p) => p.attrs?.config);
   return (
     <>
+      <BgpConfig tenantId={tenantId} />
       <RowFilter
         f={f}
         placeholder={L("Nachbar, Name, AS, Zustand…", "Neighbor, name, AS, state…")}
@@ -689,11 +760,13 @@ function PeersTab({ tenantId }: { tenantId: number }) {
             <th>{L("Lokal", "Local")}</th>
             <th className="num">AS</th>
             <th>{L("Zustand", "State")}</th>
+            {configured && <th>{L("Filter (ein / aus)", "Filters (in / out)")}</th>}
+            {configured && <th>{L("Prüfung", "Check")}</th>}
           </tr>
         </thead>
         <tbody>
           {(rows ?? []).map((p) => (
-            <tr key={p.id}>
+            <tr key={p.id} data-peer={p.peer_ip}>
               <td>{where(p)}</td>
               <td className="mono">
                 {p.peer_ip}
@@ -707,11 +780,55 @@ function PeersTab({ tenantId }: { tenantId: number }) {
                   {p.state ?? "?"}
                 </span>
               </td>
+              {configured && (
+                <td>
+                  <FilterCell config={p.attrs?.config} />
+                  {p.attrs?.config && (
+                    <button
+                      className="linkbtn bgp-sollist"
+                      onClick={() => setOpen(p.id)}
+                      title={L("Erwartet, erhalten und angekündigt nach den Filtern", "Expected, received and announced by the filters")}
+                    >
+                      {L("Soll/Ist", "expected/actual")}
+                    </button>
+                  )}
+                </td>
+              )}
+              {configured && (
+                <td>
+                  <PeerCheck p={p} />
+                </td>
+              )}
             </tr>
           ))}
         </tbody>
       </List>
+      {open != null && <BgpPeerDrawer tenantId={tenantId} peerId={open} onClose={() => setOpen(null)} />}
     </>
+  );
+}
+
+// Prüfung je Nachbar (0.133.0, Anwender: „sehe ich den BGP Neighbors nicht an, ob sie eine Filter Verletzung haben
+// oder nicht … mit Grünem oder Gelbem Zeichen, wie bei den Firewall Rules“): offene Befunde der Routing-Filter
+function PeerCheck({ p }: { p: TopoPeer }) {
+  if (!p.attrs?.config) return <Dash />;
+  const list = p.findings ?? [];
+  if (!list.length)
+    return (
+      <span className="chip ok bgp-check" data-check="ok" title={L("keine offenen Befunde der Routing-Filter", "no open findings of the routing filters")}>
+        ✓
+      </span>
+    );
+  const kinds = [...new Set(list.map((x) => findingLabel(x.type)))];
+  return (
+    <a
+      className="chip warn linkchip bgp-check"
+      data-check="findings"
+      href={`#findings?q=${encodeURIComponent(p.peer_ip)}`}
+      title={L(`Offene Befunde: ${kinds.join(", ")} – in den Findings öffnen`, `Open findings: ${kinds.join(", ")} – open in findings`)}
+    >
+      ⚠ {list.length}
+    </a>
   );
 }
 
@@ -957,21 +1074,45 @@ function PolicyTab({ tenantId, initialQ = "" }: { tenantId: number; initialQ?: s
   );
 }
 
-function L3OutTab({ tenantId }: { tenantId: number }) {
-  const { rows: all, error } = useList<TopoL3Out>(() => fetchL3Outs(tenantId), [tenantId]);
+function L3OutTab({ tenantId, canEdit, initialQ = "" }: { tenantId: number; canEdit: boolean; initialQ?: string }) {
+  const [tick, setTick] = useState(0); // neu laden nach einer Zuordnung von Hand (ADR 0034)
+  const { rows: all, error } = useList<TopoL3Out>(() => fetchL3Outs(tenantId), [tenantId, tick]);
+  const [choices, setChoices] = useState<FirewallChoice[] | null>(null);
+  useEffect(() => {
+    if (!canEdit) return;
+    fetchFirewallChoices(tenantId)
+      .then(setChoices)
+      .catch(() => setChoices([]));
+  }, [tenantId, canEdit]);
   const f = useRowFilter(
     all,
-    (o) => [o.name, o.aci_tenant, o.vrf, o.ext_epgs, o.nodes, o.paths, o.peers],
+    (o) => [o.name, o.aci_tenant, o.vrf, o.ext_epgs, o.nodes, o.paths, o.peers, o.behind?.firewalls],
     (o) => `Tenant ${o.aci_tenant}`,
+    initialQ, // 0.131.0: aus einem Befund
   );
   const rows = f.shown;
+  const [rcOpen, setRcOpen] = useState<number | null>(null); // Route Control Soll/Ist (0.113.0)
   return (
     <>
       <RowFilter
         f={f}
-        placeholder={L("L3Out, VRF, Leaf, Interface, Peer, Route…", "L3Out, VRF, leaf, interface, peer, route…")}
+        placeholder={L("L3Out, VRF, Leaf, Interface, Peer, Route, Firewall…", "L3Out, VRF, leaf, interface, peer, route, firewall…")}
         total={all && rows ? { shown: rows.length, all: all.length } : null}
       />
+      <Note>
+        {L(
+          <>
+            <b>Firewall dahinter</b> (ADR 0034): hinter einem L3Out regelt die Firewall den Verkehr – ihr Routing entscheidet,
+            über welchen L3Out eine Gegenstelle kommt, und ein Contract zur externen EPG ist nur ein Hilfs-Contract an ihren
+            Regeln. Abgeleitet aus dem Transfernetz bzw. BGP-Peer; von Hand bestätigen, ändern oder „keine“.
+          </>,
+          <>
+            <b>Firewall behind</b> (ADR 0034): behind an L3Out the firewall controls the traffic – its routing decides via
+            which L3Out a peer comes, and a contract to the external EPG is only a helper contract on its rules. Derived from
+            the transfer network or BGP peer; confirm, change or set “none” by hand.
+          </>,
+        )}
+      </Note>
       <List error={error} rows={rows} empty={L("Keine L3Outs gelesen.", "No L3Outs read.")}>
         <thead>
           <tr>
@@ -980,11 +1121,13 @@ function L3OutTab({ tenantId }: { tenantId: number }) {
             <th>{L("Border-Leafs", "Border leafs")}</th>
             <th>Interfaces / SVIs</th>
             <th>{L("BGP-Peers", "BGP peers")}</th>
+            <th>Route Control</th>
+            <th>{L("Firewall dahinter", "Firewall behind")}</th>
           </tr>
         </thead>
         <tbody>
           {(rows ?? []).map((o) => (
-            <tr key={o.id}>
+            <tr key={o.id} data-l3out={o.name}>
               <td>
                 <b>{o.name}</b>
                 <div className="faint">
@@ -1048,11 +1191,174 @@ function L3OutTab({ tenantId }: { tenantId: number }) {
                   ))}
                 </div>
               </td>
+              <td>
+                <RouteControlCell rc={o.route_control} />
+                <button className="linkbtn rc-sollist" onClick={() => setRcOpen(o.id)}>
+                  {L("Soll/Ist", "expected/actual")}
+                </button>
+              </td>
+              <td>
+                <L3OutFirewall
+                  tenantId={tenantId}
+                  l3out={o}
+                  canEdit={canEdit}
+                  choices={choices ?? []}
+                  onChanged={() => setTick((t) => t + 1)}
+                />
+              </td>
             </tr>
           ))}
         </tbody>
       </List>
+      {rcOpen != null && <RouteControlDrawer tenantId={tenantId} l3outId={rcOpen} onClose={() => setRcOpen(null)} />}
     </>
+  );
+}
+
+const ORIGIN_LABEL: Record<L3OutBehind["origin"], [string, string, string]> = {
+  derived: ["info", L("abgeleitet", "derived"), L("aus Transfernetz bzw. BGP-Peer abgeleitet", "derived from the transfer network or BGP peer")],
+  confirmed: ["ok", L("bestätigt", "confirmed"), L("von Hand bestätigt", "confirmed by hand")],
+  manual: ["warn", L("von Hand", "by hand"), L("von Hand gewählt", "chosen by hand")],
+  none: ["na", L("keine", "none"), L("von Hand: keine Firewall – der Contract regelt allein", "by hand: no firewall – the contract alone controls access")],
+};
+
+// Firewall hinter einem L3Out (ADR 0034): Anzeige mit Herkunft, für Operatoren bestätigen, ändern,
+// „keine“ und zurücksetzen (wieder abgeleitet)
+function L3OutFirewall({
+  tenantId,
+  l3out,
+  canEdit,
+  choices,
+  onChanged,
+}: {
+  tenantId: number;
+  l3out: TopoL3Out;
+  canEdit: boolean;
+  choices: FirewallChoice[];
+  onChanged: () => void;
+}) {
+  const b = l3out.behind;
+  const [edit, setEdit] = useState(false);
+  const [fw, setFw] = useState("");
+  const [iface, setIface] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<unknown>(null);
+  if (!b) return <Dash />;
+  const [chip, label, title] = ORIGIN_LABEL[b.origin];
+  const chosen = choices.find((c) => `${c.source_system_id}|${c.vdom}` === fw);
+  const run = async (body: { confirm?: boolean; none?: boolean; firewalls?: { source_system_id: number; vdom: string; interface?: string | null }[] }) => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await setL3OutFirewall({ tenant_id: tenantId, source_system_id: l3out.source_system_id, dn: l3out.dn, ...body });
+      setEdit(false);
+      onChanged();
+    } catch (e) {
+      setErr(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const reset = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await removeL3OutFirewall(tenantId, l3out.source_system_id, l3out.dn);
+      onChanged();
+    } catch (e) {
+      setErr(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="objs l3out-fw">
+      {b.firewalls.length ? (
+        b.firewalls.map((x) => (
+          <span key={`${x.node}|${x.interface ?? ""}`} className="mono">
+            <b>{x.label}</b>
+            {x.interface && <span className="faint"> · {x.interface}</span>}
+            {x.zone && <span className="chip" style={{ marginLeft: 4 }}>{x.zone}</span>}
+          </span>
+        ))
+      ) : (
+        <span className="faint">
+          {b.origin === "none" ? L("keine Firewall", "no firewall") : L("nicht erkannt", "not detected")}
+        </span>
+      )}
+      <span>
+        <span className={`chip ${chip}`} title={title}>
+          {label}
+        </span>
+        {b.updated_by && b.origin !== "derived" && <span className="faint"> · {b.updated_by}</span>}
+      </span>
+      {canEdit && !edit && (
+        <span className="no-print">
+          {b.origin === "derived" && b.derived.length > 0 && (
+            <button className="linkbtn" disabled={busy} onClick={() => run({ confirm: true })}>
+              {L("bestätigen", "confirm")}
+            </button>
+          )}{" "}
+          <button className="linkbtn" disabled={busy} onClick={() => setEdit(true)}>
+            {L("ändern", "change")}
+          </button>{" "}
+          {b.origin !== "derived" && (
+            <button className="linkbtn" disabled={busy} onClick={reset} title={L("wieder abgeleitet", "derived again")}>
+              {L("zurücksetzen", "reset")}
+            </button>
+          )}
+        </span>
+      )}
+      {canEdit && edit && (
+        <span className="l3out-fw-edit no-print">
+          <select
+            className="sel"
+            aria-label={L("Firewall", "Firewall")}
+            value={fw}
+            onChange={(e) => {
+              setFw(e.target.value);
+              setIface("");
+            }}
+          >
+            <option value="">{L("Firewall wählen…", "Choose firewall…")}</option>
+            {choices.map((c) => (
+              <option key={`${c.source_system_id}|${c.vdom}`} value={`${c.source_system_id}|${c.vdom}`}>
+                {c.label}
+              </option>
+            ))}
+          </select>
+          <select
+            className="sel"
+            aria-label={L("Interface zum L3Out", "Interface to the L3Out")}
+            value={iface}
+            disabled={!chosen}
+            onChange={(e) => setIface(e.target.value)}
+          >
+            <option value="">{L("Interface: –", "Interface: –")}</option>
+            {(chosen?.interfaces ?? []).map((i) => (
+              <option key={i.name} value={i.name}>
+                {i.name}
+                {i.zone ? ` (${i.zone})` : ""}
+              </option>
+            ))}
+          </select>
+          <button
+            className="btn btn-sm"
+            disabled={busy || !chosen}
+            onClick={() => chosen && run({ firewalls: [{ source_system_id: chosen.source_system_id, vdom: chosen.vdom, interface: iface || null }] })}
+          >
+            {L("Speichern", "Save")}
+          </button>
+          <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => run({ none: true })}>
+            {L("keine Firewall", "no firewall")}
+          </button>
+          <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => setEdit(false)}>
+            {L("Abbrechen", "Cancel")}
+          </button>
+        </span>
+      )}
+      <ErrorBox error={err} onClose={() => setErr(null)} />
+    </div>
   );
 }
 
@@ -1105,7 +1411,10 @@ function ExitForm({
   const [sids, setSids] = useState<number[]>(draft.source_system_ids ?? []);
   const [ifaces, setIfaces] = useState((draft.interfaces ?? []).join(", "));
   const [hops, setHops] = useState((draft.next_hops ?? []).join(", "));
-  const [prefixes, setPrefixes] = useState((draft.prefixes ?? []).join(", "));
+  const [prefixes, setPrefixes] = useState((draft.prefixes ?? []).join("\n"));
+  const [checked, setChecked] = useState<PrefixCheck | null>(null); // Liste geprüft (0.111.0)
+  const [learned, setLearned] = useState<LearnedPrefixes | null>(null);
+  const [filtered, setFiltered] = useState<FilteredPrefixes | null>(null); // 0.113.0
   const [routes, setRoutes] = useState<{ prefix: string; target: string }[]>(draft.routes ?? []);
   const [description, setDescription] = useState(draft.description ?? "");
   const [detected, setDetected] = useState<ExitSuggestion[] | null>(null);
@@ -1142,24 +1451,62 @@ function ExitForm({
     setHops(union(hopList, routers.map((r) => r.ip)).join(", "));
     if (sids.length) setSids(union(sids, related.flatMap((s) => s.source_system_ids)));
   };
-  const save = () => {
-    const body: TopoExitIn = {
-      tenant_id: tenantId,
-      name: name.trim(),
-      kind,
-      source_system_ids: sids,
-      interfaces: portList,
-      next_hops: hopList,
-      prefixes: csv(prefixes),
-      routes: routes.filter((r) => r.prefix.trim() && r.target),
-      description: description.trim() || null,
-    };
+  // Netzliste (0.111.0): Text mit Netzen, Namen bzw. Kommentaren – der Server erkennt die Netze
+  const check = () => {
+    setError(null);
+    return checkPrefixes(prefixes).then((c) => {
+      setChecked(c);
+      return c;
+    });
+  };
+  const collapseList = (c: PrefixCheck) => {
+    setPrefixes(c.collapsed.join("\n"));
+    setChecked({ ...c, valid: c.collapsed, duplicates: 0, invalid: [] });
+  };
+  const suggest = () => {
+    setError(null);
+    fetchLearnedPrefixes(tenantId, sids, hopList, portList).then(setLearned).catch(setError);
+  };
+  // Netze der BGP-Filter für diese Router (0.113.0, ADR 0041): was die Eingangsfilter erlauben
+  const fromFilters = () => {
+    setError(null);
+    fetchFilteredPrefixes(tenantId, sids, hopList).then(setFiltered).catch(setError);
+  };
+  const addNets = (nets: string[]) => {
+    const now = prefixes.split(/\n/).map((x) => x.trim()).filter(Boolean);
+    setPrefixes(union(now, nets).join("\n"));
+    setChecked(null);
+    setLearned(null);
+    setFiltered(null);
+  };
+  const save = async () => {
     setBusy(true);
     setError(null);
-    (draft.id ? updateExit(draft.id, body) : createExit(body))
-      .then(onSaved)
-      .catch(setError)
-      .finally(() => setBusy(false));
+    try {
+      const nets = await checkPrefixes(prefixes);
+      setChecked(nets);
+      if (nets.invalid.length) {
+        throw new Error(L(`Netze dahinter: ungültig – ${nets.invalid.slice(0, 5).join(", ")}`,
+                          `Networks behind: invalid – ${nets.invalid.slice(0, 5).join(", ")}`));
+      }
+      const body: TopoExitIn = {
+        tenant_id: tenantId,
+        name: name.trim(),
+        kind,
+        source_system_ids: sids,
+        interfaces: portList,
+        next_hops: hopList,
+        prefixes: nets.valid,
+        routes: routes.filter((r) => r.prefix.trim() && r.target),
+        description: description.trim() || null,
+      };
+      await (draft.id ? updateExit(draft.id, body) : createExit(body));
+      onSaved();
+    } catch (e) {
+      setError(e);
+    } finally {
+      setBusy(false);
+    }
   };
   return (
     <div className="card" id="exit-form" ref={card} style={{ scrollMarginTop: 72 }}>
@@ -1212,16 +1559,121 @@ function ExitForm({
             <label htmlFor="ex-hops">{L("Next-Hops (Gegenstelle)", "Next-hops (peer)")}</label>
             <input id="ex-hops" className="input" placeholder="198.51.100.1" value={hops} onChange={(e) => setHops(e.target.value)} />
           </div>
-          <div className="field">
-            <label htmlFor="ex-nets">{L("Netze dahinter", "Networks behind")}</label>
-            <input
-              id="ex-nets"
-              className="input"
-              placeholder={L("leer = alles, was dorthin geroutet wird", "empty = everything routed there")}
-              value={prefixes}
-              onChange={(e) => setPrefixes(e.target.value)}
-            />
+        </div>
+        <div className="field" id="ex-nets-field">
+          <label htmlFor="ex-nets">
+            {L("Netze dahinter", "Networks behind")}{" "}
+            <span className="faint">
+              {L(
+                "– leer = alles, was dorthin geroutet wird; Liste einfügen (je Zeile, Komma oder Leerzeichen, auch „Netz Maske“), Text daneben wird ignoriert",
+                "– empty = everything routed there; paste a list (per line, comma or space, also “network mask”), text next to it is ignored",
+              )}
+            </span>
+          </label>
+          <textarea
+            id="ex-nets"
+            className="input mono"
+            rows={Math.min(10, Math.max(3, prefixes.split("\n").length))}
+            placeholder={"10.0.0.0/8\n172.16.0.0 255.240.0.0  Kunde A"}
+            value={prefixes}
+            onChange={(e) => {
+              setPrefixes(e.target.value);
+              setChecked(null);
+            }}
+          />
+          <div className="filterbar" style={{ margin: "6px 0 0" }}>
+            <button className="btn btn-sm" id="ex-nets-check" onClick={() => void check().catch(setError)} disabled={!prefixes.trim()}>
+              {L("Liste prüfen", "Check list")}
+            </button>
+            <button
+              className="btn btn-sm"
+              id="ex-nets-learned"
+              onClick={suggest}
+              disabled={!hopList.length && !portList.length}
+              title={L(
+                "Netze, die die Geräte über diese Next-Hops bzw. Interfaces erhalten (gelesenes Routing, ohne Default-Route)",
+                "Networks the devices receive via these next-hops or interfaces (routing read, without default route)",
+              )}
+            >
+              {L("aus dem Routing vorschlagen", "suggest from routing")}
+            </button>
+            <button
+              className="btn btn-sm"
+              id="ex-nets-filters"
+              onClick={fromFilters}
+              disabled={!hopList.length}
+              title={L(
+                "Netze, die die Eingangsfilter für diese Next-Hops ausdrücklich erlauben (Prefix-Listen, Route-Maps, ACI import-rtctrl)",
+                "Networks the inbound filters for these next-hops explicitly permit (prefix lists, route maps, ACI import-rtctrl)",
+              )}
+            >
+              {L("aus den BGP-Filtern", "from the BGP filters")}
+            </button>
+            {checked && (
+              <span className="faint" id="ex-nets-summary">
+                {L(`${checked.valid.length} Netze`, `${checked.valid.length} networks`)}
+                {checked.duplicates ? L(` · ${checked.duplicates} doppelt`, ` · ${checked.duplicates} duplicate`) : ""}
+                {checked.invalid.length ? (
+                  <span className="critfg">
+                    {L(` · ungültig: ${checked.invalid.slice(0, 5).join(", ")}`, ` · invalid: ${checked.invalid.slice(0, 5).join(", ")}`)}
+                  </span>
+                ) : null}
+                {checked.collapsed.length < checked.valid.length && (
+                  <>
+                    {" · "}
+                    <button className="linkbtn" id="ex-nets-collapse" onClick={() => collapseList(checked)}>
+                      {L(`zusammenfassen (${checked.collapsed.length})`, `summarize (${checked.collapsed.length})`)}
+                    </button>
+                  </>
+                )}
+              </span>
+            )}
           </div>
+          {filtered && (
+            <div className="note" id="ex-nets-filters-list" style={{ marginTop: 6 }}>
+              {filtered.total === 0 ? (
+                L(
+                  "Kein Eingangsfilter für diese Next-Hops erlaubt bestimmte Netze (ohne Filter bzw. nur „alles“).",
+                  "No inbound filter for these next-hops permits specific networks (no filter or only “everything”).",
+                )
+              ) : (
+                <>
+                  {L(
+                    `${filtered.total} Netze aus ${filtered.filters.join(", ")} (zusammengefasst ${filtered.collapsed.length}): `,
+                    `${filtered.total} networks from ${filtered.filters.join(", ")} (summarized ${filtered.collapsed.length}): `,
+                  )}
+                  <span className="mono">{filtered.collapsed.slice(0, 8).join(", ")}{filtered.collapsed.length > 8 ? " …" : ""}</span>{" "}
+                  <button className="btn btn-sm" onClick={() => addNets(filtered.collapsed)}>
+                    {L("zusammengefasst übernehmen", "add summarized")}
+                  </button>{" "}
+                  <button className="btn btn-sm btn-ghost" onClick={() => addNets(filtered.prefixes)}>
+                    {L("einzeln übernehmen", "add one by one")}
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+          {learned && (
+            <div className="note" id="ex-nets-learned-list" style={{ marginTop: 6 }}>
+              {learned.total === 0 ? (
+                L("Keine gelernten Netze über diese Next-Hops bzw. Interfaces.", "No networks learned via these next-hops or interfaces.")
+              ) : (
+                <>
+                  {L(
+                    `${learned.total} Netze im Routing über diese Anbindung (zusammengefasst ${learned.collapsed.length}): `,
+                    `${learned.total} networks in the routing via this exit (summarized ${learned.collapsed.length}): `,
+                  )}
+                  <span className="mono">{learned.collapsed.slice(0, 8).join(", ")}{learned.collapsed.length > 8 ? " …" : ""}</span>{" "}
+                  <button className="btn btn-sm" onClick={() => addNets(learned.collapsed)}>
+                    {L("zusammengefasst übernehmen", "add summarized")}
+                  </button>{" "}
+                  <button className="btn btn-sm btn-ghost" onClick={() => addNets(learned.prefixes)}>
+                    {L("einzeln übernehmen", "add one by one")}
+                  </button>
+                </>
+              )}
+            </div>
+          )}
         </div>
         <div className="field" id="ex-fws">
           <label>
@@ -1590,7 +2042,11 @@ function ExitsTab({
                     </button>
                   ) : null}
                 </td>
-                <td className="mono">{e.prefixes.join(", ") || <span className="faint">{L("alles", "everything")}</span>}</td>
+                <td className="mono" title={e.prefixes.length > 4 ? e.prefixes.join("\n") : undefined}>
+                  {e.prefixes.length > 4
+                    ? `${e.prefixes.slice(0, 3).join(", ")} … ${L(`(${e.prefixes.length} Netze)`, `(${e.prefixes.length} networks)`)}`
+                    : e.prefixes.join(", ") || <span className="faint">{L("alles", "everything")}</span>}
+                </td>
                 <td>
                   {e.routes.length ? (
                     <div className="objs">
@@ -1619,6 +2075,8 @@ function ExitsTab({
           })}
         </tbody>
       </List>
+      {/* 0.111.0: grosse Netze der Regeln, von Hand zugeordnet */}
+      <NetAssignList tenantId={tenantId} canEdit={canEdit} />
       {/* Vorschläge zu unterst; „übernehmen“ springt hoch zum Formular */}
       <SuggestedExits
         rows={suggested}
@@ -1626,6 +2084,341 @@ function ExitsTab({
         onTake={(s) => edit(draftFrom(s, rows ?? []))}
         onDismiss={dismiss}
       />
+    </>
+  );
+}
+
+// -- Verlauf des Routings (ADR 0030) ---------------------------------------------------------
+
+const CHANGE_KIND: Record<TopoChangeKind, string> = {
+  route: "Route",
+  bgp_peer: L("BGP-Nachbar", "BGP neighbor"),
+  ha: "HA",
+  policy_route: L("Policy-Route/SD-WAN", "Policy route/SD-WAN"),
+  context: L("Kontext", "Context"),
+  l3out: "L3Out",
+};
+
+const CHANGE_TYPE: Record<TopoChangeType, [string, string, string]> = {
+  added: ["ok", L("hinzugefügt", "added"), L("neu gegenüber dem vorigen Lauf", "new compared with the previous run")],
+  removed: ["crit", L("entfernt", "removed"), L("im vorigen Lauf noch da", "still present in the previous run")],
+  changed: ["warn", L("geändert", "changed"), L("verglichene Felder anders als im vorigen Lauf", "compared fields differ from the previous run")],
+  baseline: ["info", L("Ausgangsstand", "Baseline"), L("erster Lauf des Quellsystems – der Verlauf beginnt hier", "first run of the source system – the history starts here")],
+  unreadable: [
+    "warn",
+    L("nicht lesbar", "not readable"),
+    L(
+      "Teile des Kontexts nicht lesbar – dort nicht verglichen, nichts als entfernt gezählt",
+      "Parts of the context not readable – not compared there, nothing counted as removed",
+    ),
+  ],
+  truncated: [
+    "info",
+    L("Obergrenze", "Limit reached"),
+    L("mehr Änderungen in diesem Lauf als einzeln gespeichert werden", "more changes in this run than are stored individually"),
+  ],
+};
+
+const CHANGE_TABLE: Record<string, string> = {
+  rib: L("wirksam", "effective"),
+  bgp: L("BGP-Pfad", "BGP path"),
+  static: L("statisch", "static"),
+  policy: L("Policy-Route", "Policy route"),
+  sdwan: "SD-WAN",
+};
+
+// Datum (Eingabe, Ortszeit) -> Beginn des Tages bzw. des Folgetags als ISO-Zeitpunkt
+function dayStart(value: string, plus = 0): string | undefined {
+  if (!value) return undefined;
+  const d = new Date(`${value}T00:00`);
+  if (Number.isNaN(d.getTime())) return undefined;
+  d.setDate(d.getDate() + plus);
+  return d.toISOString();
+}
+
+function RunLink({ c }: { c: TopoChange }) {
+  if (!c.collector_run_id) return <Dash />;
+  const short = `#${c.collector_run_id.slice(0, 8)}`;
+  if (!c.run_exists)
+    return (
+      <span
+        className="faint"
+        title={L("Lauf nicht mehr gespeichert (Aufbewahrung)", "Run no longer stored (retention)")}
+      >
+        {short}
+      </span>
+    );
+  return (
+    <a
+      href={`#laeufe?source_system_id=${c.source_system_id}&run=${encodeURIComponent(c.collector_run_id)}`}
+      title={L("Lauf in der Ansicht Läufe zeigen", "Show the run in the runs view")}
+    >
+      {short}
+    </a>
+  );
+}
+
+function ChangeRows({ c, open, onToggle }: { c: TopoChange; open: boolean; onToggle: () => void }) {
+  const [cls, label, title] = CHANGE_TYPE[c.change] ?? ["", c.change, ""];
+  return (
+    <>
+      <tr className={open ? "selected" : undefined}>
+        <td>
+          {c.fields.length > 0 && (
+            <button
+              className="linkbtn"
+              aria-expanded={open}
+              title={L("Felder vorher/nachher", "Fields before/after")}
+              onClick={onToggle}
+            >
+              {open ? "▾" : "▸"}
+            </button>
+          )}
+        </td>
+        <td className="mono">{fmtTime(c.at)}</td>
+        <td>
+          <b>{c.label}</b>
+          <SharedChip shared={c.shared} />
+          {!c.label.startsWith(c.source) && <div className="faint">{c.source}</div>}
+        </td>
+        <td>
+          <span className="chip">{CHANGE_KIND[c.kind] ?? c.kind}</span>
+          {c.table && <span className="chip">{CHANGE_TABLE[c.table] ?? c.table}</span>}
+        </td>
+        <td className="mono">{c.key || <Dash />}</td>
+        <td>
+          <span className={`chip ${cls}`} title={title}>
+            {label}
+          </span>
+        </td>
+        <td className="change-summary">{c.summary}</td>
+        <td className="mono">
+          <RunLink c={c} />
+        </td>
+      </tr>
+      {open && (
+        <tr className="change-detail">
+          <td />
+          <td colSpan={7}>
+            <table className="compact">
+              <thead>
+                <tr>
+                  <th>{L("Feld", "Field")}</th>
+                  <th>{L("vorher", "before")}</th>
+                  <th>{L("nachher", "after")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {c.fields.map((f) => (
+                  <tr key={f.field}>
+                    <td>{f.label}</td>
+                    <td className="mono">{f.before ?? <Dash />}</td>
+                    <td className="mono">{f.after ?? <Dash />}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+// Verlauf: neuster Lauf zuerst, darin Kontexte, HA, Nachbarn, Policy-Routen, L3Outs, Routen
+function ChangesTab({
+  tenantId,
+  nodes,
+  initial = {},
+}: {
+  tenantId: number;
+  nodes: RoutingNode[];
+  initial?: { q?: string; context?: string }; // aus einer Route bzw. einem Link
+}) {
+  const [q, setQ] = useState(initial.q ?? "");
+  const [source, setSource] = useState(initial.context ? initial.context.split("|")[0] : "");
+  const [context, setContext] = useState(initial.context ?? "");
+  const [kind, setKind] = useState("");
+  const [change, setChange] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [offset, setOffset] = useState(0);
+  const [page, setPage] = useState<Page<TopoChange> | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const [open, setOpen] = useState<Set<number>>(new Set());
+  const query = useDebounced(q);
+  const filtered = !!(query || source || context || kind || change || from || to);
+  const sources = [...new Map(nodes.map((n) => [n.source_system_id, n.source])).entries()].sort((a, b) =>
+    a[1].localeCompare(b[1], undefined, { numeric: true }),
+  );
+  const contexts = nodes.filter((n) => !source || String(n.source_system_id) === source);
+
+  useEffect(() => setOffset(0), [query, source, context, kind, change, from, to]);
+  useEffect(() => {
+    setPage(null);
+    setError(null);
+    let current = true; // nur die Antwort zur letzten Anfrage
+    // Kontext = Knoten „<Quellsystem>|<VDOM bzw. Tenant:VRF>“ (ACI: alle Border-Leafs)
+    const [sid, ...rest] = context ? context.split("|") : [source];
+    fetchRoutingChanges({
+      tenantId,
+      sourceId: sid ? Number(sid) : null,
+      context: context ? rest.join("|") : undefined,
+      kind,
+      change,
+      q: query,
+      since: dayStart(from),
+      until: dayStart(to, 1),
+      limit: PAGE,
+      offset,
+    })
+      .then((p) => current && setPage(p))
+      .catch((e) => {
+        if (!current) return;
+        setError(e);
+        setPage({ rows: [], total: 0 });
+      });
+    return () => {
+      current = false;
+    };
+  }, [tenantId, query, source, context, kind, change, from, to, offset]);
+
+  const toggle = (id: number) =>
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  return (
+    <>
+      <div className="filterbar" id="routing-changes-filter">
+        <div className="search">
+          <span className="ico">
+            <Icon name="search" />
+          </span>
+          <input
+            placeholder={L("Präfix, Next-Hop, Nachbar…", "Prefix, next-hop, neighbor…")}
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
+        </div>
+        <select
+          className="sel"
+          aria-label={L("Quellsystem", "Source system")}
+          value={source}
+          onChange={(e) => {
+            setSource(e.target.value);
+            setContext("");
+          }}
+        >
+          <option value="">{L("Quellsystem: alle", "Source system: all")}</option>
+          {sources.map(([id, name]) => (
+            <option key={id} value={String(id)}>
+              {name}
+            </option>
+          ))}
+        </select>
+        <select className="sel" aria-label={L("Kontext", "Context")} value={context} onChange={(e) => setContext(e.target.value)}>
+          <option value="">{L("Kontext: alle", "Context: all")}</option>
+          {contexts.map((n) => (
+            <option key={n.key} value={n.key}>
+              {n.label}
+            </option>
+          ))}
+        </select>
+        <select className="sel" aria-label={L("Art", "Kind")} value={kind} onChange={(e) => setKind(e.target.value)}>
+          <option value="">{L("Art: alle", "Kind: all")}</option>
+          {(Object.keys(CHANGE_KIND) as TopoChangeKind[]).map((k) => (
+            <option key={k} value={k}>
+              {CHANGE_KIND[k]}
+            </option>
+          ))}
+        </select>
+        <select className="sel" aria-label={L("Änderung", "Change")} value={change} onChange={(e) => setChange(e.target.value)}>
+          <option value="">{L("Änderung: alle", "Change: all")}</option>
+          <option value="added">{L("hinzugefügt", "added")}</option>
+          <option value="removed">{L("entfernt", "removed")}</option>
+          <option value="changed">{L("geändert", "changed")}</option>
+          <option value="note">{L("Vermerke (Ausgangsstand, nicht lesbar, Obergrenze)", "Notes (baseline, not readable, limit)")}</option>
+        </select>
+        <input
+          type="date"
+          className="input input-inline"
+          aria-label={L("von (Datum)", "from (date)")}
+          title={L("ab diesem Tag", "from this day")}
+          value={from}
+          max={to || undefined}
+          onChange={(e) => setFrom(e.target.value)}
+        />
+        <span className="faint">–</span>
+        <input
+          type="date"
+          className="input input-inline"
+          aria-label={L("bis (Datum)", "to (date)")}
+          title={L("bis und mit diesem Tag", "up to and including this day")}
+          value={to}
+          min={from || undefined}
+          onChange={(e) => setTo(e.target.value)}
+        />
+        {page && <span className="count">{L(`${page.total} Einträge`, `${page.total} entries`)}</span>}
+      </div>
+      <ErrorBox error={error} prefix={L("Verlauf laden", "Load history")} />
+      <div className="card" id="routing-changes">
+        <div className="card-body scroll viewport">
+          {page === null ? (
+            <Loading />
+          ) : page.rows.length === 0 ? (
+            filtered ? (
+              <Empty title={L("Keine Änderungen", "No changes")}>{L("Filter anpassen.", "Adjust the filter.")}</Empty>
+            ) : (
+              <Empty title={L("Noch kein Verlauf", "No history yet")}>
+                {L(
+                  "Verlauf beginnt mit dem nächsten Lauf: ab dann vergleicht jeder Lauf einer FortiGate bzw. eines APIC das Routing mit dem vorigen Stand.",
+                  "The history starts with the next run: from then on every run of a FortiGate or an APIC compares the routing with the previous state.",
+                )}
+              </Empty>
+            )
+          ) : (
+            <table className="compact routing-changes">
+              <thead>
+                <tr>
+                  <th />
+                  <th>{L("Zeit", "Time")}</th>
+                  <th>{L("Gerät · Kontext", "Device · context")}</th>
+                  <th>{L("Art", "Kind")}</th>
+                  <th>{L("Schlüssel", "Key")}</th>
+                  <th>{L("Änderung", "Change")}</th>
+                  <th>{L("Vorher → nachher", "Before → after")}</th>
+                  <th>{L("Lauf", "Run")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {page.rows.map((c) => (
+                  <ChangeRows key={c.id} c={c} open={open.has(c.id)} onToggle={() => toggle(c.id)} />
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+        {page && page.total > 0 && <Pager total={page.total} offset={offset} onOffset={setOffset} pageSize={PAGE} />}
+      </div>
+      <div className="faint" style={{ marginTop: 8 }}>
+        {L(
+          <>
+            Je Lauf verglichen mit dem vorigen Stand: Next-Hops, Interface, Protokoll, Distanz/Metrik, aktiv/Backup,
+            BGP-Zustand und AS, HA-Mitglieder, Policy-Routen und L3Outs. Reihenfolge und Zähler zählen nicht; ein nicht lesbarer
+            Kontext ist ein Vermerk statt vieler „entfernt“. Frist: <code>AUTOMATO_RETENTION_TOPO_CHANGES_DAYS</code> (180
+            Tage).
+          </>,
+          <>
+            Each run is compared with the previous state: next-hops, interface, protocol, distance/metric, active/backup, BGP
+            state and AS, HA members, policy routes and L3Outs. Order and counters do not count; a context that is not readable
+            is one note instead of many “removed”. Retention: <code>AUTOMATO_RETENTION_TOPO_CHANGES_DAYS</code> (180 days).
+          </>,
+        )}
+      </div>
     </>
   );
 }
@@ -1647,6 +2440,14 @@ export default function Routing({
   const [draft, setDraft] = useState<ExitDraft | null>(null);
   const [summary, setSummary] = useState<RoutingSummary | null>(null);
   const [error, setError] = useState<unknown>(null);
+  // Verlauf mit Filter öffnen (aus einer Route bzw. einem Link #routing?tab=changes&q=…)
+  const [history, setHistory] = useState<{ q?: string; context?: string }>(
+    params.tab === "changes" ? { q: params.q, context: params.context } : {},
+  );
+  const openHistory = (q = "", context = "") => {
+    setHistory({ q, context });
+    setTab("changes");
+  };
 
   useEffect(() => {
     if (tenantId === null) return;
@@ -1739,7 +2540,7 @@ export default function Routing({
           )}
         </Note>
       ) : (
-        <ContextCard summary={summary} />
+        <ContextCard summary={summary} onHistory={() => openHistory()} />
       )}
       <div className="tabbar sticky">
         {TABS.map((t) => (
@@ -1755,13 +2556,17 @@ export default function Routing({
           vrfs={summary?.vrfs ?? []}
           mgmt={!!summary?.mgmt_vrf}
           initial={params.tab === "routes" ? params : {}}
+          onHistory={openHistory}
         />
       )}
-      {tab === "peers" && <PeersTab tenantId={tenantId} />}
+      {tab === "changes" && (
+        <ChangesTab key={JSON.stringify(history)} tenantId={tenantId} nodes={nodes} initial={history} />
+      )}
+      {tab === "peers" && <PeersTab tenantId={tenantId} initial={params.tab === "peers" ? params : {}} />}
       {tab === "ha" && <HaTab tenantId={tenantId} />}
       {tab === "parallel" && <ParallelTab tenantId={tenantId} />}
       {tab === "policy" && <PolicyTab tenantId={tenantId} initialQ={params.tab === "policy" ? params.q : ""} />}
-      {tab === "l3out" && <L3OutTab tenantId={tenantId} />}
+      {tab === "l3out" && <L3OutTab tenantId={tenantId} canEdit={canEdit} initialQ={params.tab === "l3out" ? (params.q ?? "") : ""} />}
       {tab === "topology" && <TopologyTab tenantId={tenantId} />}
       {tab === "exits" && (
         <ExitsTab

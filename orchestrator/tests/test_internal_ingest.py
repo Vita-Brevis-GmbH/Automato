@@ -177,15 +177,8 @@ def test_publizierte_dienste_aus_vips(client, session_factory):
     )
     assert resp.status_code == 200
 
-    apps = client.get("/published-services").json()
-    assert any(a["name"] == "VIP_web" and a["rule_count"] == 1 for a in apps)
-
-    detail = client.get("/published-services/VIP_web").json()
-    assert detail["mapped_ip"] == "10.10.10.5"
-    assert detail["rules"][0]["services"] == ["tcp/443"]
-    assert detail["rules"][0]["sources"] == ["10.10.20.0/24"]
-
-    assert client.get("/published-services/nicht-da").status_code == 404
+    nat = next(n for n in client.get("/nat").json() if n["name"] == "VIP_web")
+    assert nat["mapped_ip"] == "10.10.10.5"
 
 
 def test_ergebnis_fuer_abgeschlossenen_lauf_wird_nur_quittiert(client):

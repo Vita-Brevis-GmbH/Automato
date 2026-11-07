@@ -22,7 +22,11 @@ export default defineConfig({
         target: tlsDir ? target.replace(/^http:/, "https:") : target,
         changeOrigin: true,
         secure: true, // Zertifikat des Orchestrators pruefen (bei HTTPS)
-        agent: tlsDir ? new Agent({ ca: readFileSync(`${tlsDir}/ca.crt`), keepAlive: true }) : undefined,
+        // Verbindungen wiederverwenden, unbenutzte nach 30 s selbst schliessen (0.139.2): der
+        // Orchestrator hält sie 75 s offen (app/serve.py) - bis 0.139.1 schloss er sie nach 5 s, und
+        // der Proxy nahm ab und zu eine, die gerade zuging („socket hang up“, HTTP 500). Ohne TLS
+        // intern öffnet der Proxy je Anfrage eine neue Verbindung.
+        agent: tlsDir ? new Agent({ ca: readFileSync(`${tlsDir}/ca.crt`), keepAlive: true, timeout: 30_000 }) : undefined,
         rewrite: (path) => path.replace(/^\/api/, ""),
       },
     },

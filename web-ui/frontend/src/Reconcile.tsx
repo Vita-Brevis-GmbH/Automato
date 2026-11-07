@@ -1,8 +1,12 @@
 // Abgleich (ADR 0010): Befunde je Typ, Referenzquellen des Mandanten und Vergleich des führenden
-// IPAM (z. B. Infoblox DDI) mit der Anreicherung (NetBox). Gegenüber den Quellsystemen rein lesend.
+// IPAM (z. B. Infoblox DDI) mit einer Anreicherung (NetBox, wählbar auch AD-DNS: dann nur die
+// DNS-Namen je IP, ADR 0045). Gegenüber den Quellsystemen rein lesend.
+// Reiter „Datenqualität“ (ADR 0029): wo Ergebnisse unsicher sind, mit Ursache und Link (#abgleich?tab=datenqualitaet).
 import { useCallback, useEffect, useState } from "react";
 import { fetchIpamCompare, fetchReconcileSummary, IpamCompare, RefBrief, ReconcileSummary, runReconcile } from "./api";
+import type { View, ViewParams } from "./App";
 import type { Me } from "./auth";
+import { DataQualityPanel } from "./DataQuality";
 import { FINDING_HINT, FINDING_LABEL, PLATFORM_LABEL, REF_ROLE_LABEL } from "./refs";
 import { Dash, Empty, ErrorBox, Icon, Loading, Note, PageHead } from "./ui";
 import { L } from "./i18n";
@@ -24,16 +28,23 @@ const TYPES = [
 ];
 
 
+type Tab = "befunde" | "datenqualitaet";
+const tabOf = (p: ViewParams): Tab => (p.tab === "datenqualitaet" ? "datenqualitaet" : "befunde");
+
 export default function Reconcile({
   me,
   tenantId,
   tenantLabel,
+  params = {},
+  onGo,
   onOpenFindings,
   onChanged,
 }: {
   me: Me;
   tenantId: number | null;
   tenantLabel: string;
+  params?: ViewParams; // tab=datenqualitaet (Kachel der Übersicht)
+  onGo?: (v: View, p?: ViewParams) => void; // Links der Datenqualität in die Ansichten
   onOpenFindings: (type: string) => void;
   onChanged: () => void;
 }) {
@@ -41,6 +52,12 @@ export default function Reconcile({
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const [stamp, setStamp] = useState(0);
+  const [tab, setTab] = useState<Tab>(() => tabOf(params));
+  useEffect(() => setTab(params.tab === "datenqualitaet" ? "datenqualitaet" : "befunde"), [params.tab]);
+  const choose = (t: Tab) => {
+    setTab(t);
+    onGo?.("abgleich", t === "befunde" ? {} : { tab: t });
+  };
 
   const load = useCallback(() => {
     if (tenantId === null) return;
@@ -108,8 +125,22 @@ export default function Reconcile({
         )}
       </PageHead>
       <ErrorBox error={error} prefix={L("Abgleich", "Reconciliation")} onClose={() => setError(null)} />
+      <div className="tabbar">
+        <button className={tab === "befunde" ? "on" : ""} onClick={() => choose("befunde")}>
+          {L("Befunde & IPAM", "Findings & IPAM")}
+        </button>
+        <button
+          id="data-quality-tab"
+          className={tab === "datenqualitaet" ? "on" : ""}
+          onClick={() => choose("datenqualitaet")}
+        >
+          {L("Datenqualität", "Data quality")}
+        </button>
+      </div>
 
-      {summary === null ? (
+      {tab === "datenqualitaet" ? (
+        <DataQualityPanel tenantId={tenantId} stamp={stamp} onGo={onGo} />
+      ) : summary === null ? (
         !error && <Loading />
       ) : (
         <>
@@ -207,9 +238,10 @@ export default function Reconcile({
 
 function Brief({ r }: { r: RefBrief | null }) {
   if (!r) return <span className="faint">{L("fehlt", "missing")}</span>;
+  const names = r.dns_names?.length ? r.dns_names : r.dns_name ? [r.dns_name] : [];
   return (
     <div className="refline">
-      {r.dns_name ? <span className="mono">{r.dns_name}</span> : null}
+      {names.length > 0 ? <span className="mono">{names.join(", ")}</span> : null}
       {r.vlan != null && <span className="chip">VLAN {r.vlan}</span>}
       {r.site && <span className="faint">{r.site}</span>}
       {r.description && <span className="faint">{r.description}</span>}
@@ -218,7 +250,7 @@ function Brief({ r }: { r: RefBrief | null }) {
           <Icon name="external" size={12} />
         </a>
       )}
-      {!r.dns_name && r.vlan == null && !r.site && !r.description && !r.url && <Dash />}
+      {names.length === 0 && r.vlan == null && !r.site && !r.description && !r.url && <Dash />}
     </div>
   );
 }
@@ -231,35 +263,47 @@ function IpamTable({ tenantId, summary }: { tenantId: number; summary: Reconcile
   const [offset, setOffset] = useState(0);
   const [data, setData] = useState<IpamCompare | null>(null);
   const [error, setError] = useState<unknown>(null);
+  // Anreicherung wählbar (0.123.0): z. B. NetBox oder AD-DNS; Zahlen der gewählten
+  const [enrichmentId, setEnrichmentId] = useState<number | null>(null);
+  const [counts, setCounts] = useState<IpamCompare | null>(null);
 
   useEffect(() => {
     const t = setTimeout(() => setQuery(q), 300);
     return () => clearTimeout(t);
   }, [q]);
-  useEffect(() => setOffset(0), [status, query]);
+  useEffect(() => setOffset(0), [status, query, enrichmentId]);
   useEffect(() => {
     if (!ipam.available) return;
     setData(null);
     setError(null);
     let current = true; // nur die Antwort zur letzten Anfrage (Filter schnell gewechselt)
-    fetchIpamCompare(tenantId, { status: status || undefined, q: query, limit: PAGE, offset })
-      .then((d) => current && setData(d))
+    const choice = enrichmentId != null ? { enrichment_id: enrichmentId } : {};
+    fetchIpamCompare(tenantId, { status: status || undefined, q: query, limit: PAGE, offset, ...choice })
+      .then((d) => {
+        if (!current) return;
+        setData(d);
+        setCounts(d); // Zahlen gelten ohne Filter und Suche
+      })
       .catch((e) => current && setError(e));
     return () => {
       current = false;
     };
-  }, [tenantId, ipam.available, status, query, offset]);
+  }, [tenantId, ipam.available, status, query, offset, enrichmentId]);
 
+  const shown = counts ?? ipam;
+  const dnsMode = shown.mode === "dns";
+  const enrichments = ipam.enrichments ?? [];
   const p = ipam.primary?.name ?? L("führend", "primary");
-  const e = ipam.enrichment?.name ?? L("Anreicherung", "enrichment");
+  const e = shown.enrichment?.name ?? L("Anreicherung", "enrichment");
   const label: Record<string, string> = {
     missing: L(`fehlt in ${e}`, `missing in ${e}`),
-    different: L("abweichend", "different"),
-    only_enrichment: L(`nur in ${e}`, `only in ${e}`),
+    different: dnsMode ? L("DNS-Name abweichend", "DNS name different") : L("abweichend", "different"),
+    only_enrichment: dnsMode ? L(`nur im DNS (${e})`, `only in DNS (${e})`) : L(`nur in ${e}`, `only in ${e}`),
   };
   const cls: Record<string, string> = { missing: "warn", different: "crit", only_enrichment: "info" };
   const kind: Record<string, string> = { prefix: L("Netz", "Network"), range: "Range", ip: "IP" };
-  const s = ipam.summary ?? {};
+  const s = shown.summary ?? {};
+  const states = dnsMode ? ["", "different", "only_enrichment"] : ["", "missing", "different", "only_enrichment"];
 
   return (
     <div className="card" style={{ marginTop: 8 }}>
@@ -275,18 +319,39 @@ function IpamTable({ tenantId, summary }: { tenantId: number; summary: Reconcile
           )}
         </h2>
         <span className="faint" style={{ fontSize: 12 }}>
-          {L(
-            <>Netze, Ranges und IPs mit DNS-Name – {p} ist führend</>,
-            <>Networks, ranges and IPs with DNS name – {p} is primary</>,
-          )}
+          {dnsMode
+            ? L(
+                <>DNS-Namen je IP aus dem DNS – IPs ohne DNS-Eintrag sind kein Fehler; {p} ist führend</>,
+                <>DNS names per IP from the DNS – IPs without a DNS record are not an error; {p} is primary</>,
+              )
+            : L(
+                <>Netze, Ranges und IPs mit DNS-Name – {p} ist führend</>,
+                <>Networks, ranges and IPs with DNS name – {p} is primary</>,
+              )}
         </span>
+        {enrichments.length > 1 && (
+          <select
+            id="ipam-enrichment"
+            className="sel input"
+            style={{ marginLeft: "auto", width: "auto" }}
+            value={shown.enrichment?.id ?? ""}
+            onChange={(ev) => setEnrichmentId(Number(ev.target.value))}
+            aria-label={L("Vergleich mit", "Compare with")}
+          >
+            {enrichments.map((x) => (
+              <option key={x.id} value={x.id}>
+                {L("Vergleich mit", "Compare with")} {x.name} ({PLATFORM_LABEL[x.platform] ?? x.platform})
+              </option>
+            ))}
+          </select>
+        )}
       </div>
       {!ipam.available ? (
         <div className="card-body pad">
           <Note>
             {L(
-              "Für den Vergleich braucht der Mandant ein führendes IPAM (z. B. Infoblox DDI) und eine Anreicherung (NetBox), beide eingelesen. Fehlende Einträge übernimmt später der NetBox-Sync (Vorschau + Übernehmen).",
-              "The comparison needs a primary IPAM (e.g. Infoblox DDI) and an enrichment (NetBox) for the tenant, both collected. Missing entries are applied later by the NetBox sync (Preview + Apply).",
+              "Für den Vergleich braucht der Mandant ein führendes IPAM (z. B. Infoblox DDI bzw. NetBox) und eine Anreicherung (NetBox bzw. AD-DNS), beide eingelesen. Fehlende Einträge übernimmt später der NetBox-Sync (Vorschau + Übernehmen).",
+              "The comparison needs a primary IPAM (e.g. Infoblox DDI or NetBox) and an enrichment (NetBox or AD DNS) for the tenant, both collected. Missing entries are applied later by the NetBox sync (Preview + Apply).",
             )}
           </Note>
         </div>
@@ -294,7 +359,7 @@ function IpamTable({ tenantId, summary }: { tenantId: number; summary: Reconcile
         <>
           <div className="filterbar" style={{ padding: "12px 16px 0" }}>
             <div className="seg">
-              {["", "missing", "different", "only_enrichment"].map((k) => (
+              {states.map((k) => (
                 <button key={k || "all"} className={status === k ? "on" : ""} onClick={() => setStatus(k)}>
                   {k ? label[k] : L("alle Abweichungen", "all deviations")} (
                   {k ? (s[k] ?? 0) : (s.missing ?? 0) + (s.different ?? 0) + (s.only_enrichment ?? 0)})

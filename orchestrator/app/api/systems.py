@@ -9,25 +9,36 @@ zugewiesenen Collector-Agenten (`agent_id`) beim Abholen eines Laufs übergeben 
 `token`, Cisco ACI: `username` + `password` (APIC-Login). Sie sind **nur schreibbar**:
 gespeichert verschlüsselt, ausgegeben wird nur `has_credentials`. Bei PATCH bleiben nicht
 angegebene Felder erhalten (z. B. nur das Passwort ändern), `""` entfernt ein Feld.
+
+Switches & Router (ADR 0033): `access` = `ssh` (Standard) bzw. `snmp` - mit SNMPv3 sind die
+Zugangsdaten `username`, `auth_password`, `priv_password` (Pflicht, authPriv), `auth_protocol`
+(SHA/SHA-2, Vorgabe sha256), `priv_protocol` (AES, Vorgabe aes128) und optional `context`.
+Ausgegeben werden davon nur die Protokolle (`snmp`). Ein Wechsel des Zugangs verwirft die
+bisherigen Zugangsdaten (sie gehören zum anderen Zugang).
+
+AD-DNS (ADR 0045): `base_url` = DNS-Server (`server`, `server:port` oder `dns://…`, gespeichert
+als `dns://server[:port]`), `read_scope` = Zonen (Pflicht, je Zeile), ohne Zugangsdaten, immer
+Anreicherung (ein DNS-Server kennt keine Netze).
 """
 
 import re
 from datetime import UTC, datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app import audit, credentials, schedule, scheduler
 from app.api.customer_filter import customer_view, own_view
 from app.auth.deps import require_admin, require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.config import get_settings
-from app.db import get_session
+from app.db import get_session, get_session_factory
 from app.i18n import L
 from app.models import (
+    DNS_PLATFORMS,
     REFERENCE_PLATFORMS,
     Agent,
     CollectorRun,
@@ -43,7 +54,7 @@ from app.models import (
     TopoContext,
 )
 from app.models.source_system import Platform
-from app.store import deletion, reachability, sites
+from app.store import app_refresh, deletion, reachability, sites
 from app.store import naming_profiles as profile_store
 
 router = APIRouter(prefix="/systems", tags=["systems"])
@@ -75,6 +86,14 @@ class SystemOut(BaseModel):
     parallel_group: str | None = None  # Verbund paralleler Firewalls (0.18.0)
     # Switches (0.62.0): festgehaltene SSH-Host-Schluessel je Adresse (nur Fingerabdruck)
     host_keys: list[dict] = []
+    # Switches & Router (ADR 0033): Zugang ssh | snmp; bei SNMPv3 nur die Protokolle und ob ein
+    # Context hinterlegt ist - nie Benutzer oder Passwoerter
+    access: str | None = None
+    snmp: dict | None = None
+
+
+SnmpAuth = Literal["sha", "sha224", "sha256", "sha384", "sha512"]
+SnmpPriv = Literal["aes128", "aes192", "aes256"]
 
 
 class SystemIn(BaseModel):
@@ -94,6 +113,13 @@ class SystemIn(BaseModel):
     username: str | None = Field(default=None, max_length=200)
     password: str | None = Field(default=None, max_length=4096)
     write_token: str | None = Field(default=None, max_length=4096)
+    # Switches & Router: Zugang (ADR 0033); SNMPv3-Zugangsdaten nur schreibbar wie die übrigen
+    access: Literal["ssh", "snmp"] | None = None
+    auth_protocol: SnmpAuth | Literal[""] | None = None
+    auth_password: str | None = Field(default=None, max_length=4096)
+    priv_protocol: SnmpPriv | Literal[""] | None = None
+    priv_password: str | None = Field(default=None, max_length=4096)
+    context: str | None = Field(default=None, max_length=200)
 
 
 class SystemPatch(BaseModel):
@@ -116,6 +142,13 @@ class SystemPatch(BaseModel):
     username: str | None = Field(default=None, max_length=200)
     password: str | None = Field(default=None, max_length=4096)
     write_token: str | None = Field(default=None, max_length=4096)
+    # Switches & Router (ADR 0033): Wechsel des Zugangs verwirft die bisherigen Zugangsdaten
+    access: Literal["ssh", "snmp"] | None = None
+    auth_protocol: SnmpAuth | Literal[""] | None = None
+    auth_password: str | None = Field(default=None, max_length=4096)
+    priv_protocol: SnmpPriv | Literal[""] | None = None
+    priv_password: str | None = Field(default=None, max_length=4096)
+    context: str | None = Field(default=None, max_length=200)
 
 
 class SystemDeleted(BaseModel):
@@ -169,6 +202,22 @@ def _reference_stats(session: Session, sources) -> dict[int, tuple[int, datetime
     return {sid: (counts.get(rid, 0), finished.get(rid)) for rid, sid in runs.items()}
 
 
+def _access_out(s: SourceSystem) -> str | None:
+    return (s.access or "ssh") if s.platform is Platform.CISCO_SWITCH else None
+
+
+def _snmp_out(s: SourceSystem) -> dict | None:
+    """SNMPv3 (ADR 0033): nur die Protokolle und ob ein Context hinterlegt ist."""
+    if not credentials.is_snmp(s.platform.value, s.access) or not s.credentials:
+        return None
+    try:
+        data = credentials.decrypt(s.credentials)
+    except credentials.CredentialsUnavailable:
+        return None
+    return {"auth_protocol": data.get("auth_protocol"), "priv_protocol": data.get("priv_protocol"),
+            "has_context": bool(data.get("context"))}  # fmt: skip
+
+
 def _has_write_token(s: SourceSystem) -> bool:
     if s.platform is not Platform.NETBOX or not s.credentials:
         return False
@@ -216,7 +265,7 @@ def _out(
         agent_id=s.agent_id,
         verify_tls=s.verify_tls,
         read_scope=s.read_scope,
-        has_credentials=credentials.complete(s.platform.value, s.credentials),
+        has_credentials=credentials.complete(s.platform.value, s.credentials, s.access),
         ref_role=s.ref_role,
         has_write_token=_has_write_token(s),
         reference_count=ref_count,
@@ -235,6 +284,8 @@ def _out(
             {"host": h, "fingerprint": fingerprint(k)}
             for h, k in sorted((s.ssh_host_keys or {}).items())
         ],  # fmt: skip
+        access=_access_out(s),
+        snmp=_snmp_out(s),
     )
 
 
@@ -267,35 +318,58 @@ def _check_agent(session: Session, agent_id: int | None, tenant_id: int | None) 
         raise HTTPException(status_code=422, detail="agent belongs to another tenant")
 
 
+_CREDENTIAL_KEYS = ("token", "username", "password", "write_token", "auth_protocol",
+                    "auth_password", "priv_protocol", "priv_password", "context")  # fmt: skip
+_PASSWORDS = ("password", "auth_password", "priv_password")  # ohne strip (Leerzeichen zaehlen)
+
+
 def _credential_changes(body: SystemIn | SystemPatch) -> dict[str, str]:
-    return {
-        key: value
-        for key in ("token", "username", "password", "write_token")
-        if (value := getattr(body, key)) is not None
-    }
+    return {key: value for key in _CREDENTIAL_KEYS if (value := getattr(body, key)) is not None}
 
 
-def _apply_credentials(src: SourceSystem, changes: dict[str, str]) -> bool:
+def _access(platform: Platform, value: str | None) -> str | None:
+    """Zugang eines Quellsystems (ADR 0033): nur bei Switches & Router; `ssh` = Standard."""
+    if value is None:
+        return None
+    if platform is not Platform.CISCO_SWITCH:
+        raise HTTPException(status_code=422, detail="access only supported for cisco_switch")
+    return value
+
+
+def _check_snmp(current: dict) -> None:
+    """SNMPv3 nur authPriv (ADR 0033): Protokolle mit Vorgabe, Passwoerter mit 8 Zeichen."""
+    for key, default in credentials.SNMP_DEFAULTS.items():
+        current[key] = current.get(key) or default
+    for key in ("auth_password", "priv_password"):
+        if len(current[key]) < credentials.SNMP_MIN_PASSWORD:
+            raise HTTPException(
+                status_code=422,
+                detail=f"{key}: at least {credentials.SNMP_MIN_PASSWORD} characters (SNMPv3)",
+            )
+
+
+def _apply_credentials(src: SourceSystem, changes: dict[str, str], reset: bool = False) -> bool:
     """Zugangsdaten-Felder setzen und verschlüsselt ablegen; True, wenn etwas geändert wurde.
 
     Nicht angegebene Felder bleiben erhalten, `""` entfernt ein Feld. Ein Gerät hat entweder
-    alle Felder seiner Plattform oder keine (422)."""
-    if not changes:
+    alle Felder seiner Plattform oder keine (422). `reset`: Zugang gewechselt - die bisherigen
+    Zugangsdaten gehören zum anderen Zugang und fallen weg."""
+    if not changes and not reset:
         return False
     platform = src.platform.value
-    required = credentials.FIELDS[platform]
-    allowed = required + credentials.OPTIONAL_FIELDS.get(platform, ())
+    required = credentials.fields(platform, src.access)
+    allowed = required + credentials.optional_fields(platform, src.access)
     unknown = sorted(set(changes) - set(allowed))
     if unknown:
         raise HTTPException(
             status_code=422, detail=f"{', '.join(unknown)} not supported for {platform}"
         )
     try:
-        current = credentials.decrypt(src.credentials) if src.credentials else {}
+        current = credentials.decrypt(src.credentials) if src.credentials and not reset else {}
     except credentials.CredentialsUnavailable:
         current = {}  # alter Schlüssel: Zugangsdaten nur noch vollständig neu setzbar
     for key, value in changes.items():
-        value = value if key == "password" else value.strip()
+        value = value if key in _PASSWORDS else value.strip()
         if value:
             current[key] = value
         else:
@@ -306,6 +380,11 @@ def _apply_credentials(src: SourceSystem, changes: dict[str, str]) -> bool:
         raise HTTPException(
             status_code=422, detail=f"{' and '.join(required)} required for {platform}"
         )
+    if credentials.is_snmp(platform, src.access):
+        if present:
+            _check_snmp(current)
+        else:
+            current = {}  # Protokolle/Context nur zusammen mit Benutzer und Passwoertern
     try:
         src.credentials = credentials.encrypt(current) if current else None
     except credentials.CredentialsUnavailable as exc:
@@ -373,17 +452,43 @@ def _switch_hosts(value: str) -> str:
     return "\n".join(hosts)
 
 
-def _switch_base_url(read_scope: str) -> str:
-    """Adresse fuer „Verbindung pruefen“: der erste Switch per SSH."""
+def _switch_base_url(read_scope: str, access: str | None = None) -> str:
+    """Adresse fuer „Verbindung pruefen“: der erste Switch per SSH bzw. SNMPv3 (ADR 0033)."""
     first = next(iter(read_scope.split()), "")
-    return f"ssh://{first}" if first else ""
+    scheme = "snmp" if access == "snmp" else "ssh"
+    return f"{scheme}://{first}" if first else ""
+
+
+def _zones(value: str) -> str:
+    """AD-DNS (ADR 0045): Zonen je Zeile bzw. kommagetrennt, klein, ohne Punkt am Ende."""
+    from sot_gateway.adapters.dns_zone import normalize_zones
+
+    try:
+        zones = normalize_zones(value or "")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if not zones:
+        raise HTTPException(status_code=422, detail="zones required")
+    return "\n".join(zones)
+
+
+def _dns_server(value: str) -> str:
+    """AD-DNS: Adresse des DNS-Servers als `dns://server[:port]`."""
+    from sot_gateway.adapters.dns_zone import server_url
+
+    try:
+        return server_url(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 def _read_scope(platform: Platform, value: str) -> str:
     """Lesebereich normalisieren: ACI- bzw. Avi-Tenant-Namen, kommagetrennt (Cisco ACI, NSX
-    ALB) bzw. die Adressen der Switches (Cisco-Switches)."""
+    ALB), die Adressen der Switches (Cisco-Switches) bzw. die Zonen (AD-DNS)."""
     if platform == Platform.CISCO_SWITCH:
         return _switch_hosts(value)
+    if platform == Platform.AD_DNS:
+        return _zones(value)
     names = [x.strip() for x in value.split(",") if x.strip()]
     if not names:
         return ""
@@ -393,7 +498,7 @@ def _read_scope(platform: Platform, value: str) -> str:
             raise HTTPException(status_code=422, detail=f"invalid Avi tenant name: {bad[0]}")
         return ",".join(dict.fromkeys(names))
     if platform != Platform.CISCO_ACI:
-        detail = "read_scope only supported for cisco_aci/cisco_switch/avi"
+        detail = "read_scope only supported for cisco_aci/cisco_switch/avi/ad_dns"
         raise HTTPException(status_code=422, detail=detail)
     bad = [n for n in names if not _ACI_NAME.match(n)]
     if bad:
@@ -403,11 +508,17 @@ def _read_scope(platform: Platform, value: str) -> str:
 
 def _apply_ref_role(session: Session, src: SourceSystem, role: str | None) -> None:
     """Rolle einer Referenzquelle setzen; nur ein fuehrendes IPAM je Mandant (andere werden zur
-    Anreicherung). Default: Infoblox fuehrend, NetBox fuehrend nur ohne andere fuehrende Quelle."""
+    Anreicherung). Default: Infoblox fuehrend, NetBox fuehrend nur ohne andere fuehrende Quelle;
+    AD-DNS (nur DNS-Namen, ADR 0045) immer Anreicherung."""
     if src.platform not in REFERENCE_PLATFORMS:
         if role is not None:
-            raise HTTPException(status_code=422, detail="ref_role only for infoblox/netbox")
+            raise HTTPException(status_code=422, detail="ref_role only for infoblox/netbox/ad_dns")
         src.ref_role = None
+        return
+    if src.platform in DNS_PLATFORMS:
+        if role == ReferenceRole.PRIMARY.value:
+            raise HTTPException(status_code=422, detail="ad_dns is enrichment only (DNS names)")
+        src.ref_role = ReferenceRole.ENRICHMENT.value
         return
     others = [
         s
@@ -542,6 +653,7 @@ def check_system(
         s.platform.value,
         token=secrets.get("token"),
         verify_tls=s.verify_tls,
+        zones=s.read_scope.split() if s.platform == Platform.AD_DNS else None,
     )
     return {"system_id": s.id, "name": s.name, "from": "orchestrator", **result.out()}
 
@@ -572,11 +684,14 @@ def create_system(
         verify_tls=body.verify_tls,
         read_scope=_read_scope(body.platform, body.read_scope),
         site_id=body.site_id,
+        access=_access(body.platform, body.access),
     )
     if src.platform == Platform.CISCO_SWITCH:
         if not src.read_scope:
             raise HTTPException(status_code=422, detail="switch addresses required")
-        src.base_url = src.base_url or _switch_base_url(src.read_scope)
+        src.base_url = src.base_url or _switch_base_url(src.read_scope, src.access)
+    if src.platform == Platform.AD_DNS:
+        src.base_url = _dns_server(src.base_url)
     _set_schedule(src, _schedule(body.schedule))
     _apply_credentials(src, _credential_changes(body))
     session.add(src)
@@ -598,6 +713,7 @@ def create_system(
             "ref_role": src.ref_role,
             "site_id": src.site_id,
             "schedule": src.schedule,
+            **({"access": src.access} if src.access else {}),
         },
     )
     return _out(src, {}, {}, {})
@@ -605,10 +721,12 @@ def create_system(
 
 @router.patch("/{system_id}", response_model=SystemOut)
 def update_system(
+    background: BackgroundTasks,
     system_id: int,
     body: SystemPatch,
     principal: Principal = Depends(require_admin),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ):
     """Quellsystem ändern - Admin. Mandantenwechsel nur, wenn keine Daten eines anderen
     Mandanten daran hängen (sonst stimmten Regeln und Quellsystem nicht mehr überein)."""
@@ -651,16 +769,25 @@ def update_system(
     src.site_id = site_id
     if data.get("base_url") is not None:
         src.base_url = data["base_url"].strip()
+        if src.platform == Platform.AD_DNS:
+            src.base_url = _dns_server(src.base_url)
     if data.get("enabled") is not None:
         src.enabled = data["enabled"]
     if data.get("verify_tls") is not None:
         src.verify_tls = data["verify_tls"]
+    access_changed = False  # Zugang gewechselt (ADR 0033): bisherige Zugangsdaten verwerfen
+    if data.get("access") is not None:
+        access = _access(src.platform, data["access"])
+        access_changed = (access or "ssh") != (src.access or "ssh")
+        src.access = access
+        if access_changed:
+            src.base_url = _switch_base_url(src.read_scope, src.access)
     if data.get("read_scope") is not None:
         src.read_scope = _read_scope(src.platform, data["read_scope"])
         if src.platform == Platform.CISCO_SWITCH:
             if not src.read_scope:
                 raise HTTPException(status_code=422, detail="switch addresses required")
-            src.base_url = _switch_base_url(src.read_scope)
+            src.base_url = _switch_base_url(src.read_scope, src.access)
             hosts = set(src.read_scope.split())  # Schluessel entfernter Switches vergessen
             src.ssh_host_keys = {h: k for h, k in (src.ssh_host_keys or {}).items()
                                  if h in hosts} or None  # fmt: skip
@@ -676,7 +803,7 @@ def update_system(
     regroup = "parallel_group" in data and (data["parallel_group"] or None) != src.parallel_group
     if "parallel_group" in data:
         src.parallel_group = (data["parallel_group"] or "").strip() or None
-    credentials_changed = _apply_credentials(src, _credential_changes(body))
+    credentials_changed = _apply_credentials(src, _credential_changes(body), reset=access_changed)
     session.flush()
     if regroup:
         if src.parallel_group and src.tenant_id is not None:  # von Hand gesetzt: Ablehnung weg
@@ -689,7 +816,7 @@ def update_system(
                 )
             )
             parallel.unreject(session, src.tenant_id, list(mates))
-        _regroup(session, src.tenant_id)
+        _regroup(session, src.tenant_id, background, factory)
     audit.record(
         session,
         actor=f"user:{principal.subject}",
@@ -707,20 +834,22 @@ def update_system(
             "schedule": src.schedule,
             "parallel_group": src.parallel_group,
             **({"host_keys_forgotten": forgotten} if forgotten else {}),
+            **({"access": src.access or "ssh"} if access_changed else {}),
         },
     )
     return _single_out(session, src)
 
 
-def _regroup(session: Session, tenant_id: int | None) -> None:
-    """Verbund geaendert: Befunde und Zwillinge im Regelindex neu (0.18.0)."""
+def _regroup(session: Session, tenant_id: int | None, background: BackgroundTasks,
+             factory: sessionmaker) -> None:  # fmt: skip
+    """Verbund geaendert: Zwillinge im Regelindex neu (0.18.0); die Befunde des Mandanten und
+    der Applikationen (Verbund = ein Hop, 0.59.0) seit 0.108.0 hinter der Antwort."""
     if tenant_id is None:
         return
-    from app.store import parallel, reconcile
+    from app.store import parallel
 
-    reconcile.reconcile_tenant(session, tenant_id)
     parallel.mark(session, tenant_id)
-    reconcile.refresh_app_findings(session, tenant_id)  # Verbund = ein Hop (0.59.0)
+    app_refresh.schedule_regroup(background, factory, tenant_id)
 
 
 class ParallelIn(BaseModel):
@@ -802,9 +931,11 @@ def _reject_ids(session: Session, body: ParallelRejectIn) -> list[int]:
 
 @router.post("/parallel-reject")
 def reject_parallel(
+    background: BackgroundTasks,
     body: ParallelRejectIn,
     principal: Principal = Depends(require_admin),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ) -> dict:
     """Vorschlag ablehnen bzw. Verbund aufloesen - Admin (0.19.0): diese Firewalls sind nicht
     parallel und werden nicht mehr vorgeschlagen."""
@@ -813,7 +944,7 @@ def reject_parallel(
     tenant_scope(principal, body.tenant_id)
     ids = _reject_ids(session, body)
     new = parallel.reject(session, body.tenant_id, ids)
-    _regroup(session, body.tenant_id)
+    _regroup(session, body.tenant_id, background, factory)
     audit.record(
         session,
         actor=f"user:{principal.subject}",
@@ -848,9 +979,11 @@ def unreject_parallel(
 
 @router.post("/parallel-group", response_model=list[SystemOut])
 def set_parallel_group(
+    background: BackgroundTasks,
     body: ParallelIn,
     principal: Principal = Depends(require_admin),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ):
     """Verbund paralleler Firewalls setzen - Admin. Die Regeln der Firewalls werden
     zusammengefasst, Abweichungen erscheinen als Findings (0.18.0)."""
@@ -872,7 +1005,7 @@ def set_parallel_group(
     from app.store import parallel
 
     parallel.unreject(session, body.tenant_id, body.system_ids)  # bewusst gesetzt
-    _regroup(session, body.tenant_id)
+    _regroup(session, body.tenant_id, background, factory)
     audit.record(
         session,
         actor=f"user:{principal.subject}",

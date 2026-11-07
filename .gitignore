@@ -47,3 +47,6 @@ docker-compose.override.yml
 # Playwright (UI-Tests)
 web-ui/frontend/test-results/
 web-ui/frontend/playwright-report/
+
+# Arbeitskopien der Hintergrund-Agenten (Claude Code), nie einchecken
+.claude/worktrees/

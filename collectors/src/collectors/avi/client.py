@@ -13,6 +13,8 @@ import httpx
 from sot_gateway.readonly import enforce_read_only
 from sot_gateway.readonly import get as read_get
 
+from collectors.common.i18n import L
+
 # Positivliste: nur diese Objekte liest Automato (keine Zertifikate, Schluessel, Benutzer)
 OBJECTS = (
     "virtualservice",
@@ -92,7 +94,12 @@ class AviClient:
         body = {"username": self._username, "password": self._password}
         response = self._client.post(f"{self._base}/login", json=body)
         if response.status_code in (401, 403):
-            raise RuntimeError("Avi-Login abgelehnt (Benutzer/Passwort pruefen)")
+            raise RuntimeError(
+                L(
+                    "Avi-Login abgelehnt (Benutzer/Passwort pruefen)",
+                    "Avi login rejected (check user/password)",
+                )
+            )
         response.raise_for_status()
         self._logged_in = True
         if not found:  # sonst angemeldet, erst dann die feste

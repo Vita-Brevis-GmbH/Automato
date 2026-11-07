@@ -1,7 +1,13 @@
 """Applikationen (ADR 0012): Stammdaten, Mitglieder (AP/EPG/Server), Vorschlaege, Doku.
 
-Lesen = `viewer`, Schreiben = `operator`, alles mandantsgescoped und auditiert. Die
-publizierten Dienste (VIPs) liegen unter /published-services.
+Lesen = `viewer`, Schreiben = `operator`, alles mandantsgescoped und auditiert. Die Doku je
+System und die publizierten Dienste sind seit 0.107.0 entfernt (Anwender) - VIPs zeigt NAT/VIP.
+
+Kunden-Benutzer mit der Kunden-Rolle `editor` (feinere Rollen, ADR 0018 Ergaenzung) pflegen
+Applikationen, die ganz zu ihren Kunden gehoeren (`customer_scope.Ownership`): Stammdaten,
+Regeln zuordnen bzw. ausschliessen (und rueckgaengig) und Regeln je Kategorie ausblenden - nur
+mit Regeln ihres Ausschnitts. Anlegen, Loeschen, Import, Vorschlaege und die Mitglieder AP, EPG
+und Server bleiben den Betreuern.
 """
 
 import re
@@ -13,23 +19,42 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from app import audit
-from app.api.appdoc import DocTableOut, SiteRef
-from app.api.customer_filter import customer_view, own_view
+from app import audit, modules
+from app.api.customer_filter import actor, customer_view, own_view, ownership
 from app.api.customer_filter import ids as view_ids
+from app.api.customer_filter import visible as in_view
 from app.audit import reads
+from app.auth import capabilities as caps
 from app.auth.deps import require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session, get_session_factory
 from app.i18n import L
-from app.models import Application, Rule, Site, SourceSystem, Tenant
+from app.models import Application, CollectorRun, Rule, Site, SourceSystem, Tenant
+from app.schemas.appdoc import DocTableOut, SiteRef
 from app.schemas.rules import RuleOut
-from app.store import app_import, app_paths, app_plan, app_refresh, sites, word_export
+from app.store import (
+    app_import,
+    app_plan,
+    app_refresh,
+    app_rules_read,
+    appdoc_catalog,
+    appdoc_ruleset,
+    customer_alias,
+    doc_snapshots,
+    peer_names,
+    sites,
+    word_export,
+)
 from app.store import applications as store
+from app.store import epgs as epg_store
+from app.store import naming_profiles as profile_store
 
 router = APIRouter(prefix="/applications", tags=["applications"])
+PLAN_KEYS_MAX = 5000  # Verbindungen im Filter des Exports (0.130.0, bis dahin 120)
 
-MemberKind = Literal["ap", "epg", "host", "rule", "norule"]  # rule/norule seit 0.60.0
+MemberKind = Literal[
+    "ap", "epg", "host", "vm", "rule", "norule"
+]  # rule/norule seit 0.60.0, vm 0.124.0
 Criticality = Literal["low", "medium", "high", "critical"]
 Purpose = Literal["dev", "test", "prod"]
 
@@ -49,6 +74,7 @@ class ApplicationIn(BaseModel):
     criticality: Criticality | None = None
     site_id: int | None = None
     description: str | None = None
+    infrastructure: bool = False  # Monitoring, Backup, DNS u. a. (0.88.0)
     members: list[MemberIn] = []
 
 
@@ -62,6 +88,7 @@ class ApplicationPatch(BaseModel):
     criticality: Criticality | None = None
     site_id: int | None = None
     description: str | None = None
+    infrastructure: bool | None = None
 
 
 class MembersIn(BaseModel):
@@ -90,9 +117,13 @@ class ApplicationOut(BaseModel):
     criticality: str | None
     site: SiteRef | None
     description: str | None
+    infrastructure: bool = False  # 0.88.0
     member_count: int
     system_count: int
     vm_count: int = 0  # VMs an den Portgruppen ihrer EPGs bzw. hinter ihren Servern (0.75.0)
+    # Feinere Rollen (ADR 0018): darf der Kunden-Benutzer sie pflegen (Kunden-Rolle editor und
+    # ganz in seinem Ausschnitt)? Betreuer: None - fuer sie gilt die Rolle
+    editable: bool | None = None
 
 
 class ApplicationDetailOut(ApplicationOut):
@@ -168,6 +199,8 @@ class DocEpgOut(BaseModel):
     vm_count: int = 0
     endpoint_count: int = 0
     member: str
+    # 0.126.1: EPG einer VM der Applikation, selbst kein Mitglied (ohne ihre uebrigen Regeln)
+    of_vm: bool = False
     rules: RuleCounts = RuleCounts()
 
 
@@ -176,7 +209,7 @@ class DocHitOut(BaseModel):
 
     rule_id: int
     system: str  # Schluessel aus systems/epgs
-    table: int  # Kategorie 1-10
+    table: int  # Kategorie 1-11
     direction: str  # in (System ist Ziel) | out (System ist Quelle)
     side: str = ""  # src | dst - Seite der Regel
     object: str = ""  # Objekt der Regel, das das System erfasst (H_web01, N_srv16, any, EPG …)
@@ -197,6 +230,23 @@ class DocHitOut(BaseModel):
     # ACI ist zustandslos (0.69.1): Treffer der Rueckrichtung (Provider -> Consumer, Filter
     # ohne Ports); `side` bleibt die Seite des Contracts, `direction` ist umgekehrt
     reverse: bool = False
+    # L3Outs (ADR 0034): L3Out des Zugriffs; Contract zu externen EPGs mit Firewall dahinter =
+    # Hilfs-Contract (`helper`, an den Firewall-Regeln `helper_for`); an der Firewall-Regel ihre
+    # Hilfs-Contracts je L3Out (`helpers`: l3out, rule_ids, names, missing); Hinweis am Contract
+    # ohne Firewall dahinter (`l3out_note`)
+    l3out: str | None = None
+    helper: bool = False
+    helper_for: list[int] = []
+    helpers: list[dict] = []
+    l3out_note: str = ""
+    # nicht in der Kategorie nach ihrer Auswahl spezifisch/unspezifisch (0.125.0, ADR 0046)
+    category_hidden: bool = False
+
+
+class DocFilteredOut(BaseModel):
+    key: str  # Bedingung des Regelwerks
+    title: str
+    count: int = 0
 
 
 class DocSummaryOut(BaseModel):
@@ -211,9 +261,15 @@ class DocSummaryOut(BaseModel):
     by_scope: dict[str, int] = {}  # subnet | any | vzany | pref_group
     findings: int = 0
     impossible: int = 0  # Regeln nur mit routingtechnisch unmoeglichen Treffern
+    outbound_broad: int = 0  # 0.103.0: ausgehende Firewall-Regeln mit breiter Quelle, nicht da
+    to_internet: int = 0  # 0.114.1: Freigaben ins Internet, die das System nur über all erfassen
     assigned: int = 0  # direkt zugeordnete Regeln (0.60.0)
     excluded: int = 0  # ausgeschlossene Regeln (0.60.0)
     hidden: int = 0  # in den Kategorien ausgeblendete Zeilen (0.69.0)
+    helpers: int = 0  # Hilfs-Contracts ueber L3Outs, an den Firewall-Regeln (ADR 0034)
+    # Regelwerk (0.118.0, ADR 0043): aktives Profil und je Bedingung die gezaehlten Regeln
+    ruleset: dict[str, str] | None = None
+    filtered: list[DocFilteredOut] = []
 
 
 class DocFindingOut(BaseModel):
@@ -227,6 +283,15 @@ class DocFindingOut(BaseModel):
     hint: str | None = None
     rule_id: int | None = None
     epgs: list[str] = []  # EPGs (Tenant/AP/EPG) des Befunds - Filter nach Tenant, AP, EPG
+
+
+class SnapshotOut(BaseModel):
+    """Stand der Doku (0.108.0, ADR 0037): wann berechnet, passt er noch, rechnet er gerade."""
+
+    built_at: datetime | None = None
+    fresh: bool = True
+    building: bool = False
+    seconds: float = 0.0  # Dauer der letzten Berechnung
 
 
 class ApplicationDocOut(BaseModel):
@@ -246,6 +311,13 @@ class ApplicationDocOut(BaseModel):
     hides: list[dict] = []
     # 0.78.2: Contracts Richtung L3Out, die weniger oeffnen als die Firewall-Regeln
     narrower: list[dict] = []
+    # ADR 0034: Hilfs-Contracts ueber L3Outs (nicht in `rules`) mit ihren Firewall-Regeln
+    helpers: list[dict] = []
+    # 0.101.0: Namen der Gegenstellen eingeschaltet (Einstellung des Mandanten, nur Betreuer)
+    peer_names: bool = False
+    snapshot: SnapshotOut | None = None  # 0.108.0: Stand der Doku
+    # 0.130.0: Namensprofil der Kategorien (Titel, Reihenfolge) - nur fuer Betreuer
+    catalog_profile: dict | None = None
 
 
 class RuleMemberIn(BaseModel):
@@ -257,18 +329,25 @@ class HideIn(BaseModel):
     """Regel(n) einer Zeile in einer Kategorie ausblenden (0.69.0): IPv4/IPv6-Paar = zwei."""
 
     rule_ids: list[int] = Field(min_length=1, max_length=4)
-    category: int | None = Field(default=None, ge=1, le=10)  # leer = alle Kategorien
+    category: int | None = Field(default=None, ge=1, le=99)  # leer = alle Kategorien (Katalog)
     reason: str = Field(min_length=5, max_length=1000)
 
 
-def _site(session: Session, site_id: int | None) -> SiteRef | None:
+def _site(session: Session, site_id: int | None,
+          index: sites.SiteIndex | None = None) -> SiteRef | None:  # fmt: skip
     site = session.get(Site, site_id) if site_id else None
-    ref = sites.SiteIndex(session, site.tenant_id).ref(site) if site else None
+    if site is None:
+        return None
+    ref = (index or sites.SiteIndex(session, site.tenant_id)).ref(site)
     return SiteRef(**ref) if ref else None
 
 
 def _out(session: Session, app: Application, resolver: store.Resolver,
-         vms: store.VmCounter | None = None) -> ApplicationOut:  # fmt: skip
+         vms: store.VmCounter | None = None,
+         site_index: sites.SiteIndex | None = None) -> ApplicationOut:  # fmt: skip
+    systems, vm_count = store.counts(
+        session, app, resolver, vms or store.VmCounter(session, app.tenant_id)
+    )
     return ApplicationOut(
         id=app.id,
         tenant_id=app.tenant_id,
@@ -279,16 +358,19 @@ def _out(session: Session, app: Application, resolver: store.Resolver,
         code=app.code,
         owner=app.owner,
         criticality=app.criticality,
-        site=_site(session, app.site_id),
+        site=_site(session, app.site_id, site_index),
         description=app.description,
+        infrastructure=bool(app.infrastructure),
         member_count=len(app.members),
-        system_count=store.system_count(session, app, resolver),
-        vm_count=(vms or store.VmCounter(session, app.tenant_id)).count(app, resolver),
+        system_count=systems,
+        vm_count=vm_count,
     )
 
 
-def _detail(session: Session, app: Application) -> ApplicationDetailOut:
+def _detail(session: Session, app: Application, editable: bool | None = None
+            ) -> ApplicationDetailOut:  # fmt: skip
     res = store.Resolver(session, app.tenant_id)
+    res.prefetch((m.kind, m.ref) for m in app.members)
     members = [
         MemberOut(
             id=m.id,
@@ -301,7 +383,8 @@ def _detail(session: Session, app: Application) -> ApplicationDetailOut:
         )
         for m, r, systems in store.resolved_members(session, app, res)
     ]
-    return ApplicationDetailOut(**_out(session, app, res).model_dump(), members=members)
+    out = _out(session, app, res).model_dump() | {"editable": editable}
+    return ApplicationDetailOut(**out, members=members)
 
 
 def _require_tenant(principal: Principal, tenant_id: int | None) -> int:
@@ -348,15 +431,28 @@ def list_applications(
     reads.maybe_audit_read(session, principal, tenant_id, "applications")
     view = customer_view(session, principal, tenant_id, customer_id)
     mine = view.applications(session) if view else None
+    owner = _owner(session, principal, tenant_id)
     resolvers: dict[int, store.Resolver] = {}
     counters: dict[int, store.VmCounter] = {}
+    site_indexes: dict[int, sites.SiteIndex] = {}
+    apps = [a for a in store.list_applications(session, tenant_id) if mine is None or mine(a)]
+    # 0.124.0: Server, Regeln und VMs aller Mitglieder je Mandant gebuendelt (vorher je Mitglied
+    # eine Abfrage - Anwender: „Das Laden der Applikationen extrem langsam“)
+    for tid in {a.tenant_id for a in apps}:
+        resolvers[tid] = store.Resolver(session, tid)
+        resolvers[tid].prefetch((m.kind, m.ref) for a in apps if a.tenant_id == tid
+                                for m in a.members)  # fmt: skip
     out = []
-    for app in store.list_applications(session, tenant_id):
-        if mine is not None and not mine(app):
-            continue
-        res = resolvers.setdefault(app.tenant_id, store.Resolver(session, app.tenant_id))
+    for app in apps:
+        res = resolvers[app.tenant_id]
         vms = counters.setdefault(app.tenant_id, store.VmCounter(session, app.tenant_id))
-        out.append(_out(session, app, res, vms))
+        if app.tenant_id not in site_indexes:  # einmal je Mandant (nicht je Applikation)
+            site_indexes[app.tenant_id] = sites.SiteIndex(session, app.tenant_id)
+        index = site_indexes[app.tenant_id]
+        row = _out(session, app, res, vms, index)
+        if principal.is_customer:  # feinere Rollen: darf er sie pflegen?
+            row.editable = owner is not None and owner.application(app, res)
+        out.append(row)
     return out
 
 
@@ -390,6 +486,7 @@ def create_application(
         criticality=body.criticality,
         site_id=body.site_id,
         description=body.description,
+        infrastructure=body.infrastructure,
     )
     session.add(app)
     session.flush()
@@ -505,6 +602,89 @@ def delete_applications(
     return {"deleted": len(apps)}
 
 
+@router.get("/doc-states")
+def doc_states(
+    tenant_id: int | None = None,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Stand der Doku je Applikation (0.129.0, Uebersicht): passend, veraltet, rechnet bzw. noch
+    nie gerechnet, dazu Vorrechnen und Befunde nachziehen. Nicht fuer Kunden-Benutzer (Betrieb)."""
+    if principal.is_customer:
+        raise HTTPException(status_code=403, detail=L("nur für den Betrieb", "operations only"))
+    tid = _require_tenant(principal, tenant_id)
+    return {**doc_snapshots.overview(session, tid), "refreshing": app_refresh.pending_count(tid)}
+
+
+class RuleSourceOut(BaseModel):
+    """FortiGate bzw. Cisco ACI fuer „Regeln neu einlesen“ (0.139.0)."""
+
+    source_system_id: int
+    name: str
+    platform: str
+    own: bool  # gehoert zur Applikation (vorgewaehlt)
+    reasons: list[str] = []  # rules = Regeln/Contracts der Doku, path = auf dem Weg
+    open_run: str | None = None  # liest bzw. wartet schon (dann uebersprungen)
+    last_full_run: str | None = None
+
+
+class ReadRulesIn(BaseModel):
+    source_system_ids: list[int] | None = None  # ohne Angabe: die der Applikation
+
+
+class ReadRulesItem(BaseModel):
+    source_system_id: int
+    name: str | None = None
+    run_id: str | None = None
+    execution: str | None = None
+    skipped: str | None = None
+
+
+class ReadRulesOut(BaseModel):
+    queued: int
+    items: list[ReadRulesItem]
+
+
+@router.get("/{application_id}/rule-sources", response_model=list[RuleSourceOut])
+def rule_sources(
+    application_id: int,
+    principal: Principal = Depends(require_operator),
+    session: Session = Depends(get_session, scope="function"),
+):
+    """Geraete fuer „Regeln neu einlesen“ (0.139.0, ADR 0047): FortiGates und Cisco ACI des
+    Mandanten, die der Applikation zuerst."""
+    if principal.is_customer:
+        raise HTTPException(status_code=403, detail=L("nur für den Betrieb", "operations only"))
+    app = _load(session, principal, application_id)
+    return app_rules_read.sources(session, app)
+
+
+@router.post("/{application_id}/read-rules", response_model=ReadRulesOut, status_code=202)
+def read_rules(
+    application_id: int,
+    payload: ReadRulesIn,
+    principal: Principal = Depends(require_operator),
+    session: Session = Depends(get_session, scope="function"),
+):
+    """Nur die Regeln der Geraete neu einlesen und danach nur diese Applikation neu rechnen
+    (0.139.0, ADR 0047) - rein lesend gegenueber den Geraeten, wie „Jetzt einlesen“."""
+    if principal.is_customer:
+        raise HTTPException(status_code=403, detail=L("nur für den Betrieb", "operations only"))
+    app = _load(session, principal, application_id)
+    if not modules.enabled(session, app.tenant_id, "worker"):
+        raise HTTPException(status_code=422, detail=modules.disabled_text("worker"))
+    items = app_rules_read.start(session, app, payload.source_system_ids,
+                                 f"user:{principal.subject}")  # fmt: skip
+    from app.jobs import celery_app  # spaet: Celery nur, wenn gelesen wird
+
+    for i in items:
+        if i["run_id"] and i["execution"] == "inprocess":
+            run = session.get(CollectorRun, i["run_id"])
+            celery_app.dispatch_collect(run.platform, run.id)
+    return ReadRulesOut(queued=sum(1 for i in items if i["run_id"]),
+                        items=[ReadRulesItem(**i) for i in items])  # fmt: skip
+
+
 @router.get("/candidates", response_model=list[CandidateOut])
 def list_candidates(
     response: Response,
@@ -517,7 +697,7 @@ def list_candidates(
 ):
     """Moegliche Mitglieder (APs, EPGs, Server) mit Projektnummer und bestehender Zuordnung."""
     tid = _require_tenant(principal, tenant_id)
-    items = store.candidates(session, tid)
+    items = store.candidates(session, tid, kinds=(kind,) if kind else None)
     if kind:
         items = [c for c in items if c.kind == kind]
     if q:
@@ -596,6 +776,45 @@ def _visible(session: Session, principal: Principal, app: Application):
     return view
 
 
+def _owner(session: Session, principal: Principal, tenant_id: int | None):
+    """Kunden-Benutzer (feinere Rollen): was ganz seinen Kunden mit `applications.edit` gehoert
+    (None = keiner); Betreuer: None."""
+    if not principal.is_customer or tenant_id is None:
+        return None
+    return ownership(session, principal, tenant_id, caps.APPS_EDIT)
+
+
+def _editable(session: Session, principal: Principal, app: Application) -> bool | None:
+    if not principal.is_customer:
+        return None
+    owner = _owner(session, principal, app.tenant_id)
+    return owner is not None and owner.application(app, store.Resolver(session, app.tenant_id))
+
+
+def _maintain(session: Session, principal: Principal, app: Application):
+    """Pflege durch einen Kunden-Benutzer: Applikation in seinem Ausschnitt (sonst 404) und ganz
+    bei seinen Kunden mit `applications.edit` (sonst 403). Betreuer: None (die Rolle genuegt)."""
+    if not principal.is_customer:
+        return None
+    _visible(session, principal, app)
+    owner = _owner(session, principal, app.tenant_id)
+    if owner is None or not owner.application(app, store.Resolver(session, app.tenant_id)):
+        raise HTTPException(
+            status_code=403,
+            detail=L(
+                "Applikation liegt nicht ganz beim Kunden – Pflege durch den Betreuer",
+                "application not entirely within the customer – maintained by staff",
+            ),
+        )
+    return owner
+
+
+def _own_rule(owner, rule_id: int | None) -> None:
+    """Kunden-Benutzer: nur Regeln seines Ausschnitts (sonst nicht auffindbar)."""
+    if owner is not None and rule_id not in owner.rules:
+        raise HTTPException(status_code=404, detail="rule not found")
+
+
 @router.get("/{application_id}", response_model=ApplicationDetailOut)
 def get_application(
     application_id: int,
@@ -605,7 +824,7 @@ def get_application(
     app = _load(session, principal, application_id)
     _visible(session, principal, app)
     reads.maybe_audit_read(session, principal, app.tenant_id, "applications")
-    return _detail(session, app)
+    return _detail(session, app, _editable(session, principal, app))
 
 
 @router.patch("/{application_id}", response_model=ApplicationDetailOut)
@@ -618,6 +837,7 @@ def update_application(
     factory: sessionmaker = Depends(get_session_factory),
 ):
     app = _load(session, principal, application_id)
+    owner = _maintain(session, principal, app)  # Kunden-Benutzer: nur eigene (editor)
     fields = body.model_fields_set
     if "name" in fields and body.name is not None:
         name = body.name.strip()
@@ -639,6 +859,8 @@ def update_application(
     for attr in ("owner", "criticality", "purpose", "description"):
         if attr in fields:
             setattr(app, attr, getattr(body, attr))
+    if "infrastructure" in fields and body.infrastructure is not None:
+        app.infrastructure = body.infrastructure
     store.touch(app)
     session.flush()
     audit.record(
@@ -654,11 +876,13 @@ def update_application(
             "criticality": app.criticality,
             "purpose": app.purpose,
             "site_id": app.site_id,
+            "infrastructure": app.infrastructure,
             "fields": sorted(fields),
+            **actor(principal),
         },
     )
     _refresh(background, factory, app.tenant_id, app.id)
-    return _detail(session, app)
+    return _detail(session, app, True if owner is not None else None)
 
 
 @router.delete("/{application_id}", status_code=204)
@@ -733,9 +957,21 @@ def remove_member(
     factory: sessionmaker = Depends(get_session_factory),
 ):
     app = _load(session, principal, application_id)
+    owner = _maintain(session, principal, app)  # Kunden-Benutzer: nur eigene (editor)
     member = next((m for m in app.members if m.id == member_id), None)
     if member is None:
         raise HTTPException(status_code=404, detail="member not found")
+    if owner is not None:  # Kunden-Benutzer: nur Regeln (zuordnen/ausschliessen rueckgaengig)
+        if member.kind not in store.RULE_KINDS:
+            raise HTTPException(
+                status_code=403,
+                detail=L(
+                    "AP, EPG und Server pflegt der Betreuer",
+                    "AP, EPG and servers are maintained by staff",
+                ),
+            )
+        rule = store.Resolver(session, app.tenant_id).rule(member.ref)
+        _own_rule(owner, rule.id if rule else None)
     app.members.remove(member)
     store.touch(app)
     session.flush()
@@ -749,27 +985,32 @@ def remove_member(
             "tenant_id": app.tenant_id,
             "kind": member.kind,
             "ref": member.ref,
+            **actor(principal),
         },
     )
     _refresh(background, factory, app.tenant_id, app.id)
-    return _detail(session, app)
+    return _detail(session, app, True if owner is not None else None)
 
 
 @router.get("/{application_id}/connections")
 def application_connections(
+    background: BackgroundTasks,
     application_id: int,
+    fresh: bool = False,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ) -> dict:
     """Verbindungen Ende zu Ende (0.45.0): je Verbindung der Weg ueber Firewalls und ACI mit
     der entscheidenden Policy bzw. dem Contract je Hop und dem Abgleich mit den Regeln der
-    Doku. Nicht fuer Kunden-Benutzer (Freigabeliste): der Weg zeigt die Infrastruktur."""
+    Doku, dazu der Netzwerkplan (0.67.0). Seit 0.108.0 als Stand (`snapshot`, ADR 0037):
+    sofort der letzte, neu im Hintergrund, wenn sich etwas geaendert hat; `fresh=true` rechnet
+    neu. Nicht fuer Kunden-Benutzer (Freigabeliste): der Weg zeigt die Infrastruktur."""
     app = _load(session, principal, application_id)
     reads.maybe_audit_read(session, principal, app.tenant_id, "applications")
-    out = app_paths.build(session, app)
-    # Netzwerkplan (0.67.0), kompakt nach AP/EPG (0.74.0)
-    out["plan"] = app_plan.build(out["connections"], members=out["members"])
-    return out
+    served = doc_snapshots.serve(session, factory, background, app, doc_snapshots.CONNECTIONS,
+                                 force=fresh)  # fmt: skip
+    return {**served.data, "snapshot": served.state()}
 
 
 _EXPORT = {"svg": ("image/svg+xml", "svg"), "drawio": ("application/xml", "drawio")}
@@ -777,23 +1018,55 @@ _EXPORT = {"svg": ("image/svg+xml", "svg"), "drawio": ("application/xml", "drawi
 
 @router.get("/{application_id}/connections/plan/export")
 def export_connections_plan(
+    background: BackgroundTasks,
     application_id: int,
     format: str = Query("svg", pattern="^(svg|drawio)$"),  # noqa: A002 - Name der Abfrage
     key: Annotated[list[str] | None, Query(description="nur diese Verbindungen")] = None,
     rules: bool = True,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ) -> Response:
     """Netzwerkplan der Applikation (0.67.0) als SVG bzw. draw.io - wie in der Ansicht; mit
     `key` nur die Verbindungen des Filters, mit `rules=false` ohne die Ebene „Regeln“ (0.74.0).
     Nicht fuer Kunden-Benutzer (Freigabeliste)."""
-    if key and len(key) > app_paths.MAX_TRACES:
+    return _plan_export(background, application_id, format, key, rules, principal, session,
+                        factory)  # fmt: skip
+
+
+class PlanExport(BaseModel):
+    """Export des Netzwerkplans mit vielen Verbindungen des Filters (0.130.0: mehr als in eine
+    Adresse passen)."""
+
+    format: str = Field("svg", pattern="^(svg|drawio)$")
+    keys: list[str] | None = Field(None, max_length=PLAN_KEYS_MAX)
+    rules: bool = True
+
+
+@router.post("/{application_id}/connections/plan/export")
+def export_connections_plan_post(
+    background: BackgroundTasks,
+    application_id: int,
+    body: PlanExport,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
+) -> Response:
+    """Wie GET, die Verbindungen des Filters im Rumpf (nur lesend)."""
+    return _plan_export(background, application_id, body.format, body.keys, body.rules,
+                        principal, session, factory)  # fmt: skip
+
+
+def _plan_export(background, application_id, format, key, rules, principal, session,  # noqa: A002
+                 factory) -> Response:  # fmt: skip
+    if key and len(key) > PLAN_KEYS_MAX:
         raise HTTPException(
             status_code=422, detail=L("zu viele Verbindungen", "too many connections")
         )
     app = _load(session, principal, application_id)
     reads.maybe_audit_read(session, principal, app.tenant_id, "applications")
-    built = app_paths.build(session, app)
+    built = doc_snapshots.serve(session, factory, background, app, doc_snapshots.CONNECTIONS,
+                                wait=True).data  # fmt: skip
     plan = app_plan.build(built["connections"], set(key) if key else None, built["members"])
     when = datetime.now(UTC)
     title = f"{L('Netzwerkplan', 'Network diagram')} {app.name}"
@@ -807,17 +1080,20 @@ def export_connections_plan(
 
 @router.get("/{application_id}/export")
 def export_application(
+    background: BackgroundTasks,
     application_id: int,
-    format: str = Query("zip", pattern="^(docx|zip)$"),  # noqa: A002 - Name der Abfrage
+    format: str = Query("zip", pattern="^(docx|zip|md)$"),  # noqa: A002 - Name der Abfrage
     sections: str | None = Query(None, max_length=200),
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ) -> Response:
     """Export fuer Confluence (0.71.0, ADR 0026): die Applikations-Doku als Word (`docx`) bzw.
     als ZIP mit Word und dem Netzwerkplan als draw.io (`zip`) - zum Verbessern in Word/draw.io
     und Import von Hand. Seit 0.73.0 `sections` (Komma-Liste aus `word_export.SECTIONS`, leer =
-    alle) wie im Export-Dialog; den Plan legt das ZIP nur mit `plan` bei. Nicht fuer
-    Kunden-Benutzer (Verbindungen zeigen die Infrastruktur)."""
+    alle) wie im Export-Dialog; den Plan legt das ZIP nur mit `plan` bei. Seit 0.104.0 auch
+    Markdown (`md`) aus demselben Aufbau (bisher in der Oberflaeche gebaut). Kunden-Benutzer
+    ohne Verbindungen (sie zeigen die Infrastruktur)."""
     want = None
     if sections:
         want = {s.strip() for s in sections.split(",") if s.strip()}
@@ -825,27 +1101,45 @@ def export_application(
             raise HTTPException(
                 status_code=422, detail=L("unbekannter Abschnitt", "unknown section")
             )
-    with_plan = want is None or "plan" in want
     app = _load(session, principal, application_id)
+    view = _visible(session, principal, app)  # Kunden-Benutzer: ihr Ausschnitt (ADR 0018)
+    if principal.is_customer:  # ohne Infrastruktur: keine Verbindungen, kein Plan
+        want = (set(word_export.SECTIONS) if want is None else want) - {"connections", "plan"}
+        format = "docx" if format == "zip" else format
+    with_plan = want is None or "plan" in want
     reads.maybe_audit_read(session, principal, app.tenant_id, "applications")
-    doc = store.build_doc(session, app, None)
+    names = peer_names.enabled(session, app.tenant_id, principal.is_customer)  # 0.95.0
+    # Stand der Doku (0.108.0): der aktuelle - ein alter wird hier neu gerechnet
+    doc = _doc(session, factory, background, app, view_ids(session, view, "rule"), names,
+               wait=True).data  # fmt: skip
+    if want is None or "dependencies" in want:  # 0.88.0
+        visible = _visible_apps(session, principal, app)
+        doc["dependencies"] = store.dependencies(session, app, doc, visible)
     out = ApplicationDocOut(
         application=_out(session, app, store.Resolver(session, app.tenant_id)), **doc
     ).model_dump(mode="json")
     needs_paths = want is None or bool(want & {"connections", "plan"})
-    conns = app_paths.build(session, app) if needs_paths else None
+    conns = doc_snapshots.serve(session, factory, background, app, doc_snapshots.CONNECTIONS,
+                                wait=True).data if needs_paths else None  # fmt: skip
     when = datetime.now(UTC)
     tenant = session.get(Tenant, app.tenant_id)
     sources = dict(session.execute(
         select(SourceSystem.id, SourceSystem.name).where(SourceSystem.tenant_id == app.tenant_id)
     ).all())  # fmt: skip
+    if principal.is_customer:  # ohne Geraetenamen (0.58.0) - die Middleware sieht nur JSON
+        aliases = customer_alias.Aliases(session, [app.tenant_id])
+        out = aliases.clean(out)
+        sources = {sid: aliases.systems.get(sid, "") for sid in sources}
+        tenant = None
     base = (f"{L('applikation', 'application')}-{word_export.slug(app.name, 'applikation')}"
             f"-{when:%Y-%m-%d}")  # fmt: skip
     plan_file = f"{base}-{L('netzwerkplan', 'network-diagram')}.drawio"
     body = word_export.application(out, conns, sources, when, tenant.name if tenant else None,
                                    plan_file if format == "zip" and with_plan else None,
-                                   want)  # fmt: skip
-    if format == "docx":
+                                   want, "md" if format == "md" else "docx")  # fmt: skip
+    if format == "md":
+        media, name = "text/markdown; charset=utf-8", f"{base}.md"
+    elif format == "docx":
         media, name = _DOCX, f"{base}.docx"
     else:
         files = [(f"{base}.docx", body)]
@@ -864,30 +1158,156 @@ def export_application(
 _DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 
+def _doc(session: Session, factory: sessionmaker, background: BackgroundTasks,
+         app: Application, rule_ids: set[int] | None, names: bool, force: bool = False,
+         wait: bool = False) -> doc_snapshots.Served:  # fmt: skip
+    """Doku als Stand (0.108.0, ADR 0037) - die Befunde darin immer aktuell."""
+    served = doc_snapshots.serve(session, factory, background, app, doc_snapshots.DOC, rule_ids,
+                                 names, force=force, wait=wait)  # fmt: skip
+    doc = served.data
+    if served.stored:
+        doc["findings"] = store.doc_findings(session, app, doc, rule_ids is not None)
+        doc["summary"]["findings"] = len(doc["findings"])
+    return served
+
+
 @router.get("/{application_id}/doc", response_model=ApplicationDocOut)
 def application_doc(
+    background: BackgroundTasks,
     application_id: int,
     dependencies: bool = False,
+    fresh: bool = False,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ):
     """Applikations-Doku ueber alle Systeme der Applikation (Tabellen 1–10). Abhaengigkeiten zu
-    anderen Applikationen (0.60.0) seit 0.73.0 nur mit `dependencies=true` - in der Oberflaeche
-    vorerst entfernt (Anwender: Monitoring u. a. sind keine fachlichen Abhaengigkeiten)."""
+    anderen Applikationen (0.60.0) seit 0.73.0 nur mit `dependencies=true`; die Oberflaeche holt
+    sie seit 0.88.0 einzeln ueber `GET …/dependencies`. Gegenstellen nur mit Adresse nennen
+    seit 0.95.0 ihren Namen, wenn der Mandant es vorsieht - nie fuer Kunden-Benutzer.
+
+    Seit 0.108.0 als Stand (`snapshot`, ADR 0037): sofort der letzte, im Hintergrund neu, wenn
+    sich etwas geaendert hat (`GET …/doc/state` sagt, wann er fertig ist); `fresh=true` rechnet
+    neu (Schaltflaeche „neu berechnen“)."""
     app = _load(session, principal, application_id)
     view = _visible(session, principal, app)
     reads.maybe_audit_read(session, principal, app.tenant_id, "applications")
-    doc = store.build_doc(session, app, view_ids(session, view, "rule"))
-    visible = None
-    if view is not None:  # Kunden-Benutzer: nur Applikationen in ihrem Ausschnitt
-        mine = view.applications(session)
-        stmt = select(Application).where(Application.tenant_id == app.tenant_id)
-        visible = {a.id for a in session.scalars(stmt) if mine(a)}
+    editable = _editable(session, principal, app)
+    names = peer_names.enabled(session, app.tenant_id, principal.is_customer)
+    served = _doc(session, factory, background, app, view_ids(session, view, "rule"), names,
+                  force=fresh)  # fmt: skip
+    doc = served.data
+    doc["peer_names"] = names
+    if principal.is_customer:
+        doc["catalog_profile"] = None
+    if not modules.enabled(session, app.tenant_id, "findings"):  # Modul aus (0.107.0)
+        doc["findings"] = []
     if dependencies:
+        visible = _visible_apps(session, principal, app)
         doc["dependencies"] = store.dependencies(session, app, doc, visible)
-    return ApplicationDocOut(
-        application=_out(session, app, store.Resolver(session, app.tenant_id)), **doc
-    )
+    out = _out(session, app, store.Resolver(session, app.tenant_id))
+    out.editable = editable
+    return ApplicationDocOut(application=out, snapshot=served.state(), **doc)
+
+
+@router.get("/{application_id}/ruleset-compare")
+def application_ruleset_compare(
+    application_id: int,
+    key: str | None = None,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Regelwerke vergleichen (0.120.0): ohne `key` das aktive und die Profile zur Auswahl; mit
+    `key` rechnet die Doku mit beiden Regelwerken - nur auf Knopfdruck (Anwender: „damit nicht zu
+    viele Ressourcen verbraucht werden“), nichts gespeichert. Nicht fuer Kunden-Benutzer."""
+    app = _load(session, principal, application_id)
+    if principal.is_customer:  # Regelwerk und Wege der Infrastruktur
+        raise HTTPException(status_code=403, detail="forbidden")
+    pid = profile_store.profile_id_for_tenant(session, app.tenant_id)
+    current = appdoc_ruleset.for_profile(session, pid)
+    found = {p.key: p for p in appdoc_ruleset.profiles(session, pid)}
+    if key is None:
+        return {"current": {"key": current.key, "title": appdoc_ruleset.title(current)},
+                "profiles": [{"key": p.key, "title": appdoc_ruleset.title(p),
+                              "description": appdoc_ruleset.description(p)}
+                             for p in found.values()]}  # fmt: skip
+    if key not in found:
+        raise HTTPException(status_code=404, detail=f"unknown ruleset {key!r}")
+    return store.compare_rulesets(session, app, found[key])
+
+
+@router.get("/{application_id}/doc/state", response_model=SnapshotOut)
+def application_doc_state(
+    application_id: int,
+    kind: Literal["doc", "connections"] = "doc",
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+):
+    """Stand der Doku bzw. der Verbindungen (0.108.0): wann berechnet, ob er noch zu den
+    Eingaben passt und ob er gerade neu rechnet - die Oberflaeche fragt, bis er fertig ist."""
+    app = _load(session, principal, application_id)
+    view = _visible(session, principal, app)
+    if kind == doc_snapshots.CONNECTIONS:
+        if principal.is_customer:  # Verbindungen zeigen die Infrastruktur
+            raise HTTPException(status_code=403, detail="forbidden")
+        return doc_snapshots.state(session, app, kind)
+    names = peer_names.enabled(session, app.tenant_id, principal.is_customer)
+    return doc_snapshots.state(session, app, kind, view_ids(session, view, "rule"), names)
+
+
+def _visible_apps(session: Session, principal: Principal, app: Application) -> set[int] | None:
+    """Kunden-Benutzer: nur Applikationen in ihrem Ausschnitt (sonst None = alle)."""
+    view = _visible(session, principal, app)
+    if view is None:
+        return None
+    mine = view.applications(session)
+    stmt = select(Application).where(Application.tenant_id == app.tenant_id)
+    return {a.id for a in session.scalars(stmt) if mine(a)}
+
+
+@router.get("/{application_id}/epgs/{epg_id}")
+def application_epg(
+    application_id: int,
+    epg_id: int,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """EPG der Applikations-Doku im Detail (0.95.0, Anwender: „Detailseite statt zu den Regeln
+    springen“): die Lage wie im Regel-Detail (`epgs.details` - Tenant, AP, BD, VRF, Subnetze mit
+    IPAM, Endpunkte, VMs, Leaf-Ports und VLANs). Nur EPGs der Applikation; Kunden-Benutzer nur
+    in ihrem Ausschnitt (sonst 404), Geraetenamen neutral wie ueberall (`customer_alias`)."""
+    app = _load(session, principal, application_id)
+    view = _visible(session, principal, app)
+    reads.maybe_audit_read(session, principal, app.tenant_id, "applications")
+    _hosts, epgs = store.app_systems(session, app)
+    epg = next((e for e in epgs if e.id == epg_id), None)
+    if epg is None:
+        raise HTTPException(status_code=404, detail="epg not found")
+    if view is not None:
+        in_view(session, view, "epg", epg.id)
+    return epg_store.details(session, app.tenant_id, [epg])[epg.id]
+
+
+@router.get("/{application_id}/dependencies")
+def application_dependencies(
+    background: BackgroundTasks,
+    application_id: int,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
+) -> dict:
+    """Abhaengigkeiten zu anderen Applikationen (0.60.0, seit 0.88.0 wieder in der Doku): die
+    Oberflaeche holt sie erst, wenn der Bereich aufgeklappt wird. Je Eintrag `infrastructure`
+    (Monitoring, Backup, DNS u. a.) - getrennt von den fachlichen Abhaengigkeiten."""
+    app = _load(session, principal, application_id)
+    view = _visible(session, principal, app)
+    reads.maybe_audit_read(session, principal, app.tenant_id, "applications")
+    names = peer_names.enabled(session, app.tenant_id, principal.is_customer)
+    doc = doc_snapshots.serve(
+        session, factory, background, app, doc_snapshots.DOC, view_ids(session, view, "rule"), names
+    ).data  # Stand (0.108.0)
+    deps = store.dependencies(session, app, doc, _visible_apps(session, principal, app))
+    return {**deps, "infrastructure": bool(app.infrastructure)}
 
 
 @router.post("/{application_id}/hidden", status_code=201)
@@ -900,14 +1320,24 @@ def hide_rules(
     """Regel in einer Kategorie (bzw. in allen) der Doku ausblenden - mit Begruendung, im Audit
     (0.69.0). Die Regel bleibt sonst in der Doku; der Verweis haelt ueber neue Laeufe."""
     app = _load(session, principal, application_id)
+    owner = _maintain(session, principal, app)  # Kunden-Benutzer: nur eigene (editor)
     reason = body.reason.strip()
     if len(reason) < 5:
         raise HTTPException(status_code=422, detail=L("Begründung zu kurz", "reason too short"))
-    out = []
+    if (
+        body.category is not None
+        and appdoc_catalog.for_tenant(session, app.tenant_id).get(body.category) is None
+    ):  # Kategorien des Mandanten (0.104.0)
+        raise HTTPException(status_code=422, detail=f"unknown category {body.category}")
+    rules = []
     for rule_id in dict.fromkeys(body.rule_ids):
         rule = session.get(Rule, rule_id)
         if rule is None or rule.tenant_id != app.tenant_id:
             raise HTTPException(status_code=404, detail="rule not found")
+        _own_rule(owner, rule.id)
+        rules.append(rule)
+    out = []
+    for rule in rules:
         hide = store.hide_rule(session, app, rule, body.category, reason, _actor(principal))
         audit.record(
             session,
@@ -920,6 +1350,7 @@ def hide_rules(
                 "rule_ref": hide.rule_ref,
                 "category": hide.category,
                 "reason": reason[:500],
+                **actor(principal),
             },  # fmt: skip
         )
         out.append(store.hide_out(hide))
@@ -935,9 +1366,14 @@ def show_rule(
 ) -> Response:
     """Ausgeblendete Regel wieder einblenden (0.69.0), im Audit mit der alten Begruendung."""
     app = _load(session, principal, application_id)
+    owner = _maintain(session, principal, app)  # Kunden-Benutzer: nur eigene (editor)
     hide = next((h for h in app.hides if h.id == hide_id), None)
     if hide is None:
         raise HTTPException(status_code=404, detail="hide not found")
+    if owner is not None:  # Kunden-Benutzer: nur Regeln seines Ausschnitts
+        rule = store.Resolver(session, app.tenant_id).rule(hide.rule_ref)
+        if rule is None or rule.id not in owner.rules:
+            raise HTTPException(status_code=404, detail="hide not found")
     app.hides.remove(hide)
     session.flush()
     audit.record(
@@ -951,6 +1387,7 @@ def show_rule(
             "rule_ref": hide.rule_ref,
             "category": hide.category,
             "reason": hide.reason[:500],
+            **actor(principal),
         },  # fmt: skip
     )
     return Response(status_code=204)
@@ -968,9 +1405,11 @@ def assign_rule(
     """Regel direkt zuordnen bzw. ausschliessen (0.60.0): Mitglied `rule` bzw. `norule` mit
     stabilem Verweis (Quellsystem, VDOM, Policy-ID bzw. DN) - die Gegenrichtung faellt weg."""
     app = _load(session, principal, application_id)
+    owner = _maintain(session, principal, app)  # Kunden-Benutzer: nur eigene (editor)
     rule = session.get(Rule, body.rule_id)
     if rule is None or rule.tenant_id != app.tenant_id:
         raise HTTPException(status_code=404, detail="rule not found")
+    _own_rule(owner, rule.id)
     ref = store.rule_ref(rule)
     kind = "norule" if body.exclude else "rule"
     for m in [m for m in app.members if m.ref == ref and m.kind in store.RULE_KINDS]:
@@ -982,7 +1421,13 @@ def assign_rule(
         actor=_actor(principal),
         action="application.member_added",
         subject=str(app.id),
-        detail={"application_id": app.id, "tenant_id": app.tenant_id, "kind": kind, "ref": ref},
+        detail={
+            "application_id": app.id,
+            "tenant_id": app.tenant_id,
+            "kind": kind,
+            "ref": ref,
+            **actor(principal),
+        },  # fmt: skip
     )
     _refresh(background, factory, app.tenant_id, app.id)
-    return _detail(session, app)
+    return _detail(session, app, True if owner is not None else None)

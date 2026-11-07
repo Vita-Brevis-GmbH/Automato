@@ -1,18 +1,48 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { cancelRun, fetchOpsHealth, fetchRunsPage, fetchSystems, OpsHealth, Run, System, Tenant } from "./api";
+import {
+  cancelRun,
+  fetchModules,
+  fetchOpsHealth,
+  fetchRunsPage,
+  fetchSystems,
+  ModuleInfo,
+  ModuleKey,
+  OpsHealth,
+  Run,
+  System,
+  Tenant,
+} from "./api";
 import { HealthChip, HealthTable } from "./Health";
-import type { Stats, View } from "./App";
+import type { Stats, View, ViewParams } from "./App";
 import type { Me } from "./auth";
 import CollectDialog, { CollectAllDialog } from "./CollectDialog";
-import { RunsTable } from "./Runs";
+import { DataQualityTile } from "./DataQuality";
 import { ErrorBox, Icon, Loading, PageHead } from "./ui";
 import { FoldTitle, useFolds } from "./fold";
 import { L } from "./i18n";
+import {
+  AppsCard,
+  DocsCard,
+  FindingsChart,
+  LayoutEditor,
+  ObjectsCard,
+  QuickViews,
+  RoutingChanges,
+  RulesCard,
+  RunsChart,
+  RunsList,
+  useLayout,
+  WIDGETS,
+  ZonesCard,
+  type WidgetKey,
+  type WidgetMeta,
+} from "./modules/kern/Dashboard";
 
 const RECENT = 8; // letzte Läufe; offene kommen immer dazu (auch ältere, siehe Läufe-Ansicht)
 
 // Übersicht/Dashboard: KPIs, letzte Läufe (inkl. "Jetzt einlesen") und Regeln je Ziel-Zone.
-// Respektiert den Mandanten-Switcher.
+// Respektiert den Mandanten-Switcher. Seit 0.117.0 Bereiche an- und abwählbar und verschiebbar
+// („Ansicht anpassen“), dazu Grafiken, Schnellansichten, Routing, Applikationen, Regeln, Objekte.
 export default function Overview({
   me,
   tenantId,
@@ -27,13 +57,12 @@ export default function Overview({
   tenantLabel: string;
   tenants: Tenant[];
   stats: Stats;
-  onGo: (v: View) => void;
+  onGo: (v: View, p?: ViewParams) => void;
   onReload: () => void;
 }) {
   const [runs, setRuns] = useState<Run[] | null>(null);
   const { fold } = useFolds("automato_overview_folds"); // 0.75.0: Bereiche zuklappbar
   const runsFold = fold("runs");
-  const zoneFold = fold("zones");
   const [runsTotal, setRunsTotal] = useState(0);
   const [openTotal, setOpenTotal] = useState(0);
   const [runsErr, setRunsErr] = useState<unknown>(null);
@@ -41,7 +70,16 @@ export default function Overview({
   const [collectOpen, setCollectOpen] = useState(false);
   const [collectAllOpen, setCollectAllOpen] = useState(false);
   const [health, setHealth] = useState<OpsHealth | null>(null);
+  const layout = useLayout();
+  const [editing, setEditing] = useState(false);
+  const [mods, setMods] = useState<ModuleInfo[] | null>(null);
+  useEffect(() => {
+    fetchModules(tenantId)
+      .then(setMods)
+      .catch(() => setMods(null));
+  }, [tenantId]);
   const customer = me.isCustomer; // Kunden-Benutzer: nur die Doku, kein Betrieb (ADR 0018)
+  const quality = !customer && tenantId !== null; // Datenqualität (ADR 0029) je Mandant, nicht für Kunden-Benutzer
   useEffect(() => {
     if (customer) return;
     fetchOpsHealth(tenantId)
@@ -122,94 +160,82 @@ export default function Overview({
   const systemName = (id: number | null) =>
     id == null ? "–" : (systems.find((s) => s.id === id)?.name ?? `#${id}`);
 
-  const zoneRows = (rules?.by_dst_zone ?? []).slice(0, 8);
-  const zoneMax = zoneRows.reduce((m, [, n]) => Math.max(m, n), 1);
   const val = (n: number) => (rules === null ? "…" : n);
 
-  return (
-    <>
-      <PageHead
-        title={L("Übersicht", "Overview")}
-        actions={
-          me.isOperator &&
-          !customer && (
-            <>
-              {tenantId !== null && (
-                <button className="btn btn-ghost btn-sm" onClick={() => setCollectAllOpen(true)}>
-                  {L("Alle einlesen", "Collect all")}
-                </button>
-              )}
-              <button className="btn btn-primary btn-sm" onClick={() => setCollectOpen(true)}>
-                <Icon name="play" size={13} /> {L("Jetzt einlesen", "Collect now")}
-              </button>
-            </>
-          )
-        }
-      >
-        {L(
-          <>Mandant „{tenantLabel}“ – Stand der letzten Importe.</>,
-          <>Tenant “{tenantLabel}” – state of the latest imports.</>,
-        )}
-      </PageHead>
-
-      <ErrorBox error={stats.error} prefix={L("Daten laden", "Loading data")} />
-      {health && health.problems > 0 && (
-        <div className="card" style={{ marginBottom: 16 }}>
-          <div className="card-head">
-            <h2>{L("Betriebszustand", "Health")}</h2>
-            <HealthChip health={health} />
+  // Bereiche der Übersicht (0.117.0): an- und abwählbar, verschiebbar („Ansicht anpassen“)
+  const on = (m?: ModuleKey) => !m || !mods || mods.find((x) => x.key === m)?.effective !== false;
+  const available = (w: WidgetMeta) => on(w.module) && !(w.staff && customer) && !(w.tenant && tenantId === null);
+  const section = (k: WidgetKey) => {
+    switch (k) {
+      case "health":
+        return health && health.problems > 0 ? (
+          <div className="card" id="dash-health">
+            <div className="card-head">
+              <h2>{L("Betriebszustand", "Health")}</h2>
+              <HealthChip health={health} />
+            </div>
+            <div className="card-body scroll">
+              <HealthTable health={health} onlyProblems onGo={onGo} />
+            </div>
           </div>
-          <div className="card-body scroll">
-            <HealthTable health={health} onlyProblems onGo={onGo} />
-          </div>
-        </div>
-      )}
-
-      <div className="kpis">
-        <button className="kpi" onClick={() => onGo("regeln")}>
-          <div className="k-label">{L("Regeln & Contracts", "Rules & contracts")}</div>
-          <div className="k-val">{val(rulesCount)}</div>
-          <div className="k-sub">
-            {aciCount > 0 ? `${fwCount} Firewall · ${aciCount} ACI · ` : ""}
-            {L(
-              `${usedSystems.length} Quellsystem${usedSystems.length === 1 ? "" : "e"}`,
-              `${usedSystems.length} source system${usedSystems.length === 1 ? "" : "s"}`,
+        ) : null;
+      case "kpis":
+        return (
+          <div className="kpis dash-kpis" id="dash-kpis" style={{ marginBottom: 0 }}>
+            {/* 0.122.0: Namen der Quellsysteme im Tooltip statt in der Kachel – sonst wird sie bei vielen Systemen sehr hoch */}
+            <button className="kpi" onClick={() => onGo("regeln")} title={usedSystems.map(systemName).join(", ") || undefined}>
+              <div className="k-label">{L("Regeln & Contracts", "Rules & contracts")}</div>
+              <div className="k-val">{val(rulesCount)}</div>
+              <div className="k-sub">
+                {aciCount > 0 ? `${fwCount} Firewall · ${aciCount} ACI · ` : ""}
+                {L(
+                  `${usedSystems.length} Quellsystem${usedSystems.length === 1 ? "" : "e"}`,
+                  `${usedSystems.length} source system${usedSystems.length === 1 ? "" : "s"}`,
+                )}
+              </div>
+            </button>
+            <button className="kpi" onClick={() => onGo("nat")}>
+              <div className="k-label">NAT / VIPs</div>
+              <div className="k-val">{stats.nat === null ? "…" : stats.nat}</div>
+              <div className="k-sub">{L("publizierte Dienste & SNAT-Pools", "published services & SNAT pools")}</div>
+            </button>
+            <button className="kpi" onClick={() => onGo("findings")}>
+              <div className="k-label">{L("Offene Findings", "Open findings")}</div>
+              <div className={`k-val ${openFindings === 0 ? "ok" : "warn"}`}>
+                {stats.findings === null ? "…" : openFindings}
+              </div>
+              <div className="k-sub">
+                {openFindings === 0
+                  ? L("alle Objekte aufgelöst", "all objects resolved")
+                  : L("Datenqualität prüfen", "Check data quality")}
+              </div>
+            </button>
+            <div className="kpi">
+              <div className="k-label">{L("Abdeckung", "Coverage")}</div>
+              <div className={`k-val ${coverage === 100 ? "ok" : coverage === null ? "" : "warn"}`}>
+                {rules === null ? "…" : coverage === null ? "–" : `${coverage}%`}
+              </div>
+              <div className="k-sub">
+                {unmatched > 0
+                  ? L(`${unmatched} Endpunkte ohne SoT-Treffer`, `${unmatched} endpoints without SoT match`)
+                  : L("Endpunkte gegen die SoT", "Endpoints against the SoT")}
+              </div>
+            </div>
+            {quality && tenantId !== null && (
+              // nach einem Lauf (Zähler neu) auch die Gesamtnote neu
+              <DataQualityTile key={`${tenantId}-${stats.findings?.total}`} tenantId={tenantId} onGo={onGo} />
             )}
-            {usedSystems.length > 0 && ` · ${usedSystems.map(systemName).join(", ")}`}
           </div>
-        </button>
-        <button className="kpi" onClick={() => onGo("nat")}>
-          <div className="k-label">NAT / VIPs</div>
-          <div className="k-val">{stats.nat === null ? "…" : stats.nat}</div>
-          <div className="k-sub">{L("publizierte Dienste & SNAT-Pools", "published services & SNAT pools")}</div>
-        </button>
-        <button className="kpi" onClick={() => onGo("findings")}>
-          <div className="k-label">{L("Offene Findings", "Open findings")}</div>
-          <div className={`k-val ${openFindings === 0 ? "ok" : "warn"}`}>
-            {stats.findings === null ? "…" : openFindings}
-          </div>
-          <div className="k-sub">
-            {openFindings === 0
-              ? L("alle Objekte aufgelöst", "all objects resolved")
-              : L("Datenqualität prüfen", "Check data quality")}
-          </div>
-        </button>
-        <div className="kpi">
-          <div className="k-label">{L("Abdeckung", "Coverage")}</div>
-          <div className={`k-val ${coverage === 100 ? "ok" : coverage === null ? "" : "warn"}`}>
-            {rules === null ? "…" : coverage === null ? "–" : `${coverage}%`}
-          </div>
-          <div className="k-sub">
-            {unmatched > 0
-              ? L(`${unmatched} Endpunkte ohne SoT-Treffer`, `${unmatched} endpoints without SoT match`)
-              : L("Endpunkte gegen die SoT", "Endpoints against the SoT")}
-          </div>
-        </div>
-      </div>
-
-      <div className="two-col">
-        {!customer && (
-          <div className="card">
+        );
+      case "quick":
+        return <QuickViews summary={stats.findings} on={on} staff={!customer} onGo={onGo} />;
+      case "findings":
+        return <FindingsChart summary={stats.findings} onGo={onGo} />;
+      case "runschart":
+        return <RunsChart tenantId={tenantId} onGo={onGo} refresh={runsTotal} />;
+      case "runs":
+        return (
+          <div className="card" id="dash-runs">
             <div className="card-head">
               <FoldTitle fold={runsFold}>{L("Letzte Läufe", "Recent runs")}</FoldTitle>
               {openTotal > 0 && (
@@ -229,7 +255,7 @@ export default function Overview({
             </div>
             {runsFold.open && (
             <>
-            <div className="card-body scroll tall">
+            <div className="card-body tall dash-body">
               <ErrorBox error={runsErr} prefix={L("Läufe laden", "Loading runs")} />
               {runs === null ? (
                 <Loading />
@@ -244,7 +270,7 @@ export default function Overview({
                     : L("Ein Operator kann Quellsysteme einlesen.", "An operator can collect source systems.")}
                 </div>
               ) : (
-                <RunsTable
+                <RunsList
                   runs={runs}
                   systemName={systemName}
                   canCancel={me.isOperator}
@@ -279,42 +305,83 @@ export default function Overview({
             </>
             )}
           </div>
-        )}
+        );
+      case "zones":
+        return <ZonesCard rules={stats.rules} onGo={onGo} />;
+      case "routing":
+        return tenantId !== null ? <RoutingChanges tenantId={tenantId} onGo={onGo} /> : null;
+      case "apps":
+        return tenantId !== null ? <AppsCard tenantId={tenantId} summary={stats.findings} onGo={onGo} /> : null;
+      case "rules":
+        return <RulesCard rules={stats.rules} systems={systems} onGo={onGo} />;
+      case "objects":
+        return tenantId !== null ? <ObjectsCard tenantId={tenantId} onGo={onGo} /> : null;
+      case "docs":
+        return tenantId !== null && !customer ? <DocsCard tenantId={tenantId} onGo={onGo} /> : null;
+    }
+  };
 
-        <div className="card">
-          <div className="card-head">
-            <FoldTitle fold={zoneFold}>{L("Regeln je Zone (Ziel)", "Rules per zone (destination)")}</FoldTitle>
-          </div>
-          {!zoneFold.open ? null : rules === null ? (
-            <Loading />
-          ) : zoneRows.length === 0 ? (
-            <div className="empty">
-              <div className="big">{L("Keine Regeln", "No rules")}</div>
-              {L(
-                "Nach dem ersten Lauf erscheinen hier die Ziel-Zonen.",
-                "The destination zones appear here after the first run.",
-              )}
-            </div>
-          ) : (
+  return (
+    <>
+      <PageHead
+        title={L("Übersicht", "Overview")}
+        actions={
+          <>
+            <button className="btn btn-ghost btn-sm" id="overview-customize" onClick={() => setEditing((v) => !v)}>
+              {L("Ansicht anpassen", "Customize view")}
+            </button>
+            {me.isOperator && !customer && (
             <>
-              <div className="bars">
-                {zoneRows.map(([z, n]) => (
-                  <div className="bar" key={z} title={`${z}: ${n}`}>
-                    <span style={{ height: `${(n / zoneMax) * 100}%` }} />
-                    <b style={{ bottom: `calc(${(n / zoneMax) * 100}% + 3px)` }}>{n}</b>
-                  </div>
-                ))}
-              </div>
-              <div className="bars-x">
-                {zoneRows.map(([z]) => (
-                  <span key={z} title={z}>
-                    {z}
-                  </span>
-                ))}
-              </div>
+              {tenantId !== null && (
+                <button className="btn btn-ghost btn-sm" onClick={() => setCollectAllOpen(true)}>
+                  {L("Alle einlesen", "Collect all")}
+                </button>
+              )}
+              <button className="btn btn-primary btn-sm" onClick={() => setCollectOpen(true)}>
+                <Icon name="play" size={13} /> {L("Jetzt einlesen", "Collect now")}
+              </button>
             </>
-          )}
-        </div>
+            )}
+          </>
+        }
+      >
+        {L(
+          <>Mandant „{tenantLabel}“ – Stand der letzten Importe.</>,
+          <>Tenant “{tenantLabel}” – state of the latest imports.</>,
+        )}
+      </PageHead>
+
+      <ErrorBox error={stats.error} prefix={L("Daten laden", "Loading data")} />
+      {editing && <LayoutEditor layout={layout} available={available} onClose={() => setEditing(false)} />}
+      {/* 0.122.0: Raster mit 12 Spalten, Breite je Bereich (⅓, ½, ganz), gleich hohe Bereiche je Zeile; beim Anpassen ziehen */}
+      <div className={`dash-grid${editing ? " editing" : ""}`} id="overview-grid">
+        {layout.order
+          .filter((k) => !layout.hidden.has(k) && available(WIDGETS.find((w) => w.key === k)!))
+          .map((k) => {
+            const node = section(k);
+            if (!node) return null;
+            return (
+              <div
+                key={k}
+                className={`dash-cell ${layout.size(k)}`}
+                data-widget={k}
+                draggable={editing}
+                onDragStart={editing ? (e) => e.dataTransfer.setData("text/plain", k) : undefined}
+                onDragOver={editing ? (e) => e.preventDefault() : undefined}
+                onDrop={
+                  editing
+                    ? (e) => {
+                        e.preventDefault();
+                        const from = e.dataTransfer.getData("text/plain") as WidgetKey;
+                        if (from) layout.moveTo(from, k);
+                      }
+                    : undefined
+                }
+              >
+                {node}
+              </div>
+            );
+          })}
       </div>
 
       {collectAllOpen && tenantId !== null && (

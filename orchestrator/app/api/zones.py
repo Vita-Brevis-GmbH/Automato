@@ -23,19 +23,20 @@ die es zwischen bestehenden Zonen vorgibt, uebernimmt `POST /zones/schema/intent
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app import audit
 from app.api.customer_filter import customer_view
 from app.audit import reads
 from app.auth.deps import require_admin, require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
-from app.db import get_session
+from app.db import get_session, get_session_factory
 from app.i18n import L
 from app.models import (
+    DEVICE_SELECTOR_KINDS,
     INTENTS,
     ZONE_KINDS,
     ZONE_SELECTOR_KINDS,
@@ -48,17 +49,19 @@ from app.models import (
     ZonePolicy,
 )
 from app.store import (
+    app_refresh,
+    appdoc_catalog,
     customer_alias,
     plan_export,
     plan_import,
     plan_versions,
     plan_view,
-    reconcile,
     word_export,
     zone_assist,
     zone_detect,
     zone_services,
     zone_struct,
+    zone_types,
 )
 from app.store import customers as customer_store
 from app.store import zones as store
@@ -85,6 +88,11 @@ class ZoneIn(BaseModel):
     position: int = Field(default=0, ge=0, le=10000)
     description: str | None = None
     selectors: list[SelectorIn] = Field(default_factory=list, max_length=200)
+    # Zonentyp von Hand (0.105.0): Zone des Grundschemas; leer = automatisch; nicht mitgeschickt
+    # = bleibt
+    zone_type: str | None = Field(default=None, max_length=200)
+    # Fremd verwaltet (0.132.0): nicht mitgeschickt = bleibt
+    external_managed: bool | None = None
 
 
 class PreviewIn(BaseModel):
@@ -286,6 +294,18 @@ def _rederive(session: Session, tid: int, customer_ids: set[int | None]) -> None
         customer_store.derive(session, tid, cid)
 
 
+def _zone_type(session: Session, tenant_id: int, value: str | None) -> str | None:
+    """Zonentyp von Hand pruefen (0.105.0): eine Zone des Grundschemas (wie dort geschrieben);
+    leer = automatisch."""
+    value = (value or "").strip() or None
+    if value is None:
+        return None
+    hit = zone_types.schema_for(session, tenant_id).zone(value)
+    if hit is None:
+        raise HTTPException(status_code=422, detail=f"unknown zone type {value!r}")
+    return hit.name
+
+
 def _apply(session: Session, z: LogicalZone, body: ZoneIn, sel: list[store.Selector]) -> None:
     name = body.name.strip()
     clash = session.scalar(
@@ -306,6 +326,10 @@ def _apply(session: Session, z: LogicalZone, body: ZoneIn, sel: list[store.Selec
     z.name, z.code = name, (body.code or "").strip() or None
     z.kind, z.customer_id, z.color = body.kind, body.customer_id, body.color
     z.position, z.description = body.position, (body.description or "").strip() or None
+    if "zone_type" in body.model_fields_set:  # 0.105.0: nur, wenn mitgeschickt
+        z.zone_type = _zone_type(session, z.tenant_id, body.zone_type)
+    if body.external_managed is not None:  # 0.132.0: nur, wenn mitgeschickt
+        z.external_managed = body.external_managed
     z.updated_at = datetime.now(UTC)
     z.selectors = [
         LogicalZoneSelector(kind=s.kind, value=s.value, source_system_id=s.source_system_id,
@@ -424,9 +448,11 @@ def suggestions(
 
 @router.post("/suggestions/accept")
 def accept_suggestions(
+    background: BackgroundTasks,
     body: KeysIn,
     principal: Principal = Depends(require_operator),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ) -> dict:
     """Vorschlaege uebernehmen (Operator): neue Zone mit den Selektoren des Vorschlags bzw.
     die Selektoren einer bestehenden Zone ergaenzen. Ausgeblendete auch."""
@@ -479,7 +505,7 @@ def accept_suggestions(
         owners.add(z.customer_id)
     zone_detect.undismiss(session, tid, [k for k in keys if k not in missing])
     _rederive(session, tid, owners)
-    reconcile.refresh_zone_findings(session, tid)
+    app_refresh.schedule_zones(background, factory, tid)
     return {"created": created, "updated": updated, "missing": missing}
 
 
@@ -525,9 +551,11 @@ def undismiss_suggestions(
 
 @router.post("/schema/intents")
 def apply_schema_intents(
+    background: BackgroundTasks,
     body: SchemaIntentsIn,
     principal: Principal = Depends(require_operator),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ) -> dict:
     """Absichten aus dem Grundschema setzen (Operator): ohne `pairs` alle fehlenden; mit
     `pairs` nur diese, abweichende nur mit `overwrite`."""
@@ -572,7 +600,7 @@ def apply_schema_intents(
         changed.append({"src": pair[0], "dst": pair[1], "intent": x["intent"],
                         "before": x["current"]})  # fmt: skip
     if changed:
-        reconcile.refresh_zone_findings(session, tid)
+        app_refresh.schedule_zones(background, factory, tid)
     return {"changed": changed}
 
 
@@ -619,9 +647,11 @@ def matrix_rules(
 
 @router.put("/policy")
 def set_policy(
+    background: BackgroundTasks,
     body: PolicyIn,
     principal: Principal = Depends(require_operator),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ) -> dict:
     """Absicht fuer ein Zonenpaar setzen (allow, limited, deny) bzw. entfernen (leer)."""
     tid = tenant_scope(principal, body.tenant_id)
@@ -668,7 +698,7 @@ def set_policy(
             "services": services,
         },  # fmt: skip
     )
-    reconcile.refresh_zone_findings(session, tid)
+    app_refresh.schedule_zones(background, factory, tid)
     return {"src": body.src_zone_id, "dst": body.dst_zone_id, "intent": body.intent,
             "note": p.note if body.intent is not None else None,
             "services": services or []}  # fmt: skip
@@ -736,9 +766,11 @@ def plan_import_preview(
 
 @router.post("/plan/import")
 def plan_import_apply(
+    background: BackgroundTasks,
     body: PlanImportIn,
     principal: Principal = Depends(require_operator),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ) -> dict:
     """Zonenplan aus draw.io uebernehmen (0.83.0, Operator): je Teil auf Wunsch; Audit
     `zone_plan.imported`."""
@@ -764,7 +796,8 @@ def plan_import_apply(
         },  # fmt: skip
     )
     if done["intents"] or done["renames"] or done["new_zones"]:
-        reconcile.refresh_zone_findings(session, tid)  # Absichten, Zonen ausserhalb des Schemas
+        # Absichten, Zonen ausserhalb des Schemas - hinter der Antwort (0.108.0)
+        app_refresh.schedule_zones(background, factory, tid)
     return {"view": reading.view, **done}
 
 
@@ -977,9 +1010,11 @@ def delete_version(
 
 @router.post("", status_code=201)
 def create_zone(
+    background: BackgroundTasks,
     body: ZoneIn,
     principal: Principal = Depends(require_operator),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ) -> dict:
     """Zone anlegen (Operator); ohne Reihenfolge ans Ende."""
     tid = tenant_scope(principal, body.tenant_id)
@@ -995,17 +1030,167 @@ def create_zone(
     session.flush()
     _audit(session, principal, "created", z)
     _rederive(session, tid, {z.customer_id})
-    reconcile.refresh_zone_findings(session, tid)
+    app_refresh.schedule_zones(background, factory, tid)
     nets = store.derive(session, tid, [z])
     return _out(z, nets[0], _customers(session, tid))
 
 
+@router.get("/appdoc/catalog")
+def appdoc_catalog_of_tenant(
+    tenant_id: int | None = None,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Kategorien der Applikations-Doku des Mandanten (0.104.0): Katalog aus Vorgaben und
+    Namensprofil, dazu fuer Netzwerkdesign → Kategorien die Zonentypen (Zonen des
+    Grundschemas, 0.105.0), je Zone der wirksame bzw. erkannte Typ und die Geraete zur Auswahl
+    (0.106.0: Firewalls bzw. VDOMs, ACI-Tenants, ACI-VRFs, Anbindungen)."""
+    tid = tenant_scope(principal, tenant_id)
+    catalog = appdoc_catalog.for_tenant(session, tid)
+    items = store.load(session, tid)
+    schema = zone_types.schema_for(session, tid)
+    return {**catalog.out(), "zone_types": [z.name for z in schema.zones],
+            "types": zone_types.types(session, tid, items, schema),
+            "auto_types": zone_types.types(session, tid, items, schema, manual=False),
+            "devices": zone_types.devices(session, tid)}  # fmt: skip
+
+
+class DeviceIn(BaseModel):
+    kind: str = Field(max_length=16)  # fw_vdom | aci_tenant | aci_vrf | exit
+    value: str = Field(min_length=1, max_length=200)
+    source_system_id: int | None = None
+
+
+class AppdocZoneIn(BaseModel):
+    id: int
+    zone_type: str | None = Field(default=None, max_length=200)  # 0.105.0; fehlt = bleibt
+    # Netze der Zone (Selektoren „Netz“) bzw. ihre Ausschluesse („ohne“ Netz); None = bleibt
+    nets: list[str] | None = Field(default=None, max_length=500)
+    excluded: list[str] | None = Field(default=None, max_length=500)
+    # Geraete der Zone (0.106.0): Firewall/VDOM, ACI-Tenant/-VRF, Anbindung; None = bleiben
+    devices: list[DeviceIn] | None = Field(default=None, max_length=200)
+    # fremd verwaltet (0.132.0): nur zu solchen Zonen gehoert ein Eingangsfilter; None = bleibt
+    external_managed: bool | None = None
+
+
+class AppdocZonesIn(BaseModel):
+    tenant_id: int
+    zones: list[AppdocZoneIn] = Field(max_length=1000)
+
+
+def _prefix_list(values: list[str]) -> list[str]:
+    """Netze pruefen und schreiben wie gelesen (CIDR, ohne doppelte)."""
+    out: list[str] = []
+    for v in values:
+        net = customer_store._net(v.strip())
+        if net is None:
+            raise HTTPException(status_code=422, detail=f"invalid prefix {v.strip()!r}")
+        if str(net) not in out:
+            out.append(str(net))
+    return out
+
+
+def _prefixes_of(z: LogicalZone, exclude: bool) -> list[str]:
+    return [s.value for s in z.selectors if s.kind == "prefix" and s.exclude is exclude]
+
+
+def _devices_of(z: LogicalZone) -> list[tuple[str, str, int | None]]:
+    return [(s.kind, s.value, s.source_system_id) for s in z.selectors
+            if s.kind in DEVICE_SELECTOR_KINDS and not s.exclude]  # fmt: skip
+
+
+def _device_list(items: list[DeviceIn], sids: set[int]) -> list[tuple[str, str, int | None]]:
+    """Geraete pruefen (Art, Wert, Quellsystem nur bei Firewall/VDOM), ohne doppelte."""
+    out: list[tuple[str, str, int | None]] = []
+    for d in items:
+        if d.kind not in DEVICE_SELECTOR_KINDS:
+            raise HTTPException(status_code=422, detail=f"unknown device kind {d.kind!r}")
+        sid = d.source_system_id if d.kind == "fw_vdom" else None
+        if sid is not None and sid not in sids:
+            raise HTTPException(status_code=404, detail="source system not found")
+        entry = (d.kind, d.value.strip(), sid)
+        if entry[1] and entry not in out:
+            out.append(entry)
+    return out
+
+
+@router.put("/appdoc")
+def set_appdoc_zones(
+    body: AppdocZonesIn,
+    background: BackgroundTasks,
+    principal: Principal = Depends(require_operator),
+    session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
+) -> list[dict]:
+    """Netzwerkdesign → Kategorien pflegen (0.102.0, Operator): je Zone der Zonentyp (0.105.0),
+    ihre Netze mit Ausschluessen (Selektoren „Netz“ bzw. „ohne“ Netz) und seit 0.106.0 ihre
+    Geraete (Firewall/VDOM, ACI-Tenant/-VRF, Anbindung) - die anderen Selektoren bleiben.
+    Spaeter laesst sich daraus z. B. ein BGP-Filter je Zone ableiten. Liefert die Zonen."""
+    tid = tenant_scope(principal, body.tenant_id)
+    items = {z.id: z for z in store.load(session, tid)}
+    if any(x.id not in items for x in body.zones):
+        raise HTTPException(status_code=404, detail="zone not found")
+    sids = set(session.scalars(select(SourceSystem.id).where(SourceSystem.tenant_id == tid)))
+    changes: list[dict] = []
+    owners: set[int | None] = set()
+    for x in body.zones:
+        z, entry = items[x.id], {}
+        if "zone_type" in x.model_fields_set:  # Zonentyp von Hand (0.105.0)
+            kind = _zone_type(session, tid, x.zone_type)
+            if z.zone_type != kind:
+                z.zone_type = entry["type"] = kind
+                owners.add(z.customer_id)  # Befund „ausserhalb des Schemas“ neu
+        if x.nets is not None or x.excluded is not None:
+            nets = _prefix_list(x.nets) if x.nets is not None else _prefixes_of(z, False)
+            excluded = (_prefix_list(x.excluded) if x.excluded is not None
+                        else _prefixes_of(z, True))  # fmt: skip
+            if (nets, excluded) != (_prefixes_of(z, False), _prefixes_of(z, True)):
+                others = [s for s in z.selectors if s.kind != "prefix"]
+                z.selectors = others + [
+                    LogicalZoneSelector(kind="prefix", value=v, exclude=ex)
+                    for ex, values in ((False, nets), (True, excluded)) for v in values
+                ]  # fmt: skip
+                entry["nets"], entry["excluded"] = len(nets), len(excluded)
+                owners.add(z.customer_id)
+        if x.devices is not None:
+            devices = _device_list(x.devices, sids)
+            if devices != _devices_of(z):
+                keep = [s for s in z.selectors if s.kind not in DEVICE_SELECTOR_KINDS or s.exclude]
+                z.selectors = keep + [
+                    LogicalZoneSelector(kind=k, value=v, source_system_id=sid, exclude=False)
+                    for k, v, sid in devices
+                ]  # fmt: skip
+                entry["devices"] = len(devices)
+                owners.add(z.customer_id)
+        if x.external_managed is not None and x.external_managed != z.external_managed:
+            z.external_managed = entry["external_managed"] = x.external_managed
+        if entry:
+            z.updated_at = datetime.now(UTC)
+            changes.append({"zone_id": z.id, **entry})
+    session.flush()
+    if changes:
+        audit.record(session, actor=f"user:{principal.subject}", action="zone.appdoc_set",
+                     subject=str(tid), detail={"tenant_id": tid, "changes": changes})  # fmt: skip
+        if owners:  # Netze bzw. Geraete geaendert: Kunden auf den Zonen
+            _rederive(session, tid, owners)
+        # Befunde nach den Kategorien und der Zonen - hinter der Antwort (0.108.0)
+        app_refresh.schedule_tenant(background, factory, tid)
+    return [{"id": z.id, "name": z.name, "zone_type": z.zone_type,
+             "external_managed": z.external_managed,
+             "nets": _prefixes_of(z, False), "excluded": _prefixes_of(z, True),
+             "devices": [{"kind": k, "value": v, "source_system_id": sid}
+                         for k, v, sid in _devices_of(z)]}
+            for z in items.values()]  # fmt: skip
+
+
 @router.put("/{zone_id}")
 def update_zone(
+    background: BackgroundTasks,
     zone_id: int,
     body: ZoneIn,
     principal: Principal = Depends(require_operator),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ) -> dict:
     """Zone aendern (Operator) - Selektoren ersetzen."""
     z = _get(session, principal, zone_id)
@@ -1017,16 +1202,18 @@ def update_zone(
     session.flush()
     _audit(session, principal, "updated", z)
     _rederive(session, z.tenant_id, {before, z.customer_id})
-    reconcile.refresh_zone_findings(session, z.tenant_id)
+    app_refresh.schedule_zones(background, factory, z.tenant_id)
     nets = store.derive(session, z.tenant_id, [z])
     return _out(z, nets[0], _customers(session, z.tenant_id))
 
 
 @router.delete("/{zone_id}", status_code=204)
 def delete_zone(
+    background: BackgroundTasks,
     zone_id: int,
     principal: Principal = Depends(require_operator),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ) -> None:
     """Zone loeschen (Operator) - mit ihrer Absicht je Zonenpaar; gelesene Daten bleiben."""
     z = _get(session, principal, zone_id)
@@ -1041,7 +1228,7 @@ def delete_zone(
     session.delete(z)
     session.flush()
     _rederive(session, tid, {owner})
-    reconcile.refresh_zone_findings(session, tid)
+    app_refresh.schedule_zones(background, factory, tid)
 
 
 class NodesIn(BaseModel):
@@ -1050,10 +1237,12 @@ class NodesIn(BaseModel):
 
 @router.post("/{zone_id}/nodes")
 def assign_nodes(
+    background: BackgroundTasks,
     zone_id: int,
     body: NodesIn,
     principal: Principal = Depends(require_operator),
     session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
 ) -> dict:
     """Knoten (Firewall bzw. VDOM, ACI-VRF) der Zone zuordnen (Operator): als Selektor VDOM
     bzw. ACI-VRF - die Netze daran werden Netze der Zone bzw. Uebergaenge (0.56.0)."""
@@ -1080,7 +1269,7 @@ def assign_nodes(
         session.flush()
         _audit(session, principal, "updated", z, via="node")
         _rederive(session, z.tenant_id, {z.customer_id})
-        reconcile.refresh_zone_findings(session, z.tenant_id)
+        app_refresh.schedule_zones(background, factory, z.tenant_id)
     return {"zone_id": z.id, "added": added}
 
 

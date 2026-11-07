@@ -13,6 +13,10 @@ ueber die draw.io-App in Confluence). Inhalt wie die Ansicht bzw. der Markdown-E
   Diensten und Notiz, Netze ohne Zone - der Plan selbst als draw.io.
 
 `bundle` packt Word und draw.io in ein ZIP (ein Download). Rein lesend.
+
+Seit 0.104.0 (Modularisierung) ein Aufbau fuer zwei Formate: die Abschnitte gehen an einen
+Schreiber - `docx_writer.Document` (Word) bzw. `md_writer.Markdown` (Markdown, bisher in der
+Oberflaeche gebaut); dazu die Doku je System (`system`).
 """
 
 import io
@@ -24,6 +28,10 @@ from app import __version__
 from app.i18n import L
 from app.store import appdoc, plan_export
 from app.store.docx_writer import Document
+from app.store.md_writer import Markdown
+
+Writer = Document | Markdown
+FORMATS = {"docx": Document, "md": Markdown}
 
 PURPOSE = {"dev": "Dev", "test": "Test", "prod": "Prod"}
 CRIT = {"low": "niedrig", "medium": "mittel", "high": "hoch", "critical": "kritisch"}
@@ -88,7 +96,7 @@ def _stamp(when: datetime, tenant: str | None) -> str:
     return " · ".join(parts)
 
 
-def _capped(doc: Document, rows: list, what: str) -> list:
+def _capped(doc: Writer, rows: list, what: str) -> list:
     if len(rows) > MAX_ROWS:
         doc.note(
             L(
@@ -104,20 +112,21 @@ def _capped(doc: Document, rows: list, what: str) -> list:
 
 # Abschnitte zur Wahl beim Export (0.73.0, wie im Export-Dialog der Oberflaeche); der Kopf mit
 # Steckbrief steht immer da
-SECTIONS = ("overview", "systems", "epgs", "connections", "plan", "rules", "categories",
-            "hidden", "findings")  # fmt: skip
+SECTIONS = ("overview", "systems", "epgs", "connections", "plan", "rules", "dependencies",
+            "categories", "hidden", "findings")  # fmt: skip
 
 
 def application(doc: dict, conns: dict | None, sources: dict[int, str], when: datetime,
                 tenant: str | None = None, plan_file: str | None = None,
-                sections: set[str] | None = None) -> bytes:  # fmt: skip
-    """Applikations-Doku als Word: `doc` wie `GET /applications/{id}/doc`, `conns` wie
-    `GET …/connections` (None = ohne Verbindungen); `sections` = gewaehlte Abschnitte (None =
-    alle, `SECTIONS`)."""
+                sections: set[str] | None = None, fmt: str = "docx") -> bytes:  # fmt: skip
+    """Applikations-Doku als Word bzw. Markdown (`fmt`, `FORMATS`): `doc` wie
+    `GET /applications/{id}/doc`, `conns` wie `GET …/connections` (None = ohne Verbindungen);
+    `sections` = gewaehlte Abschnitte (None = alle, `SECTIONS`)."""
     want = set(SECTIONS) if sections is None else sections
     a = doc["application"]
     title = f"{L('Applikation', 'Application')} {a['name']}"
-    out = Document(title, L("Applikations-Doku (Automato)", "Application documentation (Automato)"))
+    out = FORMATS[fmt](title, L("Applikations-Doku (Automato)",
+                                "Application documentation (Automato)"))  # fmt: skip
     out.heading(title, 0)
     out.note(_stamp(when, tenant))
     site = a.get("site") or {}
@@ -157,6 +166,8 @@ def application(doc: dict, conns: dict | None, sources: dict[int, str], when: da
                    for e in epgs], [4, 2.4, 2.4, 3, 0.8])  # fmt: skip
     if "rules" in want:
         _rules(out, doc, sources)
+    if "dependencies" in want and doc.get("dependencies"):
+        _dependencies(out, doc["dependencies"])
     if conns is not None and "connections" in want:
         _connections(out, conns)
     if "plan" in want:
@@ -180,7 +191,7 @@ def application(doc: dict, conns: dict | None, sources: dict[int, str], when: da
     return out.bytes(when)
 
 
-def _systems(out: Document, doc: dict) -> None:
+def _systems(out: Writer, doc: dict) -> None:
     out.heading(L("Systeme", "Systems"), 1)
     rows = [[("VM " if x["kind"] == "vm" else "Server ") + x["name"], ", ".join(x.get("ips") or []),
              ", ".join(x.get("epgs") or []), ", ".join(x.get("portgroups") or []),
@@ -195,7 +206,7 @@ def _systems(out: Document, doc: dict) -> None:
         out.note(L("keine Systeme", "no systems"))
 
 
-def _rules(out: Document, doc: dict, sources: dict[int, str]) -> None:
+def _rules(out: Writer, doc: dict, sources: dict[int, str]) -> None:
     names = {x["key"]: x["name"] for x in doc.get("systems") or []}
     names |= {e["key"]: e["label"] for e in doc.get("epgs") or []}
     rows = []
@@ -238,20 +249,30 @@ def _rules(out: Document, doc: dict, sources: dict[int, str]) -> None:
         )
 
 
-def _dependencies(out: Document, deps: dict) -> None:
-    """Abhaengigkeiten zu anderen Applikationen (0.60.0) - seit 0.73.0 nicht im Export (Anwender:
-    vorerst entfernt, Monitoring u. a. sind keine fachlichen Abhaengigkeiten)."""
-    rows = []
+def _dependencies(out: Writer, deps: dict) -> None:
+    """Abhaengigkeiten zu anderen Applikationen (0.60.0, seit 0.88.0 wieder im Export): zuerst
+    die fachlichen, danach die zu Infrastruktur-Applikationen (Monitoring, Backup, DNS u. a.)."""
+    out.heading(L("Abhängigkeiten", "Dependencies"), 1)
     every = L("alle", "all")
-    for label, key in ((L("nutzt", "uses"), "uses"), (L("wird genutzt von", "used by"), "used_by")):
-        for d in deps.get(key) or []:
-            rules = ", ".join(f"{r['name']} ({', '.join(r.get('services') or []) or every})"
-                              for r in d.get("rules") or [])  # fmt: skip
-            rows.append([label, d["name"], rules])
-    if rows:
-        out.heading(L("Abhängigkeiten", "Dependencies"), 1)
+    for infra, title in ((False, None), (True, L("Infrastruktur", "Infrastructure"))):
+        rows = []
+        for label, key in ((L("nutzt", "uses"), "uses"),
+                           (L("wird genutzt von", "used by"), "used_by")):  # fmt: skip
+            for d in deps.get(key) or []:
+                if bool(d.get("infrastructure")) != infra:
+                    continue
+                rules = ", ".join(f"{r['name']} ({', '.join(r.get('services') or []) or every})"
+                                  for r in d.get("rules") or [])  # fmt: skip
+                rows.append([label, d["name"], rules])
+        if not rows:
+            continue
+        if title:
+            out.heading(title, 2)
         out.table([L("Richtung", "Direction"), L("Applikation", "Application"),
                    L("Regeln", "Rules")], rows, [1.4, 2.6, 8])  # fmt: skip
+    if not deps.get("uses") and not deps.get("used_by"):
+        out.note(L("keine Abhängigkeiten zu anderen Applikationen",
+                   "no dependencies on other applications"))  # fmt: skip
 
 
 def _side(s: dict) -> str:
@@ -269,10 +290,29 @@ def _hop(h: dict) -> str:
                 text = r.get("label") or r.get("name") or r.get("external_id") or L("Regel", "Rule")
                 deciding.append((f"{c.get('label')}: " if len(checks) > 1 else "") + text)
     deciding = list(dict.fromkeys(deciding))
-    return f"{h.get('label')} ({', '.join(deciding)})" if deciding else str(h.get("label"))
+    text = f"{h.get('label')} ({', '.join(deciding)})" if deciding else str(h.get("label"))
+    lb = h.get("lb") or {}
+    return f"{text} → LB {lb['name']}" if lb.get("name") else text
 
 
-def _connections(out: Document, data: dict) -> None:
+def _variants(c: dict) -> str:
+    """Wege uneinheitlich (0.73.0): je Weg (aktiv, Backup) das Urteil."""
+    parts = [f"{L('aktiv', 'active') if v.get('kind') == 'active' else 'Backup'} "
+             f"{L('über', 'via')} {v.get('via')}: "
+             f"{_pick(VERDICT, 'verdict', v.get('verdict'), v.get('verdict') or '')}"
+             for v in c.get("variants") or []]  # fmt: skip
+    text = ", ".join(parts)
+    return L(f"Wege uneinheitlich ({text})", f"Paths inconsistent ({text})") if parts \
+        else L("Wege uneinheitlich", "paths inconsistent")  # fmt: skip
+
+
+def _return(c: dict) -> list[str]:
+    """Rückweg über eine andere Firewall (0.136.0) als Abweichung der Verbindung."""
+    ret = c.get("return") or {}
+    return [ret["text"]] if ret.get("state") == "asymmetric" and ret.get("text") else []
+
+
+def _connections(out: Writer, data: dict) -> None:
     out.heading(L("Verbindungen Ende zu Ende", "End-to-end connections"), 1)
     s = data.get("summary") or {}
     out.paragraph(L(f"{s.get('total', 0)} Verbindungen · {s.get('allow', 0)} erlaubt · "
@@ -282,7 +322,10 @@ def _connections(out: Document, data: dict) -> None:
                     f"{s.get('total', 0)} connections · {s.get('allow', 0)} allowed · "
                     f"{s.get('blocked', 0)} blocked · {s.get('open', 0)} depends or open · "
                     f"{s.get('mismatch', 0)} deviations · {s.get('inconsistent', 0)} paths "
-                    "inconsistent"))  # fmt: skip
+                    "inconsistent")
+                  + (L(f" · {s['asymmetric']} Rückweg über andere Firewall",
+                       f" · {s['asymmetric']} return via other firewall")
+                     if s.get("asymmetric") else ""))  # fmt: skip
     for n in data.get("notes") or []:
         out.note(n)
     rows = []
@@ -298,9 +341,9 @@ def _connections(out: Document, data: dict) -> None:
                      c.get("text") or _pick(VERDICT, "verdict", c.get("verdict"),
                                             c.get("verdict") or ""),
                      _zones(c.get("zones")) or "–",
-                     "; ".join(([L("Wege uneinheitlich", "paths inconsistent")]
-                                if c.get("inconsistent") else [])
-                               + (c.get("mismatch") or []))])  # fmt: skip
+                     "; ".join(([_variants(c)] if c.get("inconsistent") else [])
+                               + (c.get("mismatch") or [])
+                               + _return(c))])  # fmt: skip
     if rows:
         out.table([L("Richtung", "Direction"), L("Quelle", "Source"), L("Ziel", "Destination"),
                    L("Dienst", "Service"), L("Weg (entscheidende Regel)", "Path (deciding rule)"),
@@ -321,7 +364,23 @@ def _zones(z: dict | None) -> str:
     return " · ".join(x for x in (way, "; ".join(i["text"] for i in z.get("intents") or [])) if x)
 
 
-def _tables(out: Document, tables: list[dict], rows_too: bool = True,
+def zones_text(zones: list[dict]) -> str:
+    """Zonen einer Kategorie (0.101.0): „Zonen: Clients (10.70.0.0/16, …) · …“; seit 0.102.0
+    mit den Ausschluessen („10.0.0.0/8 ohne 10.20.0.0/16“)."""
+    parts = []
+    for z in zones:
+        more = z.get("nets_total", 0) - len(z.get("nets") or [])
+        nets = ", ".join(z.get("nets") or []) + (
+            L(f" +{more} weitere", f" +{more} more") if more > 0 else ""
+        )
+        if z.get("excluded"):
+            listed = ", ".join(z["excluded"])
+            nets += L(f" ohne {listed}", f" without {listed}")
+        parts.append(f"{z['name']} ({nets})" if nets else z["name"])
+    return L("Zonen: ", "Zones: ") + " · ".join(parts)
+
+
+def _tables(out: Writer, tables: list[dict], rows_too: bool = True,
             hidden_too: bool = True) -> None:  # fmt: skip
     hidden_title = L("Ausgeblendete Regeln", "Hidden rules")
     out.heading(L("Doku nach Kategorien", "Documentation by category") if rows_too
@@ -329,9 +388,11 @@ def _tables(out: Document, tables: list[dict], rows_too: bool = True,
     empty = []
     for t in tables if rows_too else []:
         if not t.get("rows"):
-            empty.append(f"{t['index']}. {t['title']}")
+            empty.append(f"{t.get('number', t['index'])}. {t['title']}")
             continue
-        out.heading(f"{t['index']}. {t['title']}", 2)
+        out.heading(f"{t.get('number', t['index'])}. {t['title']}", 2)
+        if t.get("zones"):  # 0.101.0: Zonen der Kategorie mit ihren Netzen
+            out.note(zones_text(t["zones"]))
         cols = t.get("columns") or []
         # Anzeige der Spalten (0.87.0): `labels` parallel zu den Schluesseln `columns`
         labels = t.get("labels") or appdoc.column_labels(cols)
@@ -349,7 +410,8 @@ def _tables(out: Document, tables: list[dict], rows_too: bool = True,
         rows = []
         for t, row in hidden:
             hides = row.get("_hides") or []
-            rows.append([f"{t['index']}. {t['title']}", str(row.get("Description") or ""),
+            rows.append([f"{t.get('number', t['index'])}. {t['title']}",
+                         str(row.get("Description") or ""),
                          str(row.get("_app") or "").replace("\n", ", "),
                          "; ".join(h.get("reason") or "" for h in hides),
                          ", ".join(dict.fromkeys(h.get("by") or "" for h in hides)),
@@ -359,7 +421,7 @@ def _tables(out: Document, tables: list[dict], rows_too: bool = True,
                    L("von", "by"), L("am", "on")], rows, [2.2, 2.6, 2.4, 4, 1.4, 1])  # fmt: skip
 
 
-def _findings(out: Document, findings: list[dict]) -> None:
+def _findings(out: Writer, findings: list[dict]) -> None:
     if not findings:
         return
     out.heading(L("Befunde", "Findings"), 1)
@@ -464,7 +526,7 @@ def zone_plan(plan: dict, matrix: dict | None, title: str, when: datetime,
     return out.bytes(when)
 
 
-def _matrix(out: Document, matrix: dict) -> None:
+def _matrix(out: Writer, matrix: dict) -> None:
     zones = {z["id"]: z for z in matrix.get("zones") or []}
 
     special = {"any": "any", "none": L("ohne Zone", "no zone"),

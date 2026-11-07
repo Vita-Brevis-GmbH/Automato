@@ -21,6 +21,7 @@ import { L } from "./i18n";
 import RuleDetailDrawer from "./RuleDetail";
 import { FAMILY_LABEL, FamilyMarks, serviceNames, SideMarks, useVdomShown, VdomChip } from "./refs";
 import { ActionBadge, Dash, Empty, ErrorBox, Icon, Loading, Note, PageHead } from "./ui";
+import { RuleWegeLink } from "./modules/wege/RuleWegeLink";
 
 // Seitengrösse: Server filtert nach Art/System/Suche, der Rest wird mit "Weitere laden" geholt.
 const PAGE = 500;
@@ -320,7 +321,7 @@ export default function RulesTable({
   onGo?: (v: View, p?: ViewParams) => void;
   isAdmin?: boolean;
   customer?: boolean; // Kunden-Benutzer: keine Verbund-Vorschläge (ADR 0018)
-  canAssign?: boolean; // Operator: Regel einer Applikation zuordnen (0.60.0)
+  canAssign?: boolean; // Operator bzw. Kunden-Editor: Regel einer Applikation zuordnen (0.60.0)
 }) {
   const [rules, setRules] = useState<Rule[] | null>(null);
   const [total, setTotal] = useState(0);
@@ -645,6 +646,7 @@ export default function RulesTable({
           <option value="">{L("Paar: alle", "Pair: all")}</option>
           <option value="similar">{L("ähnlich (offen)", "similar (open)")}</option>
           <option value="confirmed">{L("bestätigt", "confirmed")}</option>
+          <option value="auto">{L("automatisch bestätigt", "confirmed automatically")}</option>
           <option value="same">{L("gleich", "identical")}</option>
           <option value="any">{L("mit Paar", "with pair")}</option>
           <option value="none">{L("ohne Paar", "without pair")}</option>
@@ -824,6 +826,7 @@ export default function RulesTable({
                       ) : (
                         <span className="chip ok">✓</span>
                       )}
+                      <RuleWegeLink ruleId={r.id} compact />
                     </td>
                   </tr>
                   );
@@ -871,8 +874,9 @@ function AssignToApp({ tenantId, ruleId, onGo }: { tenantId: number; ruleId: num
   const [error, setError] = useState<unknown>(null);
   useEffect(() => {
     setDone(null);
+    // Kunden-Editor (feinere Rollen): nur die Applikationen, die er pflegen darf
     fetchApps(tenantId)
-      .then(setApps)
+      .then((list) => setApps(list.filter((a) => a.editable !== false)))
       .catch(() => setApps([]));
   }, [tenantId, ruleId]);
   if (!apps?.length) return null;

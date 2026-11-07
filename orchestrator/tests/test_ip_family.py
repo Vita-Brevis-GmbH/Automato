@@ -196,7 +196,8 @@ def test_paare_bestaetigen_ablehnen_und_zuruecknehmen(client):
 
     body = {"partner_id": api6, "decision": "confirmed"}
     assert client.post(f"/rules/{api4}/pair", json=body, headers=viewer).status_code == 403
-    assert client.post(f"/rules/{api4}/pair", json=body, headers=operator).status_code == 204
+    r = client.post(f"/rules/{api4}/pair", json=body, headers=operator)
+    assert (r.status_code, r.json()) == (200, {"pending": False})
     rules = {(r["name"], r["family"]): r for r in _rules(client, tid)}
     pair = rules[("api-in", "v4")]["pair"]
     assert (pair["rule_id"], pair["match"], pair["diff"]) == (api6, "confirmed", ["service"])
@@ -214,7 +215,7 @@ def test_paare_bestaetigen_ablehnen_und_zuruecknehmen(client):
 
     # ablehnen: kein Paar mehr, auch nach dem naechsten Lauf
     body = {"partner_id": new4["id"], "decision": "rejected"}
-    assert client.post(f"/rules/{new6['id']}/pair", json=body, headers=operator).status_code == 204
+    assert client.post(f"/rules/{new6['id']}/pair", json=body, headers=operator).status_code == 200
     assert {r["name"] for r in _rules(client, tid, pair="none")} == {"api-in", "dual"}
     _reingest(client, tid, sid)
     rules = {(r["name"], r["family"]): r for r in _rules(client, tid)}
@@ -226,7 +227,7 @@ def test_paare_bestaetigen_ablehnen_und_zuruecknehmen(client):
     (decision,) = detail["pair_decisions"]
     assert decision["decision"] == "rejected"
     r = client.delete(f"/rules/pair-decisions/{decision['id']}", headers=operator)
-    assert r.status_code == 204
+    assert (r.status_code, r.json()) == (200, {"pending": False})
     rules = {(r["name"], r["family"]): r for r in _rules(client, tid)}
     assert rules[("api-in", "v4")]["pair"]["match"] == "similar"
 
@@ -234,6 +235,30 @@ def test_paare_bestaetigen_ablehnen_und_zuruecknehmen(client):
     bad = {"partner_id": rules[("dual", "dual")]["id"], "decision": "confirmed"}
     r = client.post(f"/rules/{rules[('api-in', 'v4')]['id']}/pair", json=bad, headers=operator)
     assert r.status_code == 422
+
+
+def test_paar_bestaetigen_waehrend_der_mandant_gesperrt_ist(client, monkeypatch):
+    """0.113.1 (Anwender: „Als Paar bestätigen – kann klicken, macht nichts“): laeuft gerade ein
+    Einspielen bzw. Abgleich (Sperre des Mandanten), wartet der Klick nicht still - die
+    Entscheidung ist gespeichert, der Regelindex folgt im Hintergrund."""
+    from app.store import tenant_lock
+
+    tid, _ = _seed(client)
+    operator = {"X-Dev-Roles": "operator", "X-Dev-Tenants": str(tid)}
+    rules = {(r["name"], r["family"]): r for r in _rules(client, tid)}
+    api4, api6 = rules[("api-in", "v4")]["id"], rules[("api-in", "v6")]["id"]
+    monkeypatch.setattr(tenant_lock, "try_hold", lambda session, tenant_id: False)
+    body = {"partner_id": api6, "decision": "confirmed"}
+    r = client.post(f"/rules/{api4}/pair", json=body, headers=operator)
+    assert (r.status_code, r.json()) == (200, {"pending": True})
+    # die Hintergrund-Aufgabe des Testclients ist gelaufen: Paar bestaetigt
+    rules = {(r["name"], r["family"]): r for r in _rules(client, tid)}
+    assert rules[("api-in", "v4")]["pair"]["match"] == "confirmed"
+    (decision,) = client.get(f"/rules/{api4}").json()["pair_decisions"]
+    r = client.delete(f"/rules/pair-decisions/{decision['id']}", headers=operator)
+    assert (r.status_code, r.json()) == (200, {"pending": True})
+    rules = {(r["name"], r["family"]): r for r in _rules(client, tid)}
+    assert rules[("api-in", "v4")]["pair"]["match"] == "similar"
 
 
 def test_paare_stehen_in_der_liste_nebeneinander(client):
@@ -259,3 +284,47 @@ def test_paare_stehen_in_der_liste_nebeneinander(client):
     # seitenweise: die Reihenfolge gilt über die Seiten
     page2 = client.get("/rules", params={"tenant_id": tid, "limit": 2, "offset": 2}).json()
     assert [(x["name"], x["family"]) for x in page2] == [("api-in", "v4"), ("api-in", "v6")]
+
+
+def test_paare_automatisch_bestaetigen_und_auseinandernehmen(client):
+    """0.138.0 (Anwender: „500 Firewall Rule Paare, welche ich bestätigen müsste, da eigentlich
+    99% stimmen … in den Basis Settings angeben, dass die Paare automatisch bestätigt werden und
+    dann aber wir die Möglichkeit haben, sie auseinander zu nehmen“): Schalter am Mandanten -
+    ähnliche Paare gelten als automatisch bestätigt (`auto`, eine Zeile in der Doku), „Kein
+    Paar“ trennt eines dauerhaft; ausgeschaltet wieder Vorschläge."""
+    tid, sid = _seed(client)
+    operator = {"X-Dev-Roles": "operator", "X-Dev-Tenants": str(tid)}
+    (tenant,) = (t for t in client.get("/tenants", headers=ADMIN).json() if t["id"] == tid)
+    assert tenant["rule_pairs_auto"] is False
+    # nur der Admin schaltet
+    r = client.patch(f"/tenants/{tid}", json={"rule_pairs_auto": True}, headers=operator)
+    assert r.status_code == 403
+    r = client.patch(f"/tenants/{tid}", json={"rule_pairs_auto": True}, headers=ADMIN)
+    assert r.status_code == 200 and r.json()["rule_pairs_auto"] is True
+    rules = {(r["name"], r["family"]): r for r in _rules(client, tid)}
+    api4, api6 = rules[("api-in", "v4")], rules[("api-in", "v6")]
+    assert (api4["pair"]["rule_id"], api4["pair"]["match"]) == (api6["id"], "auto")
+    assert api4["pair"]["diff"] == ["service"]  # Abweichungen bleiben sichtbar
+    assert rules[("web-in", "v4")]["pair"]["match"] == "same"
+    assert _rules(client, tid, pair="similar") == []
+    assert {r["name"] for r in _rules(client, tid, pair="auto")} == {"api-in"}
+    # gilt auch nach einem neuen Lauf
+    _reingest(client, tid, sid)
+    rules = {(r["name"], r["family"]): r for r in _rules(client, tid)}
+    api4, api6 = rules[("api-in", "v4")], rules[("api-in", "v6")]
+    assert api4["pair"]["match"] == "auto"
+
+    # auseinandernehmen: „Kein Paar“ - dauerhaft, auch mit dem Schalter
+    body = {"partner_id": api6["id"], "decision": "rejected"}
+    assert client.post(f"/rules/{api4['id']}/pair", json=body, headers=operator).status_code == 200
+    _reingest(client, tid, sid)
+    rules = {(r["name"], r["family"]): r for r in _rules(client, tid)}
+    assert rules[("api-in", "v4")]["pair"] is None
+
+    # ausgeschaltet: wieder Vorschläge (nach dem Zurücknehmen der Ablehnung)
+    (decision,) = client.get(f"/rules/{rules[('api-in', 'v4')]['id']}").json()["pair_decisions"]
+    client.delete(f"/rules/pair-decisions/{decision['id']}", headers=operator)
+    r = client.patch(f"/tenants/{tid}", json={"rule_pairs_auto": False}, headers=ADMIN)
+    assert r.json()["rule_pairs_auto"] is False
+    rules = {(r["name"], r["family"]): r for r in _rules(client, tid)}
+    assert rules[("api-in", "v4")]["pair"]["match"] == "similar"

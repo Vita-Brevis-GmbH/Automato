@@ -12,6 +12,7 @@ import {
   AppConnHop,
   AppConnSide,
   AppConnState,
+  AppConnWithout,
   AppConnZones,
   AppPlan,
   AppPlanVerdict,
@@ -20,9 +21,12 @@ import {
   snatText,
 } from "./api";
 import { Fold, FoldTitle } from "./fold";
-import { Verdict, VERDICT } from "./Paths";
+import { NetAssignChip, NetAssignDialog } from "./modules/wege/NetAssign";
+import PathExplainDrawer from "./PathExplain";
+import { ReturnLegs, Verdict, VERDICT } from "./Paths";
 import { Dash, download, Empty, ErrorBox, ExportLangSelect, Icon, Loading, Note } from "./ui";
 import { L } from "./i18n";
+import { SnapshotBar } from "./SnapshotBar";
 
 type Go = (v: View, p?: ViewParams) => void;
 
@@ -135,6 +139,15 @@ const FACETS: { key: string; label: string; items: Facet[] }[] = [
         test: (c) => c.inconsistent,
       },
       {
+        key: "return",
+        label: L("Rückweg über andere Firewall", "Return via other firewall"),
+        title: L(
+          "die Antwort ginge über eine andere Firewall zurück (asymmetrisches Routing) – die Firewall verwirft sie",
+          "the reply would return via another firewall (asymmetric routing) – the firewall drops it",
+        ),
+        test: (c) => c.return?.state === "asymmetric",
+      },
+      {
         key: "zones",
         label: L("gegen die Zonen-Absicht", "against the zone intent"),
         title: L("der Weg erlaubt, was die Absicht zwischen den Zonen sperrt", "the path allows what the intent between the zones denies"),
@@ -188,6 +201,41 @@ function Facets({ conns, base, picked, onPick }: { conns: AppConnection[]; base:
   );
 }
 
+// 0.127.0 (Anwender: „in der Tabelle der Verbindungen … keine Rules von den L3Os, nur in den Regeln und
+// Contracts“): Regeln der Doku ohne Verbindung mit dem Grund – zugeklappt
+function WithoutList({ items, onRule }: { items: AppConnWithout[]; onRule: (id: number) => void }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="card-body pad" id="conn-without">
+      <button className="linkbtn" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+        {open ? "▾" : "▸"} {L(`Regeln ohne Verbindung (${items.length})`, `Rules without a connection (${items.length})`)}
+      </button>
+      {open && (
+        <table style={{ marginTop: 6 }}>
+          <thead>
+            <tr>
+              <th>{L("Regel", "Rule")}</th>
+              <th>{L("Grund", "Reason")}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((x) => (
+              <tr key={x.rule_id}>
+                <td>
+                  <button className="linkbtn" onClick={() => onRule(x.rule_id)} title={L("Regel öffnen", "Open rule")}>
+                    {x.label}
+                  </button>
+                </td>
+                <td className="conn-without-why">{x.reasons.join("; ")}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
 function SideLabel({ s }: { s: AppConnSide }) {
   const many = s.systems.length + s.more;
   return (
@@ -227,7 +275,6 @@ const sideText = (s: AppConnSide) => {
   return `${s.label}${more} (${s.ip}${s.name ? ` · ${s.name}` : ""})`;
 };
 
-const mdCell = (v: string) => v.replace(/\|/g, "\\|").replace(/\n/g, " ");
 
 // Zonen einer Verbindung als Text (0.78.0): „Web → LAN · Absicht gesperrt: gegen die Absicht …“
 export function zonesText(z: AppConnZones | null | undefined): string {
@@ -236,37 +283,6 @@ export function zonesText(z: AppConnZones | null | undefined): string {
   const way = [...new Set(names)].join(" → ");
   const intents = z.intents.map((i) => i.text).join("; ");
   return [way, intents].filter(Boolean).join(" · ");
-}
-
-// Verbindungen Ende zu Ende als Markdown (Export der Applikations-Doku, 0.59.0)
-export function connectionsMarkdown(data: AppConnections): string[] {
-  const s = data.summary;
-  const lines = [L("## Verbindungen Ende zu Ende", "## End-to-end connections"), ""];
-  lines.push(
-    L(
-      `${s.total} Verbindungen · ${s.allow} erlaubt · ${s.blocked} gesperrt · ${s.open} abhängig bzw. offen · ${s.mismatch} Abweichungen · ${s.inconsistent ?? 0} Wege uneinheitlich`,
-      `${s.total} connections · ${s.allow} allowed · ${s.blocked} blocked · ${s.open} depends or open · ${s.mismatch} deviations · ${s.inconsistent ?? 0} paths inconsistent`,
-    ),
-    "",
-  );
-  data.notes.forEach((n) => lines.push(`> ${n}`, ""));
-  if (!data.connections.length) return [...lines, L("Keine prüfbaren Verbindungen.", "No checkable connections."), ""];
-  lines.push(
-    L(
-      "| Richtung | Quelle | Ziel | Dienst | Weg (entscheidende Regel) | Urteil | Zonen | Abweichung |",
-      "| Direction | Source | Destination | Service | Path (deciding rule) | Verdict | Zones | Deviation |",
-    ),
-    "| --- | --- | --- | --- | --- | --- | --- | --- |",
-  );
-  for (const c of data.connections) {
-    const way = c.hops.map(hopText).join(" → ") + (!c.reached && c.end ? ` – ${c.end.text}` : "");
-    const verdict = c.text || (VERDICT[c.verdict]?.[1] ?? c.verdict);
-    lines.push(
-      `| ${c.direction === "in" ? L("eingehend", "inbound") : L("ausgehend", "outbound")} | ${mdCell(sideText(c.src))} | ${mdCell(sideText(c.dst))} | ${c.service ?? L("alle", "all")} | ${mdCell(way || "–")} | ${mdCell(verdict)} | ${mdCell(zonesText(c.zones) || "–")} | ${mdCell([...(c.inconsistent ? [variantsText(c)] : []), ...c.mismatch].join("; "))} |`,
-    );
-  }
-  lines.push("");
-  return lines;
 }
 
 // Wege uneinheitlich (0.73.0): je Weg (aktiv, ECMP, Backup) bzw. Firewall im Verbund das Urteil
@@ -356,7 +372,7 @@ function HopChain({ hops }: { hops: AppConnHop[] }) {
   );
 }
 
-function ConnDetail({ c, onRule, onGo }: { c: AppConnection; onRule: (id: number) => void; onGo?: Go }) {
+function ConnDetail({ c, onRule, onExplain }: { c: AppConnection; onRule: (id: number) => void; onExplain?: () => void }) {
   const params = { src: c.src.ip, dst: c.dst.ip, ...(c.service ? { service: c.service } : {}) };
   return (
     <div className="conn-detail">
@@ -384,6 +400,25 @@ function ConnDetail({ c, onRule, onGo }: { c: AppConnection; onRule: (id: number
             )
           : ""}
       </div>
+      {c.service_chain && c.service_chain.length > 1 && (
+        <div className="faint conn-service-line" style={{ marginBottom: 6 }}>
+          {L("Ports:", "Ports:")} {c.service_chain.map((x) => `${x.label} ${x.service}`).join(" → ")}
+        </div>
+      )}
+      {c.return && (
+        // 0.136.0: Rückweg über dieselben Firewalls (ausser ACI und Verbund)
+        <div className="conn-return-line" data-return={c.return.state} style={{ marginBottom: 6 }}>
+          <span className={`chip ${c.return.state === "symmetric" ? "ok" : c.return.state === "asymmetric" ? "crit" : ""}`}>
+            {c.return.state === "symmetric"
+              ? L("Rückweg ✓", "Return ✓")
+              : c.return.state === "asymmetric"
+                ? L("Rückweg über andere Firewall", "Return via other firewall")
+                : L("Rückweg ?", "Return ?")}
+          </span>{" "}
+          <span className="faint">{c.return.text}</span>
+          {c.return.state !== "symmetric" && <ReturnLegs r={c.return} />}
+        </div>
+      )}
       <Variants c={c} />
       <table className="compact">
         <thead>
@@ -464,7 +499,12 @@ function ConnDetail({ c, onRule, onGo }: { c: AppConnection; onRule: (id: number
                           )}
                           {!r.label && r.name ? L(` „${r.name}“`, ` “${r.name}”`) : ""} ·{" "}
                           {r.action === "allow" ? L("erlauben", "accept") : L("sperren", "deny")}
-                          {r.unsure.length ? L(` · möglich (${r.unsure.join(", ")})`, ` · possible (${r.unsure.join(", ")})`) : ""}
+                          {r.blocklist
+                            ? L(` · Sperrliste (${r.unsure.join(", ")})`, ` · blocklist (${r.unsure.join(", ")})`)
+                            : r.unsure.length
+                              ? L(` · möglich (${r.unsure.join(", ")})`, ` · possible (${r.unsure.join(", ")})`)
+                              : ""}
+                          {r.closed ? L(" · öffnet den Dienst nicht", " · does not open the service") : ""}
                           {r.note ? L(` · greift nicht: ${r.note}`, ` · does not apply: ${r.note}`) : ""}
                         </div>
                       ))
@@ -501,16 +541,29 @@ function ConnDetail({ c, onRule, onGo }: { c: AppConnection; onRule: (id: number
           ))}
         </ul>
       </div>
-      <div className="no-print" style={{ marginTop: 6 }}>
-        {onGo ? (
-          <button className="btn btn-ghost btn-sm" onClick={() => onGo("wege", params)}>
-            <Icon name="route" size={14} /> {L("In der Weg-Suche öffnen", "Open in path search")}
+      <div className="no-print" style={{ marginTop: 6, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        {onExplain && (
+          <button
+            className="btn btn-ghost btn-sm conn-explain"
+            onClick={onExplain}
+            title={L(
+              "Hop für Hop in Sätzen, warum die Verbindung diesen Weg nimmt – mit allen Routen zum Ziel und „Erwartet über …“",
+              "Hop by hop in sentences why the connection takes this path – with all routes to the destination and “Expected via …”",
+            )}
+          >
+            {L("Warum dieser Weg?", "Why this path?")}
           </button>
-        ) : (
-          <a href={`#wege?${new URLSearchParams(params).toString()}`}>
-            {L("In der Weg-Suche öffnen", "Open in path search")}
-          </a>
         )}
+        {/* 0.109.1 (Wunsch des Anwenders): in einem neuen Tab – die Doku bleibt offen */}
+        <a
+          className="btn btn-ghost btn-sm conn-wege"
+          href={`#wege?${new URLSearchParams(params).toString()}`}
+          target="_blank"
+          rel="noopener"
+          title={L("Weg-Suche in einem neuen Tab", "Path search in a new tab")}
+        >
+          <Icon name="route" size={14} /> {L("In der Weg-Suche öffnen", "Open in path search")} ↗
+        </a>
       </div>
     </div>
   );
@@ -818,7 +871,7 @@ function PlanView({
                   fill={PLAN_FILL[n.role]}
                   stroke={stroke}
                   strokeWidth={focus?.id === n.id ? 3 : n.role === "hop" ? 2 : 1.4}
-                  strokeDasharray={n.kind === "external" ? "4 3" : undefined}
+                  strokeDasharray={n.kind === "external" || n.kind === "any" ? "4 3" : undefined}
                 />
                 <text x={10} y={18} fontSize={12} fontWeight={600} fill="var(--fg)">
                   {short(n.title)}
@@ -897,20 +950,26 @@ export default function ConnectionsCard({
   appId,
   reload,
   onRule,
-  onGo,
   onData,
   fold,
+  tenantId,
+  canCapture = false,
 }: {
   appId: number;
   reload: number;
   onRule: (id: number) => void;
-  onGo?: Go;
+  onGo?: Go; // seit 0.109.1 ungenutzt: die Weg-Suche öffnet in einem neuen Tab
+  tenantId?: number; // „Warum dieser Weg?“ (0.109.0)
+  canCapture?: boolean; // Operator: Finding von Hand erfassen
   onData?: (d: AppConnections | null) => void; // für Export der Doku (0.59.0)
   fold?: Fold; // 0.73.0: Bereich zuklappbar
 }) {
   const [data, setData] = useState<AppConnections | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [open, setOpen] = useState<string | null>(null);
+  const [explain, setExplain] = useState<AppConnection | null>(null);
+  const [assigning, setAssigning] = useState<string | null>(null); // grosses Netz zuordnen (0.111.0)
+  const [bump, setBump] = useState(0); // nach dem Zuordnen neu laden
   const [onlyIssues, setOnlyIssues] = useState(false);
   const [q, setQ] = useState("");
   const [picked, setPicked] = useState<Picked>({});
@@ -923,7 +982,7 @@ export default function ConnectionsCard({
   // 0.74.1: erst laden, wenn der Bereich offen ist – die Wege sind der teuerste Teil der Doku
   const wanted = !fold || fold.open;
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
-  const loadKey = `${appId}:${reload}`;
+  const loadKey = `${appId}:${reload}:${bump}`;
   useEffect(() => {
     if (!wanted || loadedFor === loadKey) return;
     let current = true;
@@ -949,9 +1008,18 @@ export default function ConnectionsCard({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appId, reload, wanted]);
+  // Stand fertig bzw. neu berechnen (0.108.0): der alte bleibt bis dahin sichtbar
+  const refresh = (force: boolean) =>
+    fetchAppConnections(appId, force)
+      .then((d) => {
+        setData(d);
+        onData?.(d);
+      })
+      .catch(setError);
   const needle = q.trim().toLowerCase();
   const base = (data?.connections ?? []).filter((c) => {
-    if (onlyIssues && !c.mismatch.length && !c.inconsistent && c.verdict === "allow" && c.reached) return false;
+    if (onlyIssues && !c.mismatch.length && !c.inconsistent && c.return?.state !== "asymmetric" && c.verdict === "allow" && c.reached)
+      return false;
     if (!needle) return true;
     const text = [c.src.label, c.src.ip, c.dst.label, c.dst.ip, c.service, ...c.hops.map((h) => h.label), ...c.rules.map((r) => r.label)]
       .join("\n")
@@ -967,6 +1035,23 @@ export default function ConnectionsCard({
         {s && (
           <span className="chips">
             <span className="chip">{L(`${s.total} Verbindungen`, `${s.total} connections`)}</span>
+            {data?.coverage && !data.coverage.complete && (
+              <span
+                className="chip crit"
+                id="conn-coverage"
+                title={L(
+                  "Eine Grenze hat einen Teil nicht geprüft (Hinweise unten) – für diesen Teil fehlen Befunde",
+                  "A limit left a part unchecked (notes below) – findings for that part are missing",
+                )}
+              >
+                {data.coverage.checked < data.coverage.total
+                  ? L(
+                      `unvollständig geprüft: ${data.coverage.checked} von ${data.coverage.total} Verbindungen`,
+                      `not completely checked: ${data.coverage.checked} of ${data.coverage.total} connections`,
+                    )
+                  : L("unvollständig geprüft", "not completely checked")}
+              </span>
+            )}
             {s.allow > 0 && <span className="chip ok">{L(`${s.allow} erlaubt`, `${s.allow} allowed`)}</span>}
             {s.blocked > 0 && <span className="chip crit">{L(`${s.blocked} gesperrt`, `${s.blocked} blocked`)}</span>}
             {s.open > 0 && (
@@ -993,6 +1078,18 @@ export default function ConnectionsCard({
                 )}
               >
                 {L(`${s.inconsistent} Wege uneinheitlich`, `${s.inconsistent} paths inconsistent`)}
+              </span>
+            )}
+            {(s.asymmetric ?? 0) > 0 && (
+              <span
+                className="chip crit"
+                id="conn-asymmetric"
+                title={L(
+                  "die Antwort ginge über eine andere Firewall zurück (asymmetrisches Routing) – die Firewall verwirft sie",
+                  "the reply would return via another firewall (asymmetric routing) – the firewall drops it",
+                )}
+              >
+                {L(`${s.asymmetric} Rückweg über andere Firewall`, `${s.asymmetric} return via other firewall`)}
               </span>
             )}
             {(s.zone_violations ?? 0) > 0 && (
@@ -1029,14 +1126,17 @@ export default function ConnectionsCard({
       {(!fold || fold.open) && (
       <>
       <div className="card-body pad no-print" style={{ paddingBottom: 0 }}>
+        <SnapshotBar snapshot={data?.snapshot} appId={appId} kind="connections" onReload={refresh} />
         <div className="faint" style={{ fontSize: 12, marginBottom: 8 }}>
           {L(
             "Je Verbindung (Quelle → Ziel, Dienst) eine Zeile mit dem Weg über Firewalls und ACI wie in der Weg-Suche; " +
               "Klick zeigt je Hop die entscheidende Policy bzw. den Contract mit den Objekten und welche Regeln der Doku dort " +
-              "greifen. Gegenstelle any, vzAny und Preferred Group bleiben Regeln ohne Verbindung.",
+              "greifen. Gegenstelle any: geprüft mit den Netzen hinter dem Interface der Regel, sonst 0.0.0.0/0. " +
+              "Regeln ohne Verbindung stehen unten mit dem Grund.",
             "One row per connection (source → destination, service) with the path through firewalls and ACI as in the path " +
               "search; a click shows per hop the deciding policy or contract with the objects and which rules of the " +
-              "documentation apply there. Peer any, vzAny and Preferred Group remain rules without a connection.",
+              "documentation apply there. Peer any: checked with the networks behind the interface of the rule, otherwise " +
+              "0.0.0.0/0. Rules without a connection are listed below with the reason.",
           )}
         </div>
         <div className="filterbar" style={{ marginBottom: 10 }}>
@@ -1060,6 +1160,7 @@ export default function ConnectionsCard({
           <Note>{n}</Note>
         </div>
       ))}
+      {data?.timing && <Timing t={data.timing} />}
       {view === "plan" && data && data.plan && data.plan.nodes.length > 0 ? (
         <div className="card-body pad">
           <PlanView
@@ -1123,7 +1224,18 @@ export default function ConnectionsCard({
                     <td>
                       <SideLabel s={c.dst} />
                     </td>
-                    <td className="mono">{c.service ?? L("alle", "all")}</td>
+                    <td className="mono">
+                      {c.service ?? L("alle", "all")}
+                      {c.service_chain && c.service_chain.length > 1 && (
+                        // 0.137.0: Port des Clients, dahinter die Ports nach VIP bzw. Load Balancer
+                        <div className="faint conn-service-chain" title={c.service_chain.map((x) => `${x.label} ${x.service}`).join(" → ")}>
+                          {c.service_chain
+                            .slice(1)
+                            .map((x) => `→ ${x.label} ${x.service}`)
+                            .join(" ")}
+                        </div>
+                      )}
+                    </td>
                     <td>
                       <HopChain hops={c.hops} />
                       {!c.reached && c.end && <div className="faint">{c.end.text}</div>}
@@ -1137,6 +1249,17 @@ export default function ConnectionsCard({
                         >
                           {L("ohne die genauer gerouteten Teile:", "without the more specifically routed parts:")}{" "}
                           {c.parts.join(", ")}
+                        </div>
+                      )}
+                      {c.assign && (
+                        <div className="conn-assign" onClick={(e) => e.stopPropagation()}>
+                          <NetAssignChip a={c.assign} />{" "}
+                          {c.assign.open && <span className="faint">{c.assign.text}</span>}
+                          {canCapture && tenantId != null && (
+                            <button className="linkbtn" onClick={() => setAssigning(c.assign!.prefix)}>
+                              {c.assign.how === "manual" ? L("ändern", "change") : L("zuordnen", "assign")}
+                            </button>
+                          )}
                         </div>
                       )}
                       {c.part_of && (
@@ -1170,6 +1293,12 @@ export default function ConnectionsCard({
                         </span>
                       )}
                       {c.mismatch.length > 0 && <div className="print-only conn-why">{c.mismatch.join("; ")}</div>}
+                      {c.return?.state === "asymmetric" && (
+                        <span className="chip crit conn-return" data-return="asymmetric" title={c.return.text}>
+                          {L("Rückweg über andere Firewall", "Return via other firewall")}
+                        </span>
+                      )}
+                      {c.return?.state === "asymmetric" && <div className="print-only conn-why">{c.return.text}</div>}
                       {c.zones?.violation && (
                         <span className="chip crit" title={c.zones.intents.map((i) => i.text).join("\n")}>
                           {L("gegen Zonen-Absicht", "against zone intent")}
@@ -1180,7 +1309,7 @@ export default function ConnectionsCard({
                   {open === c.key && (
                     <tr className="detail-row">
                       <td colSpan={8}>
-                        <ConnDetail c={c} onRule={onRule} onGo={onGo} />
+                        <ConnDetail c={c} onRule={onRule} onExplain={tenantId != null ? () => setExplain(c) : undefined} />
                       </td>
                     </tr>
                   )}
@@ -1191,8 +1320,65 @@ export default function ConnectionsCard({
         )}
       </div>
       )}
+      {data?.without && data.without.length > 0 && <WithoutList items={data.without} onRule={onRule} />}
       </>
       )}
+      {explain && tenantId != null && (
+        <PathExplainDrawer
+          tenantId={tenantId}
+          query={{
+            ...(explain.trace ?? { src: explain.src.ip, dst: explain.dst.ip, service: explain.service, starts: [] }),
+            connection: true,
+          }}
+          canCapture={canCapture}
+          onClose={() => setExplain(null)}
+        />
+      )}
+      {assigning && tenantId != null && (
+        <NetAssignDialog
+          tenantId={tenantId}
+          prefix={assigning}
+          onClose={() => setAssigning(null)}
+          onSaved={() => {
+            setAssigning(null);
+            setBump((b) => b + 1);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+// Dauer der Berechnung (0.132.1, Anwender: „Das Berechnen einer Applikation dauert sehr lange“): je Teil und die
+// langsamsten Wege – zeigt, wo die Zeit hingeht
+function Timing({ t }: { t: NonNullable<AppConnections["timing"]> }) {
+  const s = (x: number | undefined) => `${(x ?? 0).toLocaleString(undefined, { maximumFractionDigits: 1 })} s`;
+  const total = t.total + (t.plan ?? 0);
+  const each = t.count ? t.traces / t.count : 0;
+  return (
+    <details className="pad faint" id="app-conn-timing" style={{ fontSize: 12 }}>
+      <summary>
+        {L(
+          `Berechnet in ${s(total)}: ${t.count} Wege in ${s(t.traces)} (Ø ${s(each)})` +
+            (t.queries != null ? ` · ${t.queries} Abfragen an die Datenbank` : "") +
+            (t.failed ? ` · ${t.failed} Wege mit Fehler` : ""),
+          `Computed in ${s(total)}: ${t.count} paths in ${s(t.traces)} (avg ${s(each)})` +
+            (t.queries != null ? ` · ${t.queries} database queries` : "") +
+            (t.failed ? ` · ${t.failed} paths with errors` : ""),
+        )}
+      </summary>
+      <div>
+        {L(
+          `Doku ${s(t.doc)} · Verbindungen bilden ${s(t.candidates)} · Vorbereitung ${s(t.setup)} · Plan ${s(t.plan)}`,
+          `Documentation ${s(t.doc)} · building connections ${s(t.candidates)} · setup ${s(t.setup)} · plan ${s(t.plan)}`,
+        )}
+      </div>
+      {t.slowest.length > 0 && (
+        <div>
+          {L("Langsamste Wege: ", "Slowest paths: ")}
+          <span className="mono">{t.slowest.map((x) => `${x.key} (${s(x.seconds)})`).join(" · ")}</span>
+        </div>
+      )}
+    </details>
   );
 }

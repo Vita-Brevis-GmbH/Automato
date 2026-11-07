@@ -12,8 +12,10 @@ export const PLATFORM_LABEL: Record<string, string> = {
   avi: "NSX ALB (Avi)",
   infoblox: "Infoblox DDI",
   netbox: "NetBox",
+  ad_dns: "AD-DNS",
 };
-export const REFERENCE_PLATFORMS = ["infoblox", "netbox"];
+// AD-DNS (ADR 0045): Referenzquelle nur mit DNS-Namen (Zonentransfer), immer Anreicherung
+export const REFERENCE_PLATFORMS = ["infoblox", "netbox", "ad_dns"];
 export const REF_ROLE_LABEL: Record<string, string> = {
   primary: L("IPAM führend", "Primary IPAM"),
   enrichment: L("Anreicherung", "Enrichment"),
@@ -48,6 +50,7 @@ export const FINDING_LABEL: Record<string, string> = {
   aci_contract_both_sides: L("Contract: EPG Consumer und Provider", "Contract: EPG consumer and provider"),
   epg_assignment_conflict: L("EPG: gelernt ≠ konfiguriert", "EPG: learned ≠ configured"),
   snat_pool_missing: L("SNAT-Pool fehlt", "SNAT pool missing"),
+  vip_target_missing: L("VIP ohne Ziel", "VIP without target"),
   topo_duplicate_ip: L("IP doppelt im Netz", "Duplicate IP in network"),
   topo_mask_mismatch: L("Netzmaske abweichend", "Netmask differs"),
   topo_route_loop: L("Routing-Schleife", "Routing loop"),
@@ -56,8 +59,20 @@ export const FINDING_LABEL: Record<string, string> = {
   zone_policy_violation: L("Zone: gegen die Absicht", "Zone: against the intent"),
   zone_overlap: L("Netz in mehreren Zonen", "Network in several zones"),
   zone_outside_schema: L("Zone ausserhalb des Schemas", "Zone outside the schema"),
+  zone_net_exit: L("Netz nicht über den Übergang zur Zone", "Network not via the transition to the zone"),
   app_connection_mismatch: L("Applikation: Wege uneinheitlich", "Application: inconsistent paths"),
   app_contract_narrower: L("Applikation: Contract enger als Firewall", "Application: contract narrower than firewall"),
+  app_rule_unused: L("Applikation: Regel nie gebraucht", "Application: rule never needed"),
+  app_coverage: L("Applikation: unvollständig geprüft", "Application: not completely checked"),
+  net_wider_than_routes: L("Netz der Regel grösser als die Routen", "Network of the rule wider than the routes"),
+  bgp_expected_missing: L("BGP: erwartetes Netz kommt nicht an", "BGP: expected network does not arrive"),
+  bgp_outside_filter: L("BGP: erhalten, obwohl der Filter sperrt", "BGP: received although the filter denies"),
+  bgp_no_inbound_filter: L("BGP: fremd verwalteter Nachbar ohne Eingangsfilter", "BGP: externally managed neighbor without inbound filter"),
+  aci_import_not_enforced: L("ACI: Import Route Control nicht erzwungen", "ACI: import route control not enforced"),
+  bgp_zone_mismatch: L("BGP: Eingangsfilter passt nicht zu den Zonen", "BGP: inbound filter does not match the zones"),
+  bgp_zone_out_mismatch: L("BGP: Ausgangsfilter passt nicht zu den Zonen", "BGP: outbound filter does not match the zones"),
+  aci_import_zone_mismatch: L("ACI: Import Route Control passt nicht zu den Zonen", "ACI: import route control does not match the zones"),
+  netbox_sync_mismatch: L("NetBox-Sync: geschrieben ≠ gelesen", "NetBox sync: written ≠ read"),
   link_speed_mismatch: L("Kabel: Speed abweichend", "Link: speed differs"),
   link_duplex_mismatch: L("Kabel: Duplex abweichend", "Link: duplex differs"),
   link_vlan_mismatch: L("Kabel: VLANs abweichend", "Link: VLANs differ"),
@@ -70,6 +85,9 @@ export const FINDING_LABEL: Record<string, string> = {
   lag_degraded: L("Port-Channel unvollständig", "Port-Channel incomplete"),
   vlan_split: L("VLAN getrennt", "VLAN split"),
   vpc_mismatch: L("vPC-Paar uneinheitlich", "vPC pair inconsistent"),
+  source_stale: L("Quellsystem: Stand veraltet", "Source system: data outdated"),
+  source_partial: L("Quellsystem: nur teilweise gelesen", "Source system: only partially collected"),
+  manual: L("Von Hand erfasst", "Captured manually"),
 };
 export const findingLabel = (t: string) => FINDING_LABEL[t] ?? t;
 
@@ -137,6 +155,10 @@ export const FINDING_HINT: Record<string, string> = {
     "Policy übersetzt die Quelle auf einen IP-Pool, den die Firewall nicht hat",
     "Policy translates the source to an IP-Pool the firewall does not have",
   ),
+  vip_target_missing: L(
+    "VIP der Firewall ohne Load Balancer dahinter – die interne Adresse ist im IPAM nicht vergeben und gehört zu keiner VM bzw. keinem ACI-Endpunkt",
+    "Firewall VIP without a load balancer behind it – the internal address is not assigned in the IPAM and belongs to no VM or ACI endpoint",
+  ),
   topo_duplicate_ip: L("dieselbe IP auf zwei Geräten im selben Netz", "the same IP on two devices in the same network"),
   topo_mask_mismatch: L(
     "Gegenstellen im selben Netz mit verschiedener Netzmaske",
@@ -160,6 +182,10 @@ export const FINDING_HINT: Record<string, string> = {
     "logische Zone, die zu keiner Zone des Grundschemas im Namensprofil passt",
     "logical zone that matches no zone of the base schema in the naming profile",
   ),
+  zone_net_exit: L(
+    "Netz einer Zone, das eine Firewall (Gerät einer Zone) nicht über den Übergang Richtung dieser Zone im Zonenplan lernt (anderes Interface, nur Default-Route bzw. keine Route)",
+    "Network of a zone a firewall (device of a zone) does not learn via the transition towards that zone in the zone plan (other interface, only the default route or no route)",
+  ),
   app_connection_mismatch: L(
     "Verbindung einer Applikation, die über einen Weg offen und über einen anderen gesperrt ist (aktiv, ECMP, Backup, Firewalls im Verbund)",
     "Connection of an application that is open via one path and blocked via another (active, ECMP, backup, firewalls in a parallel group)",
@@ -167,6 +193,50 @@ export const FINDING_HINT: Record<string, string> = {
   app_contract_narrower: L(
     "Contract Richtung L3Out, der weniger öffnet als die Firewall-Regeln der Applikation (die Firewall ist führend)",
     "Contract towards the L3Out that opens less than the firewall rules of the application (the firewall is leading)",
+  ),
+  app_rule_unused: L(
+    "Regel einer Applikation auf einer Firewall bzw. im ACI, über die der Verkehr ihrer Verbindungen nach dem Routing nie geht",
+    "Rule of an application on a firewall or in the ACI the traffic of its connections never passes according to the routing",
+  ),
+  app_coverage: L(
+    "Eine Grenze hat Verbindungen, Gegenstellen, Dienste bzw. Teile von Netzen der Applikation nicht geprüft – für diesen Teil fehlen Befunde",
+    "A limit left connections, peers, services or parts of networks of the application unchecked – findings for that part are missing",
+  ),
+  net_wider_than_routes: L(
+    "Netz-Objekt einer Regel (z. B. 10.0.0.0/8), das die Firewall nicht als Ganzes routet – zuordnen: Zone, Anbindung, nur die Teile oder Weg nach dem Routing",
+    "Network object of a rule (e.g. 10.0.0.0/8) the firewall does not route as a whole – assign: zone, exit, only the parts or path by the routing",
+  ),
+  bgp_expected_missing: L(
+    "Der Eingangsfilter eines BGP-Nachbarn (bzw. Import Route Control eines L3Outs) erlaubt Netze ausdrücklich, angekommen ist nichts davon",
+    "The inbound filter of a BGP neighbor (or import route control of an L3Out) explicitly permits networks, none of them arrived",
+  ),
+  bgp_outside_filter: L(
+    "In der Routing-Tabelle stehen Netze vom Nachbarn, die sein Eingangsfilter nach der gelesenen Konfiguration sperrt",
+    "The routing table holds networks from the neighbor its inbound filter denies according to the configuration read",
+  ),
+  bgp_no_inbound_filter: L(
+    "BGP-Nachbar in einer fremd verwalteten Zone (Netzwerkdesign → Zonen) ohne Prefix-Liste bzw. Route-Map im Eingang – die Firewall übernimmt alles",
+    "BGP neighbor in an externally managed zone (network design → zones) without prefix list or route map inbound – the firewall accepts everything",
+  ),
+  aci_import_not_enforced: L(
+    "Subnetze mit import-rtctrl an einem L3Out, der Import nicht erzwingt – sie wirken nicht",
+    "Subnets with import-rtctrl on an L3Out that does not enforce import – they have no effect",
+  ),
+  bgp_zone_out_mismatch: L(
+    "Was eine Firewall einem BGP-Nachbarn ankündigt bzw. ihr Ausgangsfilter erlaubt, passt nicht zu den Netzen der Zonen, die der Nachbar über sie erreicht – Vorschlag als Prefix-Liste (Richtung Ausgang)",
+    "What a firewall announces to a BGP neighbor or its outbound filter permits does not match the networks of the zones the neighbor reaches through it – proposal as prefix list (outbound)",
+  ),
+  aci_import_zone_mismatch: L(
+    "Die Import Route Control eines L3Outs passt nicht zu den Netzen der Zonen dahinter (nicht erzwungen, fehlt, zu offen) – Vorschlag der Subnetze im L3Out",
+    "The import route control of an L3Out does not match the networks of the zones behind (not enforced, missing, too open) – proposal of the subnets on the L3Out",
+  ),
+  netbox_sync_mismatch: L(
+    "Nachkontrolle nach dem Übernehmen: ein geschriebenes Objekt fehlt in NetBox, hat dort andere Werte oder ist nicht gelöscht",
+    "Verification after applying: a written object is missing in NetBox, has other values there or is not deleted",
+  ),
+  bgp_zone_mismatch: L(
+    "Der Eingangsfilter eines BGP-Nachbarn passt nicht zu den Netzen der Zonen dahinter (Netzwerkdesign) – Vorschlag als Prefix-Liste im Soll/Ist des Nachbarn",
+    "The inbound filter of a BGP neighbor does not match the networks of the zones behind (network design) – proposal as prefix list in the neighbor's expected/actual",
   ),
   link_speed_mismatch: L(
     "zwei verbundene Switch-Ports mit verschiedener Geschwindigkeit",
@@ -216,6 +286,18 @@ export const FINDING_HINT: Record<string, string> = {
     "vPC nur auf einem Peer, down bzw. inkonsistent – oder der Peer des vPC-Paars ist nicht verbunden",
     "vPC only on one peer, down or inconsistent – or the peer of the vPC pair is not connected",
   ),
+  source_stale: L(
+    "letzter erfolgreicher Lauf älter als die Grenze (AUTOMATO_STALE_DAYS, Zeitplan beachtet) – Doku und Weg-Suche zeigen einen alten Stand",
+    "last successful run older than the limit (AUTOMATO_STALE_DAYS, schedule considered) – documentation and path search show outdated data",
+  ),
+  source_partial: L(
+    "letzter Lauf mit Teilfehlern: Geräte nicht erreicht, nicht lesbar bzw. Routing-Kontexte unvollständig",
+    "last run with partial errors: devices not reached, not readable or routing contexts incomplete",
+  ),
+  manual: L(
+    "von Hand erfasster Befund (z. B. aus „Warum dieser Weg?“): etwas in der Konfiguration oder in Automato anzupassen – bleibt bis zur Triage bestehen",
+    "manually captured finding (e.g. from “Why this path?”): something to adjust in the configuration or in Automato – stays until triaged",
+  ),
 };
 
 // Kategorien der Übersicht (Findings-Seite)
@@ -249,7 +331,7 @@ export const FINDING_GROUPS: { key: string; label: string; help: string; types: 
       "ohne Quelle/Ziel bzw. ohne Consumer/Provider, Contract-Scope ohne Gegenstelle",
       "without source/destination or without consumer/provider, contract scope without peer",
     ),
-    types: ["rule_incomplete", "aci_scope_unpaired", "aci_contract_both_sides", "snat_pool_missing"],
+    types: ["rule_incomplete", "aci_scope_unpaired", "aci_contract_both_sides", "snat_pool_missing", "vip_target_missing"],
   },
   {
     key: "parallel",
@@ -277,10 +359,36 @@ export const FINDING_GROUPS: { key: string; label: string; help: string; types: 
     key: "topology",
     label: L("Topologie", "Topology"),
     help: L(
-      "Plausibilität von Netzen und Routing: doppelte IPs, Masken, Schleifen, Routen ohne Wirkung, BGP",
-      "Plausibility of networks and routing: duplicate IPs, masks, loops, routes without effect, BGP",
+      "Plausibilität von Netzen und Routing: doppelte IPs, Masken, Schleifen, Routen ohne Wirkung, BGP, Netze der Regeln grösser als die Routen",
+      "Plausibility of networks and routing: duplicate IPs, masks, loops, routes without effect, BGP, networks of rules wider than the routes",
     ),
-    types: ["topo_duplicate_ip", "topo_mask_mismatch", "topo_route_loop", "topo_static_unused", "topo_bgp_down"],
+    types: ["topo_duplicate_ip", "topo_mask_mismatch", "topo_route_loop", "topo_static_unused", "topo_bgp_down", "net_wider_than_routes"],
+  },
+  {
+    key: "bgp_filter",
+    label: L("BGP-Filter", "BGP filters"),
+    help: L(
+      "Soll/Ist je BGP-Nachbar: erwartete Netze kommen nicht an, erhalten trotz Filter, eBGP ohne Filter, ACI Import Route Control nicht erzwungen",
+      "Expected/actual per BGP neighbor: expected networks do not arrive, received despite the filter, eBGP without filter, ACI import route control not enforced",
+    ),
+    types: [
+      "bgp_expected_missing",
+      "bgp_outside_filter",
+      "bgp_no_inbound_filter",
+      "aci_import_not_enforced",
+      "bgp_zone_mismatch",
+      "bgp_zone_out_mismatch",
+      "aci_import_zone_mismatch",
+    ],
+  },
+  {
+    key: "netbox_sync",
+    label: L("NetBox-Sync", "NetBox sync"),
+    help: L(
+      "Nachkontrolle nach dem Übernehmen: was Automato nach NetBox geschrieben hat, steht beim Zurücklesen anders da",
+      "Verification after applying: what Automato wrote to NetBox reads back differently",
+    ),
+    types: ["netbox_sync_mismatch"],
   },
   {
     key: "cabling",
@@ -298,16 +406,16 @@ export const FINDING_GROUPS: { key: string; label: string; help: string; types: 
       "Regeln gegen die Absicht der Zonenmatrix, Netze in mehreren logischen Zonen, Zonen ausserhalb des Grundschemas",
       "Rules against the intent of the zone matrix, networks in several logical zones, zones outside the base schema",
     ),
-    types: ["zone_policy_violation", "zone_overlap", "zone_outside_schema"],
+    types: ["zone_policy_violation", "zone_overlap", "zone_outside_schema", "zone_net_exit"],
   },
   {
     key: "apps",
     label: L("Applikationen", "Applications"),
     help: L(
-      "Verbindungen Ende zu Ende: über einen Weg offen, über einen anderen gesperrt",
-      "End-to-end connections: open via one path, blocked via another",
+      "Verbindungen Ende zu Ende: über einen Weg offen, über einen anderen gesperrt; Regeln nie auf dem Weg",
+      "End-to-end connections: open via one path, blocked via another; rules never on the path",
     ),
-    types: ["app_connection_mismatch", "app_contract_narrower"],
+    types: ["app_connection_mismatch", "app_contract_narrower", "app_rule_unused", "app_coverage"],
   },
   {
     key: "aci",
@@ -317,6 +425,24 @@ export const FINDING_GROUPS: { key: string; label: string; help: string; types: 
       "EPGs without endpoints, port groups without EPG, learned ≠ configured",
     ),
     types: ["epg_no_endpoints", "portgroup_no_epg", "portgroup_name_mismatch", "epg_assignment_conflict"],
+  },
+  {
+    key: "data",
+    label: L("Datenqualität", "Data quality"),
+    help: L(
+      "Stand der Quellsysteme: veraltet bzw. nur teilweise gelesen – Abgleich → Datenqualität zeigt alles",
+      "State of the source systems: outdated or only partially collected – Reconciliation → Data quality shows everything",
+    ),
+    types: ["source_stale", "source_partial"],
+  },
+  {
+    key: "manual",
+    label: L("Von Hand", "Manual"),
+    help: L(
+      "Von Hand erfasste Befunde, z. B. aus „Warum dieser Weg?“ in der Weg-Suche und bei den Verbindungen",
+      "Manually captured findings, e.g. from “Why this path?” in the path search and the connections",
+    ),
+    types: ["manual"],
   },
 ];
 
@@ -792,7 +918,12 @@ export function FamilyMarks({ r, onPair }: { r: Rule; onPair?: (id: number) => v
               `von Hand als Paar bestätigt${diff ? `, ${diff}` : ""}`,
               `confirmed as a pair by hand${diff ? `, ${diff}` : ""}`,
             )
-          : L(`ähnlich, ${diff}`, `similar, ${diff}`)) +
+          : p.match === "auto"
+            ? L(
+                `automatisch als Paar bestätigt (Einstellung des Mandanten)${diff ? `, ${diff}` : ""} – „Kein Paar“ in der Regel trennt es`,
+                `confirmed as a pair automatically (tenant setting)${diff ? `, ${diff}` : ""} – “No pair” on the rule separates it`,
+              )
+            : L(`ähnlich, ${diff}`, `similar, ${diff}`)) +
       L(
         ". Eigene Regel wie auf der FortiGate – nur zur Orientierung verbunden.",
         ". Separate rule as on the FortiGate – linked for orientation only.",
@@ -819,7 +950,9 @@ export function FamilyMarks({ r, onPair }: { r: Rule; onPair?: (id: number) => v
             ? L(" ähnlich", " similar")
             : p.match === "confirmed"
               ? L(" ✓ bestätigt", " ✓ confirmed")
-              : ""}
+              : p.match === "auto"
+                ? L(" ✓ automatisch", " ✓ automatic")
+                : ""}
         </button>
       )}
     </div>

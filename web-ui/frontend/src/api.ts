@@ -55,7 +55,7 @@ export interface RulePair {
   rule_id: number;
   name: string;
   family: string | null;
-  match: "same" | "similar" | "confirmed"; // confirmed = von Hand bestätigt
+  match: "same" | "similar" | "confirmed" | "auto"; // confirmed = von Hand bestätigt, auto = automatisch (Mandant, 0.138.0)
   diff: string[]; // src | dst | service | name | zone
 }
 
@@ -131,6 +131,7 @@ export interface RuleSummary {
   by_src_zone?: [string, number][];
   by_action?: Record<string, number>;
   by_vdom?: [string, number][]; // FortiGate-VDOMs mit Anzahl Regeln
+  by_source?: [number, number][]; // 0.117.0: Quellsystem -> Anzahl Regeln
 }
 
 export interface Endpoint {
@@ -397,6 +398,9 @@ export interface System {
   nat_count: number;
   vdoms?: string[]; // FortiGate: gelesene VDOMs – nur „root“ = die Firewall selbst
   parallel_group?: string | null; // Verbund paralleler Firewalls (Regeln zusammengefasst)
+  // Switches & Router (ADR 0033): Zugang ssh | snmp; bei SNMPv3 nur die Protokolle (nie Passwörter)
+  access?: "ssh" | "snmp" | null;
+  snmp?: { auth_protocol: string | null; priv_protocol: string | null; has_context: boolean } | null;
 }
 
 export interface ParallelSuggestion {
@@ -452,6 +456,10 @@ export interface Tenant {
   ipam_type: string;
   dns_type: string;
   naming_profile_id: number | null;
+  // Applikations-Doku (0.95.0): Gegenstellen nur mit Adresse für Betreuer mit Namen zeigen (Admin)
+  appdoc_foreign_names?: boolean;
+  // 0.138.0: ähnliche IPv4/IPv6-Paare automatisch bestätigen (Admin)
+  rule_pairs_auto?: boolean;
 }
 
 // Standorte (ADR 0015): virtuell = Nummer der Namenskonvention (000, 001), physisch = Ort-Code
@@ -523,6 +531,8 @@ export interface Run {
   queued_at: string | null;
   started_at?: string | null; // abgeholt bzw. vom zentralen Worker gestartet
   finished_at: string | null;
+  scope?: string | null; // 0.139.0: rules = nur Regeln (für die Applikation application_id)
+  application_id?: number | null;
 }
 
 export interface Nat {
@@ -551,6 +561,53 @@ export interface Nat {
   targets?: NatTarget[]; // Virtual Server: Real Server
   attrs?: Record<string, unknown>; // Virtual Server: Server-Typ, Methode, Persistenz, Health-Checks
   issues?: string[]; // Korrektheitsprüfung (0.14.0): Befunde des VIP-/Pool-Objekts, Ziel ohne IPAM
+  source?: string | null; // Quellsystem (Firewall bzw. Load Balancer)
+  // 0.96.0: Kette über den Load Balancer, VIPs davor, Ziel-Server (direkt bzw. über LB), VIP-Gruppen
+  chain?: NatChain[];
+  fronted_by?: NatFront[];
+  dest_servers?: NatServer[];
+  groups?: string[];
+}
+
+// Ziel-Server eines VIP (0.96.0): direkt bzw. über einen Load Balancer (`via`)
+export interface NatServer {
+  ip: string | null;
+  port: string | null;
+  status: string | null;
+  via: string | null; // Virtual Service des NSX ALB
+  names: string[]; // Firewall-Objekte mit dieser IP
+  dns: string[];
+}
+
+// Kette einer VIP der Firewall (0.96.0): extern → VIP des Load Balancers → Virtual Service → Pool → Server
+export interface NatChain {
+  ext_ip: string | null;
+  ext_port: string | null;
+  vip_ip: string | null;
+  vip_port: string | null;
+  via: "ip" | "fqdn" | string;
+  balancer_id: number;
+  balancer: string;
+  source: string | null;
+  source_system_id: number | null;
+  pool: string | null;
+  tenant: string | null;
+  vrf: string | null;
+  floating: boolean;
+  down: boolean;
+  servers: NatServer[];
+}
+
+// VIP einer Firewall vor einem Virtual Service (0.96.0)
+export interface NatFront {
+  id: number;
+  name: string;
+  source: string | null;
+  source_system_id: number;
+  vdom: string | null;
+  ext_ip: string | null;
+  ext_port: string | null;
+  via: string;
 }
 
 // Real Server eines Virtual Servers (FortiGate server-load-balance)
@@ -589,47 +646,10 @@ export interface NatDetail extends Nat {
   vms: VmInfo[]; // VMs hinter dem internen Ziel
 }
 
-// Publizierte Dienste (VIPs)
-export interface PublishedService {
-  name: string;
-  ext_ip: string | null;
-  ext_port: string | null;
-  mapped_ip: string | null;
-  mapped_port: string | null;
-  protocol: string | null;
-  portforward: boolean;
-  rule_count: number;
-  source?: string | null; // Quellsystem (FortiGate bzw. NSX ALB)
-  platform?: string | null; // fortigate | avi (0.77.0, ADR 0027)
-  servers?: number; // Server des Pools bzw. Real Server
-  pool?: string | null; // NSX ALB: Pool bzw. Pool Group
-  balancers?: BalancerBrief[]; // 0.79.0: VIP der FortiGate -> Virtual Services des NSX ALB
-  fronted_by?: { name: string; ext_ip: string | null; ext_port: string | null; source?: string | null }[]; // VIPs davor
-}
-
-export interface AppRule {
-  id: number;
-  name: string;
-  action: string;
-  src_zone: string | null;
-  sources: string[];
-  services: string[];
-}
-
-export interface PublishedServiceDetail extends PublishedService {
-  rules: AppRule[];
-}
-
-// Applikations-Doku (systemzentriert, 10 Kategorien)
-export interface AppDocSystem {
-  name: string;
-  ip: string | null;
-  rule_count: number;
-  kind: string; // host | epg
-}
-
+// Tabellen der Kategorien (Applikations-Doku)
 export interface DocTable {
-  index: number;
+  index: number; // feste Kennung der Kategorie
+  number?: number; // 0.126.0: angezeigte Nummer, fortlaufend in der Reihenfolge des Namensprofils
   title: string;
   enforcement: string;
   // sichtbare Spalten (0.84.0: leere NAT-/VIP-/Load-Balancer-Spalten fehlen)
@@ -644,6 +664,16 @@ export interface DocTable {
   rows: Record<string, string | number | number[] | string[] | null>[];
   // 0.69.0 (Applikations-Doku): ausgeblendete Zeilen mit _hides (Begründung, wer, wann)
   hidden?: (Record<string, string | number | number[] | string[] | null> & { _hides?: DocHide[] })[];
+  // 0.101.0: Zonen der Kategorie mit ihren Netzen (nicht für Kunden-Benutzer)
+  zones?: DocTableZone[];
+}
+export interface DocTableZone {
+  id: number;
+  name: string;
+  nets: string[]; // die ersten Netze
+  nets_total: number;
+  excluded?: string[]; // 0.102.0: ausgeschlossene Netze („ohne“)
+  type?: string | null; // 0.105.0: Zonentyp
 }
 export interface DocHide {
   id: number;
@@ -656,28 +686,9 @@ export interface DocHide {
   active?: boolean; // steht in einer Kategorie
 }
 
-// VM hinter dem System (vCenter): beim Server die VM der IP, bei der EPG die VMs ihrer Portgruppen
-export interface DocVm {
-  name: string;
-  power_state: string | null;
-  portgroup: string | null;
-  ips: string[];
-  epg: string | null;
-}
-
-export interface SystemDoc {
-  system: string;
-  system_ip: string | null;
-  tenant_code: string | null;
-  site: SiteRef | null;
-  vms?: DocVm[];
-  tables: DocTable[];
-  // routingtechnisch nicht möglich (0.24.0) – nicht in den Tabellen, mit Begründung
-  impossible?: { rule_id: number | null; description: string; side: "src" | "dst" | null; text: string }[];
-}
-
 // Applikationen (ADR 0012): Mitglieder AP (`Tenant/AP`), EPG (DN) und Server (Objektname)
-export type MemberKind = "ap" | "epg" | "host" | "rule" | "norule"; // rule/norule: Regel zugeordnet bzw. ausgeschlossen (0.60.0)
+// rule/norule: Regel zugeordnet bzw. ausgeschlossen (0.60.0); vm: VM aus dem vCenter per Name (0.124.0)
+export type MemberKind = "ap" | "epg" | "host" | "vm" | "rule" | "norule";
 export type Criticality = "low" | "medium" | "high" | "critical";
 export type Purpose = "dev" | "test" | "prod";
 export interface SiteRef {
@@ -701,9 +712,12 @@ export interface Application {
   criticality: Criticality | null;
   site: SiteRef | null;
   description: string | null;
+  infrastructure?: boolean; // 0.88.0: Monitoring, Backup, DNS u. a. (Abhängigkeiten getrennt)
   member_count: number;
   system_count: number;
   vm_count: number; // 0.75.0: VMs an den Portgruppen ihrer EPGs bzw. hinter ihren Servern
+  // feinere Rollen: Kunden-Benutzer darf sie pflegen (editor, ganz im Ausschnitt); Betreuer: null
+  editable?: boolean | null;
 }
 
 export interface AppMember {
@@ -748,6 +762,7 @@ export interface ApplicationInput {
   criticality?: Criticality | null;
   site_id?: number | null;
   description?: string | null;
+  infrastructure?: boolean;
 }
 
 // Applikations-Doku (0.14.0): Systeme (VMs bzw. Server ohne VM), EPGs, Treffer je Regel und
@@ -799,6 +814,7 @@ export interface AppDocEpg {
   vm_count: number;
   endpoint_count: number;
   member: string;
+  of_vm?: boolean; // 0.126.1: EPG einer VM der Applikation, selbst kein Mitglied
   rules: DocRuleCounts;
 }
 export interface AppDocHit {
@@ -819,6 +835,15 @@ export interface AppDocHit {
   // Routing (0.24.0): kann die Regel Verkehr zum bzw. vom System sehen; impossible mit Grund
   relevance?: "possible" | "impossible" | "unknown";
   relevance_text?: string;
+  // L3Outs (ADR 0034): L3Out des Zugriffs; Contract zu externen EPGs mit Firewall dahinter =
+  // Hilfs-Contract (helper, an den Firewall-Regeln helper_for); an der Firewall-Regel ihre
+  // Hilfs-Contracts je L3Out; Hinweis am Contract ohne Firewall dahinter
+  l3out?: string | null;
+  helper?: boolean;
+  helper_for?: number[];
+  helpers?: { l3out: string; rule_ids: number[]; names: string[]; missing: string[] }[];
+  l3out_note?: string;
+  category_hidden?: boolean; // 0.125.0: nicht in der Kategorie (Auswahl spezifisch/unspezifisch im Namensprofil)
 }
 export interface AppDocFinding {
   id: number;
@@ -850,6 +875,12 @@ export interface ApplicationDoc {
     assigned?: number; // direkt zugeordnete Regeln (0.60.0)
     excluded?: number; // ausgeschlossene Regeln (0.60.0)
     hidden?: number; // in den Kategorien ausgeblendete Zeilen (0.69.0)
+    helpers?: number; // Hilfs-Contracts über L3Outs, an den Firewall-Regeln (ADR 0034)
+    outbound_broad?: number; // 0.103.0: ausgehende Firewall-Regeln mit breiter Quelle, nicht in der Doku
+    to_internet?: number; // 0.114.1: Freigaben ins Internet, die das System nur über „all“ erfassen
+    path_unchecked?: number; // 0.140.0: Regeln, deren Weg eine Grenze nicht prüfen liess (bleiben stehen)
+    ruleset?: { key: string; title: string; description?: string } | null; // 0.118.0: aktives Regelwerk
+    filtered?: { key: string; title: string; count: number }[]; // 0.118.0: je Bedingung gezählt
   };
   systems: AppDocSystem2[];
   epgs: AppDocEpg[];
@@ -857,15 +888,27 @@ export interface ApplicationDoc {
   rules: Rule[];
   findings: AppDocFinding[];
   tables: DocTable[];
+  // 0.130.0: Namensprofil, aus dem Titel und Reihenfolge der Kategorien kommen (null = Vorgaben)
+  catalog_profile?: { id: number; customer: string; name: string } | null;
   // 0.60.0: direkt zugeordnete (rule) bzw. ausgeschlossene (norule) Regeln, Abhängigkeiten
   rule_members?: { member_id: number; kind: "rule" | "norule"; label: string; rule_id: number }[];
   dependencies?: { uses: AppDependency[]; used_by: AppDependency[] };
   hides?: DocHide[]; // 0.69.0
+  // ADR 0034: Hilfs-Contracts über L3Outs (nicht in rules) mit den Firewall-Regeln, an denen sie stehen
+  helpers?: { rule_id: number; name: string; l3outs: string[]; firewall_rules: number[]; systems: string[] }[];
+  peer_names?: boolean; // 0.101.0: Namen der Gegenstellen eingeschaltet (Einstellung des Mandanten)
+  snapshot?: DocSnapshot; // 0.108.0: Stand der Doku (von wann, wird aktualisiert)
 }
 export interface AppDependency {
   application_id: number;
   name: string;
-  rules: { rule_id: number; name: string; domain: string; via: string; services: string[] }[];
+  infrastructure?: boolean; // 0.88.0: andere Applikation ist Infrastruktur
+  rules: { rule_id: number; name: string; domain: string; via: string; services: string[]; reverse?: boolean }[];
+}
+export interface AppDependencies {
+  uses: AppDependency[];
+  used_by: AppDependency[];
+  infrastructure: boolean; // die Applikation selbst
 }
 
 // Firewall-Objekt wie auf dem Gerät (Objekt-Ansicht)
@@ -896,6 +939,7 @@ export interface DeviceObject {
 export interface ObjectPage extends Paged<DeviceObject> {
   types?: Record<string, number>; // obj_type -> Anzahl ("" = ohne Typ)
   predefined?: number;
+  prefixes?: Record<string, number>; // 0.117.0: Anzahl je Präfix der Namenskonvention ("" = ohne)
 }
 
 // Objekt-Detail (wie NAT): Attribute, Mitglieder und die Regeln, die es nutzen
@@ -1007,8 +1051,10 @@ export interface ReconcileSummary {
   reference_sources: (SourceRef & { ref_role: string; has_reference: boolean })[];
   ipam: {
     available: boolean;
+    mode?: "ipam" | "dns"; // dns: Anreicherung ist ein DNS-Server (AD-DNS, ADR 0045) – nur DNS-Namen
     primary?: SourceRef;
     enrichment?: SourceRef;
+    enrichments?: SourceRef[]; // alle Anreicherungen (wählbar, DNS-Server zuletzt)
     summary?: Record<string, number>; // missing | different | only_enrichment | equal
   };
 }
@@ -1020,6 +1066,7 @@ export interface RefBrief {
   vlan: number | null;
   site: string | null;
   url: string | null;
+  dns_names?: string[]; // DNS-Server: alle Namen der IP (A/AAAA, CNAME, PTR)
 }
 export interface IpamRow {
   status: string; // missing | different | only_enrichment
@@ -1031,12 +1078,16 @@ export interface IpamRow {
 }
 export interface IpamCompare extends Paged<IpamRow> {
   available: boolean;
+  mode?: "ipam" | "dns";
   primary?: SourceRef;
   enrichment?: SourceRef;
+  enrichments?: SourceRef[];
   summary?: Record<string, number>;
 }
 
 // NetBox-Sync (ADR 0010): Vorschau -> Übernahme per Klick (admin)
+// Abschnitte; Verkabelung und Applikationen (ADR 0031) nur ausdrücklich gewählt
+export type SyncSection = "inventory" | "mirror" | "virtualization" | "cabling" | "applications";
 export interface SyncTarget {
   id: number;
   name: string;
@@ -1050,14 +1101,35 @@ export interface SyncChange {
   new: unknown;
 }
 export interface SyncItem {
+  // tag | … | interface | cable | … | ip_address | app_tag_vm | app_tag_ip (Tags am Ziel, ADR 0031)
   kind: string;
   key: string;
   label: string;
   action: string; // create | update | conflict | delete | obsolete
-  id?: number;
+  id?: number | null; // null: Ziel wird im selben Sync angelegt (Applikations-Tags)
   manual?: boolean;
   changes?: SyncChange[];
   fields?: Record<string, unknown>;
+}
+// Nachkontrolle des NetBox-Syncs (0.115.0, ADR 0042): NetBox nach dem Schreiben rein lesend neu
+// gelesen, je geschriebenem Objekt verglichen
+export interface SyncDeviation {
+  kind: string;
+  key: string;
+  label: string;
+  action: string; // create | update | delete
+  problem: "missing" | "differs" | "still_there";
+  changes?: { field: string; old: unknown; new: unknown }[];
+}
+export interface SyncVerification {
+  checked?: number;
+  ok?: number;
+  unchecked?: number;
+  deviation_count?: number;
+  by_kind?: Record<string, number>;
+  deviations?: SyncDeviation[];
+  error?: string;
+  at?: string;
 }
 export interface SyncPlan {
   id: number;
@@ -1066,12 +1138,13 @@ export interface SyncPlan {
   target: string;
   target_url: string;
   status: string; // planning | ready | applying | applied | failed | superseded
-  options: { sections?: string[]; allow_delete?: boolean };
+  options: { sections?: SyncSection[]; allow_delete?: boolean };
   summary: Record<string, Record<string, number>> | null;
   totals: Record<string, number>;
   warnings: string[];
   message: string | null;
   result: Record<string, Record<string, number>> | null;
+  verification?: SyncVerification | null; // Nachkontrolle nach dem Übernehmen (0.115.0)
   created_by: string;
   created_at: string;
   applied_by: string | null;
@@ -1108,7 +1181,8 @@ export class ApiError extends Error {
     public status: number,
     public detail: string,
   ) {
-    super(detail ? `${detail} (HTTP ${status})` : `HTTP ${status}`);
+    // status 0 = keine Antwort (Verbindung abgebrochen, 0.139.2)
+    super(status === 0 ? detail : detail ? `${detail} (HTTP ${status})` : `HTTP ${status}`);
   }
 }
 
@@ -1156,6 +1230,33 @@ async function authHeaders(): Promise<Record<string, string>> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+// Anfrage ohne Antwort (0.139.2, Befund des Anwenders: „Doku laden: Failed to fetch“): der Browser
+// meldet nur „Failed to fetch“, wenn die Verbindung abbricht - oder wenn der Tab gerade zu Keycloak
+// umleitet. Lesende Anfragen einmal wiederholen; beim Umleiten keine Meldung (die Seite wechselt);
+// sonst eine verständliche Meldung.
+async function send(url: string, init: RequestInit): Promise<Response> {
+  const reading = (init.method ?? "GET").toUpperCase() === "GET";
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fetch(url, init);
+    } catch (e) {
+      if (auth.isLeaving()) return new Promise<Response>(() => {}); // Seite wechselt zu Keycloak
+      if (!(e instanceof TypeError) || !reading || attempt > 0) {
+        if (e instanceof TypeError)
+          throw new ApiError(
+            0,
+            L(
+              "Keine Antwort vom Server – Verbindung abgebrochen (Browser: „Failed to fetch“)",
+              "No response from the server – connection lost (browser: “Failed to fetch”)",
+            ),
+          );
+        throw e;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  }
+}
+
 // Fetch mit Token und einheitlicher Fehlerbehandlung; liefert die rohe Antwort.
 async function fetchChecked(url: string, init: RequestInit = {}): Promise<Response> {
   // Sprache der Oberfläche (0.86.0): Texte des Servers folgen schrittweise
@@ -1164,7 +1265,7 @@ async function fetchChecked(url: string, init: RequestInit = {}): Promise<Respon
     ...(await authHeaders()),
     ...(init.headers as Record<string, string>),
   };
-  const response = await fetch(url, { ...init, headers });
+  const response = await send(url, { ...init, headers });
   if (!response.ok) {
     const body = await response.json().catch(() => null);
     const detail = detailText(body);
@@ -1226,9 +1327,44 @@ export const fetchAuthConfig = async (): Promise<AuthConfig> => {
 export const fetchTenants = () => getJSON<Tenant[]>("/api/tenants");
 export const createTenant = (body: { name: string; code?: string | null }) =>
   sendJSON<Tenant>("/api/tenants", "POST", body);
+// Module je Mandant (0.107.0, ADR 0036): Kern und Einstellungen immer an; `effective` mit den Abhängigkeiten
+export type ModuleKey = "kern" | "einstellungen" | "worker" | "gateway" | "analyse" | "wege" | "findings" | "doku" | "design" | "schreibpfad";
+export interface ModuleInfo {
+  key: ModuleKey;
+  title: string;
+  purpose: string;
+  role: "basis" | "lesen" | "schreiben";
+  switchable: boolean;
+  depends: ModuleKey[];
+  views: string[];
+  enabled: boolean;
+  effective: boolean;
+}
+export const fetchModules = (tenantId: number | null) => getJSON<ModuleInfo[]>(`/api/modules${qs({ tenant_id: tenantId })}`);
+export const switchModule = (tenantId: number, key: ModuleKey, enabled: boolean) =>
+  sendJSON<ModuleInfo[]>(`/api/modules/${key}${qs({ tenant_id: tenantId })}`, "PUT", { enabled });
+
+// Prüfungen der Findings je Mandant (0.110.0, ADR 0039): lesen = viewer, schalten = admin (Audit)
+export interface CheckInfo {
+  key: string;
+  module: ModuleKey;
+  module_title: string;
+  title: string;
+  purpose: string;
+  types: string[];
+  step: "zonen" | "quellen" | "applikationen" | null; // eigener Teil-Durchgang
+  in_reconcile: boolean;
+  enabled: boolean; // eigene Schaltung
+  effective: boolean; // mit dem Modul
+  stats: { ran_at: string; ms: number; count: number } | null; // letzter Durchgang
+}
+export const fetchChecks = (tenantId: number) => getJSON<CheckInfo[]>(`/api/checks${qs({ tenant_id: tenantId })}`);
+export const switchCheck = (tenantId: number, key: string, enabled: boolean) =>
+  sendJSON<CheckInfo[]>(`/api/checks/${key}${qs({ tenant_id: tenantId })}`, "PUT", { enabled });
+
 export const patchTenant = (
   tenantId: number,
-  body: { code?: string | null; audit_reads?: boolean; naming_profile_id?: number | null },
+  body: { code?: string | null; audit_reads?: boolean; naming_profile_id?: number | null; appdoc_foreign_names?: boolean; rule_pairs_auto?: boolean },
 ) => sendJSON<Tenant>(`/api/tenants/${tenantId}`, "PATCH", body);
 export const fetchSites = (tenantId: number) => getJSON<Site[]>(`/api/tenants/${tenantId}/sites`);
 export const createSite = (
@@ -1292,6 +1428,12 @@ export type SystemCredentials = {
   username?: string;
   password?: string;
   write_token?: string;
+  // Switches & Router mit Zugang SNMPv3 (ADR 0033): nur authPriv, Benutzer in `username`
+  auth_protocol?: string;
+  auth_password?: string;
+  priv_protocol?: string;
+  priv_password?: string;
+  context?: string;
 };
 export const createSystem = (
   body: {
@@ -1305,6 +1447,7 @@ export const createSystem = (
     ref_role?: string | null;
     site_id?: number | null;
     schedule?: string | null;
+    access?: "ssh" | "snmp";
   } & SystemCredentials,
 ) => sendJSON<System>("/api/systems", "POST", body);
 export const patchSystem = (
@@ -1322,6 +1465,7 @@ export const patchSystem = (
     schedule?: string | null;
     parallel_group?: string | null;
     forget_host_keys?: string[];
+    access?: "ssh" | "snmp"; // Wechsel verwirft die bisherigen Zugangsdaten
   } & SystemCredentials,
 ) => sendJSON<System>(`/api/systems/${id}`, "PATCH", body);
 export const deleteSystem = (id: number) => sendJSON<DeleteCounts>(`/api/systems/${id}`, "DELETE");
@@ -1380,6 +1524,7 @@ export interface CollectAllItem {
   blocking_run_id?: string | null; // offener Lauf, der das Quellsystem belegt (abbrechbar)
 }
 // Offenen Lauf beenden (operator) – z. B. hängt er nach einem Neustart des Agenten
+export const fetchRun = (runId: string) => getJSON<Run>(`/api/jobs/${runId}`);
 export const cancelRun = (runId: string) => sendJSON<Run>(`/api/jobs/${runId}/cancel`, "POST", {});
 export const startCollectAll = (tenantId: number) =>
   sendJSON<{ queued: number; items: CollectAllItem[] }>("/api/jobs/collect-all", "POST", { tenant_id: tenantId });
@@ -1440,6 +1585,7 @@ export interface SchemaZone {
   description: string | null;
   geometry: [number, number, number, number] | null;
   per_customer?: boolean; // Vorlage je Kunde (0.82.0, `automato_customer`)
+  joins_same?: boolean; // verbindet gleiche Zonen (0.128.0, `automato_join_same`, Vorgabe aus)
 }
 export interface SchemaLink {
   src: string;
@@ -1492,6 +1638,7 @@ export interface SchemaZoneEdit {
   geometry: [number, number, number, number] | null;
   previous: string | null; // bisheriger Name (Umbenennen)
   per_customer?: boolean; // Vorlage je Kunde (0.82.0)
+  joins_same?: boolean; // verbindet gleiche Zonen (0.128.0)
 }
 export interface SchemaLinkEdit {
   src: string;
@@ -1512,8 +1659,8 @@ async function fileOf(url: string, fallback: string): Promise<{ blob: Blob; file
   return { blob: await response.blob(), filename: match?.[1] ?? fallback };
 }
 // Export für Confluence (0.71.0): Applikations-Doku als Word bzw. Word + Netzwerkplan (draw.io) im ZIP
-// 0.73.0: `sections` = gewählte Abschnitte (leer = alle)
-export const exportApplication = (id: number, format: "docx" | "zip", sections?: string[]) =>
+// 0.73.0: `sections` = gewählte Abschnitte (leer = alle); seit 0.104.0 auch Markdown (`md`) vom Server
+export const exportApplication = (id: number, format: "docx" | "zip" | "md", sections?: string[]) =>
   fileOf(
     `/api/applications/${id}/export${qs({ format, sections: sections?.length ? sections.join(",") : undefined })}`,
     `applikation.${format}`,
@@ -1528,6 +1675,24 @@ export const upsertEntry = (
 ) => sendJSON<DictionaryEntry>(`/api/naming-profiles/${profileId}/dictionary`, "POST", body);
 export const deleteEntry = (entryId: number) =>
   sendJSON<void>(`/api/naming-profiles/dictionary/${entryId}`, "DELETE");
+
+// Regel in der Weg-Suche (0.112.0, #wege?rule=<id>): Hosts bzw. Netze je Seite (ohne any) und Dienste wie in der Weg-Suche
+export interface PathValue {
+  value: string;
+  name: string | null;
+}
+export interface RulePathSearch {
+  rule_id: number;
+  name: string;
+  src: PathValue[];
+  dst: PathValue[];
+  services: string[];
+  // Quelle any (0.113.1): Anbindung am Eingang der Regel bzw. Start an ihrer Firewall (Knoten)
+  src_exit: { ref: string; name: string; kind: string; ports: string[] } | null;
+  start: string | null;
+  ports?: string[]; // Eingang der Regel am Start
+}
+export const fetchRulePathSearch = (ruleId: number) => getJSON<RulePathSearch>(`/api/rules/${ruleId}/path-search`);
 
 // Dokumentation
 export async function fetchRules(opts: {
@@ -1583,9 +1748,13 @@ export async function fetchRules(opts: {
   };
 }
 // IPv4/IPv6-Paar bestätigen bzw. ablehnen (operator) und die Entscheidung zurücknehmen
+// `pending` (0.113.1): gespeichert, der Mandant ist gerade gesperrt – die Markierung folgt im Hintergrund
+export interface PairResult {
+  pending: boolean;
+}
 export const decidePair = (ruleId: number, partnerId: number, decision: "confirmed" | "rejected") =>
-  sendJSON<void>(`/api/rules/${ruleId}/pair`, "POST", { partner_id: partnerId, decision });
-export const resetPairDecision = (id: number) => sendJSON<void>(`/api/rules/pair-decisions/${id}`, "DELETE");
+  sendJSON<PairResult>(`/api/rules/${ruleId}/pair`, "POST", { partner_id: partnerId, decision });
+export const resetPairDecision = (id: number) => sendJSON<PairResult>(`/api/rules/pair-decisions/${id}`, "DELETE");
 export const fetchRuleSummary = (tenantId?: number | null) =>
   getJSON<RuleSummary>(`/api/rules/summary${cq({ tenant_id: tenantId })}`);
 export const fetchRuleDetail = (id: number) => getJSON<RuleDetail>(`/api/rules/${id}`);
@@ -1612,6 +1781,15 @@ export const fetchNat = (opts: {
     `/api/nat${cq({ tenant_id: opts.tenantId, nat_type: opts.natType, q: opts.q?.trim(), issues_only: opts.issuesOnly ? "true" : undefined, limit: opts.limit, offset: opts.offset })}`,
   );
 export const fetchNatDetail = (id: number) => getJSON<NatDetail>(`/api/nat/${id}`);
+// Export der Liste (0.96.0): alle Einträge mit den Filtern der Ansicht, seitenweise geladen
+export async function fetchAllNat(opts: { tenantId?: number | null; natType?: string; q?: string; issuesOnly?: boolean }) {
+  const rows: Nat[] = [];
+  for (;;) {
+    const page = await fetchNat({ ...opts, limit: 5000, offset: rows.length });
+    rows.push(...page.rows);
+    if (!page.rows.length || rows.length >= page.total) return rows;
+  }
+}
 export const fetchFindings = (opts: {
   tenantId?: number | null;
   status?: string;
@@ -1640,26 +1818,108 @@ export const fetchFindingSummary = (tenantId?: number | null, type?: string, q?:
   getJSON<FindingSummary>(`/api/findings/summary${cq({ tenant_id: tenantId, type, q: q?.trim() })}`);
 export const patchFinding = (id: number, body: { status?: string; note?: string }) =>
   sendJSON<Finding>(`/api/findings/${id}`, "PATCH", body);
-export const fetchPublishedServices = (tenantId?: number | null) =>
-  getJSON<PublishedService[]>(`/api/published-services${cq({ tenant_id: tenantId })}`);
-export const fetchPublishedService = (name: string, tenantId?: number | null) =>
-  getJSON<PublishedServiceDetail>(
-    `/api/published-services/${encodeURIComponent(name)}${qs({ tenant_id: tenantId })}`,
-  );
-export const fetchAppDocSystems = (tenantId?: number | null) =>
-  getJSON<AppDocSystem[]>(`/api/appdoc/systems${cq({ tenant_id: tenantId })}`);
-export const fetchSystemDoc = (name: string, tenantId?: number | null) =>
-  getJSON<SystemDoc>(`/api/appdoc/systems/${encodeURIComponent(name)}${qs({ tenant_id: tenantId })}`);
-export const assignSystemSite = (name: string, tenantId: number, siteId: number | null) =>
-  sendJSON<SystemDoc>(
-    `/api/appdoc/systems/${encodeURIComponent(name)}/site${qs({ tenant_id: tenantId })}`,
-    "PATCH",
-    { site_id: siteId },
-  );
+// Mehrere Findings auf einmal triagieren (0.117.0): ganz oder gar nicht, je Finding ein Audit-Eintrag
+export const triageFindings = (body: { ids: number[]; status: string; note?: string }) =>
+  sendJSON<{ updated: number; status: string }>(`/api/findings/triage`, "POST", body);
+// Finding von Hand (0.109.0), z. B. aus „Warum dieser Weg?“; bleibt nach dem Abgleich bestehen
+export interface ManualFindingInput {
+  tenant_id: number;
+  title: string;
+  text?: string;
+  severity: "info" | "warning" | "error";
+  source_system_id?: number | null;
+  hop?: string;
+  src?: string;
+  dst?: string;
+  service?: string | null;
+  note?: string;
+}
+export const createFinding = (body: ManualFindingInput) => sendJSON<Finding>("/api/findings", "POST", body);
 
 // Applikationen
+// Übersicht (0.117.0): Läufe je Tag und Änderungen des Routings je Art
+export interface RunsDay {
+  day: string; // JJJJ-MM-TT in der Zeitzone des Zeitplans
+  ok: number;
+  failed: number;
+  open: number;
+}
+export const fetchRunsDaily = (tenantId: number | null, days = 14) =>
+  getJSON<RunsDay[]>(`/api/jobs/daily${cq({ tenant_id: tenantId ?? undefined, days })}`);
+export interface RoutingChangeSummary {
+  days: number;
+  since: string;
+  total: number;
+  by_kind: Record<string, Record<string, number>>; // Art -> added|removed|changed -> Anzahl
+}
+export const fetchRoutingChangeSummary = (tenantId: number, days = 7) =>
+  getJSON<RoutingChangeSummary>(`/api/routing/changes/summary${cq({ tenant_id: tenantId, days })}`);
 export const fetchApps = (tenantId: number) =>
   getJSON<Application[]>(`/api/applications${cq({ tenant_id: tenantId })}`);
+// Stand der Doku je Applikation (0.129.0, Übersicht): passend, veraltet, rechnet, noch nie gerechnet
+export type DocState = "fresh" | "stale" | "building" | "never";
+export interface DocKindState {
+  variants: number; // Stände (Sprache, Namen, Ausschnitt)
+  fresh: number;
+  building: boolean;
+  built_at: string | null;
+  seconds: number; // längste Berechnung
+  progress?: { done: number; total: number; seconds: number }; // 0.133.1: Wege fertig von allen, seit (s)
+  error?: { text: string; at: string }; // 0.133.2: letzter Fehler mit denselben Eingaben
+  reason?: string; // 0.141.0: Änderung, die den Stand betrifft (warum neu gerechnet wird)
+}
+// 0.139.0: Durchgang des Vorrechnens - was beim Start ausstand, je Stand einmal
+export interface DocRound {
+  number: number;
+  apps_done: number;
+  apps_total: number;
+  done: number; // Stände fertig
+  total: number;
+  since: number; // Unix-Zeit (s)
+  application_id: number | null;
+  again: boolean; // Lauf bzw. Änderung währenddessen: danach ein weiterer Durchgang
+}
+export interface DocStates {
+  enabled: boolean;
+  warming: boolean; // Vorrechnen läuft
+  round?: DocRound | null;
+  warm_days: number;
+  warm_all?: boolean; // 0.133.2: alle Applikationen im Standard vorrechnen
+  refreshing?: number; // Befunde nachziehen (ausstehend)
+  waiting_runs?: number; // 0.141.0: Befunde und Vorrechnen warten auf so viele offene Läufe
+  generation?: number; // 0.141.0: Datenstand (Nummer der letzten Änderung am Inhalt)
+  total: number;
+  counts: Record<DocState, number>;
+  last_built_at: string | null;
+  apps: {
+    id: number;
+    name: string;
+    state: DocState;
+    stale: number;
+    auto: boolean;
+    error?: string | null; // 0.133.2: Berechnung fehlgeschlagen (bis sich die Eingaben ändern)
+    kinds: Record<"doc" | "connections", DocKindState>;
+  }[];
+}
+// 0.139.0 (ADR 0047): Regeln einer Applikation neu einlesen - Teil-Lauf nur der Regeln
+export interface RuleSource {
+  source_system_id: number;
+  name: string;
+  platform: string;
+  own: boolean; // gehört zur Applikation (vorgewählt)
+  reasons: ("rules" | "path")[];
+  open_run: string | null; // liest bzw. wartet schon
+  last_full_run: string | null;
+}
+export interface ReadRulesResult {
+  queued: number;
+  items: { source_system_id: number; name: string | null; run_id: string | null; execution: string | null; skipped: string | null }[];
+}
+export const fetchRuleSources = (appId: number) => getJSON<RuleSource[]>(`/api/applications/${appId}/rule-sources`);
+export const readAppRules = (appId: number, sourceSystemIds: number[]) =>
+  sendJSON<ReadRulesResult>(`/api/applications/${appId}/read-rules`, "POST", { source_system_ids: sourceSystemIds });
+export const fetchDocStates = (tenantId: number) =>
+  getJSON<DocStates>(`/api/applications/doc-states${cq({ tenant_id: tenantId })}`);
 export const fetchApp = (id: number) => getJSON<ApplicationDetail>(`/api/applications/${id}`);
 export const createApp = (
   tenantId: number,
@@ -1714,7 +1974,21 @@ export const acceptAppSuggestion = (tenantId: number, code: string, name?: strin
     "POST",
     name ? { name } : undefined,
   );
-export const fetchAppDoc = (id: number) => getJSON<ApplicationDoc>(`/api/applications/${id}/doc`);
+// Stand der Doku (0.108.0, ADR 0037): sofort der letzte, neu im Hintergrund; `fresh` = neu berechnen
+export const fetchAppDoc = (id: number, fresh = false) =>
+  getJSON<ApplicationDoc>(`/api/applications/${id}/doc${fresh ? "?fresh=true" : ""}`);
+export interface DocSnapshot {
+  built_at: string | null;
+  fresh: boolean; // passt zu den Eingaben
+  building: boolean; // rechnet gerade neu
+  seconds: number; // Dauer der letzten Berechnung
+}
+export const fetchDocState = (id: number, kind: "doc" | "connections" = "doc") =>
+  getJSON<DocSnapshot>(`/api/applications/${id}/doc/state?kind=${kind}`);
+// EPG der Applikation im Detail (0.95.0): Lage wie im Regel-Detail (Tenant, AP, BD, VRF, Subnetze, …)
+export const fetchAppEpg = (id: number, epgId: number) => getJSON<EpgLocation>(`/api/applications/${id}/epgs/${epgId}`);
+// Abhängigkeiten zu anderen Applikationen (0.88.0 wieder in der Doku): erst beim Aufklappen
+export const fetchAppDependencies = (id: number) => getJSON<AppDependencies>(`/api/applications/${id}/dependencies`);
 
 // Verbindungen Ende zu Ende (0.45.0): je Verbindung (Quelle → Ziel, Dienst) der Weg über
 // Firewalls und ACI mit der entscheidenden Policy bzw. dem Contract je Hop und dem Abgleich mit
@@ -1722,7 +1996,7 @@ export const fetchAppDoc = (id: number) => getJSON<ApplicationDoc>(`/api/applica
 export interface AppConnSide {
   ip: string;
   label: string;
-  kind: "system" | "object" | "epg" | "external";
+  kind: "system" | "object" | "epg" | "external" | "any"; // any: Gegenstelle any einer Firewall-Regel (0.127.0)
   name: string | null; // IPAM-Name der Gegenstelle
   systems: string[];
   more: number;
@@ -1743,6 +2017,8 @@ export interface AppConnRule {
   decides: boolean;
   reverse?: boolean; // ACI (0.69.1): Contract in der Rückrichtung (zustandslos)
   note?: string; // ACI (0.72.1): greift nicht, z. B. nur Antworten (Filter nur mit Quellport)
+  closed?: boolean; // ACI (0.111.0): verbindet die EPGs, öffnet den Dienst nicht
+  blocklist?: boolean; // 0.132.2: Sperrliste (Internet Service bzw. Land)
 }
 export interface AppConnCheck {
   label: string; // Firewall bzw. VRF (im Verbund je Firewall)
@@ -1795,11 +2071,18 @@ export interface AppConnection {
   variants: { kind: "active" | "backup"; via: string; verdict: string; text: string; reason: string | null }[];
   inconsistent: boolean;
   notes: string[];
+  // 0.136.0: Rückweg über dieselben Firewalls (ausser ACI und Verbund) aus den aktiven Wegen
+  return?: ReturnInfo | null;
+  // 0.137.0: Ports entlang des Wegs (Client, VIP, Load Balancer, Server), wenn sie sich ändern
+  service_chain?: ServiceStage[] | null;
   // logische Zonen (0.78.0, ADR 0024): Quelle/Ziel, Kette des Wegs, Absichten mit Urteil
   zones?: AppConnZones | null;
   // Netz als Ziel (0.79.1): genauer geroutete Teile (eigene Verbindungen) bzw. Teil von
   parts?: string[];
   part_of?: string;
+  // Eingaben des Wegs für „Warum dieser Weg?“ (0.109.0)
+  trace?: { src: string; dst: string; service: string | null; starts: string[] };
+  assign?: NetAssignState | null; // Netz grösser als die Routen (0.111.0, ADR 0040)
 }
 export interface AppConnZones {
   src: string[];
@@ -1881,20 +2164,45 @@ export interface AppPlan {
   groups?: { title: string; x: number; y: number; w: number; h: number; nodes: string[] }[]; // Rahmen je AP (0.74.0)
   summary: { connections: number; total: number; nodes: number; edges: number };
 }
+// 0.127.0: Regel der Doku ohne Verbindung mit dem Grund
+export interface AppConnWithout {
+  rule_id: number;
+  label: string;
+  reasons: string[];
+}
 export interface AppConnections {
   connections: AppConnection[];
   notes: string[];
-  summary: { total: number; allow: number; blocked: number; open: number; mismatch: number; inconsistent?: number; zone_violations?: number };
+  without?: AppConnWithout[];
+  summary: { total: number; allow: number; blocked: number; open: number; mismatch: number; inconsistent?: number; zone_violations?: number; asymmetric?: number; unused?: number };
   plan?: AppPlan;
+  snapshot?: DocSnapshot; // 0.108.0
+  // 0.140.0: vollständig geprüft? sonst je Art, was eine Grenze ausgelassen hat (Befund app_coverage)
+  coverage?: { complete: boolean; checked: number; total: number; cuts: Record<string, { rules: number; missing: number }> };
+  // 0.132.1: Dauer je Teil (Sekunden) und die langsamsten Wege
+  timing?: {
+    doc: number;
+    candidates: number;
+    setup: number;
+    traces: number;
+    plan?: number;
+    count: number;
+    total: number;
+    queries?: number; // 0.133.1: Abfragen an die Datenbank
+    failed?: number; // 0.133.2: Wege mit Fehler im Programm (fehlen, Hinweis in den notes)
+    slowest: { key: string; seconds: number }[];
+  };
 }
-export const fetchAppConnections = (id: number) =>
-  getJSON<AppConnections>(`/api/applications/${id}/connections`);
+export const fetchAppConnections = (id: number, fresh = false) =>
+  getJSON<AppConnections>(`/api/applications/${id}/connections${fresh ? "?fresh=true" : ""}`);
 // 0.74.0: `rules` = Ebene „Regeln“ mit exportieren
+// 0.130.0: die Verbindungen des Filters im Rumpf (mehr als in eine Adresse passen)
 export async function exportAppPlan(id: number, format: "svg" | "drawio", keys?: string[], rules = true): Promise<{ blob: Blob; filename: string }> {
-  const params = new URLSearchParams({ format });
-  (keys ?? []).forEach((k) => params.append("key", k));
-  if (!rules) params.set("rules", "false");
-  const response = await fetchChecked(withLang(`/api/applications/${id}/connections/plan/export?${params.toString()}`));
+  const response = await fetchChecked(withLang(`/api/applications/${id}/connections/plan/export`), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ format, keys: keys ?? null, rules }),
+  });
   const match = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") ?? "");
   return { blob: await response.blob(), filename: match?.[1] ?? `netzwerkplan.${format}` };
 }
@@ -1932,9 +2240,10 @@ export interface RetentionCounts {
   sync_plans: number;
   audit: number;
   l2?: number; // MAC-/ARP-Einträge der Switches (0.63.0)
+  topo_changes?: number; // Verlauf des Routings (ADR 0030)
 }
 export interface RetentionStatus {
-  policy: { runs_days: number; sync_days: number; audit_days: number; l2_days?: number };
+  policy: { runs_days: number; sync_days: number; audit_days: number; l2_days?: number; topo_changes_days?: number };
   active: boolean;
   scheduled: boolean;
   due: RetentionCounts;
@@ -1992,6 +2301,7 @@ export const fetchObjects = (
     q?: string;
     issues_only?: boolean;
     obj_type?: string; // kommagetrennt; "-" = ohne Typ
+    prefix?: string; // 0.117.0: Präfix der Namenskonvention, kommagetrennt; "-" = ohne Präfix
     predefined?: "include" | "exclude" | "only";
     object_id?: number | null; // nur dieses Objekt („Objekt öffnen“)
     limit?: number;
@@ -2007,6 +2317,16 @@ export const fetchObjects = (
     })}`,
   );
 export const fetchObjectDetail = (id: number) => getJSON<ObjectDetail>(`/api/objects/${id}`);
+// Übersicht (0.117.0): Anzahl Objekte je Kategorie, Typ und Präfix der Namenskonvention
+export interface ObjectSummary {
+  total: number;
+  by_category: Record<string, number>;
+  by_type: Record<string, number>;
+  by_prefix: Record<string, number>;
+  prefixes: Record<string, string>; // Präfix -> Bedeutung aus dem Namensprofil
+}
+export const fetchObjectSummary = (tenantId: number, customerId?: number | null) =>
+  getJSON<ObjectSummary>(`/api/objects/summary${cq({ tenant_id: tenantId, customer_id: customerId ?? undefined })}`);
 export const fetchInventory = <K extends keyof Inventory>(
   kind: K,
   tenantId: number,
@@ -2019,8 +2339,47 @@ export const fetchReconcileSummary = (tenantId: number) =>
   getJSON<ReconcileSummary>(`/api/reconcile/summary${cq({ tenant_id: tenantId })}`);
 export const fetchIpamCompare = (
   tenantId: number,
-  params: { status?: string; q?: string; limit?: number; offset?: number } = {},
+  params: { status?: string; q?: string; limit?: number; offset?: number; enrichment_id?: number } = {},
 ) => getJSON<IpamCompare>(`/api/reconcile/ipam${cq({ tenant_id: tenantId, ...params, q: params.q?.trim() })}`);
+// Datenqualität (ADR 0029): Bereiche mit Ampel, Kennzahl, Einträgen (Ursache, Hinweis, Link) und
+// Gesamtnote – Werte wie `status`/`key`/`view` kommen als Schlüssel, Texte in der Sprache der Anfrage
+export type DqStatus = "ok" | "info" | "warn" | "crit";
+export interface DqEntry {
+  key: string;
+  status: DqStatus;
+  title: string;
+  count: number | null;
+  cause: string | null;
+  hint: string | null;
+  link: { view: string; params: Record<string, string> } | null;
+  samples: string[];
+}
+export interface DqArea {
+  key: string; // sources | rules | vms | ipam | assignment
+  title: string;
+  status: "ok" | "warn" | "crit";
+  metric: string;
+  applicable: boolean;
+  note: string | null;
+  entries: DqEntry[];
+}
+export interface DataQuality {
+  tenant_id: number;
+  customer_id: number | null;
+  generated_at: string;
+  stale_days: number;
+  score: {
+    percent: number | null;
+    ok: number;
+    total: number;
+    status: "ok" | "warn" | "crit";
+    by_status: Record<string, number>;
+  };
+  sample: { rules: number; of: number } | null;
+  areas: DqArea[];
+}
+export const fetchDataQuality = (tenantId: number) =>
+  getJSON<DataQuality>(`/api/data-quality${cq({ tenant_id: tenantId })}`);
 export const runReconcile = (tenantId: number) =>
   sendJSON<{ tenant_id: number; findings: Record<string, number> }>(
     `/api/reconcile${qs({ tenant_id: tenantId })}`,
@@ -2036,7 +2395,7 @@ export const fetchSyncPlan = (id: number) => getJSON<SyncPlan>(`/api/netbox-sync
 export const createSyncPlan = (body: {
   tenant_id: number;
   source_system_id: number;
-  sections: string[];
+  sections: SyncSection[];
   allow_delete: boolean;
 }) => sendJSON<SyncPlan>("/api/netbox-sync/plans", "POST", body);
 export const fetchSyncItems = (
@@ -2060,7 +2419,8 @@ export interface NextHop extends Resolved {
 }
 // Bezeichnung eines Kontexts: FortiGate nur mit root = die Firewall, sonst „fw · VDOM x“,
 // ACI „leaf · VRF Tenant:VRF“
-export type ContextKind = "firewall" | "vdom" | "vrf";
+// l3 = Router bzw. L3-Switch je VRF (Switches & Router, ADR 0032)
+export type ContextKind = "firewall" | "vdom" | "vrf" | "l3";
 export interface Labeled {
   source_system_id: number;
   source: string | null;
@@ -2095,6 +2455,7 @@ export interface RoutingSummary {
   l3outs: number;
   vrfs?: number[]; // VRFs der Routen (FortiGate 7.x, 0 = Standard)
   mgmt_vrf?: boolean; // Routen in der Management-Tabelle vorhanden
+  changes_7d?: number; // Verlauf (ADR 0030): Änderungen der letzten 7 Tage
 }
 export interface TopoRoute extends Labeled {
   id: number;
@@ -2108,7 +2469,55 @@ export interface TopoRoute extends Labeled {
   metric: number | null;
   next_hops: NextHop[];
   attrs: Record<string, unknown> | null;
+  changed_at?: string | null; // letzte Änderung laut Verlauf (neu bzw. geändert, ADR 0030)
 }
+// Verlauf des Routings (ADR 0030): Änderungen von Lauf zu Lauf je Quellsystem
+export type TopoChangeKind = "route" | "bgp_peer" | "ha" | "policy_route" | "context" | "l3out";
+// added/removed/changed; Vermerke: Ausgangsstand, nicht lesbar, Obergrenze je Lauf
+export type TopoChangeType = "added" | "removed" | "changed" | "baseline" | "unreadable" | "truncated";
+export interface TopoChangeField {
+  field: string; // Schlüssel (next_hops, state …)
+  label: string; // Bezeichnung in der Sprache der Anfrage
+  before: string | null;
+  after: string | null;
+}
+export interface TopoChange {
+  id: number;
+  at: string;
+  source_system_id: number;
+  source: string;
+  collector_run_id: string | null;
+  run_exists: boolean; // Läufe haben eine kürzere Frist als der Verlauf
+  kind: TopoChangeKind;
+  node: string | null;
+  context: string | null;
+  display: ContextKind | "";
+  label: string;
+  table: string | null; // rib | bgp | static | policy | sdwan
+  key: string;
+  prefix: string | null;
+  change: TopoChangeType;
+  before: unknown;
+  after: unknown;
+  fields: TopoChangeField[];
+  summary: string; // „vorher → nachher“ bzw. der Vermerk (vom Server, Sprache der Anfrage)
+  shared?: boolean;
+}
+export const fetchRoutingChanges = (opts: {
+  tenantId: number;
+  sourceId?: number | null;
+  context?: string;
+  kind?: string;
+  change?: string; // auch "note" = alle Vermerke
+  q?: string;
+  since?: string; // ISO 8601
+  until?: string;
+  limit?: number;
+  offset?: number;
+}) =>
+  getPage<TopoChange>(
+    `/api/routing/changes${cq({ tenant_id: opts.tenantId, source_system_id: opts.sourceId, context: opts.context || undefined, kind: opts.kind || undefined, change: opts.change || undefined, q: opts.q?.trim() || undefined, since: opts.since || undefined, until: opts.until || undefined, limit: opts.limit, offset: opts.offset })}`,
+  );
 export interface PolicyHit {
   kind: "policy" | "sdwan";
   seq: number | null;
@@ -2138,8 +2547,22 @@ export interface TracePort extends Resolved {
   next_hop?: string | null;
   exit?: { id: number; name: string; kind: string }; // Anbindung nach aussen (0.18.0)
 }
+// Ziel-Server einer VIP bzw. eines Pools in der Weg-Suche (0.114.1)
+export interface VipServer {
+  ip: string;
+  port?: number | string;
+  status?: string;
+  weight?: number | string;
+  health?: string[];
+  names?: string[];
+  object?: string[];
+  hostname?: string; // NSX ALB: Hostname des Servers im Pool
+  pool?: string;
+  vm?: { name: string; id?: number; power_state?: string; epg?: string };
+}
 export interface TraceHop extends RoutingNode {
   via: string; // wie der Weg hierher kam (Quelle angeschlossen, Adresse des Nachbarn, …)
+  checked_service?: string; // 0.137.0: Policies/Contracts mit diesem Port geprüft (nach Port-Weiterleitung bzw. Load Balancer)
   vrf?: number | string; // VRF des Eingangs, wenn nicht die Standard-VRF ("mgmt" = Management)
   ingress: TracePort;
   egress?: TracePort;
@@ -2160,7 +2583,22 @@ export interface TraceHop extends RoutingNode {
   dst?: string; // Ziel an diesem Hop nach NAT auf einem Hop davor (0.23.0)
   // VIP (DNAT) an diesem Hop: ab hier zur internen IP (Virtual Server: alle Real Server)
   // balancer (0.79.0): Ziel der VIP ist dieser Virtual Service des NSX ALB
-  nat?: { name: string; id: number; ext: string | null; to: string[]; type: string | null; ports: (string | null)[] | null; balancer?: string };
+  nat?: {
+    name: string;
+    id: number;
+    ext: string | null;
+    to: string[];
+    type: string | null;
+    ports: (string | null)[] | null;
+    balancer?: string;
+    // 0.114.1: alle Ziel-Server mit Namen und Zustand, Methode, Health-Check, Bereich, Kommentar
+    servers?: VipServer[];
+    mapped?: string;
+    method?: string;
+    health?: string[];
+    extintf?: string;
+    comment?: string;
+  };
   // NSX ALB (0.77.0, ADR 0027): VIP hier angeschlossen, der Weg geht vom Load Balancer zum Server
   lb?: {
     name: string;
@@ -2175,6 +2613,10 @@ export interface TraceHop extends RoutingNode {
     tenant?: string;
     snat?: string; // service_engine | client
     down?: boolean;
+    members?: VipServer[]; // 0.114.1: alle Server des Pools mit Namen und Zustand
+    method?: string;
+    health?: string[];
+    fqdn?: string[];
   };
   // SNAT der erlaubenden Policy (0.47.0: VIP mit nat-source-vip, Pool mit Typ und Bereich)
   snat?: {
@@ -2193,6 +2635,7 @@ export interface TraceHop extends RoutingNode {
   leak?: { vrf: string; where: string; text: string; kind?: "leak" | "shared" };
   // Verbund als ein Hop (0.29.0): je Firewall bzw. Variante (andere Interfaces) ein Eintrag
   parts?: TraceHop[];
+  boundary?: BoundaryReason; // Firmengrenze am Ausgang dieses Hops (ADR 0032)
   zone?: TraceZone | null; // logische Zone des Knotens (0.57.0)
   l2?: L2Segment; // L2 bis zum nächsten Hop bzw. zum Anschluss des Ziels (0.64.0)
 }
@@ -2252,7 +2695,9 @@ export interface HopRule {
   kind?: "contract" | "taboo" | "preferred_group";
   reverse?: boolean; // ACI (0.69.1): passt in der Rückrichtung (Provider → Consumer, zustandslos)
   note?: string; // ACI (0.72.1): greift nicht, z. B. nur Antworten (Filter nur mit Quellport)
+  closed?: boolean; // ACI (0.111.0): verbindet die EPGs, öffnet den Dienst nicht
   after?: boolean; // 0.78.4: passt, liegt aber hinter der entscheidenden Policy
+  blocklist?: boolean; // 0.132.2: Sperrliste (Internet Service bzw. Land) – kein Grund für „abhängig“
 }
 export type PolicyVerdict = "allow" | "deny" | "implicit_deny" | "depends" | "unknown";
 export interface HopRules {
@@ -2260,15 +2705,81 @@ export interface HopRules {
   text: string;
   rules: HopRule[];
   after?: HopRule[]; // Weg-Suche (0.78.4): passende Policies dahinter, nicht erreicht
+  blocklists?: HopRule[]; // 0.132.2: Sperrlisten vor der erlaubenden Policy („ausser Sperrliste“)
+  vip_skipped?: { rule_id: number; external_id: string; name: string; action: "deny" }[]; // 0.132.1: ohne match-vip
   src_epg?: string; // ACI-VRF-Hop (0.35.0): Zuordnung der Quelle bzw. des Ziels
   dst_epg?: string;
 }
+// Anbindung als Quelle bzw. Ziel der Weg-Suche (ADR 0019 Ergänzung): Firewalls mit Eingang bzw.
+// Ausgang, Netze und die geprüfte Adresse (erstes Netz bzw. beliebige Adresse im Internet)
+export interface TraceExitEnd {
+  ref: string; // exit:<id> bzw. router:<IP>, ggf. @<Quellsystem>
+  exit_id: number | null;
+  kind: ExitKind;
+  name: string;
+  label: string; // „Internet ISP-A“
+  manual: boolean; // von Hand erfasst (sonst erkannt)
+  address: string | null; // geprüfte Adresse: IP bzw. Netz
+  address_kind: "net" | "internet" | "unknown" | "given" | null; // given = gewählt (src/dst)
+  nets: string[]; // Netze der Anbindung (die ersten), ohne Default-Route
+  nets_total: number;
+  default: boolean; // Default-Route über die Anbindung
+  given: boolean; // Netze von Hand eingetragen
+  routers: string[];
+  firewalls: { key: string; source_system_id: number; source: string; label: string; interface: string | null; zone: string | null; routers: string[] }[];
+  systems: number[];
+  system: number | null; // gewählte Firewall (@<Quellsystem>)
+  choices: { source_system_id: number; source: string }[]; // alle Firewalls der Anbindung (Auswahl)
+  internet: string | null; // beliebige Adresse im Internet (Test-Adresse) zur Auswahl
+}
+// Firmengrenze (ADR 0032): eBGP zu fremdem AS, Anbindung Internet/MPLS/Partner bzw.
+// Default-Route Richtung Provider - am Ausgang des letzten Hops
+export type BoundaryReason = "ebgp" | "exit" | "default";
+export interface TraceBoundary {
+  reason: BoundaryReason;
+  text: string; // vom Server in der Sprache der Anfrage
+  key: string;
+  label: string;
+  interface?: string;
+  zone?: string;
+  next_hop?: string;
+  as?: number;
+  private_as?: boolean;
+  state?: string | null;
+  exit?: { id: number; name: string; kind: string };
+}
+// Rückweg (0.134.0); 0.141.1: je Abschnitt die Rückwege Hop für Hop, Firewalls markiert, die nicht auf dem Hinweg liegen
+export interface ReturnHop {
+  label: string;
+  kind?: string;
+  firewall: boolean;
+  other: boolean; // Firewall, die nicht auf dem Hinweg liegt (auch nicht im Verbund bzw. als Session-Sync-Partner)
+}
+export interface ReturnLeg {
+  from: string;
+  to: string;
+  forward: string[]; // Firewalls des Hinwegs
+  paths: ReturnHop[][];
+  more?: number;
+  state: "symmetric" | "asymmetric" | "unknown";
+}
+export interface ReturnInfo {
+  state: "symmetric" | "asymmetric" | "unknown";
+  text: string;
+  firewalls?: string[];
+  legs?: ReturnLeg[];
+}
 export interface TracePath {
+  via_exit?: boolean; // Ziel ist eine Anbindung: der Weg geht über sie hinaus
+  exit_start?: string; // Quelle ist eine Anbindung an mehreren Firewalls: Start dieses Wegs
   kind?: "active" | "backup"; // aktiv (inkl. ECMP) bzw. Backup-Weg (eine Abweichung)
+  boundary?: TraceBoundary; // Weg verlässt hier die Firma (ADR 0032)
   deviation?: { hop: number; label: string; reason: string }; // Backup: wo und warum
   parallel?: string[]; // redundant über diese Verbünde paralleler Firewalls
   extra?: number | null; // Hops mehr als der kürzeste Weg mit Ziel (0 = gleich lang; null = ohne Ziel)
   policy?: { verdict: "allow" | "deny" | "depends" | "unknown"; text: string } | null; // Regeln auf dem Weg
+  // 0.134.0: Rückweg über dieselben Firewalls (ausser ACI und Verbund)?
+  return?: ReturnInfo;
   hops: TraceHop[];
   zones?: TraceZoneStep[]; // Zonen auf dem Weg (0.57.0)
   l2_src?: L2Segment; // vom Anschluss der Quelle zum ersten Hop (0.64.0)
@@ -2285,33 +2796,55 @@ export interface TraceResult {
   slack?: number; // Backup-Wege mit höchstens so vielen Hops mehr als der kürzeste aktive
   service?: string | null; // geprüfter Dienst (z. B. tcp/443)
   service_name?: string; // angegebenes Service-Objekt bzw. ACI-Filter (FT_https)
+  // 0.137.0: wo der eingegebene Dienst gilt, der Port beim Client und die Ports entlang des Wegs
+  service_at?: { at: ServiceAt; label: string; given: string; client: string; note: string | null };
+  service_chain?: ServiceStage[];
   // Zonen (0.57.0): Quell- und Zielzone, Absicht zwischen ihnen mit Urteil; null = keine Zonen
   zones?: { src: TraceZone[]; dst: TraceZone[]; intents: TraceZoneIntent[] } | null;
   l2?: { src?: L2Location[]; dst?: L2Location[] }; // Anschluss von Quelle/Ziel (0.64.0)
+  exits?: { src?: TraceExitEnd; dst?: TraceExitEnd }; // Anbindung als Quelle bzw. Ziel
+  target?: TraceTarget; // 0.117.0: Ziel hinter VIP bzw. Load Balancer (Server und ihre EPG)
+  // 0.134.0: Ziel (Server) von aussen über diese VIP gesucht; Quelle angenommen (Start ohne Quelle)
+  via_vip?: { name: string; ext_ip: string; ext_port?: string | null; balancer?: string | null; server: string; others: number; text: string };
+  src_assumed?: { address: string; text: string };
+}
+// Ziel hinter VIP bzw. Load Balancer (0.117.0): die Server am Ende des Wegs mit ihrer EPG – davon kommt auch die Zielzone
+export interface TraceTarget {
+  vip?: string;
+  balancer?: string;
+  servers: { ip: string; name?: string; epg?: string; status?: string }[];
+  ips: string[];
+  epgs?: { epg: string; servers: number }[];
 }
 
 // Name bzw. FQDN -> IP für die Weg-Suche (0.35.0): IPAM, Objekte der Firewalls, VMs; seit
-// 0.38.0 auch Netze (IPAM, Netz-Objekte, Subnetze des Inventars), seitenweise
+// 0.38.0 auch Netze (IPAM, Netz-Objekte, Subnetze des Inventars), seitenweise; dazu
+// Anbindungen als Quelle bzw. Ziel (ADR 0019 Ergänzung, `exit` = Referenz für die Weg-Suche)
 export interface NameHit {
-  ip: string; // Eingabe für die Weg-Suche: IP bzw. bei Netzen das Netz (0.39.0)
+  ip: string; // Eingabe für die Weg-Suche: IP bzw. bei Netzen das Netz (0.39.0); Anbindung: geprüfte Adresse
   name: string | null;
-  kind: "ip" | "ipam" | "object" | "vm" | "net" | "subnet";
-  type: "host" | "net";
+  kind: "ip" | "ipam" | "object" | "vm" | "net" | "subnet" | "exit";
+  type: "host" | "net" | "exit";
   net: string | null; // Netz (CIDR) bei type "net"
   source: string | null;
   detail: string | null;
   also?: string[]; // weitere Namen derselben IP bzw. desselben Netzes
+  exit?: string; // Anbindung: Referenz exit:<id> bzw. router:<IP>
+  exit_kind?: ExitKind;
+  internet?: boolean; // Anbindung: beliebige Adresse im Internet
+  source_system_ids?: number[];
+  shared?: boolean;
 }
 export interface NameResult {
   hits: NameHit[];
   total: number; // mit dem Art-Filter
-  counts: { host: number; net: number };
+  counts: { host: number; net: number; exit?: number };
   capped: boolean; // je Quelle mehr Treffer, als gelesen: genauer suchen
 }
 export const resolveName = (
   tenantId: number,
   q: string,
-  opts: { type?: "host" | "net" | ""; limit?: number; offset?: number } = {},
+  opts: { type?: "host" | "net" | "exit" | ""; limit?: number; offset?: number } = {},
 ) =>
   getJSON<NameResult>(
     `/api/routing/resolve${cq({ tenant_id: tenantId, q: q.trim(), type: opts.type || undefined, limit: opts.limit, offset: opts.offset })}`,
@@ -2324,6 +2857,8 @@ export interface TopoPeer extends Labeled {
   state: string | null;
   peer?: Resolved;
   peer_node?: string | null; // gelesener Knoten hinter der Adresse
+  attrs?: { config?: BgpNeighborConfig } | null; // BGP-Konfiguration (0.113.0, ADR 0041)
+  findings?: { id: number; type: string; status: string }[]; // 0.133.0: offene Befunde der Routing-Filter
 }
 export interface TopoHa {
   id: number;
@@ -2377,6 +2912,144 @@ export interface TopoL3Out {
     | null;
   peers: ({ ip: string; asn?: number | null; path?: string; node?: string | null } & Resolved)[] | null;
   ext_epgs: string[] | null;
+  source_system_id: number;
+  behind?: L3OutBehind | null; // Firewall dahinter (ADR 0034)
+  route_control?: RouteControl | null; // 0.113.0 (ADR 0041)
+}
+
+// BGP-Filter und Route Control (0.113.0, ADR 0041): nur gelesen, Soll/Ist je Nachbar bzw. L3Out
+export type BgpFilterKind = "route_map" | "prefix_list" | "distribute_list" | "filter_list";
+export interface BgpNeighborConfig {
+  filters?: Record<string, Partial<Record<BgpFilterKind, string>>>; // in | out | in6 | out6
+  remote_as?: string;
+  group?: string;
+  description?: string;
+  shutdown?: boolean;
+}
+export interface RouteControlSubnet {
+  prefix: string;
+  epg?: string;
+  aggregate?: boolean;
+}
+export interface RouteControl {
+  enforce?: string[];
+  export?: RouteControlSubnet[];
+  import?: RouteControlSubnet[];
+}
+export type BgpVerdict = "permit" | "deny" | null;
+export interface BgpEntry {
+  filter: string;
+  kind: "prefix_list" | "access_list";
+  id?: number;
+  prefix: string;
+  ge?: number;
+  le?: number;
+  exact?: boolean;
+  all?: boolean; // erlaubt alles (any, 0/0 le 32)
+  received?: number;
+  missing?: boolean;
+}
+export interface BgpSide {
+  filters: Record<string, string>;
+  open: boolean; // ohne Filter
+  entries: BgpEntry[];
+  counts: Record<string, number>;
+  received: { prefix: string; best: boolean; verdict: BgpVerdict }[];
+  received_total?: number;
+  announced: { prefix: string; origin: string; verdict: BgpVerdict }[];
+  announced_total?: number;
+}
+export interface BgpPeerReport extends Resolved {
+  id: number;
+  label: string;
+  peer_ip: string;
+  state: string | null;
+  configured: boolean;
+  remote_as?: number | null;
+  local_as?: number | null;
+  ebgp?: boolean | null;
+  established?: boolean;
+  group?: string | null;
+  description?: string | null;
+  default_originate?: boolean; // 0.114.1: capability-default-originate
+  in?: BgpSide;
+  out?: BgpSide;
+}
+export interface BgpProcess {
+  source_system_id: number;
+  source: string | null;
+  node: string;
+  context: string;
+  label: string;
+  as?: string;
+  router_id?: string;
+  networks?: { prefix: string; route_map?: string }[];
+  aggregates?: { prefix: string; summary_only?: boolean }[];
+  redistribute?: { name: string; route_map?: string }[];
+  ranges?: { prefix: string; group: string }[];
+  groups: string[];
+  neighbors: number;
+  objects: Record<string, number>;
+  configured_only: ({ peer_ip: string; config: BgpNeighborConfig } & Resolved)[];
+}
+export interface L3OutRouteControl {
+  id: number;
+  l3out: string;
+  aci_tenant: string;
+  vrf: string | null;
+  source: string | null;
+  enforce: string[];
+  import_enforced: boolean;
+  peers: string[];
+  import: {
+    entries: (RouteControlSubnet & { received: number; missing: boolean; all: boolean })[];
+    received: { prefix: string; verdict: BgpVerdict }[];
+    received_total: number;
+    counts: Record<string, number>;
+  };
+  export: { entries: RouteControlSubnet[] };
+}
+export interface FilteredPrefixes {
+  prefixes: string[];
+  collapsed: string[];
+  total: number;
+  cut: boolean;
+  filters: string[];
+}
+
+// Firewall hinter einem L3Out (ADR 0034): abgeleitet aus dem Topologie-Modell bzw. von Hand
+export type L3OutOrigin = "derived" | "confirmed" | "manual" | "none";
+export interface L3OutFirewallRef {
+  source_system_id: number;
+  vdom: string;
+  interface: string | null;
+  zone: string | null;
+  node: string;
+  label: string;
+  source: string | null;
+  read: boolean;
+}
+export interface L3OutBehind {
+  origin: L3OutOrigin;
+  firewalls: L3OutFirewallRef[];
+  derived: L3OutFirewallRef[];
+  updated_by: string | null;
+  updated_at: string | null;
+}
+export interface FirewallChoice {
+  source_system_id: number;
+  vdom: string;
+  label: string;
+  source: string;
+  interfaces: { name: string; zone: string | null; ips: string[] }[];
+}
+export interface L3OutFirewallIn {
+  tenant_id: number;
+  source_system_id: number; // APIC
+  dn: string;
+  confirm?: boolean;
+  none?: boolean;
+  firewalls?: { source_system_id: number; vdom: string; interface?: string | null }[];
 }
 
 export const fetchRoutingSummary = (tenantId: number) =>
@@ -2398,18 +3071,223 @@ export const fetchRoutes = (opts: {
 export const lookupRoute = (tenantId: number, ip: string) =>
   getJSON<RouteLookup[]>(`/api/routing/lookup${cq({ tenant_id: tenantId, ip: ip.trim() })}`);
 // Weg Hop für Hop: ab der Quelle (dort angeschlossen) bzw. dem Startpunkt (RoutingNode.key)
+// Anbindung als Quelle bzw. Ziel: src_exit/dst_exit (Referenz aus der Namenssuche); src/dst
+// wählen dann ein anderes Netz der Anbindung
 export const traceRoute = (
   tenantId: number,
-  opts: { dst: string; src?: string; start?: string; slack?: number; service?: string },
+  opts: { dst: string; src?: string; start?: string; startPort?: string; slack?: number; service?: string; serviceAt?: ServiceAt; srcExit?: string; dstExit?: string },
 ) =>
   getJSON<TraceResult>(
-    `/api/routing/trace${qs({ tenant_id: tenantId, dst: opts.dst.trim(), src: opts.src?.trim() || undefined, start: opts.start || undefined, slack: opts.slack, service: opts.service?.trim() || undefined })}`,
+    `/api/routing/trace${qs({ tenant_id: tenantId, dst: opts.dst.trim() || undefined, src: opts.src?.trim() || undefined, start: opts.start || undefined, start_port: opts.startPort || undefined, slack: opts.slack, service: opts.service?.trim() || undefined, service_at: opts.service?.trim() && opts.serviceAt && opts.serviceAt !== "client" ? opts.serviceAt : undefined, src_exit: opts.srcExit || undefined, dst_exit: opts.dstExit || undefined })}`,
   );
+// 0.137.0: wo der Dienst gilt – beim Client (Vorgabe), am Eingang des Load Balancers bzw. am Ziel-Server
+export type ServiceAt = "client" | "lb" | "server";
+// Ports entlang des Wegs, wenn VIP bzw. Load Balancer sie ändern
+export interface ServiceStage {
+  at: "client" | "vip" | "lb" | "server";
+  label: string;
+  service: string;
+}
+// Warum dieser Weg? (0.109.0): derselbe Weg Hop für Hop in Sätzen – Start, Eingang und Tabelle,
+// Policy-Routen, alle Routen zum Ziel (gewählt bzw. verworfen mit Grund), Next-Hop, Ende mit Hinweis;
+// `expect` = Gerät (Quellsystem), über das der Verkehr gehen müsste
+export interface ExplainRoute {
+  prefix: string;
+  protocol: string | null;
+  distance: number | null;
+  metric: number | null;
+  table: string; // rib | bgp | static
+  next_hops: { ip: string | null; interface: string | null; owner: string | null }[];
+  chosen: boolean;
+  why: string;
+}
+export interface ExplainStep {
+  kind: string; // start | reached | group | table | nat | lb | policy | backup | routes | leak | next_hop | end | expect | own | note
+  status: "ok" | "info" | "warn" | "stop";
+  text: string;
+  hint?: string;
+  items?: ExplainRoute[];
+}
+export interface ExplainHop {
+  label: string;
+  key: string;
+  source?: string;
+  source_system_id?: number | null;
+  read_at?: string | null; // Routing des Geräts gelesen
+  stale?: boolean;
+  steps: ExplainStep[];
+}
+export interface PathExplanation {
+  start: ExplainStep[];
+  paths: { kind: string; hops: ExplainHop[]; end: ExplainStep }[];
+  expect?: { source_system_id: number; device: string; on_path: boolean; steps: ExplainStep[] };
+  paths_found: number;
+}
+export interface ExplainQuery {
+  dst?: string;
+  src?: string;
+  start?: string;
+  startPort?: string; // Eingang am Startpunkt (0.113.1, Regel mit Quelle any)
+  slack?: number;
+  service?: string | null;
+  serviceAt?: ServiceAt; // 0.137.0: wo der Dienst gilt
+  srcExit?: string;
+  dstExit?: string;
+  connection?: boolean; // Weg wie bei Verbindungen Ende zu Ende
+  starts?: string[];
+}
+export const explainPath = (tenantId: number, q: ExplainQuery, expect?: number | null) => {
+  const params = new URLSearchParams(
+    Object.entries({
+      tenant_id: tenantId,
+      dst: q.dst?.trim(),
+      src: q.src?.trim(),
+      start: q.start,
+      start_port: q.startPort,
+      slack: q.slack,
+      service: q.service?.trim(),
+      service_at: q.service?.trim() && q.serviceAt && q.serviceAt !== "client" ? q.serviceAt : undefined,
+      src_exit: q.srcExit,
+      dst_exit: q.dstExit,
+      connection: q.connection ? "true" : undefined,
+      expect: expect ?? undefined,
+    })
+      .filter(([, v]) => v !== undefined && v !== null && v !== "")
+      .map(([k, v]) => [k, String(v)]),
+  );
+  (q.starts ?? []).forEach((s) => params.append("starts", s));
+  return getJSON<PathExplanation>(`/api/routing/explain?${params.toString()}`);
+};
 export const fetchPeers = (tenantId: number) => getJSON<TopoPeer[]>(`/api/routing/peers${cq({ tenant_id: tenantId })}`);
 export const fetchHa = (tenantId: number) => getJSON<TopoHa[]>(`/api/routing/ha${cq({ tenant_id: tenantId })}`);
 export const fetchPolicyRoutes = (tenantId: number) =>
   getJSON<TopoPolicyRoute[]>(`/api/routing/policy-routes${cq({ tenant_id: tenantId })}`);
 export const fetchL3Outs = (tenantId: number) => getJSON<TopoL3Out[]>(`/api/routing/l3outs${cq({ tenant_id: tenantId })}`);
+export const fetchBgpConfig = (tenantId: number) =>
+  getJSON<BgpProcess[]>(`/api/routing/bgp/config${cq({ tenant_id: tenantId })}`);
+export const fetchBgpPeer = (tenantId: number, peerId: number) =>
+  getJSON<BgpPeerReport>(`/api/routing/bgp/peers/${peerId}${cq({ tenant_id: tenantId })}`);
+// Soll aus den Zonen dahinter (0.114.0, ADR 0041 Stufe 2) – Vorschlag, kein Schreibweg
+export interface BgpZoneRef {
+  id: number;
+  name: string;
+  code?: string | null;
+}
+// 0.127.0: Urteil eines Filters für ein Netz mit der entscheidenden Regel (rule null bei deny = keine Regel passt)
+export interface BgpDecision {
+  kind: string;
+  filter: string;
+  verdict: BgpVerdict;
+  rule: string | null;
+  list?: string; // Route-Map: Liste hinter match
+  list_rule?: string | null;
+  unread?: boolean;
+}
+// 0.127.0: Begründung je Abweichung (Netz mit Zone und entscheidender Regel)
+export interface BgpWhy {
+  kind: "missing" | "too_open" | "excluded_allowed";
+  prefix: string;
+  zones?: string[];
+  by?: BgpDecision[];
+  parts?: string[]; // gesperrtes Netz: erlaubte Teile darin
+  filter?: string;
+  rule?: string | null;
+  all?: boolean;
+}
+// 0.127.0: woher die Zonen kommen
+export interface BgpZoneChain {
+  home: string;
+  neighbor: string;
+  device?: boolean;
+  network?: string;
+  interface?: string;
+  // 0.130.0: je Zone der Weg (Zone und Netz des Übergangs je Schritt)
+  zones: { name: string; hops: number | null; path?: BgpZoneStep[] }[];
+  not_via?: string[]; // 0.128.0: nur über eine Zone erreichbar, die gleiche Zonen nicht verbindet
+}
+export interface BgpZoneStep {
+  zone: string;
+  network: string | null;
+  more?: number;
+}
+export interface BgpZoneList {
+  family: number;
+  name: string;
+  filters: Record<string, string>;
+  open: boolean;
+  entries: { prefix: string; action: "permit" | "deny"; zones: string[]; verdict: BgpVerdict; decided?: BgpDecision[] }[];
+  missing: string[];
+  missing_total: number;
+  too_open: { prefix: string; filter: string; all?: boolean; rule?: string | null; zones?: string[] }[];
+  excluded_allowed: string[];
+  reasons?: BgpWhy[];
+  // Ausgang (0.116.0): heute angekündigte Routen ausserhalb der Zonen diesseits
+  announced_outside?: string[];
+  announced_outside_total?: number;
+  // Eingang (0.131.0): was heute vom Nachbarn ankommt (z. B. nur die Default-Route)
+  received_total?: number;
+  received_default_only?: boolean;
+  open_ok?: boolean; // 0.132.0: ohne Eingangsfilter, Nachbar selbst verwaltet – kein Filter nötig
+  cli: string;
+}
+// 0.131.0: Netz von Hand ohne bekanntes Netz darin – nur Rahmen, nicht im Filter
+export interface BgpZoneFrame {
+  prefix: string;
+  zone: string;
+}
+export interface BgpZoneSoll {
+  id: number;
+  peer_ip: string;
+  state: "ok" | "differs" | "open" | "no_zones" | "no_zone" | "no_neighbor_zone" | "no_nets";
+  text: string;
+  home?: BgpZoneRef;
+  neighbor_zone?: BgpZoneRef;
+  zones?: BgpZoneRef[];
+  lists?: BgpZoneList[];
+  way?: "in" | "out"; // 0.116.0: Eingang (Zonen dahinter) bzw. Ausgang (Zonen diesseits)
+  public_only?: boolean; // Nachbar in einer Zone ausserhalb: nur öffentliche Netze
+  chain?: BgpZoneChain; // 0.127.0
+  families?: number[]; // 0.131.0: Adressfamilien der Sitzung
+  frames?: BgpZoneFrame[]; // 0.131.0
+  neighbor_external?: boolean; // 0.132.0: Zone am Nachbarn fremd verwaltet
+  originate?: number[]; // 0.132.0: Familien mit default-originate (Ausgang nur Default-Route)
+}
+export const fetchBgpPeerZones = (tenantId: number, peerId: number, way: "in" | "out" = "in") =>
+  getJSON<BgpZoneSoll>(`/api/routing/bgp/peers/${peerId}/zones${cq({ tenant_id: tenantId, way })}`);
+// Import Route Control eines L3Outs gegen die Zonen dahinter (0.116.0, ADR 0041 Stufe 3)
+export interface L3OutZoneSoll {
+  id: number;
+  l3out: string;
+  state: "ok" | "differs" | "no_zones" | "no_zone" | "no_neighbor_zone" | "no_nets";
+  text: string;
+  home?: BgpZoneRef;
+  neighbor_zone?: BgpZoneRef;
+  zones?: BgpZoneRef[];
+  import_enforced?: boolean;
+  entries?: { prefix: string; zones: string[]; aggregate: boolean; verdict: BgpVerdict }[];
+  missing?: string[];
+  missing_total?: number;
+  too_open?: { prefix: string; epg?: string | null; all?: boolean }[];
+  excluded_allowed?: string[];
+  excluded?: { prefix: string; zones: string[] }[];
+  proposal?: string;
+  families?: number[]; // 0.131.0: Adressfamilien der Peers des L3Outs
+  frames?: BgpZoneFrame[]; // 0.131.0
+  neighbor_external?: boolean; // 0.132.0: Zone am Peer fremd verwaltet
+}
+export const fetchL3OutZones = (tenantId: number, l3outId: number) =>
+  getJSON<L3OutZoneSoll>(`/api/routing/bgp/l3outs/${l3outId}/zones${cq({ tenant_id: tenantId })}`);
+export const fetchL3OutRouteControl = (tenantId: number, l3outId: number) =>
+  getJSON<L3OutRouteControl>(`/api/routing/bgp/l3outs/${l3outId}${cq({ tenant_id: tenantId })}`);
+export const fetchFirewallChoices = (tenantId: number) =>
+  getJSON<FirewallChoice[]>(`/api/routing/l3outs/firewall-choices${qs({ tenant_id: tenantId })}`);
+export const setL3OutFirewall = (body: L3OutFirewallIn) =>
+  sendJSON<{ dn: string; behind: L3OutBehind | null }>("/api/routing/l3outs/firewall", "PUT", body);
+export const removeL3OutFirewall = (tenantId: number, sourceId: number, dn: string) =>
+  sendJSON<{ dn: string; removed: number; behind: L3OutBehind | null }>(
+    `/api/routing/l3outs/firewall${qs({ tenant_id: tenantId, source_system_id: sourceId, dn })}`,
+    "DELETE",
+  );
 
 // Anbindungen nach aussen (0.18.0, von Hand): Internet, MPLS, WAN, Partner – der Weg endet dort
 // bzw. geht nach den manuellen Routen bei einem gelesenen Knoten weiter
@@ -2501,6 +3379,74 @@ export const fetchExitSuggestions = (tenantId: number, opts: { covered?: boolean
 // erkannte Router nicht mehr vorschlagen bzw. wieder vorschlagen (Operator, 0.21.0)
 export const dismissExits = (tenantId: number, ips: string[], undo = false) =>
   sendJSON<{ ips: string[] }>(`/api/routing/exits/dismiss${undo ? "/undo" : ""}`, "POST", { tenant_id: tenantId, ips });
+// Grosse Netze der Regeln zuordnen (0.111.0, ADR 0040): von Hand, Zone, Anbindung, Teile nach dem Routing
+export interface NetAssignState {
+  prefix: string;
+  state: "zone" | "exit" | "route" | "ignore" | "split" | "unclear";
+  how: "manual" | "zone" | "exit" | "routing";
+  text: string;
+  open: boolean; // noch zuzuordnen (Befund)
+  zone_id?: number;
+  zone?: string;
+  exit_id?: number;
+  exit?: string;
+  id?: number; // Zuordnung von Hand
+  device?: string;
+}
+export type NetAssignKind = "zone" | "exit" | "route" | "ignore";
+export interface NetAssignment {
+  id: number;
+  tenant_id: number;
+  prefix: string;
+  kind: NetAssignKind;
+  zone_id: number | null;
+  zone: string | null;
+  exit_id: number | null;
+  exit: string | null;
+  note: string | null;
+  changed_by: string | null;
+  changed_at: string;
+}
+export const fetchNetAssignments = (tenantId: number) =>
+  getJSON<NetAssignment[]>(`/api/routing/net-assignments${qs({ tenant_id: tenantId })}`);
+export const setNetAssignment = (body: {
+  tenant_id: number;
+  prefix: string;
+  kind: NetAssignKind;
+  zone_id?: number | null;
+  exit_id?: number | null;
+  note?: string | null;
+}) => sendJSON<NetAssignment>("/api/routing/net-assignments", "PUT", body);
+export const deleteNetAssignment = (id: number) => sendJSON<void>(`/api/routing/net-assignments/${id}`, "DELETE");
+
+// Netzlisten der Anbindungen (0.111.0): Liste prüfen bzw. Netze aus dem gelesenen Routing
+export interface PrefixCheck {
+  valid: string[];
+  invalid: string[];
+  duplicates: number;
+  collapsed: string[];
+}
+export const checkPrefixes = (text: string) => sendJSON<PrefixCheck>("/api/routing/exits/prefixes", "POST", { text });
+export interface LearnedPrefixes {
+  prefixes: string[];
+  collapsed: string[];
+  total: number;
+  cut: boolean;
+}
+export const fetchLearnedPrefixes = (tenantId: number, sids: number[], hops: string[], ifaces: string[]) => {
+  const q = new URLSearchParams({ tenant_id: String(tenantId) });
+  sids.forEach((x) => q.append("source_system_ids", String(x)));
+  hops.forEach((x) => q.append("next_hops", x));
+  ifaces.forEach((x) => q.append("interfaces", x));
+  return getJSON<LearnedPrefixes>(`/api/routing/exits/learned?${q}`);
+};
+// Netze der Eingangsfilter für die Router einer Anbindung (0.113.0): Vorschlag für „Netze dahinter“
+export const fetchFilteredPrefixes = (tenantId: number, sids: number[], hops: string[]) => {
+  const q = new URLSearchParams({ tenant_id: String(tenantId) });
+  sids.forEach((x) => q.append("source_system_ids", String(x)));
+  hops.forEach((x) => q.append("next_hops", x));
+  return getJSON<FilteredPrefixes>(`/api/routing/bgp/filtered?${q}`);
+};
 export const createExit = (body: TopoExitIn) => sendJSON<TopoExit>("/api/routing/exits", "POST", body);
 export const updateExit = (id: number, body: TopoExitIn) => sendJSON<TopoExit>(`/api/routing/exits/${id}`, "PUT", body);
 export const deleteExit = (id: number) => sendJSON<void>(`/api/routing/exits/${id}`, "DELETE");
@@ -2590,7 +3536,8 @@ export function snatText(s: NonNullable<TraceHop["snat"]>): string {
 
 // Topologie-Modell (0.50.0, ADR 0019): Knoten und Kanten der Umgebung mit Herkunft und den
 // Plausibilitäts-Befunden
-export type TopoNodeKind = "firewall" | "vdom" | "vrf" | "segment" | "exit" | "router";
+// l3 = gelesener Router bzw. L3-Switch (ADR 0032); router = Gegenstelle ohne gelesenes Gerät
+export type TopoNodeKind = "firewall" | "vdom" | "vrf" | "l3" | "segment" | "exit" | "router";
 export type TopoOrigin = "derived" | "manual" | "confirmed";
 export interface TopoNode {
   id: string;
@@ -2610,6 +3557,10 @@ export interface TopoNode {
   remote_as?: number | null;
   names?: string[];
   dismissed?: boolean;
+  // Firmengrenze (ADR 0032): Knoten aussen (Router bzw. Anbindung) mit Gründen und AS,
+  // gelesener Grenzknoten innen
+  boundary?: { reasons: BoundaryReason[]; as: number[] };
+  at_boundary?: boolean;
   degree: number;
   issues: number;
 }
@@ -2650,6 +3601,7 @@ export interface TopoEdge {
   group?: string;
   peer?: string;
   to?: Record<string, number>;
+  boundary?: { reason: BoundaryReason; as?: number; private_as?: boolean }; // ADR 0032
 }
 export interface TopoIssue {
   type: string;
@@ -2661,13 +3613,19 @@ export interface TopologyModel {
   nodes: TopoNode[];
   edges: TopoEdge[];
   issues: TopoIssue[];
-  summary: { nodes: Record<string, number>; edges: Record<string, number>; issues: Record<string, number> };
+  summary: {
+    nodes: Record<string, number>;
+    edges: Record<string, number>;
+    issues: Record<string, number>;
+    boundary?: { outside: number; inside: number }; // Firmengrenze (ADR 0032)
+  };
 }
 export const fetchTopology = (tenantId: number, node?: string) =>
   getJSON<TopologyModel>(`/api/topology${cq({ tenant_id: tenantId, node })}`);
 
 // Logische Zonen (0.51.0, ADR 0024): in Automato gepflegt, Selektoren wie beim Kunden und dazu
 // `exit` (Netze hinter einer Anbindung); Zonenmatrix mit Absicht je Paar, Zonenplan
+// 0.105.0 (ADR 0035): Ausgänge – Firewall-Interface, Firewall-Zone bzw. L3Out, über die die Zone erreicht wird
 export type ZoneSelectorKind = SelectorKind | "exit";
 // Art = Ebene des Zonenmodells (0.56.0): Datacenter, Edge, Transfer, Core, Distribution, Access,
 // Public (extern) – dazu die bisherigen Arten
@@ -2715,7 +3673,142 @@ export interface LogicalZone {
   own_color?: string | null; // an der Zone gespeicherte Farbe
   nodes?: string[]; // Knoten der Zone (Firewall/VDOM, ACI-VRF)
   transitions?: { to: string; to_id: number | string; name: string; count: number }[];
+  zone_type?: string | null; // 0.105.0: Zonentyp von Hand (Zone des Grundschemas); wirksam = `schema`
+  external_managed?: boolean; // 0.132.0: fremd verwaltet (WAN, MPLS, fremde Anbindungen); Vorgabe nein
 }
+// Kategorien der Applikations-Doku als Konfiguration (0.104.0, seit 0.106.0 einfach): Titel und Richtung Zonentyp der
+// Quelle → Zonentyp des Ziels (Zonen des Grundschemas, je Seite einer oder mehrere, `*` = jeder); fest (nur Titel):
+// innerhalb der Applikation, innerhalb des Security Tenants, unspezifisch
+export interface AppdocCategory {
+  index: number; // feste Kennung (Ausblenden, Wörterbuch)
+  number?: number; // 0.126.0: angezeigte Nummer in der Reihenfolge
+  title: string;
+  title_en: string;
+  src: string[];
+  dst: string[];
+  role: string; // feste Rolle (aci_ap, aci_tenant, fallback) - nur Titel und Auswahl änderbar
+  enforcement: "firewall" | "aci";
+  builtin: boolean;
+  // 0.125.0 (ADR 0046): welche Zeilen die Kategorie zeigt, je Seite spezifisch und/oder unspezifisch
+  src_scope: AppdocScope[];
+  dst_scope: AppdocScope[];
+}
+export type AppdocScope = "specific" | "unspecific";
+// Gerät einer Zone (0.106.0): Firewall/VDOM, ACI-Tenant, ACI-VRF, Anbindung
+export type ZoneDeviceKind = "fw_vdom" | "aci_tenant" | "aci_vrf" | "exit";
+export interface ZoneDevice {
+  kind: ZoneDeviceKind;
+  value: string;
+  source_system_id: number | null;
+  label?: string;
+}
+export interface AppdocCatalog {
+  profile_id: number | null;
+  categories: AppdocCategory[];
+  default?: Pick<AppdocCatalog, "profile_id" | "categories">; // Pflege: die Vorgaben
+  zone_types?: string[]; // Zonen des Grundschemas (Zonentypen)
+  types?: Record<string, string | null>; // Netzwerkdesign: Zone (id) → wirksamer Zonentyp
+  auto_types?: Record<string, string | null>; // … erkannt (ohne den von Hand)
+  devices?: ZoneDevice[]; // Netzwerkdesign: Geräte zur Auswahl
+  tenants?: string[] | null; // 0.130.0: Mandanten, deren Doku dieses Profil nutzt (nur Betreuer)
+}
+export type AppdocCatalogIn = { categories: Pick<AppdocCategory, "index" | "title" | "title_en" | "src" | "dst" | "src_scope" | "dst_scope">[] };
+export const fetchAppdocCatalog = (tenantId: number) => getJSON<AppdocCatalog>(`/api/zones/appdoc/catalog${qs({ tenant_id: tenantId })}`);
+export const fetchProfileAppdocCatalog = (profileId: number) => getJSON<AppdocCatalog>(`/api/naming-profiles/${profileId}/appdoc-catalog`);
+export const saveProfileAppdocCatalog = (profileId: number, body: AppdocCatalogIn) =>
+  sendJSON<AppdocCatalog>(`/api/naming-profiles/${profileId}/appdoc-catalog`, "PUT", body);
+export const resetProfileAppdocCatalog = (profileId: number) =>
+  sendJSON<AppdocCatalog>(`/api/naming-profiles/${profileId}/appdoc-catalog`, "DELETE");
+// Regelwerk der Applikations-Doku (0.118.0, ADR 0043): Bedingungen mit Schalter und Wirkung, von oben nach unten
+export interface RulesetEffect {
+  key: string; // mark | hit | note | counted | drop | except
+  label: string;
+}
+export interface RulesetCondition {
+  key: string;
+  title: string;
+  text: string;
+  since: string;
+  effects: RulesetEffect[];
+}
+export interface RulesetRule extends RulesetCondition {
+  on: boolean;
+  effect: string;
+  effect_label: string;
+  lifts: string[]; // Ausnahme: aufgehobene Regeln darunter
+}
+export interface RulesetProfile {
+  key: string;
+  title: string;
+  title_de: string;
+  title_en: string;
+  description: string; // 0.119.0: in der Sprache der Anfrage
+  description_de: string;
+  description_en: string;
+  builtin: boolean;
+  hidden: boolean;
+  based_on: string;
+  rules: RulesetRule[];
+}
+export interface AppdocRuleset {
+  profile_id: number | null;
+  active: string;
+  default: string;
+  conditions: RulesetCondition[];
+  profiles: RulesetProfile[];
+  hidden: { key: string; title: string }[]; // 0.119.0: gelöschte (ausgeblendete) eingebaute
+  saved?: string; // nach dem Speichern: Schlüssel des Profils
+}
+export interface RulesetLabelIn {
+  title: string;
+  title_en: string;
+  description: string;
+  description_en: string;
+}
+export interface RulesetIn extends Partial<RulesetLabelIn> {
+  title: string;
+  based_on?: string;
+  rules: Pick<RulesetRule, "key" | "on" | "effect" | "lifts">[];
+}
+const rulesetUrl = (profileId: number, key = "") => `/api/naming-profiles/${profileId}/appdoc-ruleset${key ? `/${encodeURIComponent(key)}` : ""}`;
+export const fetchAppdocRuleset = (profileId: number) => getJSON<AppdocRuleset>(rulesetUrl(profileId));
+export const activateAppdocRuleset = (profileId: number, key: string) => sendJSON<AppdocRuleset>(rulesetUrl(profileId, "active"), "PUT", { key });
+export const createAppdocRuleset = (profileId: number, body: RulesetIn) => sendJSON<AppdocRuleset>(rulesetUrl(profileId), "POST", body);
+export const updateAppdocRuleset = (profileId: number, key: string, body: RulesetIn) => sendJSON<AppdocRuleset>(rulesetUrl(profileId, key), "PUT", body);
+export const deleteAppdocRuleset = (profileId: number, key: string) => sendJSON<AppdocRuleset>(rulesetUrl(profileId, key), "DELETE");
+export const renameAppdocRuleset = (profileId: number, key: string, body: RulesetLabelIn) => sendJSON<AppdocRuleset>(rulesetUrl(profileId, key), "PATCH", body);
+export const restoreAppdocRuleset = (profileId: number, key: string) => sendJSON<AppdocRuleset>(`${rulesetUrl(profileId, key)}/restore`, "POST");
+// Regelwerke vergleichen (0.120.0): nur auf Knopfdruck, nichts gespeichert
+export interface RulesetChoice {
+  current: { key: string; title: string };
+  profiles: { key: string; title: string; description: string }[];
+}
+export interface RulesetDiffItem {
+  rule_id: number;
+  name: string;
+  domain: string;
+  source: string;
+  key: string; // Bedingung, die entschied
+  why: string;
+  effect: string;
+  effect_label: string;
+}
+export interface RulesetSide {
+  key: string;
+  title: string;
+  rules: number; // unter „Regeln & Contracts“
+  shown: number; // in den Kategorien
+  filtered: { key: string; title: string; count: number }[];
+}
+export interface RulesetCompare {
+  current: RulesetSide;
+  other: RulesetSide;
+  rules: { added: RulesetDiffItem[]; removed: RulesetDiffItem[] };
+  categories: { added: RulesetDiffItem[]; removed: RulesetDiffItem[] };
+  seconds: number;
+}
+export const fetchRulesetChoice = (appId: number) => getJSON<RulesetChoice>(`/api/applications/${appId}/ruleset-compare`);
+export const compareRuleset = (appId: number, key: string) => getJSON<RulesetCompare>(`/api/applications/${appId}/ruleset-compare${qs({ key })}`);
 export interface ZoneIn {
   tenant_id: number;
   name: string;
@@ -2726,6 +3819,8 @@ export interface ZoneIn {
   position: number;
   description: string | null;
   selectors: ZoneSelector[];
+  zone_type?: string | null; // 0.105.0; nicht mitgeschickt = bleibt
+  external_managed?: boolean; // 0.132.0; nicht mitgeschickt = bleibt
 }
 export interface ZonePreview {
   counts: { net: number; epg: number };
@@ -2974,6 +4069,22 @@ export const fetchZones = (tenantId: number) => getJSON<LogicalZone[]>(`/api/zon
 export const createZone = (body: ZoneIn) => sendJSON<LogicalZone>("/api/zones", "POST", body);
 export const updateZone = (id: number, body: ZoneIn) => sendJSON<LogicalZone>(`/api/zones/${id}`, "PUT", body);
 export const deleteZone = (id: number) => sendJSON<void>(`/api/zones/${id}`, "DELETE");
+// Netzwerkdesign → Kategorien (0.102.0, Operator): je Zone Zonentyp, Netze mit Ausschlüssen und seit 0.106.0 die
+// Geräte (Firewall/VDOM, ACI-Tenant/-VRF, Anbindung); die anderen Selektoren bleiben
+export interface AppdocZoneIn {
+  id: number;
+  zone_type?: string | null; // 0.105.0: Zonentyp von Hand; leer = automatisch
+  nets?: string[]; // nicht mitgeschickt = bleiben
+  excluded?: string[];
+  devices?: Pick<ZoneDevice, "kind" | "value" | "source_system_id">[]; // 0.106.0: Geräte der Zone; fehlt = bleiben
+  external_managed?: boolean; // 0.132.0: fremd verwaltet; fehlt = bleibt
+}
+export const setAppdocZones = (tenantId: number, zones: AppdocZoneIn[]) =>
+  sendJSON<{ id: number; name: string; zone_type: string | null; external_managed: boolean; nets: string[]; excluded: string[]; devices: ZoneDevice[] }[]>(
+    "/api/zones/appdoc",
+    "PUT",
+    { tenant_id: tenantId, zones },
+  );
 // Vorschläge beim Erfassen einer Zone (0.66.0): Selektoren, deren Name zur Zone passt
 export interface ZoneAssistItem {
   selector: ZoneSelector;
@@ -3203,18 +4314,29 @@ export interface ServerMe {
   is_admin: boolean;
   is_customer: boolean;
   customer_source: "claim" | "automato" | "claim+automato" | null;
-  customers: { id: number; name: string }[];
+  customers: { id: number; name: string; role?: string | null }[];
+  // feinere Rollen (ADR 0018 Ergänzung): höchste Kunden-Rolle, je Kunde, Capabilities
+  customer_role?: CustomerRole | null;
+  customer_roles?: Record<string, CustomerRole>;
+  capabilities?: Capability[];
+  logins?: string[]; // eigene Kennungen (sub, Benutzername, E-Mail – klein)
 }
 export const fetchServerMe = () => getJSON<ServerMe>("/api/auth/me");
 
-// Zuordnung Benutzer → Kunde (0.53.0, nur Admin)
+// Feinere Rollen der Kunden-Benutzer (ADR 0018 Ergänzung): Rolle je Kunde → Capabilities;
+// „operator“ = Altbestand aus 0.53.0 (gilt als triage)
+export type CustomerRole = "viewer" | "triage" | "editor" | "customer_admin";
+export type Capability = "doc.read" | "findings.triage" | "applications.edit" | "customer_users.manage";
+
+// Zuordnung Benutzer → Kunde (0.53.0, Admin; seit den feineren Rollen auch der Kunden-Admin)
 export interface CustomerUserRow {
   id: number;
   tenant_id: number;
   customer_id: number;
   customer: string | null;
   login: string;
-  role: "viewer" | "operator";
+  role: CustomerRole | "operator";
+  origin?: "staff" | "customer"; // angelegt vom Betreuer bzw. vom Kunden-Admin
   note: string | null;
   created_by: string | null;
   created_at: string;
@@ -3390,6 +4512,7 @@ export interface CablingEndpoint {
   names: string[];
   vm: EndpointVm | null;
   epgs: string[];
+  link_local?: string[]; // IPv6 fe80::/10 aus dem NDP (0.94.0), nicht als Identität
 }
 export interface EndpointLocation {
   mac: string;
@@ -3397,6 +4520,7 @@ export interface EndpointLocation {
   names: string[];
   vm: EndpointVm | null;
   epgs: string[];
+  link_local?: string[];
   reason: string;
   seen_on: number;
   locations: CablingEndpoint[];

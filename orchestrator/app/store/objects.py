@@ -123,8 +123,33 @@ class Directory:
         self.by_id: dict[int, DeviceObject] = {}
         self._by_name: dict[tuple[int, str | None, str, str], list[DeviceObject]] = {}
         for o in rows:
-            self.by_id[o.id] = o
-            self._by_name.setdefault((o.source_system_id, o.vdom, art(o), o.name), []).append(o)
+            self._add(o)
+
+    def _add(self, o: DeviceObject) -> None:
+        self.by_id[o.id] = o
+        self._by_name.setdefault((o.source_system_id, o.vdom, art(o), o.name), []).append(o)
+
+    @classmethod
+    def closure(cls, session: Session, objects: Iterable[DeviceObject]) -> "Directory":
+        """Nur diese Objekte mit ihren (verschachtelten) Mitgliedern statt aller Objekte der
+        Quellsysteme (0.107.0, Namen der Gegenstellen: grosse Firewalls haben zehntausende)."""
+        d = cls(session, ())
+        start = list({o.id: o for o in objects}.values())
+        for o in start:
+            d._add(o)
+        sources = {o.source_system_id for o in start}
+        wanted = {m for o in start for m in o.members or []}
+        asked: set[str] = set()
+        while sources and wanted - asked:
+            batch = wanted - asked
+            asked |= batch
+            new = [o for o in session.scalars(select(DeviceObject).where(
+                DeviceObject.source_system_id.in_(sources), DeviceObject.name.in_(batch)))
+                if o.id not in d.by_id]  # fmt: skip
+            for o in new:
+                d._add(o)
+            wanted |= {m for o in new for m in o.members or []}
+        return d
 
     def find(
         self,

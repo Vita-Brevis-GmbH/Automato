@@ -59,6 +59,7 @@ from app.store.rule_view import bare_service
 from app.store.topology import is_net, overlaps, within
 
 SHOWN = 12
+WHY = 2  # Gruende je Seite, warum keine externe EPG zuordnet (0.103.0)
 _ALL = ("", "any", "unspecified")
 
 
@@ -102,6 +103,10 @@ class AciChecker:
         self._contracts: dict[int, list[_Contract]] = {}
         self._servers: dict[str, set[int]] = {}
         self._unknown: set[str] = set()  # Texte „im Fabric, EPG nicht bekannt“ (Merkmal)
+        # 0.132.1: nach einigen Abfragen je IP Endpunkte und Server einmal ganz lesen (viele
+        # Wege einer Applikation); eine einzelne Weg-Suche fragt weiter je IP
+        self._lookups = 0
+        self._endpoints: dict[str, list[int]] | None = None
 
     # -- Laden -------------------------------------------------------------------
 
@@ -193,29 +198,66 @@ class AciChecker:
     # -- Zuordnung ---------------------------------------------------------------
 
     def members(self, sid: int, vrf: str, ip) -> tuple[list[Member], str]:
-        """EPG(s) der IP in der VRF und eine Beschreibung; leer = keine EPG erfasst sie."""
+        """EPG(s) der IP in der VRF und eine Beschreibung; leer = keine EPG erfasst sie. Je
+        IP, VRF und Sprache einmal (0.132.1: viele Wege einer Applikation)."""
         if ip is None:
             return [], L("Quelle unbekannt", "source unknown")
+        from app.i18n import lang
+
+        cache = self.__dict__.setdefault("_members_cache", {})
+        key = (sid, vrf, str(ip), lang())
+        if key not in cache:
+            cache[key] = self._members(sid, vrf, ip)
+        found, text = cache[key]
+        return list(found), text
+
+    def _members(self, sid: int, vrf: str, ip) -> tuple[list[Member], str]:
         inside = self._inside(sid, vrf, ip)
         if inside is not None:
             return inside
-        found: list[Member] = []
-        for epg in self.cls.externals(ip):
-            if epg.source_system_id != sid or self.cls.vrf_of(epg) != vrf:
-                continue
-            rel = self.cls.check(epg, ip)
-            if rel is None or rel[0] == aci_relevance.IMPOSSIBLE:
-                continue
-            net = self.cls.subnet_for(epg, ip)
-            name = aci_relevance.ext_label(epg)
-            label = L(f"externe EPG {name}", f"external EPG {name}") + (f" ({net})" if net else "")
-            found.append(Member(epg, rel[0] == aci_relevance.POSSIBLE, label))
+        found, why = self._externals(sid, vrf, ip, self.cls.check)
+        if not found:
+            # 0.103.0 (Anwender): lehnt das Routing der Firewalls hinter den L3Outs jede externe
+            # EPG ab (z. B. die Firewall leitet die IP zurueck ins ACI), ordnet das Fabric sie
+            # trotzdem zu - VRF-weit das laengste zuordnende Subnetz (10.0.0.0/8), mit Contract
+            # erlaubt
+            found, _ = self._externals(sid, vrf, ip, self.cls.classify, fabric=True)
         if not found and is_net(ip):  # Netz (0.39.0): externe EPGs, die nur einen Teil erfassen
             found = self._partial_external(sid, vrf, ip)
         if not found:
-            return [], L(f"keine EPG bzw. externe EPG erfasst {ip} in VRF {vrf}",
-                         f"no EPG or external EPG covers {ip} in VRF {vrf}")  # fmt: skip
+            text = L(f"keine EPG bzw. externe EPG erfasst {ip} in VRF {vrf}",
+                     f"no EPG or external EPG covers {ip} in VRF {vrf}")  # fmt: skip
+            if why:
+                text += f" ({'; '.join(dict.fromkeys(why[:WHY]))})"
+            return [], text
         return found, _either(m.text for m in found)
+
+    def _externals(self, sid: int, vrf: str, ip, decide,
+                   fabric: bool = False) -> tuple[list[Member], list[str]]:  # fmt: skip
+        """Externe EPGs der VRF, die die IP zuordnen, und warum die uebrigen nicht (0.103.0)."""
+        found: list[Member] = []
+        why: list[str] = []
+        for epg in self.cls.externals(ip):
+            if epg.source_system_id != sid:
+                continue
+            name = aci_relevance.ext_label(epg)
+            net = self.cls.subnet_for(epg, ip)
+            if self.cls.vrf_of(epg) != vrf:
+                other = self.cls.vrf_of(epg)
+                why.append(L(f"externe EPG {name} ({net}) liegt in VRF {other}",
+                             f"external EPG {name} ({net}) is in VRF {other}"))  # fmt: skip
+                continue
+            rel = decide(epg, ip)
+            if rel is None:
+                continue
+            if rel[0] == aci_relevance.IMPOSSIBLE:
+                why.append(rel[1])
+                continue
+            label = L(f"externe EPG {name}", f"external EPG {name}") + (f" ({net})" if net else "")
+            if fabric:
+                label += L(" – Zuordnung im ACI", " – assignment in the ACI")
+            found.append(Member(epg, rel[0] == aci_relevance.POSSIBLE, label))
+        return found, why
 
     def _partial_external(self, sid: int, vrf: str, net) -> list[Member]:
         out: dict[int, Member] = {}
@@ -237,13 +279,7 @@ class AciChecker:
             members = [Member(e, sure, f"EPG {epg_store.inventory_label(e)} ({why})")
                        for e, why in conf]  # fmt: skip
             return members, _either(m.text for m in members)
-        own = [
-            self.epgs[i]
-            for i in self.session.scalars(
-                select(EpgEndpoint.epg_id).where(EpgEndpoint.ip == str(ip))
-            )
-            if i in self.epgs
-        ]
+        own = [self.epgs[i] for i in self._endpoint_epgs(str(ip)) if i in self.epgs]
         own += [
             e
             for e in self.epgs.values()
@@ -291,7 +327,36 @@ class AciChecker:
                 )
         return None
 
+    BULK_AFTER = 20  # Abfragen je IP, danach alles einmal lesen
+
+    def _endpoint_epgs(self, ip: str) -> list[int]:
+        """EPGs mit diesem gelernten Endpunkt."""
+        self._lookups += 1
+        if self._endpoints is None and self._lookups > self.BULK_AFTER:
+            found: dict[str, list[int]] = defaultdict(list)
+            for epg_id, addr in self.session.execute(
+                select(EpgEndpoint.epg_id, EpgEndpoint.ip)
+                .join(Epg, Epg.id == EpgEndpoint.epg_id)
+                .where(Epg.tenant_id == self.tenant_id)
+            ):  # fmt: skip
+                found[str(addr)].append(epg_id)
+            self._endpoints = found
+            servers: dict[str, set[int]] = defaultdict(set)
+            for oid, value in self.session.execute(
+                select(NetworkObject.id, NetworkObject.value).where(
+                    NetworkObject.tenant_id == self.tenant_id, NetworkObject.value.is_not(None))
+            ):  # fmt: skip
+                host = str(value).removesuffix("/32").removesuffix("/128")
+                if "/" not in host:
+                    servers[host].add(oid)
+            self._servers = servers
+        if self._endpoints is not None:
+            return self._endpoints.get(ip, [])
+        return list(self.session.scalars(select(EpgEndpoint.epg_id).where(EpgEndpoint.ip == ip)))
+
     def _server_ids(self, ip: str) -> set[int]:
+        if isinstance(self._servers, defaultdict):  # alles gelesen
+            return self._servers.get(ip, set())
         if ip not in self._servers:
             self._servers[ip] = set(
                 self.session.scalars(
@@ -317,9 +382,14 @@ class AciChecker:
 
     # -- Pruefen -----------------------------------------------------------------
 
-    def check(self, sid: int, vrf: str, src, dst, service, dst_vrf: str | None = None) -> dict:
+    def check(self, sid: int, vrf: str, src, dst, service, dst_vrf: str | None = None,
+              outside: bool = False) -> dict:  # fmt: skip
         """Urteil des Fabrics; `dst_vrf`: Ziel in einer anderen VRF, in diese geleakt
-        (Shared Service, Route-Leaking - `aci_shared`, 0.44.0)."""
+        (Shared Service, Route-Leaking - `aci_shared`, 0.44.0). `outside`: der Weg kommt von
+        aussen ins Fabric (über einen L3Out) - ohne Quell-IP zählt jede externe EPG der VRF
+        (0.135.0)."""
+        if src is None and outside:
+            return self._from_outside(sid, vrf, dst, service, dst_vrf)
         srcs, src_text = self.members(sid, vrf, src)
         dsts, dst_text = self.members(sid, dst_vrf or vrf, dst)
         # L3Outs der externen EPGs (0.74.0, Netzwerkplan der Applikation)
@@ -355,6 +425,84 @@ class AciChecker:
                  "depends on the EPG – allowed or blocked depending on the assignment")  # fmt: skip
         return base | {"verdict": "depends", "rules": rules, "text": text}
 
+    def _from_outside(self, sid: int, vrf: str, dst, service, dst_vrf: str | None) -> dict:
+        """Quelle ohne IP von aussen (0.135.0, Anwender: „Contracts nicht prüfbar an aci01 …“
+        bei Start an der Firewall ohne Quelle): das Fabric ordnet sie einer externen EPG der VRF
+        zu (Subnetz mit `import-security`) - je externe EPG das Urteil. Alle erlauben (und eine
+        erfasst 0.0.0.0/0 bzw. ::/0): erlaubt; alle sperren: gesperrt; sonst abhängig von der
+        Quelle mit den externen EPGs, für die es gilt."""
+        exts: dict[int, Member] = {}
+        whole = False
+        for epg, net, scope in self.cls._ext.get((sid, vrf), []):
+            if not aci_relevance.classifies(scope):
+                continue
+            whole = whole or net.prefixlen == 0
+            if epg.id not in exts:
+                name = aci_relevance.ext_label(epg)
+                exts[epg.id] = Member(epg, False, L(f"externe EPG {name}", f"external EPG {name}"))
+        dsts, dst_text = self.members(sid, dst_vrf or vrf, dst)
+        unknown = L("Quelle unbekannt", "source unknown")
+        if not exts:
+            text = L(
+                f"Quelle unbekannt, keine externe EPG in VRF {vrf} – Contracts nicht prüfbar",
+                f"source unknown, no external EPG in VRF {vrf} – contracts not verifiable",
+            )
+            return {"src_epg": unknown, "dst_epg": dst_text, "l3outs": [], "verdict": "unknown",
+                    "rules": [], "text": text}  # fmt: skip
+        srcs = list(exts.values())
+        listed = ", ".join(aci_relevance.ext_label(m.epg) for m in srcs[:SHOWN])
+        src_text = L(f"Quelle von aussen ohne IP – externe EPG {listed}",
+                     f"source from outside without IP – external EPG {listed}")  # fmt: skip
+        src_text += " …" if len(srcs) > SHOWN else ""
+        l3outs = sorted({m.epg.l3out for m in srcs + (dsts or []) if m.epg.l3out
+                         and m.epg.kind == "external"})  # fmt: skip
+        base = {"src_epg": src_text, "dst_epg": dst_text, "l3outs": l3outs}
+        if not dsts:
+            if dst_text in self._unknown:
+                return base | {"verdict": "unknown", "rules": [], "text": dst_text}
+            text = L(f"{dst_text} – das Fabric verwirft den Verkehr",
+                     f"{dst_text} – the fabric drops the traffic")  # fmt: skip
+            return base | {"verdict": "implicit_deny", "rules": [], "text": text}
+        by_src: dict[str, set[str]] = {}
+        rules: list[dict] = []
+        for s in srcs:
+            for d in dsts:
+                r = self._pair(sid, vrf, s, d, service, dst_vrf)
+                by_src.setdefault(aci_relevance.ext_label(s.epg), set()).add(r["verdict"])
+                for e in r["rules"]:
+                    if e["rule_id"] not in {x["rule_id"] for x in rules} and len(rules) < SHOWN:
+                        rules.append(e)
+        allowed = [n for n, v in by_src.items() if v == {"allow"}]
+        blocked = [n for n, v in by_src.items() if v <= {"deny", "implicit_deny"}]
+        if len(allowed) == len(by_src) and whole:
+            text = L(
+                "erlaubt für jede Quelle von aussen (alle externen EPGs der VRF)",
+                "allowed for any source from outside (all external EPGs of the VRF)",
+            )
+            return base | {"verdict": "allow", "rules": rules, "text": text}
+        if len(blocked) == len(by_src):
+            text = L(
+                "gesperrt für jede Quelle von aussen (keine externe EPG der VRF erlaubt)",
+                "blocked for any source from outside (no external EPG of the VRF allowed)",
+            )
+            return base | {"verdict": "implicit_deny", "rules": rules, "text": text}
+
+        def names(items: list[str]) -> str:
+            return ", ".join(items[:4]) + (" …" if len(items) > 4 else "")
+
+        text = L("abhängig von der Quelle (ohne IP)", "depends on the source (no IP)")
+        if allowed:
+            text += L(f" – erlaubt für externe EPG {names(allowed)}",
+                      f" – allowed for external EPG {names(allowed)}")  # fmt: skip
+        else:
+            text += L(" – keine externe EPG sicher erlaubt", " – no external EPG surely allowed")
+        if blocked:
+            text += L(f", gesperrt für {names(blocked)}", f", blocked for {names(blocked)}")
+        if not whole and len(allowed) == len(by_src):
+            text += L(" (andere Quellen erfasst keine externe EPG)",
+                      " (no external EPG covers other sources)")  # fmt: skip
+        return base | {"verdict": "depends", "rules": rules, "text": text}
+
     def _pair(self, sid: int, vrf: str, s: Member, d: Member, service,
               dst_vrf: str | None = None) -> dict:  # fmt: skip
         if s.epg.id == d.epg.id:
@@ -363,12 +511,13 @@ class AciChecker:
             return {"verdict": "allow", "rules": [], "text": text}
         ps, pd = self.proxies(s.epg, vrf), self.proxies(d.epg, dst_vrf or vrf)
         shown: list[dict] = []
+        closed_entries: list[dict] = []
         decisive = None
         for c in self.contracts(sid):
             hit = self._match(c, ps, pd, s, d, service)
             if hit is None:
                 continue
-            ok, back, consumer, provider, note = hit
+            ok, back, consumer, provider, note, closed = hit
             if back:  # Rueckrichtung: die Quelle ist Provider, das Ziel Consumer
                 via_src, via_dst = ps[min(provider)], pd[min(consumer)]
             else:
@@ -393,6 +542,12 @@ class AciChecker:
             }
             if note:  # greift nicht: nur Antworten (0.72.1) - zur Erklaerung, entscheidet nicht
                 entry |= {"note": note, "unsure": [], "services": c.names[:4]}
+            if closed:  # verbindet die EPGs, oeffnet den Dienst nicht (0.111.0) - zur Erklaerung
+                if c.allow and c.kind == "contract" and len(closed_entries) < SHOWN:
+                    closed_entries.append(
+                        entry | {"closed": True, "unsure": [], "open": c.services[:8]}
+                    )
+                continue
             if not ok:
                 if len(shown) < SHOWN:
                     shown.append(entry)
@@ -400,7 +555,7 @@ class AciChecker:
             shown.append(entry)
             decisive = entry  # Taboos stehen vorn: sie sperren vor allen Contracts
             break
-        return _verdict(decisive, shown, s, d)
+        return _verdict(decisive, shown, s, d, service, closed_entries)
 
     def _match(self, c: _Contract, ps: dict, pd: dict, s: Member, d: Member, service):
         """(Urteil Dienst, Rueckrichtung, Consumer, Provider) bzw. None: Consumer -> Provider
@@ -409,6 +564,7 @@ class AciChecker:
         nur Antworten (0.72.1), greift er dort nicht - mit Hinweis, wenn sonst nichts passt."""
         best = None
         note = None
+        closed = None  # Consumer und Provider passen, der Filter oeffnet den Dienst nicht
         for back in (False, True):
             if back and not c.reverse:
                 break
@@ -420,16 +576,18 @@ class AciChecker:
             if not self.cls.scope_allows(c.scope, a.epg, b.epg):
                 continue  # Scope (AP, VRF, Tenant) - auch bei Contracts aus common (0.43.1)
             if not back and c.replies_only:
-                note = (False, False, consumer, provider, aci_direction.replies())
+                note = (False, False, consumer, provider, aci_direction.replies(), False)
                 continue
             ok = service_ok(c.reverse if back else c.services, service)
             if ok is False:
+                if closed is None and not back:
+                    closed = (False, back, consumer, provider, None, True)
                 continue
             if best is None or (ok and not best[0]):
-                best = (ok, back, consumer, provider, None)
+                best = (ok, back, consumer, provider, None, False)
             if ok:
                 break
-        return best or note
+        return best or note or closed
 
 
 def _label(c: _Contract) -> str:
@@ -440,7 +598,8 @@ def _label(c: _Contract) -> str:
     return f"Contract {c.name}"
 
 
-def _verdict(decisive: dict | None, shown: list[dict], s: Member, d: Member) -> dict:
+def _verdict(decisive: dict | None, shown: list[dict], s: Member, d: Member,
+             service=None, closed: list[dict] | None = None) -> dict:  # fmt: skip
     # Contracts, die nur Antworten zulassen (`note`), greifen nicht - kein „moeglich“
     before = [e for e in shown if not e["decides"] and not e.get("note")]
     if decisive is not None:
@@ -463,12 +622,32 @@ def _verdict(decisive: dict | None, shown: list[dict], s: Member, d: Member) -> 
         text = L("nur mögliche Contracts (Dienst nicht angegeben), sonst gesperrt",
                  "only possible contracts (service not specified), otherwise blocked")  # fmt: skip
         return {"verdict": "depends", "rules": shown, "text": text}
+    notes = [e for e in shown if e.get("note")]
+    if closed:
+        # 0.111.0 (Anwender): der vorhandene Contract hat den Port nicht offen - statt „kein
+        # Contract“; mit den Diensten, die er oeffnet
+        labels = ", ".join(e["label"] for e in closed[:3])
+        opened = ", ".join(dict.fromkeys(x for e in closed[:3] for x in e["open"])) or "–"
+        want = _want_text(service)
+        text = L(f"{labels} von {s.text} zu {d.text} öffnet {want} nicht (offen: {opened}) – "
+                 "im ACI gesperrt",
+                 f"{labels} from {s.text} to {d.text} does not open {want} (open: {opened}) – "
+                 "blocked in the ACI")  # fmt: skip
+        if notes:
+            text += f" ({notes[0]['label']}: {notes[0]['note']})"
+        return {"verdict": "implicit_deny", "rules": closed + notes, "text": text}
     text = L(f"kein Contract von {s.text} zu {d.text} – im ACI gesperrt",
              f"no contract from {s.text} to {d.text} – blocked in the ACI")  # fmt: skip
-    notes = [e for e in shown if e.get("note")]
     if notes:
         text += f" ({notes[0]['label']}: {notes[0]['note']})"
     return {"verdict": "implicit_deny", "rules": notes, "text": text}
+
+
+def _want_text(service) -> str:
+    """Gesuchter Dienst im Satz: `tcp/1433`, `icmp` bzw. „den Dienst“."""
+    if not service:
+        return L("den Dienst", "the service")
+    return service[0] if service[1] is None else f"{service[0]}/{service[1]}"
 
 
 def _either(texts) -> str:

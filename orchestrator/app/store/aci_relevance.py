@@ -13,6 +13,12 @@ Contracts:
 - Gleich lange Subnetze in mehreren L3Outs (typisch 0.0.0.0/0): moeglich ist die EPG des
   L3Outs, ueber den die VRF die IP leitet; fuer die anderen bleibt es unbekannt (nicht
   ausgeschlossen).
+- **Firewall fuehrend (ADR 0034):** Steht hinter dem L3Out der externen EPG eine Firewall
+  (`store/l3out_firewall.py`, abgeleitet bzw. von Hand), entscheidet ihr Routing, ueber welchen
+  L3Out die IP kommt - nicht das (meist weit offene) Subnetz im ACI: es gewinnt der L3Out,
+  dessen Firewall die IP am genauesten nach aussen routet; leitet sie die IP zurueck ins ACI,
+  kommt sie nicht ueber diesen L3Out. Innerhalb der gewaehlten L3Outs gilt weiter das laengste
+  Subnetz. Ohne Firewall bzw. ohne Aussage bleibt die Zuordnung im ACI (Rueckfall).
 
 Ein Netz (Weg-Suche, 0.39.0) zaehlt wie eine IP, wenn das Subnetz es ganz enthaelt.
 
@@ -51,6 +57,13 @@ def classifies(scope: str | None) -> bool:
     return scope is None or CLASSIFY in {s.strip() for s in scope.split(",")}
 
 
+def assigns(origin: str | None, scope: str | None) -> bool:
+    """Gehoert das Subnetz als Netz zur EPG? Bei externen EPGs nur mit `import-security`:
+    Export Route Control (`export-rtctrl`) u. a. steuern nur, was das ACI ankuendigt bzw.
+    annimmt (0.111.0, Anwender) - kein Netz der externen EPG."""
+    return origin != "ext" or classifies(scope)
+
+
 def _net(value: str) -> Net | None:
     try:
         return ipaddress.ip_network(value, strict=False)
@@ -71,6 +84,8 @@ class Classifier:
         self._graph_of = graph  # Graph der Wege teilen (Doku: einmal je Mandant)
         self._graph: Graph | None = None
         self._cache: dict[tuple, tuple[str, str] | None] = {}
+        # gelernte Endpunkte je IP (0.133.1: je Verbindung eine Abfrage ueber alle Endpunkte)
+        self._endpoint_epgs: dict[str, list] = {}
 
     @property
     def graph(self) -> Graph:
@@ -86,6 +101,14 @@ class Classifier:
         from app.store import epg_locate  # spaet: epg_locate importiert dieses Modul
 
         return epg_locate.Locator(self.session, self.tenant_id, self)
+
+    @cached_property
+    def behind(self):
+        """Firewalls hinter den L3Outs (ADR 0034): ihr Routing entscheidet, ueber welchen L3Out
+        eine IP kommt; teilt den Graph."""
+        from app.store import l3out_firewall  # spaet: l3out_firewall -> topo_model -> paths
+
+        return l3out_firewall.Behind(self.session, self.tenant_id, lambda: self.graph)
 
     @cached_property
     def _l3outs(self) -> list[TopoL3Out]:
@@ -252,7 +275,19 @@ class Classifier:
             self._cache[key] = self._decide(epg, ip)
         return self._cache[key]
 
-    def _decide(self, epg: Epg, ip) -> tuple[str, str] | None:
+    def classify(self, epg: Epg, ip) -> tuple[str, str] | None:
+        """Zuordnung im Fabric (0.103.0, Weg-Suche und Verbindungen): das ACI ordnet eine IP
+        VRF-weit der externen EPG mit dem laengsten zuordnenden Subnetz zu - unabhaengig davon,
+        ueber welchen L3Out bzw. welche Firewall dahinter der Verkehr weitergeht. Das Routing der
+        Firewalls (ADR 0034, `_by_firewall`) bestimmt, welche Regeln in der Doku relevant sind,
+        nicht, ob der Contract im Fabric greift (Anwender: 10.67.0.13 liegt in 10.0.0.0/8 der
+        externen EPG - mit Contract erlaubt)."""
+        key = (epg.id, str(ip), "fabric")
+        if key not in self._cache:
+            self._cache[key] = self._decide(epg, ip, firewall=False)
+        return self._cache[key]
+
+    def _decide(self, epg: Epg, ip, firewall: bool = True) -> tuple[str, str] | None:
         vrf = self.vrf_of(epg)
         rows = self._ext.get((epg.source_system_id, vrf or ""), [])
         own = [(n, s) for e, n, s in rows if e.id == epg.id and within(ip, n)]
@@ -276,6 +311,9 @@ class Classifier:
                 f"{ip} is in the fabric of VRF {vrf} ({inside}) – traffic comes from the EPG, not "
                 f"via {epg.l3out or 'an L3Out'}",
             )
+        by_firewall = self._by_firewall(epg, ip, vrf, rows, mine) if firewall else None
+        if by_firewall is not None:
+            return by_firewall
         best = max(n.prefixlen for n in mine)
         cover = [(e, n) for e, n, s in rows if classifies(s) and within(ip, n)]
         top = max(n.prefixlen for _e, n in cover)
@@ -306,6 +344,47 @@ class Classifier:
         return UNKNOWN, L(f"{also}; die VRF {vrf} leitet {ip} über {via}",
                           f"{also}; VRF {vrf} routes {ip} via {via}")  # fmt: skip
 
+    def _by_firewall(self, epg: Epg, ip, vrf: str | None, rows, mine) -> tuple[str, str] | None:
+        """Firewall fuehrend (ADR 0034): der L3Out der IP nach dem Routing der Firewalls hinter
+        den L3Outs der VRF. None ohne Aussage fuer den L3Out dieser EPG (keine Firewall, keine
+        Route) - dann gilt die Zuordnung im ACI."""
+        name = epg.l3out
+        d = self.behind.decide(epg.source_system_id, vrf, ip) if name else None
+        if d is None or name not in d.names or name in d.unknown:
+            return None
+        label = ext_label(epg)
+        if name in d.best:
+            # innerhalb der L3Outs der Firewall: das laengste zuordnende Subnetz
+            cover = [(e, n) for e, n, s in rows
+                     if classifies(s) and within(ip, n) and e.l3out in d.best]  # fmt: skip
+            top = max(n.prefixlen for _e, n in cover)
+            best = max(n.prefixlen for n in mine)
+            if best < top:
+                mine_net = next(n for n in mine if n.prefixlen == best)
+                winners = ", ".join(f"{ext_label(e)} ({n})" for e, n in cover
+                                    if n.prefixlen == top and e.id != epg.id)  # fmt: skip
+                return IMPOSSIBLE, L(
+                    f"{ip} gehört in VRF {vrf} zur externen EPG {winners} – genauer als "
+                    f"{mine_net} von {label}",
+                    f"{ip} belongs to external EPG {winners} in VRF {vrf} – more specific than "
+                    f"{mine_net} of {label}",
+                )
+            reason = d.reasons[name]
+            return POSSIBLE, L(f"über {name}: {reason}", f"via {name}: {reason}")
+        if d.best:
+            via, why = ", ".join(d.best), d.reason()
+            return IMPOSSIBLE, L(f"{ip} kommt über {via}: {why} – nicht über {name}",
+                                 f"{ip} comes via {via}: {why} – not via {name}")  # fmt: skip
+        if name in d.back:
+            why = d.back[name]
+            return IMPOSSIBLE, L(f"{why} – nicht über {name}", f"{why} – not via {name}")
+        return None
+
+    def l3out_of(self, sid: int | None, vrf: str | None, ip) -> list[str] | None:
+        """L3Outs der IP nach dem Routing der Firewalls (ADR 0034) - None ohne Aussage."""
+        d = self.behind.decide(sid, vrf, ip)
+        return list(d.best) if d is not None and d.best else None
+
     def _fabric(self, sid: int | None, vrf: str | None, ip) -> str | None:
         """Ort im Fabric der VRF (EPG bzw. BD), wenn ein BD-/EPG-Subnetz die IP enthaelt, die
         Portgruppe ihrer VM bzw. ein statischer Endpunkt sie einer EPG zuordnet (0.83.1: BD ohne
@@ -319,11 +398,14 @@ class Classifier:
         if not is_net(ip):
             for epg, how in self.locator.configured(str(ip), sid, vrf):
                 return f"{how}, EPG {epg_store.inventory_label(epg).replace('/', '|')}"
-        for epg in self.session.scalars(
-            select(Epg)
-            .join(EpgEndpoint, EpgEndpoint.epg_id == Epg.id)
-            .where(Epg.tenant_id == self.tenant_id, Epg.kind == "epg", EpgEndpoint.ip == str(ip))
-        ):
+        key = str(ip)
+        if key not in self._endpoint_epgs:
+            self._endpoint_epgs[key] = list(self.session.scalars(
+                select(Epg)
+                .join(EpgEndpoint, EpgEndpoint.epg_id == Epg.id)
+                .where(Epg.tenant_id == self.tenant_id, Epg.kind == "epg", EpgEndpoint.ip == key)
+            ))  # fmt: skip
+        for epg in self._endpoint_epgs[key]:
             if epg.source_system_id == sid and self.vrf_of(epg) == vrf:
                 name = epg_store.inventory_label(epg).replace("/", "|")
                 return L(f"Endpunkt der EPG {name}", f"endpoint of EPG {name}")

@@ -7,6 +7,1846 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 1.0.0 – 2026-11-07
+
+**Version 1 abgeschlossen** (Anwender 2026-11-07: „Es funktioniert bisher alles wie gewünscht …
+Bitte den Stand fertigstellen, … damit wir die Version 1 fertig haben.“). Abgenommen bis 0.141.2.
+
+- **Oberfläche als Produktions-Build:** Das Image der Web-UI baut die Oberfläche (`npm run build`)
+  und liefert sie mit Caddy aus – kein Entwicklungsserver mehr im Betrieb. `/api` geht wie bisher
+  an den Orchestrator (mit TLS intern gegen die eigene CA), `/healthz` als Lebenszeichen, Dateien
+  mit Fingerabdruck lange im Cache, die Startseite immer frisch (nach einem Update kein
+  Neuladen nötig). Der Vite-Server bleibt fürs Labor: `AUTOMATO_UI_TARGET=dev` und
+  `AUTOMATO_UI_READ_ONLY=false` in der `.env`.
+- **Container gehärtet:** migrate, Orchestrator, Collector, Web-UI, Proxy und Agent-Gateway laufen
+  mit `no-new-privileges`, ohne Linux-Capabilities (`cap_drop: ALL`; nur `tls-init` darf
+  Besitzer setzen, der Proxy Port 443 öffnen) und mit Dateisystem nur lesend – geschrieben wird
+  nur in die Volumes und `/tmp`. Postgres und Redis mit `no-new-privileges`.
+- **Test:** Die CI startet das Image der Oberfläche so wie im Betrieb (nur lesend, ohne
+  Capabilities) und prüft `/healthz` und die Startseite.
+- **Roadmap Version 1 geschlossen:** alle Punkte erledigt; bewusst offene Punkte als „Bekannte
+  Einschränkungen von 1.0.0“ (Juniper MX ungetestet, ACI Shared L3Out/vzAny als Consumer, NSX ALB
+  Service Engines/Content Switching/GSLB, VPN, Betrieb von Postgres/Redis/Keycloak, ein Realm) mit
+  Übertrag nach Version 2. Risiko-Review (R14) und Abnahme-Liste der Produktiv-Installation
+  nachgeführt.
+
+**Nach dem Update** auf der Prod-VM: `docker compose … up -d --build` baut die Oberfläche neu;
+die Container-Prüfung steht in `docs/INSTALLATION-PROD.md` (Abnahme-Liste, „Container (1.0.0)“).
+
+## 0.141.2 – 2026-11-06
+
+Befund des Anwenders 2026-11-06: Klick auf die Firewall-Regel in den Findings – „/api/rules/…
+Failed to load resource: 404“.
+
+- **Ursache:** Die Befunde der Applikationen („Regel nie gebraucht“, Abweichungen Regel ↔ Weg)
+  rechnen seit 0.141.0 erst nach den Läufen bzw. mit dem Vorrechnen neu und verweisen bis dahin
+  auf die Kennung der Regel beim Rechnen. Wurde die Regel inzwischen umbenannt, gelöscht oder –
+  bei mehreren Regeln mit gleichem Schlüssel (z. B. ACI-Filter eines Subjects) – neu angelegt,
+  zeigte der Link ins Leere.
+- **Befunde folgen der Regel:** Gleich beim Einlesen zeigt der Befund auf die Regel mit neuer
+  Kennung (gleiches Quellsystem, Policy-ID bzw. DN, VDOM, Name); gibt es sie nicht mehr, fällt der
+  Befund weg (er trifft nicht mehr zu).
+- **Gleiche Kennungen auch hier:** Umbenannte Regeln (gleiche Policy-ID) und mehrere Regeln mit
+  gleichem Schlüssel behalten beim erneuten Einlesen ihre Kennungen (ADR 0049 Nachtrag).
+- **Klare Meldung:** Öffnet ein Link eine Regel, die es nicht mehr gibt, steht im Detail „Diese
+  Regel gibt es nicht mehr …“ statt eines Fehlers.
+
+## 0.141.1 – 2026-11-06
+
+Rückmeldung des Anwenders 2026-11-06: „Wegsuche: Rückweg über eine andere Firewall: Bei mir
+sehe ich die Meldung, aber es zeigt mir nicht den Rückweg an, welcher falsch sein soll.
+Berücksichtigen der Parallelen Wege (ACI mehrere Leafs, Firewall Verbunde mit Sessionsync)“
+
+- **Rückweg sichtbar:** Ist der Rückweg nicht symmetrisch, zeigen Weg-Suche (über der
+  Hop-Tabelle) und Verbindungen der Applikations-Doku (im Detail) je Abschnitt „Rückweg von → an“
+  Hop für Hop; die Firewall, die nicht auf dem Hinweg liegt, ist rot markiert, die des Hinwegs
+  grün, darunter „Hinweg über …“. Mehrere Rückwege (ECMP) stehen nebeneinander („bzw.“, bis 3,
+  dann „+n weitere“).
+- **Parallele Firewalls:** Session-Sync-Partner (FGSP) zählen wie die Mitglieder eines Verbunds
+  als dieselbe Firewall – geht die Antwort über den Partner zurück, ist der Rückweg symmetrisch.
+  Mehrere Leafs bzw. Knoten des ACI und Router zählen wie bisher nicht; nacheinander
+  durchlaufene Partner zählen als ein Durchgang.
+
+## 0.141.0 – 2026-11-06
+
+Rückmeldung des Anwenders 2026-11-06: „Berechnungen starten, auch wenn noch einige Läufe in der
+Warteschlaufe stehen. Die Neu berechnungen verhindern schnelles einlesen. Dies erst ausführen,
+wenn die Läufe durch sind. Die Berechnungen nur anstossen, wenn was geändert hat, also nur die
+Wege berechnen, welche von der geänderten Firewall Regel betroffen sind.“ Auf den Vorschlag:
+„Je Applikation“. Abnahme: „Das wars mit der Abnahme von den 139er Stand“ (ADR 0049)
+
+- **Erst nach den Läufen:** Befunde und Vorrechnen beginnen erst, wenn beim Mandanten kein Lauf
+  mehr wartet oder läuft – nach dem letzten Lauf, auch wenn dieser fehlschlug. Kommt während des
+  Vorrechnens ein Lauf dazu, hält es nach der aktuellen Applikation an und macht danach weiter. Die
+  Übersicht zeigt „wartet auf n Läufe“. Hängende Läufe blockieren nicht (Fristen wie bisher);
+  Öffnen einer Applikation und „Regeln neu einlesen“ rechnen wie bisher sofort.
+- **Nur bei Änderung:** Der Datenstand ist der Inhalt, nicht mehr der Zeitpunkt des letzten
+  Laufs. Nach dem Einspielen vergleicht der Orchestrator je Quellsystem Regeln, Objekte, NAT,
+  Routing, Inventar, EPGs, VMs bzw. die Einträge der Referenzquelle mit dem letzten Lauf; ein Lauf
+  ohne Änderung rechnet nichts neu.
+- **Nur Betroffenes:** Jeder Stand der Doku merkt, welche Regeln, Geräte, EPGs und Adressen er
+  nutzt. Eine geänderte Regel (neu, geändert, gelöscht, verschoben) rechnet nur die Applikationen
+  neu, die sie zeigen bzw. auf ihren Wegen prüfen, deren Systeme sie trifft oder deren
+  Verbindungen sie auf einer Firewall des Wegs passt. Geänderte Routen bzw. NAT eines Geräts: die
+  Applikationen mit Wegen über das Gerät; angeschlossene Netze, Interfaces, IPAM/DNS: wie bisher
+  alle. Alle anderen behalten ihren Stand; die Übersicht nennt den Grund einer Neuberechnung.
+- **Gleiche Kennungen:** Regeln, NAT, Objekte, VMs und Portgruppen behalten beim erneuten
+  Einlesen ihre Kennung – Links bleiben gültig; die Reihenfolge der Regeln steht ausdrücklich.
+- **Schneller:** Doku und Verbindungen teilen Daten, Graph und Policies; alle Applikationen eines
+  Datenstands teilen den Routing-Index und die Routen. Messung (50 Applikationen, alle neu
+  gerechnet): 16 158 statt 41 444 Datenbankabfragen (−61 %), 39,3 statt 49,9 s; Abfragen der
+  Routen 1 405 statt 21 041. Bei unveränderten Daten entfällt die Berechnung ganz.
+
+## 0.140.0 – 2026-11-06
+
+Rückmeldung des Anwenders 2026-11-06: „Wir rechnen heute nicht alle Wege durch und lassen auch
+sonst immer wieder viel liegen, dies ist nicht zuverlässig und daher gefährlich. Die Frage ist, ob
+das Tool nicht für so grosse Umgebungen bereit ist.“ Auf den Vorschlag in drei Stufen: „Alle drei
+Stufen in 140 umsetzen.“ (ADR 0048)
+
+- **Keine stillen Grenzen:** Jede Grenze, die greift, wird gezählt – Verbindungen je
+  Applikation, Gegenstellen je Regel, Dienste je Regel, genauer geroutete Teile eines Netzes,
+  Fehler im Programm. Die Applikation ist dann „unvollständig geprüft“: rotes Zeichen und Hinweise
+  in den Verbindungen, Befund **„Applikation: unvollständig geprüft“** unter Findings →
+  Applikationen mit Link zur Applikation. Die Doku zeigt „n Regeln: Weg nicht geprüft“, wenn eine
+  Grenze den Weg einer Regel nicht prüfen liess. Bis 0.139 fielen dabei Gegenstellen (mehr als 6
+  je Regel), Dienste (mehr als 3) und Teile von Netzen (mehr als 8) ohne Hinweis weg.
+- **Grenzen angehoben:** 64 Gegenstellen je Regel und Seite (bisher 6), 16 Dienste je Regel (3),
+  32 genauer geroutete Teile (8), alle Subnetze einer externen EPG bis 64 (3); Wegprüfung der Doku
+  64 Gegenstellen, 8 Adressen je System, 20 000 Wege (3, 2, 400).
+- **Wege einmal je Mandant:** Doku, Verbindungen und Befunde aller Applikationen teilen die Wege,
+  die geladenen Policies und die Urteile je Hop eines Datenstands – der Weg vom Monitoring, AD
+  oder Backup zu einem Server wird einmal gerechnet, nicht in jeder Applikation neu. Ein neuer Lauf
+  bzw. eine Änderung verwirft den Speicher. Grösse `AUTOMATO_PATH_STORE_MB` (Vorgabe 256).
+- **Urteile je Adressklasse:** Adressen, die dieselben Objekte der Policies treffen, haben
+  dasselbe Urteil je Hop – es wird je Klasse einmal gerechnet und für alle Server eines Netzes
+  wiederverwendet (exakt, keine Näherung).
+
+## 0.139.3 – 2026-11-06
+
+Rückmeldung des Anwenders 2026-11-06 zu 0.139.2: Fehler „Failed to fetch“ nicht mehr aufgetaucht.
+Unter Findings → Applikationen „Regel nie gebraucht“ 3255 von 4153 Findings – darunter z. B. eine
+Monitoring-Regel mit 10.0.0.0/8 bei einem Server, der sie nicht braucht: „Seine IP steht dort
+nicht drin, also frage ich mich über den Sinn des Findings.“
+
+- **„Regel nie gebraucht“ nur für konkrete Regeln:** Der Befund entsteht nur noch für Regeln, die
+  das System konkret nennen (Host, Gruppe, Netz der EPG bzw. direkt zugeordnet) und deren
+  Firewall nicht auf dem Weg liegt – eine solche Regel ist ein Kandidat zum Aufräumen. Eine
+  Regel, die das System nur über ein breites Netz umfasst (z. B. 10.0.0.0/8), gehört bei einem
+  Weg abseits ihrer Firewall nicht zur Applikation: kein Befund, keine Verbindung, der Grund
+  steht unter „Regeln ohne Verbindung“ („Regel über ein Netz … gehört nicht zur Applikation“).
+  So war der Befund gedacht (ADR 0043); seit 0.139.1 zählen die Befunde alle Verbindungen statt
+  der ersten 120 je Applikation, dadurch fielen die breiten Regeln erst jetzt in der Menge auf.
+- Die Befunde rechnen nach dem Update mit dem neuen Stand der Verbindungen neu; danach sollten
+  unter „Regel nie gebraucht“ nur noch konkrete Regeln stehen.
+
+## 0.139.2 – 2026-11-06
+
+Befund des Anwenders 2026-11-06: „Doku laden: Failed to fetch“ ohne Fehler im Log; in der
+Browser-Konsole `GET /api/jobs?tenant_id=2&limit=8 500` und eine Adresszeile mit
+`?error=temporarily_unavailable&error_description=authentication_expired`; im Log der Web-UI
+`http proxy error: /jobs?tenant_id=2&limit=8 – Error: socket hang up` (mit TLS intern).
+
+- **Verbindung Web-UI → Orchestrator:** Mit TLS intern verwendet der Proxy der Web-UI seine
+  Verbindungen zum Orchestrator wieder; der Orchestrator schloss unbenutzte Verbindungen nach
+  5 Sekunden – genau im Takt, in dem die Übersicht die Läufe abfragt. Ab und zu nahm der Proxy
+  eine Verbindung, die gerade zuging, und antwortete selbst mit einem leeren HTTP 500. Jetzt hält
+  der Orchestrator unbenutzte Verbindungen 75 Sekunden offen (`app/serve.py`, Dockerfile), der
+  Proxy schliesst seine nach 30 Sekunden selbst (`vite.config.ts`).
+- **Rückmeldung von Keycloak mit Fehler:** Schickt Keycloak statt einer Anmeldung einen Fehler
+  zurück (z. B. `authentication_expired`, wenn die Anmeldung abgelaufen ist oder ein anderer Tab
+  sie schon abgeschlossen hat), bereinigt die Oberfläche die Adresszeile, stellt die Ansicht
+  wieder her und übernimmt die Sitzung eines anderen Tabs. Gibt es keine, meldet sie sich einmal
+  neu an; kommt der Fehler wieder, steht der Grund da („Keycloak hat die Anmeldung nicht
+  abgeschlossen: …“). Bisher blieb `?error=…` stehen, und es geschah nichts.
+- **Mehrere Tabs:** Ein verdeckter Tab leitet nicht mehr selbst zu Keycloak um, sondern wartet,
+  bis er wieder sichtbar ist oder ein anderer Tab neu angemeldet hat; ein sichtbarer wartet bis
+  20 Sekunden, wenn gerade ein anderer Tab umleitet. Ein umleitender Tab löscht die gemeinsame
+  Sitzung der anderen Tabs nicht mehr.
+- **Verständliche Meldung:** Statt „Failed to fetch“ steht „Keine Antwort vom Server –
+  Verbindung abgebrochen“. Lesende Anfragen wiederholt die Oberfläche einmal, und während der
+  Tab zu Keycloak umleitet, erscheint keine Meldung mehr.
+
+## 0.139.1 – 2026-11-05
+
+Rückmeldung des Anwenders 2026-11-05 zu 0.139.0: „Ich habe Fehler bei der Doku Erstellung“ – im
+Log nach dem Update nur „Applikation 1: 89 von 120 Wegen in 297 s“ und „Abweichungen Regel <-> Weg:
+1 von 98 Applikationen nach 120 s (Zeitbudget)“, keine Doku fertig.
+
+- **Befunde aus dem Stand der Verbindungen:** Die Befunde der Applikationen (Wege uneinheitlich,
+  Regel nie gebraucht, Contract enger als die Firewall) kommen jetzt aus den eben gerechneten
+  Verbindungen der Applikation. Bisher rechnete der Orchestrator nach dem Update, nach jedem Lauf
+  und nach Änderungen dieselben Wege ein zweites Mal – je grosser Applikation mehrere Minuten,
+  nach dem Update unter der Sperre des Mandanten, und das Vorrechnen der Doku wartete bzw.
+  konkurrierte darum. Mit dem Stand der Doku (Vorgabe) entfällt diese zweite Berechnung;
+  „Abgleich neu berechnen“ von Hand rechnet wie bisher. Die Befunde zählen jetzt alle Wege der
+  Verbindungen (bis `app_traces_max`), nicht nur die ersten 120.
+- **Applikation für Applikation:** Das Vorrechnen rechnet je Applikation Doku und Verbindungen
+  nacheinander (die schnellen zuerst) – bisher erst alle Dokus, dann alle Verbindungen, so war
+  lange keine Applikation ganz fertig. Die Übersicht zeigt „Durchgang 1: 12 von 98 Applikationen
+  (25 von 196 Ständen)“.
+- **Im Log sichtbar:** je Durchgang „Mandant 2: Durchgang 1 des Vorrechnens - 196 Staende von 98
+  Applikationen“ und je Stand „Vorrechnen 25/196: Applikation 7 Verbindungen in 84.2 s“ – bisher
+  meldete die Doku nichts, bis die ersten Verbindungen fertig waren.
+- Tests: `test_rules_read.py`, `e2e/release_0139.spec.ts`.
+
+## 0.139.0 – 2026-11-05
+
+Rückmeldung des Anwenders 2026-11-05: „Das Neuberechnen der Apps und Wege muss besser gesteuert
+werden. Wenn ich Imports am Laufen habe, startet er jedes Mal neu, wenn ein Gerät importiert hat
+… vorberechnen ungeachtet der Daten mal starten und dann wenn alle vorberechnet sind, die
+komplette Berechnung durchführen“ und auf die Rückfrage: „Wenn ich im Realen System was ändere für
+eine App auf diversen Firewalls und ACI, würde ich gerne nicht alle Firewalls und ACI neu
+integrieren, sondern nur die Regeln neu berechnen, welche geändert haben.“ (ADR 0047)
+
+- **Vorrechnen in Durchgängen:** zu Beginn steht fest, was aussteht; jede Applikation wird je Stand
+  genau einmal gerechnet, auch wenn währenddessen Läufe eingehen. Ein Lauf bzw. eine Änderung
+  währenddessen merkt einen weiteren Durchgang mit allem, was danach nicht mehr passt. Übersicht:
+  „Durchgang 2: 340 von 808 · danach erneut“. Bis 0.138.0 kamen nach jedem Lauf die schnellen
+  Applikationen erneut zuerst dran, die langsamen nie.
+- **Befunde nach Läufen zusammengefasst:** die Abweichungen Regel ↔ Weg (bis zu 120 s) rechnen
+  nicht mehr im Einspielen jedes Laufs, sondern hinter den Läufen – zehn Läufe hintereinander
+  rechnen sie nicht zehnmal. Die Routing-Filter rechnen nach einem Anstoss während des Rechnens
+  noch einmal (bisher ging er verloren). Eine gespeicherte Applikation rechnet gleich, ohne auf
+  den Durchgang zu warten.
+- **Regeln neu einlesen** (Applikation, Operator): je FortiGate bzw. Cisco ACI ein Lauf **nur der
+  Regeln** – FortiGate: Policies, Objekte, NAT je VDOM ohne Interfaces, Zonen, Routing, HA, System;
+  ACI: Tenant-Baum ohne Fabric und Border-Leafs. Inventar und Routing bleiben vom letzten vollen
+  Lauf. Vorgewählt die Geräte der Applikation (Regeln der Doku, auf dem Weg). Danach rechnet nur
+  diese Applikation neu; das Fenster zeigt je Gerät den Stand. Läufe: „nur Regeln“. Zählt nicht
+  als voller Lauf (Datenqualität, Routing-Filter).
+- Migration `0075` (`collector_run.scope`, `application_id`); Agent/Worker bekommen `scope` im
+  Ziel – ältere Agenten lesen alles.
+- Tests: `test_rules_read.py`, `test_fortigate_client.py`, `e2e/release_0139.spec.ts`; zwei Tests,
+  die mit `AUTOMATO_TEST_DOC_SNAPSHOTS=1` (nächtlicher Lauf) am gespeicherten Stand scheiterten,
+  rechnen jetzt ohne Stand bzw. leeren ihn.
+
+## 0.138.0 – 2026-11-05
+
+Rückmeldung des Anwenders 2026-11-05: „Ich habe 500 Firewall Rule Paare, welche ich bestätigen
+müsste, da eigentlich 99% stimmen ist es ein riesiger Aufwand … in den Basis Settings angeben,
+dass die Paare automatisch bestätigt werden und dann aber wir die Möglichkeit haben, sie
+auseinander zu nehmen, wenn sie nicht stimmen?“
+
+- **Paare automatisch bestätigen (je Mandant):** Unter *Mandanten & Standorte* schaltet der Admin
+  „IPv4/IPv6-Paare automatisch bestätigen“ ein (Vorgabe aus). Jeder Vorschlag („ähnlich“) gilt
+  dann als Paar – Marke „✓ automatisch“, im Detail „automatisch bestätigt (Einstellung des
+  Mandanten)“, in Regeln & Contracts und in der Applikations-Doku wie ein bestätigtes Paar.
+  Abweichungen stehen weiter im Tooltip.
+- **Auseinandernehmen:** „Kein Paar“ im Detail trennt ein automatisch bestätigtes Paar dauerhaft,
+  auch nach neuen Läufen; „zurücknehmen“ macht es wieder zum Paar. Filter „Paar: automatisch
+  bestätigt“ zum Durchsehen.
+- Umschalten bildet die Paare im Hintergrund neu (Audit `tenant.updated` mit `rule_pairs_auto`,
+  danach `rule_pairs.rebuilt`). Ausgeschaltet sind die Vorschläge wieder „ähnlich“; von Hand
+  bestätigte bzw. abgelehnte Paare bleiben.
+- Migration `0074` (`tenant.rule_pairs_auto`).
+- Tests: `test_ip_family.py`, `test_tenants_api.py`, `e2e/release_0138.spec.ts`.
+
+## 0.137.0 – 2026-11-05
+
+Rückmeldung des Anwenders 2026-11-05 zu 0.136.0: „wenn wir bei den VIPs oder Loadbalancer die
+Ports anpassen, dann wird ebenso nicht sauber angezeigt, da das Service Feld nicht genau
+definiert ist, wo es hin gehört, zum Zielsystem oder zum VIP. Zudem könnte dies zu
+Fehldiagnosen führen“; Entscheid: „Der Dienst soll zugewiesen werden können, auswahlfeld, also
+Clientseitig, Eingang Loadbalancer oder beim Ziel Server, Standard wäre Clientseitig.“
+
+- **Weg-Suche – wo der Dienst gilt:** Auswahl neben dem Dienst: „Dienst beim Client“ (Vorgabe),
+  „Dienst am Eingang Load Balancer“ bzw. „Dienst am Ziel-Server“. Die Weg-Suche rechnet über die
+  Port-Weiterleitung der VIP und den Pool des Load Balancers zurück zum Port des Clients
+  („Dienst tcp/8443 am Ziel-Server = beim Client tcp/443“); führen mehrere Ports zum Server,
+  nennt der Hinweis die übrigen. Die Wahl steht in der URL (`service_at`).
+- **Ports entlang des Wegs:** Ändern VIP bzw. Load Balancer den Port, steht oben „Ports: Client
+  tcp/443 → VIP … tcp/8443 → Eingang Load Balancer … → Server tcp/8080“; je Hop „geprüft mit
+  tcp/…“ – mit diesem Port sind Policies bzw. Contracts geprüft (die FortiGate prüft nach der
+  Port-Weiterleitung).
+- **Verbindungen der Applikations-Doku:** Der Dienst ist der Port des Clients – bis 0.136.0 stand
+  bei einer VIP mit Port-Weiterleitung der Port der Policy (nach der Weiterleitung), z. B.
+  „→ 198.51.100.80 tcp/8443“ statt 443. Darunter bzw. im Detail die Ports entlang des Wegs.
+- **Korrektur:** Leitet die VIP einen anderen Port auf den Load Balancer weiter (z. B. 8443 →
+  443), wählt die Weg-Suche den Virtual Service jetzt mit dem weitergeleiteten Port – bisher
+  fand sie ihn nicht und der Weg endete an der VIP.
+- Tests: `test_vip_balancer.py`, `test_policy_check.py`, `e2e/release_0137.spec.ts`.
+
+## 0.136.0 – 2026-11-05
+
+Rückmeldung des Anwenders 2026-11-05 zu 0.135.0: „Ja“ – den Rückweg auch in den Verbindungen der
+Applikations-Doku prüfen (wie seit 0.134.0 in der Weg-Suche).
+
+- **Rückweg je Verbindung:** Je Verbindung prüft die Applikations-Doku, ob die Antwort über
+  dieselben Firewalls zurückgeht (ACI-Knoten und Router zählen nicht, im Verbund genügt derselbe
+  Verbund). Ein Zeichen „Rückweg über andere Firewall“ steht in der Spalte der Abweichungen, die
+  Übersicht zählt sie, „nur Auffälliges“ und der Filter „Rückweg über andere Firewall“ zeigen
+  sie; das Detail nennt den Rückweg („Rückweg ✓ … / ?“). Im Word-Export steht er bei der
+  Abweichung. Bei mehreren aktiven Wegen (ECMP) genügt ein Weg über eine andere Firewall.
+- **Antwort von aussen:** Antwortet eine Adresse ausserhalb der gelesenen Geräte (Internet,
+  Partner), kommt die Antwort über den Ausgang des Hinwegs zurück, von dort nach dem Routing.
+  Bis 0.135.0 war der Rückweg jeder Verbindung nach aussen „nicht prüfbar“ (Weg-Suche).
+- **Quelle an mehreren Firewalls** (Transfernetz, SNAT-Pool): verglichen wird ab der letzten
+  Firewall am Netz der Quelle – der Weg kann an jeder beginnen.
+- Die Befunde rechnen den Rückweg nicht (gleiche Dauer wie bisher).
+- Tests: `test_policy_check.py`, `test_paths.py`, `test_app_paths.py`, `e2e/release_0136.spec.ts`.
+
+## 0.135.0 – 2026-11-05
+
+Rückmeldung des Anwenders 2026-11-05 zu 0.134.0: „beides ja“ – die Verbindungen der
+Applikations-Doku wie die Weg-Suche über die VIP, und „Contracts nicht prüfbar“ am ACI-Hop
+klären.
+
+- **Verbindungen über die VIP:** Eine Firewall-Regel mit einer VIP direkt auf den Server (ohne
+  Load Balancer) als Ziel trifft nur Verkehr zur externen IP. Die Verbindung geht darum zur
+  externen IP der VIP, mit DNAT an der Firewall weiter zum Server – wie seit 0.79.0 die Kette
+  VIP → Load Balancer. Bis 0.134.0 ging sie direkt zur Server-IP (ohne DNAT).
+- **ACI-Contracts ohne Quell-IP:** „Contracts nicht prüfbar“ kam von der fehlenden Quelle (Start
+  an einer Firewall ohne Quelle). Kommt der Weg von aussen ins Fabric, ordnet das ACI die Quelle
+  einer externen EPG der VRF zu – die Weg-Suche prüft jetzt jede: „abhängig von der Quelle (ohne
+  IP) – erlaubt für externe EPG …, gesperrt für …“, „gesperrt für jede Quelle von aussen“ bzw.
+  „erlaubt für jede Quelle von aussen“ (nur wenn eine externe EPG 0.0.0.0/0 erfasst). Mit SNAT
+  bzw. über die VIP (0.134.0, Quelle aus dem Internet) prüft sie die Adresse selbst. Beginnt der
+  Weg im Fabric ohne Quelle, bleibt es „nicht prüfbar“.
+- Tests: `test_policy_check.py`, `test_aci_check.py`.
+
+## 0.134.0 – 2026-11-05
+
+Rückmeldung des Anwenders 2026-11-05 zu 0.133.4: „Ich nehme als Source die Internet Firewall und
+als Ziel den Server zuhinterst, aber leider zeigt er mir dennoch nicht den VIP als Pfad an,
+sondern nur der direkte Pfad … Er will direkt zum Server, auch wenn die zweite Policy den
+richtigen Weg wählt“; „Gemäss mir sollte der Hin und Rückweg geprüft werden (dieser muss gleich
+sein, ausnahme ACI Nodes und Firewall Verbunde)“; „es scheint noch Externe VIPs zu geben, welche
+keine Loadbalancer haben und die IP nicht mehr zugewiesen ist“.
+
+- **Weg-Suche über die VIP:** Ist das Ziel ein Server hinter einer VIP der Firewall (direkt bzw.
+  über den Load Balancer) und kommt die Suche von aussen – Start an einer Firewall ohne Quelle,
+  öffentliche Quelle oder eine Anbindung als Quelle –, geht der Weg zur externen IP der VIP und
+  von dort über DNAT und Load Balancer zum Server. Bisher suchte die Weg-Suche direkt die
+  Server-IP, die erlaubende VIP-Policy passte darum nur „möglich (Eingang)“. Eingang ist das
+  externe Interface der VIP (sonst nach der Route zur Quelle); ohne Quelle gilt eine beliebige
+  Adresse im Internet. Oben steht „über VIP … → Load Balancer → Server“; eine Quelle von innen
+  (private IP) sucht wie bisher direkt.
+- **Rückweg je Weg:** Firewalls sind zustandsbehaftet, die Antwort muss über dieselben Firewalls
+  zurück. Je Weg rechnet die Weg-Suche den Rückweg (nur Routing) und zeigt „Rückweg ✓“, „Rückweg
+  über andere Firewall“ (mit dem Rückweg im Hinweis) bzw. „Rückweg ?“. ACI-Knoten und Router
+  zählen nicht, im Verbund genügt derselbe Verbund. Abschnitte: am Load Balancer antwortet der
+  Server dem Load Balancer, nach einem SNAT der Adresse des Pools. Sind nicht alle Wege
+  symmetrisch, nennt ein Hinweis den einzig möglichen.
+- **Befund „VIP ohne Ziel“** (Findings → Regeln): VIP der Firewall ohne Load Balancer dahinter,
+  deren interne IP weder im IPAM noch an einer VM bzw. einem ACI-Endpunkt vorkommt.
+- Tests: `test_policy_check.py`, `test_vip_balancer.py`, `test_nat_checks.py`,
+  `e2e/release_0134.spec.ts`, `e2e/flows.spec.ts`.
+
+## 0.133.4 – 2026-11-05
+
+Rückmeldung des Anwenders 2026-11-05 zu 0.133.3 (der Dienst FT_any ist erledigt): „Regeln:
+abhängig … (nur mögliche Policies, sonst implizit gesperrt – abhängig von: Eingang, Quelle)“ –
+alle Policies am Hop nur „möglich (Eingang)“, auch die erlaubenden VIP-Policies mit Quelle any.
+
+- **SD-WAN-Zone als Eingang:** Policies nennen die SD-WAN-Zone (z. B. `virtual-wan-link`), der
+  Weg kommt über ihr Mitglied (z. B. `wan1`) herein. Bisher kannte die Prüfung die SD-WAN-Zone
+  nicht - jede Policy war nur „möglich (Eingang)“. Jetzt gehört das Mitglied zur Zone (aus
+  `system/sdwan`, sofort mit den gelesenen SD-WAN-Regeln); der Agent liest die SD-WAN-Zonen ab
+  dieser Version auch ohne SD-WAN-Regeln wie Zonen (nach dem Agent-Update und einem Lauf).
+- **Anbindung ohne Interface:** liefert die Anbindung als Quelle kein Interface bzw. keine Zone,
+  gilt als Eingang das Interface der Route zur Quelle (wie beim gewählten Startpunkt).
+- **Weg-Suche:** bei „möglich (…)“ zeigt der Hinweis beim Darüberfahren Ein- und Ausgang der
+  Policy – zum Vergleich mit dem Hop.
+- Tests: `test_policy_check.py`, `collectors/tests/test_inventory.py`,
+  `e2e/release_0133_4.spec.ts`.
+
+## 0.133.3 – 2026-11-05
+
+Rückmeldung des Anwenders 2026-11-05: „Er rechnet nun durch, super. Mit den Wegsuche, wenn ich im
+Pfad eine Deny Policy habe, dies geht noch nicht … Die Regel ist zuoberst und soll allen Traffic
+von den Schadsystemen sperren. Quellen Botnet-C&C.Server … Ziele all … Dienste wie auf der
+Firewall FT_any · Service · IP“. Abnahme bis 0.133.2 (ohne Einwand).
+
+- **Eigener Dienst „alle Protokolle“:** ein FortiGate-Service mit Protokoll IP und Nummer 0 (z. B.
+  „FT_any“) trifft in der Weg-Suche alle Dienste wie ALL. Bisher galt er als nicht prüfbar - die
+  Sperre mit Internet Service war darum „abhängig von: Dienst, Quelle“ statt Sperrliste. Jetzt:
+  „erlaubt durch Policy … – ausser Sperrliste Policy … (Internet Service bzw. Land)“. Ein
+  IP-Service mit anderer Nummer (z. B. GRE 47) bleibt nicht prüfbar. Wirkt ohne neuen Lauf.
+- Tests: `test_policy_check.py`.
+
+## 0.133.2 – 2026-11-04
+
+Rückmeldung des Anwenders 2026-11-04 zu 0.133.1: „Er bricht bei 391 von 808 Wegen · seit 3 min ab,
+dann geht es eine Weile, dann kommt er wieder und startet bei 0 Ich habe noch immer 83 App, welche
+nie berechnet wurden“, „Er bricht immer bei dieser Anzahl ab“, „bei 14 steht veraltet und wird
+vorgerechnet, ist aber noch nicht ein anderer Stand, als heute morgen“ und „das log zeigt nichts“.
+
+- **Abbruch behoben:** liegt im Ziel-Netz einer Regel eine Hostroute (/32 bzw. /128) eines
+  Geräts, brach die Berechnung der Verbindungen mit `AttributeError: 'IPv4Address' object has no
+  attribute 'prefixlen'` ab - immer am selben Weg (seit 0.79.1 im Code; mit der alten Grenze von
+  120 Wegen kam dieser Weg nie dran). Dieselbe Stelle bei den Netzen hinter einer Regel zu any.
+- **Ein Weg bricht nicht mehr alles ab:** ein Fehler im Programm bei einem Weg lässt diesen Weg
+  weg, mit dem Hinweis „n Wege nicht berechnet (Fehler im Programm, Einzelheiten im Log des
+  Orchestrators)“; unter den Verbindungen „· n Wege mit Fehler“.
+- **Fehler sichtbar statt Neubeginn:** schlägt eine Berechnung fehl, steht in der Übersicht beim
+  Stand „Fehler“ (Text beim Darüberfahren); vorgerechnet wird er erst wieder mit neuen Eingaben -
+  bis 0.133.1 begann er bei jedem Anstoss bei 0 und brach wieder ab.
+- **Alle Applikationen vorrechnen:** Doku und Verbindungen jeder Applikation im Standard, auch
+  nie geöffnete, schnelle zuerst, bis nichts mehr aussteht (`AUTOMATO_DOC_WARM_ALL`, Vorgabe an;
+  kein Zeitbudget mehr) - auch nach dem Start des Orchestrators. Ein Anstoss während des
+  Vorrechnens wartet nicht mehr (blockierte je Lauf einen Thread), das Vorrechnen schaut danach
+  erneut. Vorgerechnet zählt nicht mehr als angesehen. Fehlen einer Applikation die Verbindungen,
+  steht sie auf „noch nie berechnet · wird vorgerechnet“.
+- **Log:** die Meldungen des Orchestrators (Fortschritt, Dauer, Abfragen) erscheinen jetzt mit
+  Zeit im Log des Containers; bis 0.133.1 kamen nur Warnungen und Fehler ohne Zeit an.
+- „Veraltet“ ohne geänderte Konfiguration: jeder Lauf eines Quellsystems liest die Regeln neu ein
+  (neue IDs, Links der Doku) und macht die Stände darum veraltet - das Vorrechnen holt sie jetzt
+  vollständig nach.
+- Tests: `test_app_paths.py`, `test_doc_snapshots.py`, `e2e/release_0133_2.spec.ts`; UI-Tests ohne
+  Vorrechnen aller Applikationen (`e2e/server.py`).
+
+## 0.133.1 – 2026-11-04
+
+Rückmeldung des Anwenders 2026-11-04: „Das Berechnen hat immer noch über eine Stunde für eine
+riesige App und ich habe 83 wartende … VM hat 4 vCPUs, 8G Ram aber eine sehr kleine Auslastung 30%
+… woran kann es liegen, dass bei mir es ewig dauert und bei dir Sekunden?“ und „dass der "rechnet
+gerade" immer wieder im Dashboard verschwindet und wieder kommt … er aktuell bei den Verbindungen
+am Messen ist“. Abnahme bis 0.133.0 (ohne Einwand).
+
+- **Datenbank statt Rechenzeit:** gemessen gegen Postgres statt der Test-Datenbank im Speicher -
+  je Verbindung und Hop fragte die Weg-Suche die BGP- bzw. statischen Routen gleichen Präfixes ab
+  (Backup-Wege), ohne passenden Index: Postgres las dafür jedes Mal alle Routen des Geräts (mit
+  60 000 BGP-Routen 11,5 ms je Abfrage, mit einer vollen BGP-Tabelle ein Vielfaches). Neu je
+  Knoten und Präfix einmal, mit Index (0,04 ms); ebenso die genaueren Routen in einem Netz (z. B.
+  zu any) und die gelernten ACI-Endpunkte je IP. Migration `0073` (Indizes).
+- **Abfragen sichtbar:** unter den Verbindungen „· n Abfragen an die Datenbank“, im Log dazu.
+- **Fortschritt:** „rechnet gerade“ in der Übersicht mit „· 340 von 2000 Wegen · seit 12 min“;
+  lange Berechnungen schreiben jede Minute den Fortschritt ins Log.
+- **Vorrechnen:** die schnellen Stände zuerst - die wartenden kommen nicht mehr hinter einer
+  riesigen Applikation erst beim nächsten Durchgang dran.
+- Tests: `test_doc_snapshots.py`, `e2e/release_0133_1.spec.ts`.
+
+## 0.133.0 – 2026-11-04
+
+Rückmeldung des Anwenders 2026-11-04: „Ich sehe nun bei den BGP Filter, das es viel besser ist,
+aber ich habe immer noch die gleiche Anzahl der Findings. Zudem sehe ich den BGP Neighbors nicht
+an, ob sie eine Filter Verletzung haben oder nicht, kann man dies mit Grünem oder Gelbem Zeichen,
+wie bei den Firewall Rules anzeigen?“ und „Im Netzwerkplan sehe ich zwischendurch noch, dass der
+eine Firewall Verbund zwei mal auf der Map auftaucht“. Abnahme bis 0.132.2 (ohne Einwand).
+
+- **Befunde nach einem Update neu:** die Ansichten rechnen sofort mit der neuen Version, die
+  Befunde entstanden aber nur nach Läufen und Änderungen – bis zum nächsten Lauf blieb ihre Zahl
+  die der alten Version. Kurz nach dem Start rechnet der Orchestrator je Mandant einmal den
+  Abgleich und die Befunde der Applikationen neu (mit dem Zeitplan; gesperrte Mandanten danach
+  erneut; Audit `reconcile.version`, zählt nicht für den Stand der Doku).
+- **BGP-Nachbarn: Spalte „Prüfung“:** je Nachbar mit gelesener Konfiguration grünes ✓ ohne
+  offene bzw. bestätigte Befunde der Routing-Filter, sonst gelb ⚠ mit der Zahl und den Arten im
+  Tooltip; Klick öffnet die Findings zu diesem Nachbarn. Ignorierte zählen nicht.
+- **Netzwerkplan: Verbund einmal:** der zusammengefasste Hop eines Verbunds trug den Schlüssel
+  der ersten Firewall darin – je nach Weg fw-a oder fw-b, also zwei Knoten „Verbund …“. Der
+  Knoten gehört jetzt dem Verbund (je Kontext).
+- Tests: `test_bgp_filters.py`, `test_app_plan.py`, `test_app_paths.py`,
+  `e2e/release_0133.spec.ts`.
+
+## 0.132.2 – 2026-11-04
+
+Rückmeldung des Anwenders 2026-11-04 zu 0.132.1: „Er erkennt, dass es einen Pfad [gibt], aber er
+zeigt nur den Pfad an, welcher gesperrt ist … die Regel mit Deny beinhaltet Botnet-C&C.Server usw.
+als Source. Mein Suchfilter geht nur von der Quelle aus dem Internet Gateway … er zeigt nur den
+Weg, welches die gesperrte Regel hätte, was aber ja bereits bei sich sperren ist.“
+
+- **Sperrlisten:** eine sperrende Policy mit Internet Service von FortiGuard bzw. Land als Quelle
+  oder Ziel vor der erlaubenden macht den Hop nicht mehr „abhängig“ – „erlaubt durch Policy 10 …
+  – ausser Sperrliste Policy 5 …“, in der Zeile der Policy „Sperrliste (Quelle)“ (Weg-Suche und
+  Verbindungen Ende zu Ende). Eigene Internet Services, FQDN und dynamische Objekte bleiben
+  „möglich“.
+- **Weg geht mit dem NAT der erlaubenden Policy weiter:** war der Hop „abhängig“, ging der Weg
+  ohne SNAT weiter – die Firewall dahinter sah die falsche Quelle und der Weg stand auf
+  „gesperrt“. Gibt es am Hop genau eine erlaubende Policy, gilt ihr NAT (z. B. SNAT der
+  VIP-Policy bis zum Load Balancer bzw. Server).
+- **Nur Sperren möglich:** kommen an einem Hop nur sperrende Policies in Frage, ist er
+  gesperrt („gesperrt – Policy 5 … bzw. implizit“), nicht „abhängig“.
+- ADR 0019 Ergänzung (Regeln auf dem Weg). Tests: `test_policy_check.py`,
+  `e2e/release_0132_2.spec.ts`.
+
+## 0.132.1 – 2026-11-04
+
+Rückmeldung des Anwenders 2026-11-04: „Das Berechnen einer Applikation dauert sehr lange mehrere
+Stunden, wenn es 800 Firewall Regeln sind. Können wir dies beschleunigen?“ und „Ein Weg vom
+Internet über den LBA auf die VM wird nicht mehr sauber erkannt, wahrscheinlich, weil vorher eine
+Deny Regel ist, welche Schadhafte Ziele / Sourcen blockiert“. Abnahme bis 0.132.0 (ohne Einwand).
+
+- **Verbindungen schneller:** je Hop prüft die Weg-Suche nur noch Policies, deren Ein- und
+  Ausgang zum Hop passen können, und nur die, deren Quelle bzw. Ziel die Adresse enthalten kann
+  (Index der Adressbereiche je Firewall/VDOM; negierte, nicht auflösbare und FQDN/ISDB-Objekte
+  immer geprüft) – Urteile unverändert. Dazu einmal je Berechnung: Netze des ACI-Fabrics,
+  Policy-Routen, Endpunkte der EPGs (ab 20 Abfragen gesammelt) und Mitglieder je VRF/IP. Im Test
+  mit 800 Regeln der Applikation und 2300 Policies: 757 Verbindungen in 6 s statt 31 s.
+- **Dauer sichtbar:** unter den Verbindungen „Berechnet in … s: n Wege in … s (Ø …)“, aufgeklappt
+  je Teil und die fünf langsamsten Wege; dieselben Zahlen im Log des Orchestrators.
+- **Sperre vor der VIP:** eine sperrende Policy greift für Verkehr zu einer VIP nur mit
+  `match-vip enable` (bzw. mit der VIP als Ziel) – wie auf der FortiGate. Ohne match-vip
+  entscheidet die Policy mit der VIP und der Weg geht über DNAT und Load Balancer weiter; das
+  Urteil nennt die übergangene Sperre („… sperrt Verkehr zur VIP … nicht (match-vip aus)“).
+- Tests: `test_policy_check.py`, `e2e/release_0132_1.spec.ts`.
+
+## 0.132.0 – 2026-11-04
+
+Antwort des Anwenders 2026-11-04: „Generell Filtere ich lediglich die Ausgänge bei Geräten, welche
+ich selber kontrolliere. Eingangsfilter gibt es nur bei Verbindungen nach nicht durch mich
+verwaltete Geräte. Also WAN, MPLS und Fremde Anbindungen … Eventuell kann man bei dem Netzwerk
+Design angeben, welche Zonen / Geräte extern Managed sind“, „Bei Default-originate braucht es
+auch keinen weiteren Filter, dieser Filtert bereits alles weg und sendet dem nächsten Gerät nur
+noch die Default Route“ und zur Vorgabe „Nein Standard immer intern Verwaltet nehmen“. Abnahme bis
+0.131.0 (ohne Einwand).
+
+- **Zone „fremd verwaltet“** (Netzwerkdesign → Kategorien bzw. Zone bearbeiten, Migration
+  `0072`): Häkchen je Zone, Vorgabe selbst verwaltet – auch für Zonen der Art „extern“.
+- **Eingangsfilter nur zu fremd verwalteten Zonen:** Ein BGP-Nachbar ohne Eingangsfilter ist nur
+  in einer fremd verwalteten Zone eine Abweichung (Soll aus den Zonen, Befund „fremd verwalteter
+  Nachbar ohne Eingangsfilter“, jetzt im Teil-Durchgang Zonen – neu gleich nach dem Speichern).
+  Selbst verwaltet: „kein Eingangsfilter nötig“, der Vorschlag nur auf Wunsch aufklappbar; ein
+  vorhandener Eingangsfilter wird weiter mit den Zonen verglichen. Ebenso beim ACI: Import nicht
+  erzwungen ist nur zu einer fremd verwalteten Zone am Peer eine Abweichung.
+- **default-originate:** an den Nachbarn nur die Default-Route – im Soll aus den Zonen kein
+  Ausgangsfilter, kein Vorschlag, keine Abweichung („default-originate (IPv4): nur die
+  Default-Route“), unter „angekündigt“ nur 0.0.0.0/0 mit der Zahl der übrigen, nicht gezeigten
+  Routen.
+- ADR 0041 Ergänzung (Nr. 24–25). Tests: `test_bgp_zones.py`, `test_bgp_filters.py`,
+  `test_checks.py`, `e2e/release_0132.spec.ts`.
+
+## 0.131.0 – 2026-11-04
+
+Rückmeldung des Anwenders 2026-11-04: „Das Laden der Routingfilter dauert lange, kann man dies
+nicht wie bei der Doku machen und vorab berechnen?“, „In den FIndings, bei den Routingfilters,
+sehe ich immer noch nicht, welche Netzwerke da betroffen sind … oder per Link zu der Info
+gelangen“, „Im BGP Filter werden immer noch alle Netwerke der Firewall als unbekannt angezeigt,
+wenn default-originate vorhanden ist … Somit können diese hier verschwinden“, „Bei dem BGP Filter
+sollten ebenso die Transfer Netzwerke nicht mit eingerechnet werden“, „Lediglich in dem Netzwerk
+design Kategorien habe ich den groben Filter angewendet, der sollte aber nicht auf die Routing
+Filter angesetzt werden sondern nur Filtern, welche Netzwerke dort dahinter sein könnten“, „Im
+Netzwerk Plan wird die Verbindung zwischen den EPGs innerhalb der AP immer noch nicht angezeigt“,
+„In BGP Verbindungen sind die erlaubten Protokolle hinterlegt, IPv6 oder IPv4 … ich habe in IPv6
+Rules Vorschläge von IPv4“ und „Obwohl ich default-originate habe sagt es Heute ohne
+Eingangsfilter – erlaubt alles“. Kategorien bestätigt; zu 0.130.0 Einwand (Linie zwischen den
+EPGs im AP) – Abnahme bleibt bis 0.129.0.
+
+- **Routing-Filter vorab berechnet** (`store/bgp_cache.py`, wie die Doku): je Mandant und Sprache
+  Soll/Ist je BGP-Nachbar, Soll aus den Zonen (Eingang und Ausgang) und Soll je L3Out in einem
+  Durchgang mit gemeinsamem Zonenplan – nach jedem Lauf und nach Änderungen an Zonen, Verbund und
+  L3Outs im Hintergrund. Passt der Stand (Fingerabdruck wie die Doku), kommt die Antwort sofort,
+  sonst wie bisher einzeln und der Stand rechnet hinter der Antwort neu. `AUTOMATO_DOC_SNAPSHOTS`
+  schaltet auch dies ab.
+- **Befunde der Routing-Filter:** „Betroffene Netze“ je Liste mit ihrer Bedeutung (z. B. „Netze
+  der Zonen dahinter, die der Eingangsfilter sperrt“) und Gesamtzahl (bis 50 gezeigt, vorher 10
+  bzw. 20), dazu der Link „BGP-Nachbar … öffnen“ (Routing → BGP-Nachbarn mit Soll/Ist) bzw.
+  „L3Out … öffnen“.
+- **Netze von Hand sind nur der Rahmen:** die Netze einer Zone aus Netzwerkdesign → Zonen bzw.
+  Kategorien (Selektor „Netz“) stehen nicht mehr selbst im BGP-Soll, sondern die bekannten Netze
+  darin aus den Routing-Tabellen – ohne Transfernetze, ohne Netze an Geräten bzw. Kontexten einer
+  anderen Zone und ohne Sammelrouten über Netze einer anderen Zone. Ist im Rahmen kein Netz
+  bekannt, steht er als Hinweis („Netze von Hand nur als Rahmen, darin kein bekanntes Netz“), nicht
+  im Filter. 0.0.0.0/0 von Hand gilt als Ganzes. Regeln eines Filters im Rahmen sind nicht „zu
+  offen“.
+- **Transfernetze** (zwischen zwei Geräten bzw. am L3Out, bis /27 bzw. /64, Übergänge zwischen
+  Zonen und Session-Sync) zählen nicht zum Soll; eine Filterregel dafür ist nicht „zu offen“, eine
+  Ankündigung nicht „ausserhalb der Zonen“.
+- **Adressfamilien der Sitzung:** Vorschläge nur für die Familien der Sitzung (`activate`/
+  `activate6 disable` am Nachbarn nimmt sie weg) – keine IPv6-Liste mit IPv4-Netzen bzw.
+  umgekehrt; je L3Out die Familien seiner BGP-Peers. Chip „Adressfamilien der Sitzung“.
+- **default-originate:** Routen, deren Ausgangsfilter sich nicht auswerten lässt, stehen nicht mehr
+  als „unbekannt“ in „Ausgang – angekündigt“, nur ihre Zahl („mit default-originate wird nur die
+  Default-Route erwartet“). Im Soll aus den Zonen ohne Eingangsfilter: „die Firewall übernimmt
+  alles, was der Nachbar ankündigt“ mit dem, was heute ankommt („Heute erhalten: nur die
+  Default-Route“).
+- **Netzwerkplan:** eine Verbindung zwischen zwei EPGs bzw. Systemen der Applikation, die nur über
+  die ACI-VRF läuft, geht direkt von Kasten zu Kasten – links im dafür breiteren AP-Rahmen, der
+  Contract an der Linie (Plan, SVG, draw.io).
+- ADR 0041 Ergänzung (Nr. 19–23). Tests: `test_bgp_zones.py`, `test_bgp_filters.py`,
+  `test_app_plan.py`, `e2e/release_0131.spec.ts`, `e2e/bgp_filters.spec.ts`.
+
+## 0.130.0 – 2026-11-03
+
+Rückmeldung des Anwenders 2026-11-03: „Der Fehler mit ein und Ausgangsfilter habe ich nicht mehr
+gesehen, also vergessen“, „Der Netzwerkplan zeigt immer noch nicht alles, ich habe eine Meldung:
+808 Verbindungen – nur die ersten 120 geprüft. Wie kann ich das umgehen?“, „Verbindungen zwischen
+den EPGs eines APs werden im Netzwerkplan nicht dargestellt“, „Die Reihenfolge der Dokumentation
+nach Kategorie wird nicht in der Reihenfolge des Namensprofils angezeigt (nicht im UI und auch
+nicht im Word / PDF)“ und „im BGP Filtering … Es zeigt mir nun auch andere Zonen an, wo es nicht
+möglich sein soll. Zonen, welche in anderen Tenants oder Session Links, welche dort nicht
+hingehören“. Abnahme bis 0.129.0 (ohne Einwand).
+
+- **Grenze der Verbindungen einstellbar:** geprüft werden die Wege der ersten
+  `AUTOMATO_APP_TRACES_MAX` Verbindungen je Applikation (neu Vorgabe 2000 statt fest 120, `0` =
+  alle) – Verbindungen, Netzwerkplan, Export; Verbindungen zu any zuletzt. Der Hinweis nennt die
+  Einstellung. Die Befunde nach einem Lauf prüfen weiter 120 je Applikation
+  (`AUTOMATO_APP_FINDINGS_TRACES`, wegen des Zeitbudgets). Eine geänderte Grenze rechnet die Stände
+  der Doku neu. Export des Plans mit vielen hervorgehobenen Verbindungen per `POST` (bis 5000).
+- **Netzwerkplan: Verbindungen innerhalb der Applikation** (z. B. Contract zwischen zwei EPGs eines
+  AP) enden an der EPG bzw. dem System im Rahmen der Applikation – bisher an einer eigenen
+  Gegenstelle mit der IP, die Verbindung zwischen den EPGs war nicht zu sehen.
+- **BGP – Zonen dahinter:**
+  - **Session-Sync** (FGSP: Netz mit der Adresse des Sync-Partners, nur die beiden Partner
+    daran) ist im Zonenplan kein Übergang und kein Netz einer Zone mehr – er verband Zonen
+    (fremde Zonen „dahinter“) bzw. stand als Netz im Soll.
+  - **Abstand je Weg:** eine Zone, die über einen gesperrten Durchgang (0.128.0) und über einen
+    Umweg erreicht wird, zählt mit der Länge des Umwegs (vorher zu kurz – falsche Zonen dahinter).
+  - **„Weg je Zone“** in der Zonenkette (BGP-Nachbar und Befund): je Zone die Zonen bis zu ihr mit
+    dem Netz jedes Übergangs – so ist sichtbar, welcher Übergang eine Zone hereinbringt.
+- **Reihenfolge der Kategorien:** Doku und Word folgen der Reihenfolge des Namensprofils **ihres
+  Mandanten** (eigenes, sonst „default“) – im Code kein Fehler gefunden. Neu nennt die Doku unter
+  „Doku nach Kategorie“ das Profil, aus dem Titel und Reihenfolge kommen, und das Namenskonzept je
+  Profil die Mandanten, die es nutzen („Kein Mandant nutzt dieses Namensprofil“). Die Kategorien
+  am Regel-Detail stehen in der Reihenfolge (Nummer) statt nach der Kennung.
+- ADR 0041 Ergänzung (Nr. 16–18). Tests: `test_bgp_zones.py`, `test_bgp_join_same.py`,
+  `test_app_plan.py`, `test_app_paths.py`, `test_appdoc_order.py`, `e2e/release_0130.spec.ts`.
+
+## 0.129.0 – 2026-11-03
+
+Wunsch des Anwenders 2026-11-03: „Kannst du mir in der Übersicht noch ein Fenster erstellen, wo
+man sieht, wie der Stand der Neuberechnungen der Dokumentationen ist?“ Abnahme bis 0.128.0 (ohne
+Einwand).
+
+- **Übersicht → „Stand der Doku“** (neuer Bereich, Modul Doku, nicht für Kunden-Benutzer): Zahl der
+  Applikationen **aktuell**, **veraltet** (seit der letzten Berechnung geändert – Lauf,
+  Konfiguration, Applikation), **rechnet gerade** und **noch nie berechnet**; Chips „Vorrechnen
+  läuft“ und „Befunde nachziehen“. Darunter die nicht aktuellen Applikationen (bzw. alle) mit
+  Zustand, „wird vorgerechnet“ (in den letzten Tagen geöffnet), aktuelle von allen Ständen je Doku
+  und Verbindungen, letzter Berechnung und Dauer; Klick öffnet die Applikation. Solange etwas
+  rechnet, alle 5 s neu.
+- API `GET /applications/doc-states?tenant_id=` (Abdruck wie beim Öffnen, `doc_snapshots.overview`).
+- Tests: `orchestrator/tests/test_doc_snapshots.py`, `e2e/release_0129.spec.ts`.
+
+## 0.128.0 – 2026-11-03
+
+Rückmeldung des Anwenders 2026-11-03 zur Frage der Zonenübergänge: „Der Schalter ist ok, er muss
+einfach nur die Rückwege zu einer gleichen Zone ein oder ausschalten … es betrifft nur die
+Verbindungen zu gleichen Zonen unterschiedlicher Tenants“, „Eventuell kannst du dies im
+Namensprofil einsetzen im Design“ und „Generell sollte der Schalter aus sein als Default“.
+Abnahme bis 0.127.0 (ohne Einwand).
+
+- **Grundschema (Namensprofil → Design): „verbindet gleiche Zonen“** je Zone des Grundschemas,
+  Vorgabe aus – im Editor als Häkchen, in der Zeichnung `automato_join_same` = ja. Jede Zone
+  erbt es über ihren Zonentyp.
+- **BGP- und Import-Soll aus den Zonen:** eine Zone ist kein Durchgang zwischen zwei Zonen
+  desselben Zonentyps (z. B. die Internet-Firewall zwischen „Transfer Kunde A“ und „Transfer
+  Kunde B“), ausser ihr Zonentyp verbindet gleiche Zonen (z. B. die Zone der Zonen-Firewall).
+  Übergänge zu Zonen anderer Typen bleiben wie bisher (kürzester Weg). Zonen ohne Zonentyp sind
+  nicht betroffen.
+- **Begründung:** die Zonenkette nennt die Zonen, die deshalb nicht dazu gehören („Nicht dazu
+  (nur über eine Zone, die gleiche Zonen nicht verbindet …)“).
+- ADR 0041 Ergänzung (Nr. 15). Tests: `orchestrator/tests/test_bgp_join_same.py`,
+  `e2e/release_0128.spec.ts`, `e2e/release_0127.spec.ts`.
+
+## 0.127.0 – 2026-11-03
+
+Rückmeldung des Anwenders 2026-11-03 zu 0.126.1: „Ich habe viele Firewall Regeln nach extern,
+über L3Os, diese werden aber nicht angezeigt im Netzwerkplan“, „Er zeigt mir auch nur ACI VRF an
+und keine L3Os“, „Auch in der Tabelle der Verbindungen Ende zu Ende ist auch keine Rules von den
+L3Os vorhanden, nur in den Regeln und Contracts“ und „Bei BGP Findings sehe ich sehr viele Filter,
+welche nicht passen würden, aber ich sehe keine Details, weshalb dies so sein soll“. Abnahme bleibt
+bei 0.126.0 (Einwand zu 0.126.1).
+
+- **Ursache:** Firewall-Regeln mit der Gegenstelle „all“/any (typisch Regeln ins Internet bzw.
+  nach extern über einen L3Out) ergaben nie eine Verbindung, ebenso Contracts zu externen EPGs nur
+  mit 0.0.0.0/0. Sie standen in „Regeln & Contracts“, fehlten aber in den Verbindungen und damit
+  im Netzwerkplan (dort nur das ACI-VRF, kein L3Out, keine Firewall).
+- **Gegenstelle any:** geprüft mit den Netzen hinter dem Interface bzw. der Zone der Regel auf
+  dieser Seite (Routing bzw. Anbindung, Transfernetze nur ohne anderes), sonst mit der
+  Default-Route (0.0.0.0/0 bzw. ::/0) – beschriftet „any → …“, z. B. „any → extern
+  (Default-Route über wan1)“. Der Weg läuft über ACI, L3Out und Firewall; Hilfs-Contracts über den
+  L3Out prüfen im ACI-Hop mit (ADR 0034). Führt der Weg nach dem Routing nicht über die Firewall
+  der Regel, entsteht keine Verbindung und kein Befund „nie gebraucht“.
+- **Externe EPG nur mit 0.0.0.0/0:** eigene Verbindung über ihren L3Out (ohne Firewall dahinter;
+  mit Firewall bleibt der Contract Hilfs-Contract der Firewall-Regel).
+- **Regeln ohne Verbindung (n):** zugeklappte Liste unter den Verbindungen, je Regel der Grund –
+  Gegenstelle nicht als IP prüfbar (FQDN, ISDB, Geo), externe EPG ohne prüfbares Netz,
+  unspezifisch (any/vzAny/Preferred Group auf der Seite der Applikation), Hilfs-Contract, nur
+  Antworten, routingtechnisch nicht möglich, Adressfamilie, Grenze der geprüften Verbindungen.
+- **BGP gegen die Zonen mit Begründung:** je Abweichung das Netz mit seiner Zone und der
+  entscheidenden Regel des Filters („Prefix-Liste PL_x: Regel 10 deny …“ bzw. „keine Regel passt –
+  am Ende gesperrt“, dazu „erlaubt sind nur Teile davon: …“), je zu offener Regel die Regel und die
+  Zone, zu der das Netz gehört („gehört zur Zone …, die nicht hinter diesem Nachbarn liegt“), dazu
+  woher die Zonen kommen (Zone der Firewall, Zone am Nachbarn über das Netz des Übergangs bzw.
+  gelesenes Gerät, Zonen dahinter mit Abstand). Im Befund (Satz und Detail), im BGP-Nachbarn je
+  Netz die entscheidende Regel in „Filter heute“.
+- Tests: `orchestrator/tests/test_app_paths.py`, `test_l3out_firewall.py`, `test_bgp_zones.py`,
+  `e2e/release_0127.spec.ts`, `e2e/apps.spec.ts` (Webshop mit 7 statt 5 Verbindungen: die Regeln
+  ins Internet).
+
+## 0.126.1 – 2026-11-03
+
+Rückmeldung des Anwenders 2026-11-03: „Im Netzwerk Plan sehe ich auf einmal nur noch die internen
+Verbindungen, keine Firewall Anbindungen mehr … ich habe nicht das AP oder die EG gewählt, sondern
+nur die VM“ und „Die EPG wird auch nicht ausgefüllt, in der Doku“ – auf den Vorschlag „So
+umsetzen“. Abnahme bis 0.126.0.
+
+- **Ursache:** mit nur der VM als Mitglied gehörte ihre EPG nicht zur Applikation. Firewall-Regeln
+  über das Servernetz (Subnetz der EPG) zählten für die einzelne VM als unspezifisch („Subnetz“)
+  und fielen nach dem Regelwerk weg (ausgehend mit breiter Quelle, unspezifisch von Firewalls nicht
+  auf dem Weg) – damit gab es keine Verbindungen über die Firewall, nur die ACI-internen.
+- **EPG der VM:** die EPG, in der eine VM der Applikation steht (Portgruppe, sonst gelernter
+  Endpunkt), erscheint als „EPG der VM …“ im Abschnitt EPGs, beim System und im Netzwerkplan (die
+  VM in ihrer EPG im Rahmen des APs) – selbst kein Mitglied: ohne ihre übrigen VMs und ohne Regeln,
+  die nur andere Hosts der EPG nennen. Gilt auch für VMs hinter einem Server-Mitglied.
+- **Regeln über das Netz der EPG** gelten für die VM spezifisch wie für die EPG (Bezug „… · Netz
+  der EPG …“): sie stehen in den Kategorien, unter „Regeln & Contracts“ und als Verbindungen über
+  die Firewall. Grössere Netze (z. B. 10.0.0.0/8) bleiben unspezifisch.
+- Tests: `orchestrator/tests/test_app_vm_epg.py`, `e2e/release_0126_1.spec.ts`.
+
+## 0.126.0 – 2026-11-03
+
+Rückmeldung des Anwenders 2026-11-03: „Bei den Kategorien wäre es schön, wenn ich die Reihenfolge
+noch anpassen könnte“ – auf den Vorschlag: „Ordnen wie beim Regelwerk“, „Wirkung ja“, „Bei
+Gleichstand ja“, „Nummerierung fortlaufend“. Ergänzung zu ADR 0046. Abnahme bis 0.125.0.
+
+- **Reihenfolge der Kategorien:** im Namensprofil → Kategorien der Applikations-Doku je Zeile ↑/↓
+  wie beim Regelwerk, auch für die festen Kategorien; „Auf Vorgaben zurücksetzen“ stellt auch die
+  Reihenfolge wieder her.
+- **Wirkung:** die Applikations-Doku und der Word-Export zeigen die Kategorien in dieser
+  Reihenfolge, die **Nummern fortlaufend** (1., 2., 3. …) – auch in „Regeln & Contracts“ und
+  beim Ausblenden. Passen zwei Richtungen gleich genau, gewinnt die **weiter oben** (vorher die
+  kleinere Nummer).
+- Die Kategorie behält intern ihre Kennung: ausgeblendete Regeln und die Einstellungen bleiben
+  beim Verschieben erhalten. Gespeichert nur, wenn die Reihenfolge von der Vorgabe abweicht.
+- Tests: `orchestrator/tests/test_appdoc_order.py`, `e2e/release_0126.spec.ts`.
+
+## 0.125.0 – 2026-11-03
+
+Rückmeldung des Anwenders 2026-11-03: „Firewall Regeln manchmal nicht am richtigen Ort … vor allem
+wenn mehrere Ziele drin sind, also solche von anderen Tenants, von VPN Verbindungen und dem MPLS“,
+dazu je Kategorie spezifisch/unspezifisch und „ob die Source das DC der Applikation ist, oder eben
+ein anderes DC Zone“; auf die Rückfrage „lieber aufgeteilt“ und abgewählte Zeilen nur unter
+„Regeln & Contracts“. ADR 0046. Abnahme bis 0.124.0.
+
+- **Regeln je Zone aufgeteilt:** eine Firewall-Regel mit Gegenstellen in mehreren Zonen steht je
+  Zone bzw. Kategorie als eigene Zeile mit nur ihren Gegenstellen (z. B. Ziel im VPN in „Zugriff in
+  das VPN“, Ziel im anderen Tenant in „Zugriff zu anderen Security Tenants“) – vorher eine Zeile
+  mit allen Zielen in „Unspezifische Zugriffe“. Gegenstellen, die alle zur Applikation gehören,
+  stehen in „innerhalb der Applikation“. Unter „Regeln & Contracts“ bleibt es eine Regel mit allen
+  Kategorien.
+- **DC der Applikation bzw. anderes DC:** in der Richtung einer Kategorie jeden Zonentyp auch mit
+  Zusatz „(Applikation)“ (Seite der Systeme der Applikation) bzw. „(andere)“ (Gegenstelle) wählen,
+  z. B. `DC (Applikation) → DC (andere)`; mit Zusatz genauer als ohne.
+- **Spezifisch/unspezifisch je Kategorie:** im Namensprofil je Kategorie für Quellen und Ziele
+  „spezifisch“ und/oder „unspezifisch“ (auch bei den festen Kategorien; Vorgabe beides).
+  Abgewählte Zeilen stehen nur als Treffer unter „Regeln & Contracts“ („Nicht gezeigt in
+  Kategorie …“); direkt zugeordnete Regeln immer in ihrer Kategorie. Gilt nach dem Regelwerk,
+  die eingebauten Regelwerke bleiben gleich; der Vergleich der Regelwerke nennt sie als Grund.
+- Tests: `orchestrator/tests/test_appdoc_split.py`, `e2e/release_0125.spec.ts`.
+
+## 0.124.0 – 2026-11-03
+
+Rückmeldung des Anwenders 2026-11-03: „Das Laden der Applikationen extrem langsam“ und „Bei den
+Applikationen kann ich nicht einzelne VMs zufügen, dies muss möglich sein“. Abnahme bis 0.123.0.
+
+- **Applikationen laden schnell:** die Liste fragte je Mitglied einzeln nach (Server, Regeln – diese
+  sogar zweimal, obwohl die Liste sie nicht braucht), lud die Mitglieder und die Standorte je
+  Applikation. Jetzt gebündelt: gemessen mit 400 Applikationen, 4000 Servern und 3000 VMs von
+  7406 auf 17 Datenbankabfragen und von 5,4 s auf 0,5 s; die Zahl der Abfragen hängt nicht mehr
+  von der Zahl der Applikationen ab. Auch Detail, Doku und NetBox-Sync laden die Mitglieder
+  gebündelt; die Auswahl im Mitglieder-Dialog liest nur die gewählte Art.
+- **Einzelne VMs als Mitglied:** neue Art „VM“ im Mitglieder-Dialog („VMs (vCenter)“, Suche nach
+  Name, IP, Cluster; mit Projektnummer und Hinweis „zugeordnet“). Die VM zählt per Name (gleicher
+  Name in mehreren vCentern = alle, ohne Vorlagen) und steht in der Doku als System mit dem Grund
+  „VM <Name>“ – mit IPs, Regeln, EPGs und Portgruppen wie eine VM über EPG bzw. Server; sie zählt
+  in „Systeme“ und „VMs“ der Liste, in den Verbindungen, Abhängigkeiten und im NetBox-Sync der
+  Applikations-Tags. Nicht mehr gelesene VMs bleiben als Mitglied „nicht mehr gelesen“ stehen.
+- Tests: `orchestrator/tests/test_app_vm_members.py` (auch: Zahl der Abfragen der Liste fest),
+  `e2e/release_0124.spec.ts`.
+
+## 0.123.0 – 2026-11-03
+
+Auftrag des Anwenders 2026-11-03 („go AD DNS“; vorher: „DNS Geschichten bei dem AD abholen“,
+„Zonen Transfer ist ok“) – ADR 0045, setzt ADR 0044 Entscheid 6 um. Abnahme bis 0.122.0.
+
+- **AD-DNS als Referenzquelle:** neues Quellsystem *AD-DNS* mit **DNS-Server** (Name oder IP eines
+  DCs, optional `:Port`) und **Zonen** (je Zeile, Forward- und Reverse-Zonen). Gelesen wird per
+  **Zonentransfer** (AXFR über TCP 53) – ohne Konto, auf dem DC je Zone nur für die Adresse von
+  Automato bzw. des Agenten freigegeben. Je IP die DNS-Namen aus A/AAAA, CNAME (auf Hosts der
+  gelesenen Zonen) und PTR; Dienst-Einträge des AD (`_msdcs`, `_tcp` …), `DomainDnsZones`/
+  `ForestDnsZones`, Zonenkopf, `*` und Unterzonen werden übergangen.
+- **Immer Anreicherung:** ein DNS-Server kennt keine Netze – die Rolle „führend“ ist gesperrt, Netz,
+  VLAN und Standort kommen nie aus dem DNS. Die Namen erscheinen überall, wo Referenzquellen Namen
+  liefern (Objekte, NAT/VIP, Weg-Suche, Namen der Gegenstellen, Doku).
+- **Abgleich:** die Anreicherung für den Vergleich ist wählbar („Vergleich mit …“). Gegen AD-DNS nur
+  die Namen: *DNS-Name abweichend* (IPAM mit anderem bzw. ohne Namen) und *nur im DNS* (IP fehlt im
+  IPAM); IPs ohne DNS-Eintrag sind kein Fehler; alle DNS-Namen der IP in der Zeile.
+- **Verbindung prüfen:** Name, TCP 53 und je Zone der Anfang des Transfers mit SOA-Seriennummer;
+  eine abgelehnte Zone nennt Zone, Code und die Freigabe auf dem DC (deutsch/englisch, auch im Lauf).
+- **Nur lesend vom Protokoll her:** der Adapter kennt keine dynamischen Updates (`dns.update`) und
+  ruft nur den Zonentransfer auf (Test). Neue Abhängigkeit: `dnspython` (ISC-Lizenz) im
+  sot-gateway, auch im Agent-Paket.
+- Tests: `sot-gateway/tests/test_dns_zone_adapter.py` (echter AXFR gegen einen Test-Server),
+  `collectors/tests/test_ipam_collector.py`, `orchestrator/tests/test_ad_dns.py`,
+  `orchestrator/tests/test_i18n_runs.py`, `e2e/release_0123.spec.ts`.
+
+## 0.122.0 – 2026-11-03
+
+Rückmeldung des Anwenders 2026-11-03 („Übersichtsseite besser gestalten … statische Boxen, welche
+nicht zueinander passen und zeilenweise seitlich gescrollt werden muss … etwas dynamischer und mit
+besseren Ansichten, damit man es lesen kann“). Abnahme bis 0.121.0.
+
+- **Raster der Übersicht neu:** die Bereiche einer Zeile sind gleich hoch und teilen sich die Breite
+  ohne Lücke (Fuss unten, Grafik wächst mit); die Breite richtet sich nach dem Platz der Übersicht –
+  in schmalen Fenstern werden die Bereiche breiter, kein Querscrollen mehr.
+- **Ansicht anpassen:** je Bereich eine **Breite** (⅓, ½, ganz) und **Verschieben per Ziehen** – in
+  der Liste oder direkt im Raster (gestrichelt, solange die Anpassung offen ist); ↑ ↓ bleiben,
+  „Vorgabe“ setzt auch die Breiten zurück; alles merkt sich der Browser.
+- **Letzte Läufe** als Liste statt Tabelle: Status, System, Ausführung, Einträge und Zeit in einer
+  Zeile, Meldungen umbrochen (höchstens zwei Zeilen, ganz im Tooltip), Abbrechen bei offenen Läufen.
+- **Regeln je Zone** als waagrechte Balken mit vollen Namen (vorher senkrecht, Namen abgeschnitten);
+  Klick sucht die Zone in „Regeln & Contracts“.
+- **Kennzahlen** passen sich der Breite an; die Namen der Quellsysteme stehen im Tooltip statt in der
+  Kachel (sie wurde bei vielen Systemen sehr hoch). Läufe-Grafik: Datum jeden zweiten Tag.
+- Tests: `e2e/release_0122.spec.ts`.
+
+## 0.121.0 – 2026-11-03
+
+Entscheide des Anwenders 2026-11-03 (ADR 0044): „1. Eigene VM. 2. Zonentransfer ist ok. 3. Realm
+pro Mandant ist super, auch der Betriebs-Realm mit Einbindung des ADs lokal.“ Abnahme bis 0.120.3.
+
+- **NetBox je Kunde** auf einer eigenen VM: `deploy/netbox-host/netbox-host.sh`
+  - `init`: Grundgerüst `/opt/netbox-host`, `host.conf`, Proxy (Caddy, nur Port 443,
+    Wildcard-Zertifikat, Zugriff nur aus `ALLOW`), age-Schlüssel, tägliche Sicherung per cron.
+  - `neu <kunde>`: netbox-docker in der Version aus `host.conf`, eigene Secrets (Vorgaben von
+    netbox-docker nie benutzt), eigene Datenbank und Redis, nur im Netz des Proxys
+    (`nb-<kunde>`), erster Admin mit Zufallspasswort; Adresse `<kunde>-netbox.<domain>`.
+  - `token <kunde>`: Lese- und Sync-Benutzer mit Tokens für das Quellsystem in Automato.
+  - **Startseite je Kunde** `<kunde>.<domain>` mit Kacheln (NetBox, Dokumentation, weitere per
+    `link`), interne Übersicht `start.<domain>`; Texte maskiert, nur `http(s)`-Links.
+  - `sichern`, `wiederherstellen`, `update` (immer erst sichern), `loeschen --ja` (letzte
+    Sicherung zuerst), `liste`, `pruefen`.
+- **Anleitung** `docs/INSTALLATION-NETBOX-HOST.md` (VM, DNS mit Wildcard, Zertifikat,
+  Einrichten, Kunde anlegen und an Automato anbinden, Betrieb, Grenzen).
+- **ADR 0044** nachgeführt: eigene VM, AD-DNS über Zonentransfer, Realm je Mandant mit
+  Betriebs-Realm (lokales AD über LDAP); ROADMAP Version 1 Nr. 9 umgesetzt, Nr. 10 als Nächstes.
+- Tests: `orchestrator/tests/test_netbox_host_script.py` (Werkzeug mit Ersatz für docker, git,
+  age und curl).
+
+## 0.120.3 – 2026-11-03
+
+Rückmeldungen des Anwenders beim Aufsetzen der Produktion (2026-11-02/03) und Entscheide zur
+Plattform für viele Kunden. Abnahme bis 0.120.2.
+
+- **`docs/INSTALLATION-PROD.md`** nachgeführt mit dem, was beim Aufsetzen gefehlt hat:
+  - 4.2 „Ausgesperrt?“: SSH neu starten statt neu einlesen, Prüfung mit `sshd -T -C` (auch
+    `Match`-Blöcke), Journal mitlesen.
+  - 4.3: Name der Schnittstelle (`ip -br addr`), Zähler der `443`-Zeile; **Firewall vor der VM**
+    (443/8443 ohne NAT) mit Prüfung per `tcpdump` und `Test-NetConnection`.
+  - 5.1 `docker-buildx` dazu; 5.2 erst nach der Installation (sonst fehlt `/etc/docker`); 6.4
+    Prüfung `pgrep -c docker-proxy`.
+  - 6.2: `setenv` und `P` gelten nur in der aktuellen Sitzung; **`COMPOSE_PROFILES`** in `.env`,
+    damit `docker compose` ohne `$P` läuft.
+  - 6.3 Zertifikate Schritt für Schritt: Schlüssel und CSR auf der VM oder PFX umwandeln,
+    Pfade auf der VM gegen Pfade im Container, Prüfung von Name, Kette und Schlüssel;
+    **der eigenen CA vertrauen** (richtige Root über die Kette bzw. AIA finden, VM-Store,
+    `docker-compose.override.yml` mit `SSL_CERT_FILE` für Orchestrator und Worker).
+  - 6.5 Keycloak neu: Realm in einem **bestehenden Keycloak** (`make_realm.py`, Import, User
+    profile, OTP, erster Admin), **Issuer = `KC_HOSTNAME`** statt Admin-Name, Backchannel per
+    `extra_hosts`, Fehlerbilder (`ConnectError`, 403, 404), Rollen der Benutzer.
+- **ADR 0044 (Entwurf) – Plattform für viele Kunden:** Startseite je Kunde und Werkzeuge mit
+  Namen nach Schema (Variante B), NetBox je Kunde als eigener Stack, eine Instanz mit einem
+  Mandanten je Kunde, Anmeldung je Mandant mit Global Admin und globaler Sicht (V2), VPN in V2,
+  AD-DNS lesend; Name des Werkzeugs offen („Palantir“ verworfen). ADR 0014 und ROADMAP
+  (Version 1 Nr. 9–11, Version 2 Nr. 11–14) nachgeführt.
+
+## 0.120.2 – 2026-11-02
+
+Rückmeldungen des Anwenders 2026-11-02 beim Aufsetzen des Produktivservers („Kannst du mir 6.2
+genauer erklären“; nach dem Härten „No supported authentication methods available (server sent:
+publickey)“ – „Bitte Passwort-Anmeldung wieder erlauben“). Abnahme bis 0.120.1.
+
+- **`docs/INSTALLATION-PROD.md` 4.2 Konten und SSH:** Anmeldung per **Passwort** (Entscheid des
+  Anwenders), abgesichert durch SSH nur aus dem Admin-Netz, kein Root-Login, nur Gruppe
+  `automato-admins`, `MaxAuthTries 3` und `fail2ban`; SSH-Schlüssel optional (PowerShell,
+  `ssh-copy-id`, PuTTYgen). Neu **„Ausgesperrt?“**: Passwort-Anmeldung über die Konsole im
+  vCenter wieder zulassen, Prüfung mit `sshd -T`. Portmatrix, Abnahme-Checkliste und
+  Konten-Entzug angepasst.
+- **6.2 `.env` ausfüllen** Schritt für Schritt: Hilfsfunktion `setenv` (setzt oder ergänzt eine
+  Zeile), vier Geheimnisse mit `openssl rand -hex 32`, Bedeutung jedes Werts, Prüfung mit
+  maskierter Ausgabe und `docker compose … config --quiet`.
+
+## 0.120.1 – 2026-11-02
+
+Rückmeldung des Anwenders 2026-11-02 beim Aufsetzen des Produktivservers („Unit docker.service not
+found … Es fehlt die Installation von Docker in der Anleitung“). Abnahme bis 0.120.0.
+
+- **`docs/INSTALLATION-PROD.md` Schritt 5.1 Docker installieren:** bisher nur ein Verweis auf
+  `deploy/keycloak/PROD-INSTALL.md`; jetzt die Befehle direkt – Variante A Ubuntu-Pakete
+  (`docker-compose-v2`, empfohlen) bzw. Variante B Docker-Upstream (Repository mit Schlüssel,
+  Fallback `noble` bei fehlendem Codename), nicht mischen; Prüfung `docker compose version`,
+  Voraussetzung `/var/lib/docker` eingehängt, keine Gruppe `docker`. Härten (`daemon.json`) als
+  5.2, `docker info` mit `sudo`.
+
+## 0.120.0 – 2026-11-02
+
+Rückmeldung des Anwenders 2026-11-02 („bei den Dokus sehe ich nicht wirklich eine Veränderung“ –
+Vergleich gewünscht, „aber nur mit Klicken auf einen Button, damit nicht zu viele Ressourcen
+verbraucht werden“). Abnahme bis 0.119.0.
+
+- **Regelwerke vergleichen** in der Applikations-Doku: Knopf „Vergleichen“ neben „Regelwerk: …“
+  öffnet ein Fenster mit der Auswahl der Profile; gerechnet wird **erst mit „Vergleichen“** – die
+  Doku mit dem aktiven und dem gewählten Regelwerk, nichts gespeichert, die Doku selbst bleibt
+  beim aktiven. Ergebnis: je Regelwerk die Anzahl unter „Regeln & Contracts“ und in den
+  Kategorien sowie die gezählten; welche Regeln **dazukommen bzw. wegfallen** (Regeln &
+  Contracts, Kategorien), je mit der Bedingung und Wirkung, die entscheidet; Klick öffnet die
+  Regel. Beide Durchgänge teilen Wege und Relevanz (`TenantData`), der zweite ist günstig.
+- Nicht für Kunden-Benutzer (Regelwerk und Wege der Infrastruktur).
+- API: `GET /applications/{id}/ruleset-compare` (Auswahl) bzw. `?key=` (Vergleich);
+  `applications.compare_rulesets`, `build_doc(ruleset=, data=, trace=)`.
+- Tests: `test_appdoc_ruleset.py`; UI `e2e/release_0120.spec.ts` (neu).
+
+## 0.119.0 – 2026-11-02
+
+Rückmeldung des Anwenders 2026-11-02 („Kann ich noch den Profilen der Regelwerke richtige Namen
+geben und eine Beschreibung? Auch den Bestehenden? Und löschen sollte ich auch können, da wir
+sonst einen Friedhof haben an Test-Regelwerken“). Abnahme bis 0.118.0.
+
+- **Name und Beschreibung je Profil** (Namensprofile → Regelwerk → „Name & Beschreibung“): Titel,
+  Titel englisch, Beschreibung, Beschreibung englisch – auch für die eingebauten Regelwerke 1 und
+  2 (gespeichert im Namensprofil, die Regeln bleiben; „Vorgabe“ stellt Name und Beschreibung
+  wieder her). Die Beschreibung steht unter der Auswahl und als Hinweis am Regelwerk in der Doku;
+  neue Profile lassen sich gleich mit Beschreibung anlegen.
+- **Löschen für alle Profile:** eigene ganz, eingebaute werden ausgeblendet und lassen sich unter
+  „Gelöschte eingebaute Profile“ wiederherstellen. Das **aktive** Profil lässt sich nicht löschen
+  (zuerst ein anderes aktivieren) – bisher fiel die Doku dann still auf Regelwerk 1 zurück.
+- API: `PATCH /naming-profiles/{id}/appdoc-ruleset/{key}` (Name, Beschreibung),
+  `POST …/{key}/restore`, `DELETE` auch für eingebaute; `hidden` in der Pflege, Audit
+  `appdoc_ruleset.renamed`/`restored`.
+- Tests: `test_appdoc_ruleset.py`; UI `e2e/release_0119.spec.ts` (neu).
+
+## 0.118.0 – 2026-10-30
+
+Rückmeldung des Anwenders 2026-10-30 („Regeln in die Settings übernehmen … aktivieren oder
+deaktivieren … die Wirkung einstellen … die beiden Regelsets hinterlegen, damit man umschalten
+kann. Wenn es neue Reihenfolgen gibt, immer dort ein neues Profil anlegen“). Abnahme bis 0.117.0.
+
+- **Regelwerk der Applikations-Doku als Einstellung** (ADR 0043, `store/appdoc_ruleset.py`):
+  Namensprofile → „Regelwerk der Applikations-Doku“. Elf Regeln (Bedingungen) mit Schalter und
+  **Wirkung**: in der Kategorie markiert, nur als Treffer, nur als Vermerk in der Spalte L3Out,
+  nicht gezeigt/nur gezählt, nicht gezeigt/nicht gezählt, Ausnahme. Von oben nach unten gelesen:
+  die erste eingeschaltete Regel, die eine Zeile trifft, entscheidet; „direkt zugeordnet“ hebt
+  die gewählten Regeln darunter auf.
+- **Zwei eingebaute Profile zum Umschalten:** **Regelwerk 1** = Stand bis 0.117.0 (Vorgabe, die
+  Doku bleibt gleich); **Regelwerk 2** = Rückmeldung 2026-10-30: (1) nicht im Pfad –
+  routingtechnisch unmöglich bzw. Firewall nicht auf dem Weg, unspezifische **und konkrete**
+  Regeln – nicht gezeigt, nicht gezählt; (2) über das Internet-Gateway hinaus nicht gezeigt,
+  nicht gezählt; (3) direkt zugeordnete heben 1 und 2 auf, ausgeschlossene fallen weg; (4)
+  Hilfs-Contracts nur als Vermerk; (5) L3Out-Contracts ohne bekannte Firewall nur, wenn enger;
+  (6) unspezifische Kategorie nur eingehend. Ausgeschaltet als Vorschlag: „ausgehend mit breiter
+  Quelle“ (0.103.0) und neu „deaktivierte Firewall-Regeln“ (FortiGate-Status disable).
+- **Eigene Profile:** eingebaute bleiben unverändert; Änderungen „Als neues Profil speichern“,
+  eigene ändern (Schalter, Wirkung) und löschen; **eine neue Reihenfolge nur als neues Profil**.
+  Umschalten, speichern, löschen = Admin, mit Audit (der Stand der Doku rechnet neu).
+- **Doku:** im Kopf von „Regeln & Contracts“ je Bedingung die gezählten Regeln und das aktive
+  Regelwerk (Link zu den Namensprofilen). Neue Merkmale: Ursache „nicht auf dem Weg“ getrennt
+  von „Routing der Firewall“, konkrete Regeln nur geprüft, wenn das Regelwerk danach fragt.
+- API: `GET/POST /naming-profiles/{id}/appdoc-ruleset`, `PUT …/active`, `PUT/DELETE …/{key}`;
+  `summary.ruleset` und `summary.filtered` in der Applikations-Doku.
+- Tests: `test_appdoc_ruleset.py` (neu); UI `e2e/release_0118.spec.ts` (neu).
+
+## 0.117.0 – 2026-10-30
+
+Rückmeldung des Anwenders 2026-10-30 (vier Punkte; für die Übersicht gewählt: Findings & Läufe
+grafisch, Schnellansichten, Routing-Änderungen, Applikationen & Regeln, Diagramm mit
+Objekttypen). Abnahme bis 0.116.0.
+
+- **Findings: mehrere auf einmal** (Anwender: „Multi-Checkbox für das Ignorieren der Findings“):
+  Kästchen je Befund und „alle auf der Seite“, Leiste „n ausgewählt“ mit Status (Vorgabe
+  ignoriert) und Notiz für alle. `POST /findings/triage` – jedes Finding wie einzeln geprüft
+  (Mandant, Kunde, Kunden-Rolle triage), ganz oder gar nicht, je Finding ein Audit-Eintrag
+  (`bulk`).
+- **Übersicht mit wählbaren Bereichen** (Anwender: „Dashboard erweitern mit Schnellansichten,
+  Grafen, Auswahl an Content“): „Ansicht anpassen“ – Bereiche an- und abwählen, verschieben,
+  Vorgabe; die Auswahl merkt sich der Browser. Neu: Schnellansichten (Ansichten mit Filter),
+  offene Findings je Gruppe, Läufe der letzten 14 Tage (erfolgreich/Fehler/offen), Routing-
+  Änderungen der letzten 7 Tage je Art, Applikationen, Regeln je Firewall und Aktion, Objekte
+  nach Kategorie und Präfix der Namenskonvention – Klick öffnet die gefilterte Ansicht. Bereiche
+  abgeschalteter Module bzw. des Betriebs (Kunden-Benutzer) fehlen. API `GET /jobs/daily`,
+  `GET /routing/changes/summary`, `GET /objects/summary`, `by_source` in `/rules/summary`.
+- **Weg-Suche: Ziel hinter VIP bzw. Load Balancer** (Anwender: „wenn ich ein V-EXT_ auflöse,
+  nimmt er als Ziel nicht die VMs hinter dem Loadbalancer, sondern das Subnetz“): das Ziel sind
+  die Server am Ende des Wegs mit ihrer **EPG** (Karte „Ziel“: EPG, Anzahl Server, VIP bzw. Load
+  Balancer); Zielzone und Absicht kommen von diesen Servern. Die EPG nach der Reihenfolge der
+  Zuordnung (statischer Endpunkt, Portgruppe der VM, gelernt, Subnetz; `epg_locate.server_epgs`).
+  Die Namenssuche findet auch VIPs (`V-EXT_…` mit der externen IP) und nennt die Kette
+  „→ VIP-Ziel · Load Balancer → EPG (n Server)“.
+- **Objekte nach Präfix der Namenskonvention** (Anwender: „filtern nach Typ gemäss
+  Namenskonvention (V-EXT, CVS usw.)“): Filter „Präfix“ aus dem Namensprofil des Mandanten (auch
+  eigene Präfixe), mit Anzahl und „ohne Präfix“; längstes Präfix gewinnt, `_` ist kein Platzhalter.
+- **Version 2:** Reservierungen (VLAN, BGP-AS) mit Befund bei Überschneidung und AS-Nummern im
+  Routing als Eintrag in der Roadmap.
+- Tests: `test_findings_triage.py`, `test_objects_prefix.py` (neu), `test_overview_stats.py`
+  (neu), `test_vip_balancer.py`; UI `e2e/release_0117.spec.ts` (neu).
+
+## 0.116.0 – 2026-10-30
+
+Roadmap Version 1 Nr. 3 (Rest) und Nr. 6 (Teil 1); Anwender 2026-10-30: „go 116 und bitte eine
+Installationsanleitung für Prod erstellen mit Disk Verschlüsselung und Hardening der VM“. Abnahme
+bis 0.115.0.
+
+- **BGP-Ausgangsfilter aus den Zonen** (ADR 0041 Stufe 3): im Soll/Ist des BGP-Nachbarn
+  Umschalter **Eingang / Ausgang**. Ausgang = was die Firewall dem Nachbarn ankündigen soll: die
+  Netze der Zonen, die er über sie erreicht (ihre eigene Zone und alles dahinter), ohne
+  Ausschlüsse; liegt der Nachbar in einer Zone der Art `external`, nur öffentliche Netze (keine
+  RFC 1918, CGNAT, Link-Local, ULA). Verglichen werden der Ausgangsfilter (gesperrt, zu offen,
+  Ausschluss erlaubt) und die heutige Ankündigung („n Routen ausserhalb der Zonen angekündigt“;
+  default-originate zählt nicht). Vorschlag als FortiOS-CLI (`PL_<Nachbar>_OUT`,
+  `prefix-list-out`) zum Kopieren.
+- **ACI: Import Route Control aus den Zonen:** im Route-Control-Fenster des L3Outs „Soll aus den
+  Zonen dahinter (Import)“ – Zone der VRF, Zone am Peer, Netze der Zonen dahinter je mit dem
+  Urteil der Route Control heute; Abweichungen: Import nicht erzwungen, Netz ohne
+  `import-rtctrl`, Subnetz ausserhalb der Zonen (auch 0.0.0.0/0 aggregate), Ausschluss
+  importiert. Vorschlag: Subnetze der externen EPG mit „Import Route Control Subnet“ (nur Text –
+  Automato schreibt nichts ins ACI).
+- **Befunde** „BGP: Ausgangsfilter passt nicht zu den Zonen“ (`bgp_zone_out_mismatch`) und „ACI:
+  Import Route Control passt nicht zu den Zonen“ (`aci_import_zone_mismatch`), Hinweis, Gruppe
+  BGP-Filter; Prüfungen im Modul Analyse, Teil-Durchgang „Zonen“. API
+  `GET /routing/bgp/peers/{id}/zones?way=out` und `GET /routing/bgp/l3outs/{id}/zones`.
+- **Installationsanleitung Produktion** (`docs/INSTALLATION-PROD.md`): VM im vCenter (EFI, Secure
+  Boot, Geräte, erweiterte Parameter, Snapshots ohne Arbeitsspeicher), Ubuntu mit **LUKS2** über
+  LVM, eigene Volumes für Docker und Sicherungen, Header-Kopie und Notfall-Passphrase;
+  automatisches Entsperren mit **Clevis + Tang** (empfohlen) oder vTPM; Härtung (Updates, SSH nur
+  mit Schlüssel, ufw und `DOCKER-USER`, sysctl, `/tmp`, auditd, chrony, Lynis); Docker
+  (`daemon.json` mit Log-Rotation, live-restore, no-new-privileges, ohne userland-proxy);
+  Automato mit `.env` für Produktion, Zertifikaten, DB-Rollen, TLS intern, Keycloak mit OTP,
+  Sicherung inklusive `.env`/Zertifikate, Abnahme-Liste.
+- **Oberfläche nur aus erlaubten Netzen:** `AUTOMATO_UI_ALLOW` (Proxy, z. B. Management-Netz und
+  VPN; andere Quellen HTTP 403; Vorgabe alles). Orchestrator und Web-UI lassen sich mit
+  `AUTOMATO_API_BIND` / `AUTOMATO_UI_DEV_BIND=127.0.0.1` nur lokal veröffentlichen. Compose reicht
+  `AUTOMATO_AUDIT_ENCRYPTION_KEY`, `AUTOMATO_SECRETS_FILE_DIR`, `AUTOMATO_OPENBAO_*` und
+  `AUTOMATO_ALLOW_UNAUTHENTICATED_READ_API` an den Orchestrator durch.
+- **Startprüfung:** die Freigabe der Read-API ohne Anmeldung
+  (`AUTOMATO_ALLOW_UNAUTHENTICATED_READ_API`) verlangt der Orchestrator ausserhalb `dev` nur noch
+  im Modus `AUTOMATO_AUTH_MODE=dev`; mit `oidc` ist jede Anfrage angemeldet und die Freigabe
+  bleibt `false`.
+- Tests: `test_bgp_zones.py` (Ausgangsfilter, nach aussen nur öffentliche Netze, ACI Import aus
+  den Zonen), `test_checks.py`, `test_security_config.py`; UI `bgp_filters.spec.ts`
+  (Umschalter Ausgang, Zonen am L3Out).
+
+## 0.115.0 – 2026-10-30
+
+Roadmap Version 1 Nr. 5 (ADR 0042; Anwender 2026-10-30: „go 115“, gewählt die Nachkontrolle des
+Schreibpfads). Abnahme bis 0.114.1.
+
+- **Nachkontrolle des NetBox-Syncs:** nach „Übernehmen“ liest Automato die Ziel-NetBox über einen
+  eigenen, rein lesenden Zugang neu (Lese-Token, sonst Schreib-Token; POST/PUT/PATCH/DELETE werden
+  vor dem Senden blockiert) und vergleicht jedes geschriebene Objekt mit dem Auftrag:
+  - angelegt bzw. geändert, aber **fehlt in NetBox** bzw. **andere Werte** (Feld alt → neu);
+  - gelöscht, aber **noch in NetBox**;
+  - inzwischen in Automato anders: nicht prüfbar, keine Abweichung.
+- **Ergebnis am Plan** (NetBox-Sync): „Nachkontrolle: geschrieben = gelesen (n)“ bzw. „n
+  Abweichungen von m“ mit Tabelle; Meldung „Übernommen und nachkontrolliert …“; im Audit
+  `verified`/`deviations`. Scheitert das Zurücklesen, bleibt die Übernahme gültig („Nachkontrolle
+  nicht möglich: …“).
+- **Befund „NetBox-Sync: geschrieben ≠ gelesen“** (`netbox_sync_mismatch`, Warnung, neue Gruppe
+  „NetBox-Sync“) je Abweichung der letzten Übernahme je NetBox; Prüfung „Nachkontrolle des
+  NetBox-Syncs“ im Modul Schreibpfad – sofort nach der Übernahme und nach jedem Lauf.
+- Migration 0071 (`sync_plan.verification`), API `verification` am Plan. Kein neuer Schreibweg.
+- Tests: `test_netbox_sync_verify.py` (neu: in Ordnung, Validator/verworfen/nicht gelöscht,
+  Befund Deutsch/Englisch, Lesepfad kann nicht schreiben, Zurücklesen scheitert),
+  `test_netbox_sync.py`, `test_netbox_sync_cabling_apps.py`.
+
+## 0.114.1 – 2026-10-30
+
+Fehler und Wünsche des Anwenders zu 0.113 (2026-10-30). Abnahme bis 0.114.0.
+
+- **Weg-Suche: alle Ziel-Server einer VIP mit Details** (Anwender: „bei den VIPs den Zielserver,
+  aber nur einer und nur die IP“): im Hop und im Seitenpanel je Server IP:Port, Name (VM, IPAM,
+  Hostname), Zustand (aktiv, Standby, deaktiviert), Gewicht, Health-Check, Adressobjekt der
+  Firewall (öffnet das Objekt) und EPG der VM; der Server, über den der gezeigte Weg führt, ist
+  markiert. Dazu Methode, Health-Check, Bereich, Eingang und Kommentar der VIP; beim Load
+  Balancer (NSX ALB) alle Server des Pools (auch deaktivierte), Methode, Health-Monitore, FQDN.
+  Höchstens 20 Server je Hop; ein einzelner Server nur mit IP steht wie bisher in der Zeile.
+- **Applikations-Doku: Freigaben ins Internet nicht als Zugriff auf die Applikation**
+  (Anwender: „irrelevant, wenn das ganze Internet zugreifen kann“): Regeln einer Firewall mit Ziel
+  `all` zum Internet (Ausgang mit Default-Route bzw. Anbindung Internet, oder Zone vom Typ
+  Internet) stehen nicht mehr als unspezifischer Zugriff in der Doku, sondern werden oben gezählt
+  („n Freigaben ins Internet ausgelassen“). Ursache des erneuten Auftretens: SD-WAN-Zonen als
+  Ausgang wurden nicht in ihre Interfaces aufgelöst – die Relevanz blieb „unbekannt“; jetzt
+  zählen die Mitglieder der SD-WAN-Zone.
+- **BGP-Filter: default-originate, nichts zurück ins selbe AS** (Anwender: „alle Routen, auch
+  wenn die Firewall lediglich Default Origin sendet“): der Collector liest
+  `capability-default-originate`; „angekündigt“ zeigt dann 0.0.0.0/0 (Chip „default-originate“).
+  Routen, deren AS-Pfad das AS des eBGP-Nachbarn schon enthält, kündigt die Firewall ihm nicht an
+  (BGP-Schleifenschutz) – sie fehlen jetzt in „angekündigt“ und werden gezählt.
+- Tests: `test_vip_balancer.py` (alle Server mit Details, Pool), `test_appdoc_internet.py` (neu),
+  `test_relevance.py`, `test_bgp_filters.py` (default-originate, AS-Schleife),
+  `collectors/tests/test_routing.py`, UI-Test in `e2e/flows.spec.ts`.
+
+## 0.114.0 – 2026-10-29
+
+Roadmap Version 1 Nr. 3, Stufe 2 (ADR 0041; Anwender 2026-10-29: „go 114“, gewählt Backup-Wege
+prüfen und das Soll aus allen Zonen, die über den Nachbarn erreicht werden). Abnahme bis 0.113.2.
+
+- **Backup-Wege gegen die BGP-Filter:** Ein Backup über einen BGP-Nachbarn gilt nur noch, wenn der
+  Eingangsfilter des Geräts das Zielnetz von diesem Nachbarn übernimmt und – ist der Nachbar eine
+  gelesene FortiGate – deren Ausgangsfilter es ihm ankündigt. Sonst zeigt die Weg-Suche keinen
+  Backup-Weg, sondern den Hinweis „Backup an fw-01 über 198.51.100.1 verworfen: Eingangsfilter
+  RM_ISP_IN vom Nachbarn 198.51.100.1 sperrt 10.5.0.0/16“ (Anwender zu 0.110: „die Firewalls davor
+  würden das Netzwerk niemals lernen, da sie in den Filtern gesperrt wurden“). Unbekannte
+  Bedingungen (AS-Path, Community) verwerfen nichts.
+- **Soll je BGP-Nachbar aus den Zonen dahinter:** im Soll/Ist eines BGP-Nachbarn (Routing →
+  BGP-Nachbarn) der neue Abschnitt „Soll aus den Zonen dahinter“:
+  - Zone der Firewall, Zone am Nachbarn (gelesenes Gerät mit seiner IP bzw. Übergang im
+    Zonenplan) und alle Zonen, deren kürzester Weg über sie führt;
+  - ihre Netze (wie erfasst und abgeleitet) als `permit … le 32`, die Ausschlüsse davor als
+    `deny`, mit dem Urteil des Filters heute je Netz;
+  - Abweichungen: „fehlt im Filter“ (Netz der Zonen gesperrt), „zu offen“ (Regel ausserhalb der
+    Zonen bzw. alles erlaubt), „Ausschluss erlaubt“, ohne Eingangsfilter;
+  - **FortiOS-CLI-Vorschlag** (`config router prefix-list` `PL_<Zone>_IN`, ohne Filter am Nachbarn
+    mit `set prefix-list-in`) mit „Kopieren“ – nur Text, Automato schreibt nichts auf die Firewall.
+- **Befund „BGP: Eingangsfilter passt nicht zu den Zonen“** (`bgp_zone_mismatch`, Info) in der
+  Gruppe BGP-Filter; Prüfung „BGP-Filter gegen die Zonen“ (Modul Analyse) im Teil-Durchgang Zonen –
+  neu nach jedem Speichern einer Zone und nach jedem Lauf.
+- API: `GET /routing/bgp/peers/{id}/zones`. Teil-Durchgänge synchronisieren die Befund-Typen aller
+  Prüfungen ihres Schritts (auch aus anderen Modulen).
+- Tests: `test_bgp_filters.py` (Backup verworfen), `test_bgp_zones.py` (Zonen dahinter, Soll,
+  Abweichungen, CLI, API, Befund), `test_checks.py`, UI-Test in `e2e/bgp_filters.spec.ts`.
+
+## 0.113.2 – 2026-10-29
+
+Fehler des Anwenders zu 0.113 (2026-10-29), in einer Version. Abnahme bis 0.113.1.
+
+- **Applikations-Doku: unspezifische Firewall-Regeln nur von Firewalls auf dem Weg.** Steht
+  dieselbe unspezifische Regel (System nur über ein Netz bzw. any) auf mehreren Firewalls, zählte
+  bisher nur das Routing der Firewall selbst. Jetzt wird wie bei den Verbindungen der Weg von der
+  Gegenstelle der Regel (Host bzw. Netz) zum System bzw. umgekehrt verfolgt: führt er nicht über
+  die Firewall der Regel, steht sie weder in der Doku nach Kategorie noch oben (Regeln &
+  Contracts, Kennzahlen), sondern zählt zu „routingtechnisch unmögliche ausgelassen“ mit dem Grund
+  „fw-03 liegt nicht auf dem Weg von … zu … – die Regel braucht dieses System nicht“. Ist der Weg
+  nicht bekannt bzw. endet er vor dem Ziel, bleibt die Regel; Gegenstelle any wird nicht geprüft.
+- **Findings: Texte laufen nicht mehr ineinander.** Die Netze der BGP-Befunde stehen als Liste
+  („Netze: …“) statt in einer leeren Routentabelle, ihre Felder haben Beschriftungen (Anzahl,
+  Filter, erhalten, L3Out, ACI-Tenant); lange Beschriftungen und Werte ohne Leerzeichen brechen um,
+  die Spalte „Befund“ bekommt Platz, Typ und Objekt brechen um.
+- **NetBox-/DDI-Lauf bricht nicht mehr ab** („Teil-Upload unvollstaendig (0 von 13855)“, danach
+  „keine Adresse fuer die Referenzquelle“):
+  - Eine Referenzquelle wird nur einmal zugleich gelesen: „Jetzt einlesen“ während eines offenen
+    Laufs antwortet „… wird schon gelesen: Lauf läuft seit … – abwarten bzw. den Lauf abbrechen“
+    (wie „Alle einlesen“ und der Zeitplan). Bisher wurde der zuerst fertige Lauf der Stand und
+    verwarf die Teil-Uploads des anderen.
+  - Der Abschluss eines Laufs verwirft die Teil-Uploads eines anderen, noch offenen Laufs derselben
+    Quelle nicht mehr (z. B. nach „abbrechen und neu“, wenn der alte Auftrag doch noch liefert).
+  - Der zentrale Worker liest nicht mehr ohne Ziel: ist es nicht abrufbar, versucht er es nach 2,
+    5 und 15 s erneut und lässt den Lauf sonst stehen (er wird erneut geschickt bzw. nach der Frist
+    beendet). Bisher scheiterte der Auftrag mit „keine Adresse fuer die Referenzquelle“, und sein
+    Abbruch verwarf die Teil-Uploads des Auftrags, der den Lauf wirklich las.
+  - Ein abgebrochener Lauf behält seinen Grund: ein spätes, unvollständiges Ergebnis überschreibt
+    ihn nicht mehr mit „Teil-Upload unvollstaendig (0 von …)“.
+  - Zugangsdaten nicht entschlüsselbar: der Lauf endet mit „Zugangsdaten nicht verfügbar: …“ statt
+    immer wieder geschickt zu werden.
+- API: `POST /jobs/collect` antwortet für eine Referenzquelle mit offenem Lauf mit 409;
+  `GET /internal/collector-runs/{id}/target` beendet den Lauf, wenn die Zugangsdaten nicht
+  entschlüsselbar sind (`skip`).
+- Tests: `test_reference_sources.py` (einmal zugleich, abbrechen und neu, Grund bleibt,
+  Zugangsdaten), `collectors/tests/test_run.py` (Ziel nicht abrufbar: wiederholen, nicht lesen),
+  `test_app_paths.py` (unspezifische Regel nur auf dem Weg), UI-Test in `e2e/bgp_filters.spec.ts`
+  (Detail des BGP-Befunds).
+
+## 0.113.1 – 2026-10-29
+
+Fehler des Anwenders zu 0.112 (2026-10-29), in einer Version. Abnahme bis 0.113.0.
+
+- **„Als Paar bestätigen“ ohne Wirkung:** der Klick wartete still auf die Sperre des Mandanten,
+  solange ein Einspielen bzw. Abgleich lief. Jetzt wird die Entscheidung sofort gespeichert;
+  ist der Mandant gerade gesperrt, folgt die Markierung im Hintergrund („Gespeichert – die
+  Markierung folgt …“, das Detail lädt selbst neu). Während des Speicherns ist der Knopf gesperrt
+  mit „wird gespeichert …“, ein Fehler steht direkt beim Knopf. Gilt auch für „Kein Paar“ und
+  „zurücknehmen“.
+- **Weg-Suche aus einer Regel mit Quelle any:** statt einer leeren Quelle die Anbindung am
+  Eingang der Regel (Interface bzw. Zone der Regel in einer Anbindung, z. B. Internet an `wan1`),
+  sonst der Start an der Firewall der Regel mit ihrem Eingang – „Quelle any – über die Anbindung
+  „Internet“ (wan1)“ bzw. „… Start an der Firewall der Regel“. Der Weg geht damit bis zum Ziel,
+  auch durch eine VIP (DNAT) zum Server, und die Policies prüfen den richtigen Eingang.
+- **Weg-Suche ohne Quelle und Start:** keine Liste aller Routen zur IP mehr, sondern der Hinweis
+  „Quelle oder Startpunkt angeben“ (die Routen je Gerät stehen unter Routing → Routen).
+- **draw.io übersichtlicher:** Zonenplan mit breiteren Spalten und mehr Abstand zwischen den
+  Zonen, gerade Linien von Seite zu Seite wie im Grundschema (rechtwinklig, wo beide Enden an
+  derselben Seite liegen), Beschriftung mit weissem Hintergrund; Netzwerkplan der Applikation mit
+  rechtwinkligen statt geschwungenen Linien und mehr Abstand.
+- API: `POST /rules/{id}/pair` und `DELETE /rules/pair-decisions/{id}` antworten mit
+  `{"pending": …}`; `GET /rules/{id}/path-search` mit `src_exit`, `start`, `ports`;
+  `GET /routing/trace` und `/routing/explain` mit `start_port` (Eingang am Startpunkt).
+- Tests: `test_ip_family.py` (Paar bei gesperrtem Mandanten), `test_policy_check.py` (Regel mit
+  Quelle any: Start, Anbindung, Eingang), UI-Tests in `e2e/paths.spec.ts` und
+  `e2e/flows.spec.ts`.
+
+## 0.113.0 – 2026-10-29
+
+Roadmap Version 1 Nr. 3, Stufe 1 (Anwender 2026-10-29: „go 113“, gewählt „Filter lesen +
+Soll/Ist“) – Grund: Backup-Wege, die die Filter der Firewalls davor nie zulassen (Rückmeldung zu
+0.110). Abnahme bis 0.112.0. ADR 0041, Migration 0070.
+
+- **BGP-Konfiguration der FortiGate lesen, strikt nur lesend:** je VDOM `router bgp` (AS,
+  Router-ID, network, aggregate, redistribute, je Nachbar bzw. Nachbar-Gruppe die Filter ein/aus
+  – Route-Map, Prefix-Liste, Distribute-Liste, Filter-Liste, je auch IPv6 – und dynamische
+  Nachbarn über Nachbar-Bereiche) sowie Prefix-Listen, Route-Maps und Access-Listen mit ihren
+  Regeln. Passwörter und Schlüssel der Nachbarn kommen nie mit (Positivliste).
+- **ACI Route Control lesen:** je L3Out `enforceRtctrl` (export, import) und die Subnetze der
+  externen EPGs mit `import-rtctrl` bzw. `export-rtctrl` (mit `aggregate`).
+- **Soll/Ist je BGP-Nachbar** (Routing → BGP-Nachbarn, neue Spalte „Filter (ein / aus)“ und
+  „Soll/Ist“): **erwartet** = was die Eingangsfilter ausdrücklich erlauben, **erhalten** = die
+  BGP-Pfade vom Nachbarn mit dem Urteil des Filters, **angekündigt** (berechnet) = beste Pfade,
+  network, aggregate und redistribute durch die Ausgangsfilter. Ausgewertet wie die FortiGate
+  (erste passende Regel, ge/le, Route-Map mit `match ip-address`); AS-Path, Community und Wildcards
+  ergeben „unbekannt“. Darüber die gelesene BGP-Konfiguration je Firewall, mit konfigurierten
+  Nachbarn ohne Sitzung.
+- **L3Outs:** Spalte „Route Control“ (erzwungen, Anzahl Subnetze) und „Soll/Ist“ – Import
+  erwartet, erhalten über die Peers des L3Outs, Export.
+- **Befunde** (neue Prüfung „BGP-Filter Soll/Ist“, Gruppe „BGP-Filter“): erwartetes Netz kommt
+  nicht an (FortiGate-Filter bzw. ACI-Import erzwungen), erhalten obwohl der Filter sperrt,
+  eBGP-Nachbar ohne Eingangsfilter (Info), ACI Import Route Control nicht erzwungen (Info).
+- **Anbindungen:** Knopf „aus den BGP-Filtern“ bei „Netze dahinter“ – die Netze, die die
+  Eingangsfilter für die Next-Hops erlauben (ohne „alles“ und Default-Route), zusammengefasst
+  oder einzeln übernehmen.
+- API (viewer, Kunden-Ausschnitt): `GET /routing/bgp/config`, `/routing/bgp/peers/{id}`,
+  `/routing/bgp/l3outs/{id}`, `/routing/bgp/filtered`.
+- Das Read-only-Profil der FortiGate braucht Lesezugriff auf die Router-Konfiguration; fehlt er,
+  steht „BGP-Konfiguration“ als nicht lesbar in der Lauf-Meldung.
+- Tests: `collectors/tests/test_routing.py` (BGP-Konfiguration, Filter, Route Control),
+  `orchestrator/tests/test_bgp_filters.py` (Auswertung, Soll/Ist, Befunde, Vorschlag, Mandant);
+  UI-Tests in `e2e/bgp_filters.spec.ts`.
+
+## 0.112.0 – 2026-10-29
+
+Fehler und Wunsch des Anwenders zu 0.110 (2026-10-29), in einer Version. Abnahme bis 0.111.0.
+
+- **„Abhängig“ mit Grund:** das Urteil eines Wegs nennt den Grund je Firewall, z. B. „abhängig
+  an fw-08 (Policy 3 „block-geo“ kann vor Policy 7 „web“ greifen – abhängig von: Ziel)“, nicht
+  nur „abhängig an fw-08“. Sind mehrere aktive Wege (ECMP, mehrere Starts) verschieden, nennt
+  die Verbindung jeden Weg mit seinem Urteil – der gezeigte erste kann stimmen, ein anderer nicht.
+- **Weniger „abhängig“, wo die Regeln klar offen sind:**
+  - Länder (Adressobjekte vom Typ Geografie) und Internet Services (FortiGuard) treffen keine
+    private Adresse (RFC 1918, CGNAT, Link-Local, ULA) – eine Sperre „Land X“ bzw. „Botnet“
+    davor macht Verkehr zwischen internen Netzen nicht mehr „abhängig“. Eigene Internet Services
+    (`custom`) bleiben „möglich“, sie können private Netze enthalten.
+  - Startpunkt gewählt bzw. Verbindung ab dem Gerät der Regel, die Quelle hängt dort nicht an:
+    der Eingang ist das Interface der Route zur Quelle (Reverse Path) statt unbekannt – Policies
+    mit Interface bzw. Zone davor sind damit sicher prüfbar.
+- **Backup-Wege nur, was das Gerät gelernt hat:** kein Backup über die Default-Route für ein
+  privates Ziel (die Firewall davor kennt das Netz nicht, nur die dahinter – „Hochrechnung“),
+  kein BGP-Bestpfad als Backup (anderer Next-Hop nur durch Rekursion) und keine statische Route
+  auf ein Adressobjekt (`dstaddr`, als 0.0.0.0/0 gespeichert).
+- **„↔ beide Richtungen“ verständlich:** in der Doku nach Kategorie steht jetzt, was der Provider
+  auch zum Consumer aufbauen kann, z. B. „tcp/1433, icmp/any (↔ auch vom Provider aus:
+  icmp/any)“. Grund: ACI ist zustandslos – ein Filter ohne Ports (ip, ICMP) in einem Subject mit
+  „Apply Both Directions“ gilt auch rückwärts. Im Regel-Detail ebenso („↔ auch vom Provider aus:
+  …“).
+- **Knopf „Weg-Suche“** bei Regeln & Contracts (Liste und Detail), bei den Regeln der Applikation
+  und in der Doku nach Kategorie: öffnet die Weg-Suche in einem neuen Tab mit Quelle, Ziel und
+  Dienst der Regel (`#wege?rule=<id>`, `GET /rules/{id}/path-search`) und sucht gleich; die
+  übrigen Quellen, Ziele und Dienste der Regel stehen zur Wahl darüber.
+- Tests: neue Fälle in `test_policy_check.py` (Geo/ISDB, Grund, Eingang nach der Route, Regel
+  in der Weg-Suche), `test_paths.py` (Backup nur Gelerntes), angepasst `test_aci_direction.py`,
+  `test_i18n_apps.py`; UI-Tests in `e2e/paths.spec.ts` und `e2e/apps.spec.ts`.
+
+## 0.111.0 – 2026-10-29
+
+Fehler und Funde des Anwenders zu 0.109 (2026-10-29), in einer Version. Abnahme bis 0.110.0.
+
+- **ACI: Export Route Control ist kein Netz der externen EPG.** Subnetze einer externen EPG nur
+  mit Scope `export-rtctrl` (bzw. ohne `import-security`) steuern das Routing und ordnen keinen
+  Verkehr zu – sie gelten nicht mehr als Gegenstelle in den Verbindungen, nicht als Treffer der
+  IP-Suche bei Regeln & Contracts, nicht für die Zonen der EPG und nicht in der Applikations-Doku
+  (`aci_relevance.assigns`). Ein Contract nur über ein solches Subnetz steht unter „ohne prüfbare
+  Gegenstelle“; im Regel-Detail bleibt das Subnetz mit „nur Routing“ sichtbar.
+- **Text „Contract vorhanden, Port nicht offen“:** stimmen Consumer und Provider, öffnet der
+  Contract aber den Dienst nicht, heisst es jetzt „Contract CT_x von … zu … öffnet tcp/80 nicht
+  (offen: tcp/443) – im ACI gesperrt“ statt „kein Contract“; der Contract steht mit „öffnet den
+  Dienst nicht“ bei den Regeln des Hops (Weg-Suche, Verbindungen).
+- **Transfernetz zum eigenen L3Out:** hinter einem L3Out mit Firewall führend (ADR 0034) zählt das
+  angeschlossene Netz am Interface der Firewall zu diesem L3Out als „hinaus“ – das Transfernetz
+  wird nicht mehr über einen anderen L3Out geführt, nur weil die Firewall es direkt angeschlossen
+  hat.
+- **Anbindungen: grosse Netzlisten.** „Netze dahinter“ als Liste (bis 5 000): einfügen in jeder
+  Schreibweise (CIDR, Netz und Maske, Wildcard, mit Text dazwischen), „Prüfen“ (gültig, ungültig,
+  doppelt), „Zusammenfassen“ und „Aus dem Routing“ (über Next-Hop bzw. Interface gelernte Routen
+  als Vorschlag). Speichern mit ungültigen Einträgen zeigt sie und speichert nicht; die Tabelle
+  kürzt lange Listen.
+- **Grosse Netze der Regeln zuordnen** (gewählt „kombiniert“, ADR 0040, Migration `0069`): routet
+  eine Firewall ein Netz-Objekt einer Regel (z. B. 10.0.0.0/8) nicht als Ganzes – Teile genauer
+  geroutet bzw. privat nur über die Default-Route –, entscheiden der Reihe nach die Zuordnung von
+  Hand, eine Zone (Netzwerkdesign), die Netze einer Anbindung; sonst „aufgeteilt“ bzw. „unklar“.
+  Neuer Befund **„Netz der Regel grösser als die Routen“** (Modul Wegsucher) mit Route, Next-Hop,
+  Teilen und Regeln; „Netz zuordnen“ im Befund und in den Verbindungen (Operator, Audit): zur
+  Zone, über die Anbindung, „Weg nach dem Routing stimmt“ oder „nur die genauer gerouteten Teile
+  zählen“. Die Zuordnungen von Hand stehen unter Routing → Anbindungen.
+- Tests: `test_net_assign.py`, neue Fälle in `test_aci_relevance.py`, `test_aci_check.py`,
+  `test_l3out_firewall.py`, `test_exit_paths.py`; UI-Test `e2e/net_lists.spec.ts`, angepasst
+  `e2e/apps.spec.ts` (Webshop ohne Verbindung über das Routing-Subnetz von EN_rt).
+
+## 0.110.0 – 2026-10-29
+
+Findings als steckbare Prüfungen und Oberfläche je Modul (Roadmap Version 1 Nr. 1, Stufe 1;
+gewählt „Prüfungen + Pakete schrittweise“; ADR 0039). Abnahme bis 0.109.1.
+
+- **Je Prüfung eine Datei** im Paket ihres Moduls (`orchestrator/app/checks/<modul>/`): fünfzehn
+  Prüfungen aus `store/reconcile.py` umgezogen (Kern: Firewall-Objekte und Namenskonvention,
+  Regeln ohne Quelle/Ziel, SNAT-Pool, ACI-Scope, Contract auf beiden Seiten, EPG-Zuordnung;
+  Analyse: Regel-Endpunkte im IPAM, IPAM-Abgleich, VMware, Topologie, Verkabelung, Verbund, Stand
+  der Quellsysteme; Design: Zonen; Doku: Verbindungen der Applikationen). Der Abgleich findet sie
+  selbst; eine neue Prüfung ändert `reconcile.py` nicht mehr. Befunde bleiben gleich.
+- **Seite Findings → Reiter „Prüfungen“:** je Prüfung Zweck, Modul, Befund-Typen (Klick zeigt die
+  Befunde), wann sie läuft, Dauer und Anzahl des letzten Durchgangs, Summe; „Neu abgleichen“
+  (Operator).
+- **Je Mandant schaltbar** (Admin, Audit `check.switched`, Migration `0068`): aus = die Prüfung
+  läuft nicht, ihre Befunde fallen beim nächsten Abgleich weg; wieder an = sie kommen mit Status
+  zurück. Ist ihr Modul aus, läuft sie auch nicht („Modul aus“).
+- **Oberfläche je Modul:** die Ansichten stehen im Ordner ihres Moduls
+  (`web-ui/frontend/src/modules/<modul>/`), Navigation und Anzeige baut die Shell aus dem
+  Verzeichnis; `tests/test_modules.py` prüft Ordner und Pakete gegen das Verzeichnis der Module.
+- Tests: `test_checks.py`, Ordner-Prüfung in `test_modules.py`, UI-Test `e2e/checks.spec.ts`.
+
+## 0.109.1 – 2026-10-29
+
+Korrekturen (Fehlerliste des Anwenders 2026-10-29) und neue Roadmap nach Versionen. Abnahme bis
+0.109.0.
+
+- **NetBox-Lauf bleibt „wartet“:** Redis hält die Warteschlange zum zentralen Worker ohne
+  Datenträger – nach einem Neustart bzw. Update waren wartende Aufträge weg und der Lauf blieb
+  bis zur Frist (24 h) stehen. Jetzt schickt der Zeitplan zentral gelesene Läufe nach
+  `AUTOMATO_RUN_REDISPATCH_MINUTES` (5) erneut; gelesen wird trotzdem nur einmal (Claim beim
+  Abholen des Ziels, `X-Run-Claim`). Die Liste der Läufe sagt, wer abholen muss (Agent mit
+  letztem Lebenszeichen bzw. zentraler Worker, „erneut geschickt“).
+- **Prüfung „Zentraler Worker“** in System → Verbindungen und `deploy/aufbau.sh pruefen`:
+  antwortet er (Ping), Aufträge in der Warteschlange, wartende Läufe – mit Befehl zum Starten
+  und den Logs.
+- **Oberfläche schneller:** Ansichten werden erst beim Öffnen geladen – das erste Paket
+  1 057 kB → 270 kB (ohne Warnung beim Bauen).
+- **Fenster:** Seitenpanels und Dialoge am Rand ziehbar (Breite gemerkt, Doppelklick = Vorgabe),
+  ⤢ fast volle Breite; Vorgabe nach Bildschirmbreite, lange Namen brechen in Panels um.
+- **Applikation:** „In der Weg-Suche öffnen“ bei einer Verbindung öffnet einen neuen Tab – die
+  Doku bleibt offen (Wunsch des Anwenders).
+- **Tests:** Testclient mit `httpx2` (keine Warnung mehr); nachts bzw. von Hand alle
+  Orchestrator-Tests auch mit `AUTOMATO_TEST_DOC_SNAPSHOTS=1` (Fingerabdruck der Doku);
+  `test_aus_wie_bisher` schaltet den Stand selbst aus.
+- **Roadmap** nach Versionen: Version 1 bis zur Produktivschaltung (1.0.0), Version 2 neuer Name
+  und Cockpit, Version 3 Automatisierung (`ROADMAP.md`).
+- Tests (orchestrator 664, UI-Tests 151).
+
+## 0.109.0 – 2026-10-29
+
+Analyse der Wege (Anwender: „weshalb dieser Pfad gewählt wird … dass ich es als Mensch verstehen
+kann“, „Erwartet über …“ und „ein Finding-Button“; ADR 0038). Abnahme bis 0.108.0.
+
+- **Warum dieser Weg?** an jeder Weg-Karte der Weg-Suche und im Detail einer Verbindung Ende zu
+  Ende: derselbe Weg Hop für Hop in Sätzen – Start (wo die Quelle angeschlossen ist), Eingang mit
+  Zone und Routing-Tabelle, NAT, Policy-Routen bzw. SD-WAN-Regeln, **alle Routen zum Ziel** mit
+  Grund (gewählt; kürzeres Präfix, höhere Distanz, nur in der BGP-Tabelle, statische Route nicht
+  aktiv, Policy-Route geht vor), Next-Hop und wem er gehört, Ende mit Hinweis (fehlende Route,
+  unbekannter Next-Hop mit IPAM-Name, Schleife, Default-Route nach aussen). Je Hop, wann das
+  Routing gelesen wurde (alt = orange). Bei mehreren Wegen wählbar.
+- **Erwartet über …:** ein Gerät wählen, über das der Verkehr gehen müsste – liegt es nicht auf dem
+  Weg, zeigt die Erklärung, wo der Weg daran vorbeigeht, welche Route über das Gerät es gibt und
+  warum sie verliert bzw. dass sie fehlt, und wie das Gerät selbst Ziel und Rückweg routet.
+- **Findings von Hand:** „Als Finding erfassen“ an jedem Schritt mit einem Problem (vorausgefüllt
+  mit Satz, Hinweis, Gerät, Quelle/Ziel/Dienst), „+ Finding erfassen“ in der Erklärung und auf der
+  Seite Findings (frei). Typ „Von Hand erfasst“, Kategorie „Von Hand“; bleibt nach dem Abgleich
+  stehen, Triage wie jedes Finding; nur Operator.
+- API `GET /routing/explain` (Parameter wie `/routing/trace`, dazu `expect`, `connection`,
+  `starts`), `POST /findings`; Verbindungen liefern ihre Eingaben (`trace`).
+- Tests (orchestrator 660, UI-Tests 150).
+
+## 0.108.0 – 2026-10-28
+
+Leistung (Anwender: „das Speichern dauert zu lange“, Doku im Hintergrund rechnen; ADR 0037,
+Migration `0067`). Abnahme bis 0.107.0.
+
+- **Doku als Stand:** Doku und Verbindungen Ende zu Ende (mit Plan) je Applikation werden
+  gespeichert und nur neu gerechnet, wenn sich etwas ändert, das sie betrifft (Lauf eines
+  Quellsystems, IPAM, Zonen, Kategorien, Namensprofil, Verbund, L3Outs, Mitglieder, ausgeblendete
+  Regeln) – erkannt am Fingerabdruck der Eingaben. Die Seite zeigt sofort den letzten Stand:
+  „Stand von …“, „– wird im Hintergrund aktualisiert…“, danach lädt sie von selbst neu;
+  „↻ neu berechnen“ stösst eine Berechnung an. Befunde in der Doku sind immer aktuell. Gemessen
+  im grossen Testbestand: Doku 9,5 s → 0,2 s, Verbindungen 4,7 s → 0,04 s.
+- **Vorrechnen:** nach Läufen und Änderungen rechnet der Hintergrund die in den letzten 7 Tagen
+  angesehenen Stände neu – nach dem Speichern ist die Doku meist schon fertig.
+- **Speichern ohne Warten:** Zonen anlegen/ändern/löschen, Absichten, Vorschläge, Zonenplan-Import,
+  Netzwerkdesign, Grundschema und Verbund paralleler Firewalls kehren sofort zurück; die Befunde
+  rechnet der Hintergrund. Die Prüfung der Zonen lädt die EPG-Zuordnung nur noch einmal je
+  Durchgang (grosser Testbestand: Zone speichern 13 min → 3 s).
+- Einstellungen `AUTOMATO_DOC_SNAPSHOTS`, `AUTOMATO_DOC_STALE_SECONDS`, `AUTOMATO_DOC_WARM_DAYS`,
+  `AUTOMATO_DOC_WARM_SECONDS`; API `GET /applications/{id}/doc/state`, `?fresh=true`.
+- Tests (orchestrator 655, UI-Tests 148).
+
+## 0.107.0 – 2026-10-28
+
+Module und Testbefunde zu 0.106.0 (Rückmeldung des Anwenders 2026-10-28; ADR 0036, Migration
+`0066`).
+
+- **Module** (ADR 0036): Kern, Einstellungen (Basis, immer an), Worker, Gateway, Analyse,
+  Wegsucher, Findings, Doku, Design (lesend) und der Schreibpfad (NetBox-Sync, braucht das
+  Gateway). Jede Datei in `app/api` und `app/store` gehört genau einem Modul; die CI prüft das und
+  dass **nur der Schreibpfad** den NetBox-Schreiber nutzt – Worker, Gateway-Leser und alle
+  lesenden Module bleiben starr getrennt.
+- **Module je Mandant schaltbar:** Mandanten & Standorte → Karte „Module“ (Admin, Audit). Aus =
+  Ansicht weg, API 403, keine Läufe (Worker) bzw. Referenzquellen (Gateway) bzw. Befunde der
+  Applikationen im Hintergrund; die Daten bleiben. Erste Stufe der Basis-Settings fürs Cockpit.
+- **Verbindungen Ende zu Ende nur nach dem Routing:** eine Firewall, über die der Verkehr nicht
+  geht, die aber dieselbe Regel hat, steht nicht mehr in der Verbindung. Kommt die Quelle von
+  aussen (Internet), beginnt der Weg dort, wo der Rückweg das gelesene Netz verlässt. Neuer
+  Befund **„Applikation: Regel nie gebraucht“** (Hinweis) mit dem Weg, den der Verkehr nimmt.
+- **Namen der Gegenstellen schneller:** das IPAM bleibt im Speicher statt je Anfrage neu gelesen
+  (`AUTOMATO_REF_CACHE`, gemessen mit 340 000 IPAM-Einträgen: Doku 11,7 s → 4 s); Namen je Regel
+  und Seite einmal berechnet, Gruppen nur mit ihren Mitgliedern geladen; der Schalter zeigt
+  sofort den neuen Stand („– lädt…“).
+- **Entfernt:** „Doku je System“ (Ansicht, API `/appdoc/systems…`, Export, Standort je System) und
+  „Publizierte Dienste“ (Ansicht, API `/published-services`) – VIPs zeigt NAT / VIPs.
+- Tests (orchestrator 651, UI-Tests 147).
+
+## 0.106.0 – 2026-10-28
+
+Kategorien einfach (Rückmeldung des Anwenders 2026-10-28 zu 0.105.0: „Kategorien und Bereiche sind
+nicht notwendig … einfacher ist besser, in allem“; ADR 0035 überarbeitet, Migration `0065`).
+
+- **Namenskonzept → Kategorien:** nur noch Titel, Titel englisch, **Source-Zone** und **Dest-Zone**
+  (je Seite ein oder mehrere Zonentypen des Grundschemas, `* jeder`). Fest mit nur dem Titel:
+  innerhalb der Applikation (7), innerhalb des Security Tenants (8), unspezifisch (10). Die
+  Vorgaben sind Richtungen auf der Vorlage (z. B. Edge Internet, Public → DC = „Zugriff aus dem
+  Internet“) und lassen sich ändern bzw. entfernen.
+- **Entfallen:** Bereiche je Zone, Merkmale im Namen der Firewall-Zone, Optionen, Spalten-Layout,
+  „nur mit Zone“, Titel mit Zonen, Vorschlag nach Namen, die Ausgänge von Hand (0.105.0) und die
+  Spalte „Kategorie“ im Netzwerkdesign.
+- **Netzwerkdesign → Kategorien:** je Zone Zonentyp, Netze, Ausschlüsse und **Geräte**
+  (Firewall/VDOM, ACI-Tenant, ACI-VRF, Anbindungen aus dem Routing).
+- **Ausgänge aus den Daten:** any bzw. ein grosser Bereich gehört zu den Zonen hinter dem
+  Interface der Regel (Anbindung, geroutete Netze, Default-Route); eine externe EPG zur Zone der
+  Firewall hinter ihrem L3Out. Nicht eindeutig: unspezifisch. Ohne Zone der Zonentyp nach dem
+  Namen der Firewall-Zone bzw. des L3Outs (Muster des Grundschemas), Systeme im ACI als DC.
+- **Befund „Netz nicht über den Übergang zur Zone“:** aus den Geräten der Zonen und dem Zonenplan
+  statt aus Ausgängen von Hand.
+- **Spalten nach den Zeilen:** VIP-/Load-Balancer-Kette bzw. NAT-Spalten erscheinen, wo Zeilen sie
+  haben.
+- Tests (orchestrator 649, UI-Tests 148).
+
+## 0.105.0 – 2026-10-28
+
+Kategorien der Applikations-Doku einfacher: **Zonentyp, Richtungen, Ausgänge** statt Bereichen je
+Zone (Rückmeldung des Anwenders 2026-10-28 zu 0.104.0, ADR 0035, Migration `0064`).
+
+- **Zonentyp** je Zone = Zone des Grundschemas im Namensprofil (ohne eigenes die Vorlage):
+  automatisch nach Name bzw. Kurzname wie beim Befund „Zone ausserhalb des Schemas“, von Hand in
+  Netzwerkdesign → Kategorien (Spalte „Zonentyp“) bzw. im Zonen-Editor; gilt auch für Farbe und
+  Schema im Zonenplan.
+- **Richtungen** je Kategorie im Namenskonzept: „Zonentyp der Quelle → Zonentyp des Ziels“, `*` =
+  jeder (z. B. `DC-Ressourcen → DC`, `Edge Internet → DC`). Mit Richtungen gilt: innerhalb der
+  Applikation (7), innerhalb der eigenen Zone (8, Security Tenant), dann die genaueste Richtung,
+  sonst wie bisher; die Bereiche je Zone entfallen. Zonentypen ausserhalb des Grundschemas meldet
+  die Tabelle.
+- **Ausgänge** einer Zone: neue Selektoren „Ausgang Interface“, „Ausgang Firewall-Zone“ (je
+  optional mit der Firewall) und „Ausgang L3Out“ – eine Gegenstelle wie any gehört zur Zone, deren
+  Ausgang die Regel nutzt; Spalte „Ausgänge“ im Reiter Kategorien.
+- **Befund „Netz nicht über den Ausgang der Zone“** (`zone_net_exit`): lernt eine Firewall ein Netz
+  einer Zone über ein anderes Interface, nur über die Default-Route oder gar nicht, steht es unter
+  Findings → Zonen (mit Interface und den Zonen dahinter).
+- Korrektur aus 0.104.0: ein Bereich zählt nicht mehr, wenn die Gegenstelle in der eigenen Zone
+  liegt (alle Zonen erschienen als „Ressourcen-Tenant“).
+- **Tests schneller** (Vorschlag 6 aus 0.104.0): siehe unten.
+- Abgenommen bis 0.103.0. Tests (orchestrator 650, UI-Tests 149). Überarbeitet in 0.106.0.
+
+### Tests schneller
+
+Die Tests laufen parallel – lokal und in der CI; geprüft wird dasselbe wie bisher (Übersicht
+`docs/TESTS.md`, Abschnitt „Schnell lokal“). Gemessen auf 4 Kernen:
+
+- **Orchestrator parallel** mit pytest-xdist (MIT, neue Dev-Abhängigkeit des Orchestrators):
+  `pytest -n auto`, in den CI-Jobs `python` und `postgres` mit `--dist worksteal`; die Abdeckung
+  fasst pytest-cov über alle Worker zusammen. SQLite 9:29 → 2:20 min. Kein Test hing von der
+  Reihenfolge ab (auch umgekehrt geprüft).
+- **Postgres**: je xdist-Worker eine eigene Datenbank `<name>_gwN` (Tabellen, Advisory-Locks und
+  Verbindungen getrennt); das Schema wird je Datenbank einmal angelegt, danach leert jeder Test
+  alle Tabellen samt Zählern (`TRUNCATE … RESTART IDENTITY`) statt rund 90 Tabellen neu anzulegen
+  – `AUTOMATO_TEST_DB_RESET=schema` wie bisher. Die Postgres-Instanz der CI läuft ohne fsync
+  (Wegwerf-Datenbank). Lokal 26:03 → 2:46 min.
+- **UI-Tests in Shards**: je Shard ein eigener Orchestrator und Vite mit eigenen Ports und eigener
+  SQLite-Datei (`E2E_API_PORT`, `E2E_PORT`, `E2E_DB`); CI-Job `e2e` als Matrix mit zwei Shards
+  (Bericht je Shard), lokal `npm run e2e:shards` (Kerne − 1 Shards, 5:20 → 3:00 min);
+  `npm run e2e` wie bisher. Aufgeteilt wird je Test (`fullyParallel`): jeder Test läuft für sich
+  allein auf den Beispieldaten – die zwei Folgen in `flows.spec.ts`, die aufeinander aufbauen
+  (Kunde TE, Verbund fw-06/fw-07), stehen in `test.describe.serial`; ein zweiter Browser-Kontext
+  nimmt die `baseURL` der Konfiguration statt fest Port 5173.
+
+## 0.104.0 – 2026-10-28
+
+Weniger Entwicklungszeit: Konfiguration statt Code, Modularisierung der Applikations-Doku,
+schlanker Ablauf (Rückmeldung des Anwenders 2026-10-28; ADR 0012 und 0026 Ergänzung 0.104.0).
+
+- **Kategorien im Namenskonzept:** Namensprofile → „Kategorien der Applikations-Doku“ (Admin):
+  Titel (deutsch/englisch, mit Zonen `{z}`), Spalten und „nur mit Zone“ je Kategorie anpassen,
+  eigene Kategorien dazu; die **Auswahl je Zone** (Bereiche mit Kategorie eingehend/ausgehend,
+  Merkmal im Namen der Firewall-Zone, Muster für den Vorschlag nach dem Zonennamen, angeboten)
+  anpassen bzw. erweitern; Optionen (breite Quelle ausgehend ausblenden, unspezifisch nur
+  eingehend). Vorgaben im Code, gespeichert nur Abweichungen, auf Vorgaben zurücksetzen; Audit
+  `appdoc_catalog.saved`/`.reset`. Netzwerkdesign → Kategorien und der Zonen-Editor bieten die
+  Bereiche des Katalogs an, der Vorschlag nach Namen kommt vom Server; Doku, Ausblenden und
+  Exporte folgen dem Katalog des Mandanten.
+- **Modular:** Sichtbarkeit der Zeilen (Kategorie, nur Treffer, nicht möglich, ausgelassen) an
+  einer Stelle (`store/appdoc_filter.py`); Markdown vom Server aus demselben Aufbau wie Word
+  (`store/md_writer.py`, `?format=md`) – der Markdown-Code in der Oberfläche entfällt.
+  Verbindungen im Export mit den Wegen je Variante („Wege uneinheitlich (aktiv über …)“) und dem
+  Load Balancer am Hop, auch in Word.
+- **Doku je System** als Markdown bzw. neu als Word (`GET /appdoc/systems/{name}/export`).
+- **Kunden-Benutzer:** Export ihres Ausschnitts als Markdown bzw. Word – ohne Verbindungen,
+  Netzwerkplan und Gerätenamen (Allowlist ergänzt).
+- **Ablauf:** `CLAUDE.md` auf die Arbeitsregeln gekürzt (Stand je Bereich in `docs/STAND.md`);
+  Abnahme gilt mit der nächsten Rückmeldung ohne Einwand, Klärung vor dem Bauen, Anpassungen
+  einer Runde in einer Version, lokal gezielte Tests.
+- Abgenommen bis 0.102.0. Tests (orchestrator 647, UI-Tests Namenskonzept und Englisch).
+
+## 0.103.0 – 2026-10-28
+
+Applikations-Doku nur mit relevanten Firewall-Regeln, ACI im Weg (Rückmeldung des Anwenders
+2026-10-28; ADR 0012 und 0034 Ergänzung 0.103.0).
+
+- **Ausgehend mit breiter Quelle ausgelassen:** Firewall-Regeln, die das System nur über ein
+  Netz, einen Bereich bzw. any in der Quelle erfassen (z. B. 10.0.0.0/8 → irgendwohin), stehen
+  nicht mehr in der Applikations-Doku (Kategorien, Regeln & Contracts, Treffer, Verbindungen) und
+  nicht in der Doku je System; Anzeige „n ausgehende mit breiter Quelle ausgelassen“
+  (`summary.outbound_broad`). Eingehende über grosse Bereiche, Regeln mit dem Server konkret und
+  direkt zugeordnete bleiben.
+- **ACI im Weg:** leitet die Firewall hinter dem L3Out eine IP zurück ins ACI (keine externe EPG
+  nach ihrem Routing), ordnet die Prüfung im Fabric sie der externen EPG mit dem längsten Subnetz
+  der VRF zu („… – Zuordnung im ACI“) – mit Contract erlaubt statt „das Fabric verwirft den
+  Verkehr“. Ordnet keine externe EPG zu, nennt der Text den Grund.
+- Tests (orchestrator 640).
+
+## 0.102.0 – 2026-10-28
+
+Kategorien der Applikations-Doku im Netzwerkdesign (Rückmeldung des Anwenders 2026-10-28; ADR 0012
+Ergänzung 0.102.0).
+
+- **Reiter „Kategorien“ im Netzwerkdesign** (Operator): je Zone die Kategorie, ihre **Netze**
+  (Quell-Adressen) und **Ausschlüsse** („ohne“, aus den Netzen herausgeschnitten) – `PUT
+  /zones/appdoc` ersetzt nur die Selektoren „Netz“, die übrigen bleiben; Audit `zone.appdoc_set`;
+  „Vorschlag nach Namen“ (Edge Internet → 1/2, Edge Office → 3/4, Edge VPN → 5, SRA/Remote → 6,
+  RES-… → 9, … Management → 11). Der Dialog „Zonen zuordnen“ in der Applikations-Doku entfällt;
+  „Zonen der Kategorien ↗“ führt ins Netzwerkdesign (`#design?tab=appdoc`).
+- **Titel nach den Zonen:** die Kategorien nennen ihre Zonen („2. Zugriff aus Edge Internet“,
+  „5. Zugriff Edge VPN“, „9. Zugriff zu RES-DC“); ohne Zone der Titel der Vorlage. Der Kopf nennt
+  die Netze wie erfasst mit den Ausschlüssen („10.0.0.0/8 ohne 10.20.0.0/16“) – Ansicht, Markdown,
+  Word, Doku je System.
+- **Kategorie 11 „Zugriff Management“** für DC Management (hinter einer eigenen Firewall):
+  Firewall-Regeln mit der Gegenstelle in der Zone und Contracts zu EPGs der Zone; erscheint nur
+  mit einer solchen Zone. Externe EPGs folgen dem Bereich ihrer Zone wie Firewall-Regeln; Spalte
+  „Zone“ auch an Contracts.
+- Ausblenden einer Regel in Kategorie 11 möglich; Tests (orchestrator 636, UI 146).
+
+## 0.101.1 – 2026-10-28
+
+Korrektur zu 0.101.0.
+
+- **„Zonen zuordnen“ behält die Auswahl:** kam die Liste der Zonen ein zweites Mal an (z. B.
+  langsame Antwort), setzte sie die eben gewählte Kategorie zurück und „Speichern“ blieb
+  gesperrt. Eine spätere Antwort überschreibt die Auswahl nicht mehr.
+- UI-Test räumt eine Zone aus einem abgebrochenen Versuch vorher weg.
+
+## 0.101.0 – 2026-10-28
+
+Applikations-Doku: Kategorien mit Zonen, Namen breiter Quellen (Rückmeldung des Anwenders
+2026-10-28; ADR 0012 Ergänzung 0.101.0).
+
+- **Zonen an den Kategorien:** je logischer Zone ein Bereich der Kategorien
+  (`logical_zone.appdoc_area`, Migration `0063`) – Internet (1/2), Unternehmensnetzwerk (3/4),
+  VPN (5), Remote Access (6), andere Security Tenants (9). Zuordnen in der Doku („Zonen
+  zuordnen“, Operator, `PUT /zones/appdoc-areas`, Audit `zone.appdoc_areas_set`) bzw. im
+  Zonen-Editor („Kategorie in der Applikations-Doku“, `appdoc_area` in `PUT /zones/{id}`, ohne
+  Feld bleibt der Wert).
+- **Kategorie nach der Zone der Gegenstelle** (`store/appdoc_zones.py`): Firewall-Regeln mit
+  grossem Quell-Bereich, die direkt auf das System zeigen, stehen in der Kategorie der Zone, aus
+  der sie kommen, statt unter „Unspezifische Zugriffe“ – längstes Zonen-Netz bzw. die Zonen der
+  Netze im Bereich, bei any die Anbindung bzw. die Netze hinter dem Interface; genau ein Bereich
+  entscheidet, vor dem Merkmal im Namen der Firewall-Zone; mehrere Bereiche bleiben unspezifisch.
+- **Spalte „Zone“** (Zonen der Gegenstelle) und **Zonen mit ihren Netzen im Kopf jeder
+  Kategorie** – Ansicht, Markdown, Word, Druck, Doku je System; nicht für Kunden-Benutzer.
+- **Namen breiter Quellen:** mit „Namen der Gegenstellen“ Netze und Bereiche über das Objekt wie
+  in der Regel – die Gruppe mit ihren Netzen in einer Zeile („G_clients (10.70.0.0/16,
+  10.71.0.0/16)“); Hosts behalten den Namen aus IPAM/VM.
+- **Schalter für den Global Admin** direkt in der Karte „Doku nach Kategorien“ („Namen der
+  Gegenstellen“, setzt die Einstellung des Mandanten; `peer_names` in der Antwort der Doku).
+
+## 0.100.0 – 2026-10-27
+
+Switches & Router über SNMPv3 – zweiter, rein lesender Zugang neben SSH (Auftrag des Anwenders
+2026-10-27; ADR 0033).
+
+- **Zugang „SSH | SNMPv3“** am Quellsystem (`source_system.access`, Migration `0062`). Nur
+  SNMPv3 authPriv (Auth SHA/SHA-224/-256/-384/-512, Priv AES-128/-192/-256, Passwörter ≥ 8
+  Zeichen, optional Context; kein v1/v2c, keine Community, kein MD5/DES), Zugangsdaten
+  verschlüsselt, ausgegeben nur die Protokolle (`snmp`); Wechsel des Zugangs verwirft die
+  Zugangsdaten; Audit nur `credentials_set`/`access`.
+- **Collector `collectors/snmp/`** (pysnmp, BSD-2, neue Abhängigkeit im Lockfile): nur
+  GET/GETBULK auf eine Positivliste (`oids.py`, `ReadOnlyViolation` vor dem Senden, kein SET
+  importiert); SNMPv2-, ENTITY-, IF-, EtherLike-, IEEE8023-LAG-, BRIDGE-, Q-BRIDGE- bzw.
+  IEEE8021-Q-BRIDGE-, IP-, LLDP- und CISCO-CDP-MIB → dieselben DTOs wie per SSH (Verkabelung,
+  Endpunkte, L2-Sicht, NetBox-Sync unverändert); fehlende Tabellen als Hinweis, MAC-Tabelle
+  höchstens 50 000; offene Tasks von pysnmp beim Schliessen beendet.
+- Prüfen: `--check` = GET auf sysName je Gerät; „Prüfen“ im Orchestrator für `snmp://` nur
+  Namensauflösung mit Hinweis (UDP).
+- UI: Quellsystem-Dialog mit Zugang, SNMPv3-Benutzer, Auth-/Priv-Protokoll und -Passwort,
+  Context (`#ss-access`, `#ss-snmp…`); Chip „SNMPv3“ in der Liste; neue Laufmeldungen zweisprachig
+  (`run_text.PHRASES`).
+- **Korrigiert:** das Ziel des Agenten enthielt die festgehaltenen SSH-Host-Schlüssel nicht
+  (`known_hosts` fiel im Antwortschema weg) – Agent-Läufe prüften den Schlüssel nie; jetzt
+  mitgeliefert (nur Switches & Router).
+
+## 0.99.0 – 2026-10-27
+
+Routing bis an die Firmengrenze (Auftrag des Anwenders 2026-10-27; ADR 0032).
+
+- **Switches & Router lesen das Routing der Router und L3-Switches** – nur `show` in der
+  Positivliste (`cisco_switch/routing.py`): IOS/IOS-XE (`show ip route` inkl. `vrf *`,
+  `show ipv6 route`, `show ip bgp summary`, `show bgp ipv4 unicast`), NX-OS
+  (`show ip/ipv6 route vrf all`, `show ip bgp summary vrf all`), Junos (`show route`,
+  `show bgp neighbor` als JSON), Arista EOS (RIB, BGP, Interface-Adressen als JSON).
+- Je Gerät und VRF ein **Routing-Kontext** (Art `l3`, „rt-01“ bzw. „rt-01 · VRF x“) mit Routen,
+  BGP-Pfaden und BGP-Nachbarn (AS, Zustand, lokales AS, ibgp/ebgp); Management-VRFs fallen weg;
+  fehlende Rechte = „nicht lesbar“ statt Fehler; Obergrenze 20 000 Routen je
+  Kontext/Tabelle/Familie (Fullfeed), zu grosse Ausgaben gekürzt; L2-Switches ohne Routing
+  ohne Kontext.
+- **Weg-Suche und Topologie laufen durch gelesene Router** (`paths.Graph`: Next-Hop-Besitzer über
+  die eigenen Adressen, HSRP/VRRP/VARP virtuell ohne Befund „doppelte IP“); erkannte
+  Anbindungen nur noch für nicht gelesene Router.
+- **Firmengrenze** (`store/boundary.py`): eBGP zu fremdem AS, Anbindung Internet/MPLS/Partner
+  bzw. Default-Route zum Provider – in der Weg-Suche am Weg und am letzten Hop
+  (`path.boundary`/`hop.boundary`, „Firmengrenze · AS …“), in der Topologie Grenzknoten und
+  Gegenstellen hervorgehoben (`boundary`, `at_boundary`, `summary.boundary`, Filter
+  „Firmengrenze“ bzw. „Router (gelesen)“).
+- Kunde oben: Router-Kontexte geteilt, wenn sie ein Netz des Kunden routen; Kunden-Doku nennt
+  sie „Router“; der Verlauf des Routings nimmt sie mit (kein Ausgangsstand ohne Routing).
+
+## 0.98.0 – 2026-10-27
+
+Weg-Suche: Details am Weg und Anbindungen als Quelle bzw. Ziel (Befunde des Anwenders aus dem
+Test 2026-10-27; ADR 0019 Ergänzung 0.98.0).
+
+- **Suche in der URL** (`#wege?src=…&dst=…&service=…`, dazu `start`, `slack`,
+  `src_name`/`dst_name`, `src_exit`/`dst_exit`): Zurück, Neuladen bzw. ein neuer Tab stellen die
+  Suche wieder her und rechnen neu; Links aus der Applikations-Doku unverändert (`svc` als Alias).
+- **Details am Weg im Seitenpanel** statt eines Sprungs: Policy/Contract (`RuleDetailDrawer`),
+  VIP/Virtual Service (`NatDrawer`), Objekt der Policy (`ObjectDrawer`), Route (wirksam mit
+  Next-Hops, Policy-Routen, Backup, alle Routen zum Ziel im Kontext), Knoten/Interface mit
+  Inventar; jeder Link mit „↗“ (neuer Tab), Ctrl-/Mittelklick wie im Browser.
+- **Je Hop „mehr“:** Ein-/Ausgang mit Zone, Route, entscheidende Regel mit
+  Interfaces/Quelle/Ziel/Dienst, NAT/SNAT/Load Balancer, Zone, L2 – je Firewall eines Verbunds.
+- **Anbindungen in der Namenssuche** (`GET /routing/resolve`, Art `exit`, Gruppe „Anbindungen“):
+  von Hand erfasste immer, erkannte bei Art, Firewall, Interface bzw. Zone; mit Kunde oben nur
+  an seinen Firewalls.
+- **Anbindung als Quelle** (`GET /routing/trace?src_exit=`, `store/exit_ends.py`): Start an
+  ihren Firewalls mit ihrem Eingang (Policies mit Eingang z. B. wan1 entscheiden); Quelle =
+  erstes Netz der Anbindung als Ganzes, bei Default-Route/Internet eine Test-Adresse aus dem
+  Dokumentationsbereich („beliebige Adresse im Internet“); `paths.trace` mit `entries`.
+- **Anbindung als Ziel** (`dst_exit=`): Ziel aus ihren Netzen, je Weg „über die Anbindung“
+  (`via_exit`) bzw. ein Hinweis.
+- Mehrere Firewalls einer Anbindung: je ein Weg („Variante ab …“), im Verbund ein Hop; Firewall
+  (`@<Quellsystem>`) und anderes Netz in der Karte der Anbindung wählbar.
+
+## 0.97.0 – 2026-10-27
+
+L3Outs: Firewall führend (Befunde des Anwenders aus dem Test 2026-10-27; ADR 0034).
+
+- **Firewall hinter jedem L3Out:** abgeleitet aus dem Transfernetz bzw. BGP-Peer/statischem
+  Next-Hop, von Hand bestätigen, ändern, „keine“ oder zurücksetzen (Routing → L3Outs (ACI),
+  Spalte „Firewall dahinter“; `GET /routing/l3outs` mit `behind`,
+  `GET /routing/l3outs/firewall-choices`, `PUT/DELETE /routing/l3outs/firewall` Operator, Audit
+  `routing.l3out_firewall.set`/`.removed`; Migration `0061` `l3out_firewall`).
+- **Über welchen L3Out eine Gegenstelle kommt, entscheidet das Routing der Firewalls dahinter**
+  (`aci_relevance._by_firewall`: genaueste Route nach aussen, zurück ins ACI = nicht über diesen
+  L3Out), mit Begründung „über L3O_inet: fw-01 routet … über wan1“; Rückfall auf das ACI
+  (längstes Subnetz) ohne Firewall bzw. ohne Aussage – in Doku, Weg-Suche, Verbindungen,
+  Regel-Liste nach IP, Zonen und Kunden.
+- **Applikations-Doku:** Contracts zu externen EPGs mit Firewall dahinter nur als Hilfs-Contract
+  an der Firewall-Regel (neue Spalte „L3Out“: „L3O_inet · Contract CT_inet“), nicht mehr in
+  „Regeln & Contracts“, im Export und in den Kennzahlen; enger als die Firewall „– es fehlt …“
+  mit Befund `app_contract_narrower`; ohne Firewall dahinter sichtbar mit Hinweis.
+- **Unspezifische Zugriffe je Kategorie nach dem L3Out geordnet**, über den sie hereinkommen
+  (Zwischenüberschrift „über L3O_x“, Spalte in Markdown/Word).
+- Verbindungen Ende zu Ende: Hilfs-Contract keine eigene Verbindung, prüft im ACI-Hop mit.
+
+## 0.96.0 – 2026-10-27
+
+NAT / VIPs: Kette über den Load Balancer, Namenskonvention für VIPs und IP-Pools (Befunde des
+Anwenders aus dem Test 2026-10-27; ADR 0027 und ADR 0016 Ergänzung 0.96.0).
+
+- **Kette in NAT / VIPs:** je VIP der Firewall externe IP:Port → VIP des Load Balancers →
+  Virtual Service → Pool → Server (`chain`); am Virtual Service die VIPs davor (`fronted_by`,
+  Kunden-Benutzer nur aus ihrem Ausschnitt); Spalte „Ziel-Server“ für alle VIPs (direkt bzw.
+  „über vs-…“, `dest_servers`), VIP-Gruppen je VIP (`groups`); im Detail „Kette über den Load
+  Balancer“ bzw. „Davor: VIPs der Firewall“ mit Sprung zwischen den Einträgen.
+- **Verknüpfung robuster** (`store/nat.Balancers.links`/`fronts`): auch Bereiche und mehrere
+  Werte in `mappedip` (1:1), Port-Weiterleitung mit Port-Bereichen, Virtual Server der FortiGate
+  mit der VIP des Load Balancers als Real Server und FQDN-VIPs – nur im selben Mandanten;
+  Regel-Detail, publizierte Dienste, Applikations-Doku, Relevanz und Regelindex nutzen sie mit
+  (Regeln am Virtual Service, Filter `nat=<Virtual Service>`).
+- **Suche** über die ganze Kette (externe IP auch im Bereich, Server-IP/-Objekt/-DNS-Name,
+  Virtual Service, Pool, VIP-Gruppe); **Export (CSV)** der Liste, je Weg eine Zeile.
+- **Collector:** VIP-Gruppen der FortiGate (`firewall/vipgrp`/`vipgrp6`, optional, nur lesend)
+  als Adressgruppe vom Typ `vipgrp` – Policies auf eine VIP-Gruppe kennen jetzt ihre VIPs;
+  IPv6-IP-Pools auch als Objekte (für die Namensprüfung).
+- **Namenskonvention:** VIPs, Virtual Server und IP-Pools mit dem Präfix ihres Typs (VIP bzw.
+  VIP / DNAT, neu „Virtual Server“ – ohne Eintrag gelten die VIP-Präfixe –, SNAT IP-Pool); ein
+  Adress-Präfix genügt nicht mehr; ohne gepflegtes Präfix des Typs kein Befund; NSX ALB nicht
+  geprüft; Befund `invalid_name` zweisprachig mit Link nach NAT / VIPs.
+
+## 0.95.0 – 2026-10-27
+
+Applikations-Doku: Detail statt Sprung, Namen der Gegenstellen (Befunde des Anwenders aus dem
+Test 2026-10-27; ADR 0012 Ergänzung 0.95.0).
+
+- **Klick auf eine EPG** (Karte „EPGs im ACI“ bzw. im Detail eines Systems) öffnet ihr Detail wie
+  im Regel-Detail (Tenant, AP, BD, VRF, Subnetze mit IPAM, Endpunkte, VMs, Leaf-Ports) statt zu
+  den Regeln zu springen; im Detail „Regeln dieser EPG zeigen“ und „In Objekte & Inventar
+  öffnen“ (`GET /applications/{id}/epgs/{epg_id}`, nur EPGs der Applikation, Kunden-Benutzer nur
+  im Ausschnitt).
+- **Firewall-Objekte** im Detail eines Systems öffnen das Objekt-Detail von „Objekte & Inventar“
+  in der Doku (mit Knopf dorthin); die Kennzahlen filtern weiter.
+- **Namen der Gegenstellen:** neue Einstellung am Mandanten `appdoc_foreign_names` (Migration
+  `0060`, Standard aus, nur Admin, Audit `tenant.updated`) – Gegenstellen, von denen die
+  Firewall-Regel nur die Adresse kennt, zeigen in den Kategorien (Ansicht, Markdown, Word, Doku
+  je System) den Namen aus IPAM, VM, EPG bzw. Firewall-Objekt (`store/peer_names.py`).
+  Kunden-Benutzer sehen unabhängig davon nur die Adressen.
+
+## 0.94.1 – 2026-10-27
+
+Korrektur nach dem Test des Anwenders („Load documentation: HTTP 500 beim Laden der Applikation“).
+
+- **Unerwartete Fehler mit Referenz:** statt nur „HTTP 500“ zeigt die Oberfläche „Interner
+  Fehler – Referenz …“; der Orchestrator schreibt die Ursache mit derselben Referenz und dem
+  Traceback ins Protokoll (keine Details in der Antwort). So lässt sich der Fehler bei der Doku
+  einer Applikation mit echten Daten finden – mit den Beispieldaten tritt er nicht auf (alle
+  Applikationen auf Deutsch und Englisch geprüft).
+
+## 0.94.0 – 2026-10-27
+
+Switches: IPv6-Nachbarn, Arista EOS und Aruba CX (ADR 0025 Nr. 13; Anwender: „Verkabelung“ –
+IPv6-Nachbarn, weitere Hersteller). Weiterhin strikt lesend (Positivliste der show-Befehle).
+
+- **IPv6-Nachbarn (NDP)** wie ARP: IOS/IOS-XE `show ipv6 neighbors`, NX-OS `show ipv6 neighbor
+  vrf all` (eigene Auswertung), Junos JSON, Catalyst 1200/1300 `show ipv6 neighbors all`; nur
+  Unicast mit MAC, ohne Zone; fehlt der Befehl (alte Software), bleibt der Teil ohne Hinweis
+  leer.
+- Gespeichert in `arp_entry` ohne Migration; Endpunkte und „Wo hängt …“ (Grund „NDP <IP>“) sowie
+  der L2-Anschluss in der Weg-Suche auch über IPv6; Link-local getrennt (`link_local`), nicht als
+  Identität.
+- **Neu: Arista EOS** (nur `show … | json`, Rolle `network-operator`) und **HPE Aruba CX/AOS-CX**
+  (ntc-Vorlagen `aruba_aoscx`, Gruppe `operators`; erlaubte VLANs/LAG-Mitglieder über die Grenze
+  der Vorlage hinaus).
+- ArubaOS-Switch/ProCurve wird erkannt und nicht gelesen (Abbruch vor dem ersten Senden; Meldung
+  zweisprachig).
+- Oberfläche: Hersteller und Konto-Rollen im Quellsystem-Dialog, IPv6/Link-local in den
+  Endpunkten.
+
+## 0.93.0 – 2026-10-27
+
+NetBox-Sync: Verkabelung und Applikationen (ADR 0031; Freigabe des Anwenders 2026-10-27
+„Verkabelung, Applikationen … Go“ für Kabel/Ports und Export der Applikationen nach NetBox –
+weiterhin nur NetBox wird geschrieben, Vorschau → Übernehmen).
+
+- Zwei neue Abschnitte im NetBox-Sync, **standardmässig aus** (ohne Angabe gelten Netzinventar,
+  DDI-Spiegel, Virtualisierung).
+- **Verkabelung:** Switches & Router mit Ports (Typ aus Name/Speed/Medium, Beschreibung,
+  aktiviert, Port-Channel) wie im Netzinventar; ohne Standort bzw. gelesenes Modell nichts raten,
+  sondern Hinweis. Modus/VLANs nur mit eindeutig vorhandenen VLANs (VLAN-Gruppe des
+  Quellsystems, Standort, global), sonst weggelassen mit Hinweis je Gerät. Kabel (`dcim/cables`)
+  nur für beidseitig gemeldete Verbindungen zwischen Ports, die in NetBox sind bzw. im Sync
+  angelegt werden; einseitige/nicht gelesene Verbindungen als Hinweis, belegter Port =
+  Konflikt, umgesteckter Port mit „Löschen zulassen“ in einem Durchgang.
+- **Applikationen:** je Applikation ein Tag `automato-app-<Mandant>-<Kürzel bzw. Name>` an den VMs
+  und IP-Adressen ihrer Systeme; nur an Objekten mit Tag `automato`, fremde Tags bleiben, von
+  Hand gepflegte Objekte als Konflikt; nicht mehr passende Applikations-Tags werden entfernt.
+  Keine Custom Fields.
+- Objekte eines nicht gewählten Abschnitts sind nicht mehr „veraltet“ (auch nicht mit „Löschen
+  zulassen“).
+- Audit `netbox_sync.planned`/`applied` mit den gewählten Abschnitten; Sync-Benutzer braucht
+  zusätzlich `dcim.cable` (`sync-user.sh` erneut ausführen).
+
+## 0.92.0 – 2026-10-27
+
+Verlauf des Routings (ADR 0030; Anwender: „Routing: Verlauf der Routen“, bisher Momentaufnahme).
+
+- **Änderungen von Lauf zu Lauf** je Quellsystem (`topo_change`, Migration `0059`,
+  `store/topo_changes.py`): Routen (RIB, BGP-Pfade, statische), BGP-Nachbarn, HA,
+  Policy-Routen/SD-WAN, Kontexte und L3Outs – je Eintrag hinzugefügt, entfernt oder geändert,
+  vorher/nachher nur mit den verglichenen Feldern (Next-Hops, Protokoll, Distanz/Metrik,
+  aktiv/Backup, BGP-Zustand, AS, AS-Pfad …); Reihenfolge und Zähler zählen nicht.
+- **Vermerke statt Fluten:** erster Lauf = „Ausgangsstand“; nicht lesbarer Kontext ohne Flut
+  „entfernt“ bzw. danach „hinzugefügt“; neuer bzw. nicht mehr gelesener Kontext und
+  Gerätename-Wechsel (HA) als ein Eintrag; höchstens 5000 Einträge je Lauf, der Rest als
+  Sammel-Eintrag.
+- **Aufbewahrung** `AUTOMATO_RETENTION_TOPO_CHANGES_DAYS` (180 Tage, `0` = nie), auf der
+  System-Seite und in `automato purge`.
+- **API** `GET /routing/changes` (Filter Quellsystem, Kontext, Art, Änderung, Suche, Zeitraum;
+  seitenweise; Texte in der Sprache der Anfrage; Kunde oben = sein Ausschnitt; nicht für
+  Kunden-Benutzer), dazu `changed_at` an den Routen und `changes_7d`.
+- **UI:** Routing → Reiter **Verlauf** mit Detail je Feld und Link zum Lauf (Läufe mit gewähltem
+  Quellsystem, Lauf hervorgehoben); Chip „geändert“ an den Routen; „Routing-Änderungen (7 Tage)“
+  in „Gelesene Kontexte“.
+
+## 0.91.0 – 2026-10-27
+
+Datenqualität (Roadmap Schritt 6 „Daten verschärfen“, erste Fassung, ADR 0029 – Inhalt von uns
+vorgeschlagen, zur Abstimmung mit dem Anwender).
+
+- **Reiter „Datenqualität“** im Abgleich und Kachel in der Übersicht: fünf Bereiche
+  (Quellsysteme, Regeln, VMs, IPAM, Zonen & Kunden) mit Ampel, Kennzahl, Ursache, Hinweis und
+  Link in die Ansicht zum Nachbessern; Gesamtnote = Anteil der Bereiche ohne Warnung.
+  `GET /data-quality` (viewer, nicht für Kunden-Benutzer, mit Kunden-Filter).
+- **Relevanz „unbekannt“ nach Ursache:** Firewall ohne Routing, Interface/Zone nicht im Inventar,
+  Stichprobe über höchstens 300 Regeln (keine Route, Interface der Route unbekannt,
+  Policy-Route); `relevance.check` liefert die Ursache als Schlüssel `cause`.
+- **Neue Befunde** „Quellsystem: Stand veraltet“ (`source_stale`, Grenze `AUTOMATO_STALE_DAYS`
+  = 7, mit Zeitplan mindestens ein Abstand plus ein Tag) und „Quellsystem: nur teilweise
+  gelesen“ (`source_partial`: Geräte nicht erreicht, nicht lesbar, Routing-Kontexte
+  unvollständig). Gruppe „Datenqualität“ in den Findings; der Zeitplan rechnet sie stündlich nach.
+- Betriebszustand: „Stand veraltet“ mit derselben Grenze wie der Befund. Läufe: Filter auf ein
+  Quellsystem per Link (`#laeufe?system=`).
+
+## 0.90.0 – 2026-10-27
+
+Läufe, Agent und CLI auf Deutsch und Englisch (ADR 0028 Schritt 4; Anwender: „3 Sprache“).
+
+- **Meldungen der Läufe** und der Grund der Update-Prüfung eines Agenten bleiben deutsch
+  gespeichert und erscheinen in der Sprache der Anfrage: Läufe-Liste, „Letzte Läufe“,
+  Betriebszustand, Agentenliste, `automato status` (`store/run_text.py`, `runs.show_message`;
+  bekannte Teile, auch in zusammengesetzten Meldungen, Unbekanntes bleibt).
+- „Alle einlesen“: Gründe für übersprungene Quellsysteme zweisprachig (vorher nur englisch).
+- **Agent-Konsole:** `AUTOMATO_LANG=en` in der `agent.env` stellt `-Check`, `-Once`/Wach-Modus,
+  Selbst-Update, Hilfe und Log auf Englisch um (`collectors/common/i18n.py`); was an Automato
+  geht, bleibt deutsch, die Konsole zeigt die Meldung des Laufs in der Übersetzung des
+  Orchestrators (Quittung `shown`).
+- **CLI:** `automato --lang en …` bzw. `AUTOMATO_LANG=en` (Standard Deutsch); speichernde Befehle
+  bleiben deutsch.
+- Collector-Agenten → Einrichtung: Meldungen des Agenten in der Fehlertabelle deutsch und
+  englisch; die erzeugte `agent.env` enthält `AUTOMATO_LANG=en` bei englischer Oberfläche.
+
+## 0.89.0 – 2026-10-27
+
+Feinere Rollen der Kunden-Benutzer (Anwender: „Kunden: feinere Rollen“; ADR 0018 Ergänzung).
+
+- **Kunden-Rollen je Kunde:** Lesen (`viewer`), Triage (`triage` = bisher „operator“ des
+  Kunden), Editor (`editor`), Kunden-Admin (`customer_admin`) – aufgelöst in Capabilities
+  (`auth/capabilities.py`). Unbekannte Rolle = Lesen, `admin` bleibt dem globalen Admin
+  vorbehalten; kein bestehendes Recht wird erweitert.
+- **Freigabeliste mit Capability** je Methode und Pfad; ein schreibender Endpunkt öffnet sich nie
+  mit dem Leserecht.
+- **Editor** pflegt Applikationen, die ganz beim Kunden liegen: Stammdaten, Regeln
+  zuordnen/ausschliessen, Regeln je Kategorie ausblenden – nur mit Regeln des eigenen
+  Ausschnitts; `editable` an den Applikationen, Chip „pflegbar“.
+- **Kunden-Admin** ordnet die Kunden-Benutzer seines Kunden selbst zu (höchstens die eigene
+  Rolle, nie das eigene Konto, nie andere Kunden); Seite „Kunden-Benutzer“. Migration `0058`
+  `customer_user.origin` – seine Zuordnungen wirken nie auf Betreuer.
+- **Keycloak:** optionaler Claim `customer_role` (Mapper in der Realm-Vorlage,
+  `AUTOMATO_OIDC_CUSTOMER_ROLE_CLAIM`, SAML fest je IdP); mit Zuordnung gilt je Kunde die höhere
+  Rolle.
+- `GET /auth/me` mit `capabilities`, `customer_role`, `customer_roles`; Audit mit
+  `customer_roles`, `origin`, `previous_role`.
+
+## 0.88.0 – 2026-10-27
+
+Abhängigkeiten zwischen Applikationen wieder in der Doku (Anwender: „Abhängigkeiten wieder
+einblenden“; 0.73.0 hatte sie entfernt, weil z. B. Monitoring keine fachliche Abhängigkeit ist).
+
+- **Infrastruktur kennzeichnen:** neues Feld im Formular der Applikation („Infrastruktur
+  (Monitoring, Backup, DNS …)“, Migration `0057`, Audit). Abhängigkeiten zu solchen
+  Applikationen stehen eingeklappt in einem eigenen Teil „Infrastruktur“, die fachlichen oben;
+  Chip „Infrastruktur“ im Kopf der Doku.
+- **Bereich „Abhängigkeiten“** in der Applikations-Doku: zugeklappt, lädt erst beim Aufklappen
+  (`GET /applications/{id}/dependencies`, auch für Kunden-Benutzer mit ihrem Ausschnitt);
+  „nutzt“ / „wird genutzt von“ mit den Regeln, Klick öffnet Applikation bzw. Regel.
+- **Export:** Abschnitt „Abhängigkeiten“ für Markdown, Word und Druck (Deutsch/Englisch).
+
 ## 0.87.0 – 2026-10-27
 
 Texte vom Server und Exporte auf Deutsch und Englisch (ADR 0028 Schritte 2 und 3; Anwender: „es

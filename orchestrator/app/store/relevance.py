@@ -38,6 +38,7 @@ from app.models import (
     RuleDomain,
     RuleEndpoint,
     RuleIpRange,
+    TopoPolicyRoute,
     TopoRoute,
     Zone,
 )
@@ -49,6 +50,11 @@ from app.store.topology import Table, ip_hex, table_of
 SHOWN_NETS = 3  # Netze hinter einem Interface in der Anzeige
 
 POSSIBLE, IMPOSSIBLE, UNKNOWN = "possible", "impossible", "unknown"
+# Ursache eines Ergebnisses als Schluessel (`check(...)["cause"]`, Datenqualitaet ADR 0029) - der
+# Text bleibt die Anzeige; None, wenn die Regel greifen kann
+NO_IP, NO_ROUTING, NO_ROUTE = "no_ip", "no_routing", "no_route"
+ROUTE_INTERFACE, POLICY_ROUTE = "route_interface", "policy_route"
+INTERFACE_UNKNOWN, OTHER_INTERFACE = "interface_unknown", "other_interface"
 
 
 def _names(raw: dict, key: str) -> list[str]:
@@ -88,6 +94,7 @@ class Relevance:
         self._behind: dict[tuple, dict | None] = {}
         self._balancers: nat_store.Balancers | None = None
         self._balanced: set[int] | None = None
+        self._classifier: aci_relevance.Classifier | None = None
 
     def through_balancer(self, rule, values: list[str]) -> list[str]:
         """0.79.0: erreicht die Regel ein Ziel ueber einen Load Balancer (NSX ALB; VIP der
@@ -112,6 +119,15 @@ class Relevance:
             self._graph = Graph(self.session, self.tenant_id)
         return self._graph
 
+    @property
+    def classifier(self) -> "aci_relevance.Classifier":
+        """Externe EPGs und die EPG je IP fuer alle Contracts dieses Durchgangs - einmal geladen
+        (0.108.0: je Adresse neu geladen, kostete das Speichern einer Zone Minuten)."""
+        if self._classifier is None:
+            self._classifier = aci_relevance.Classifier(self.session, self.tenant_id,
+                                                        lambda: self.graph)  # fmt: skip
+        return self._classifier
+
     def _node(self, rule: Rule) -> Key | None:
         g = self.graph
         key = (rule.source_system_id, rule.vdom or "")
@@ -133,7 +149,8 @@ class Relevance:
         return self._known[sid]
 
     def members(self, sid: int, name: str) -> list[str]:
-        """Interfaces eines Namens der Regel: das Interface selbst bzw. die einer Zone."""
+        """Interfaces eines Namens der Regel: das Interface selbst bzw. die einer Zone - auch
+        einer SD-WAN-Zone (Mitglieder aus `system/sdwan`, 0.114.1)."""
         if sid not in self._zones:
             zones: dict[str, list[str]] = {}
             for iface, zone in self.session.execute(
@@ -144,6 +161,15 @@ class Relevance:
                 zones.setdefault(iface, [iface])
                 if zone:
                     zones.setdefault(zone, []).append(iface)
+            for attrs in self.session.scalars(
+                select(TopoPolicyRoute.attrs).where(
+                    TopoPolicyRoute.source_system_id == sid, TopoPolicyRoute.kind == "sdwan"
+                )
+            ):
+                for m in (attrs or {}).get("members") or []:
+                    zone, iface = m.get("zone"), m.get("interface")
+                    if zone and iface and iface not in zones.setdefault(str(zone), []):
+                        zones[str(zone)].append(str(iface))
             self._zones[sid] = zones
         return self._zones[sid].get(name, [])
 
@@ -181,7 +207,13 @@ class Relevance:
         if cache_key not in self._behind:
             parts = [p for p in (self._behind_one(key, n) for n in names) if p]
             self._behind[cache_key] = (
-                {"text": "; ".join(p["text"] for p in parts), "kind": parts[0]["kind"]}
+                {
+                    "text": "; ".join(p["text"] for p in parts),
+                    "kind": parts[0]["kind"],
+                    # Zonen der Gegenstelle any (0.101.0): Anbindungen bzw. Netze dahinter
+                    "exits": [x for p in parts for x in p.get("exits", [])],
+                    "nets": [n for p in parts for n in p.get("nets", [])],
+                }
                 if parts
                 else None
             )
@@ -193,7 +225,8 @@ class Relevance:
         for iface in ifaces:
             ex = g.exit_for(key, iface, g.zone(key[0], iface) or name, None)
             if ex is not None:
-                return {"text": f"{_exit_label(ex)} ({name})", "kind": ex.kind}
+                return {"text": f"{_exit_label(ex)} ({name})", "kind": ex.kind,
+                        "exits": [ex.name, f"#{ex.id}"]}  # fmt: skip
         routes = self._routes(key)
         if any(length == 0 and set(ifaces) & via for _p, length, via in routes):
             text = L(f"extern (Default-Route über {name})", f"external (default route via {name})")
@@ -208,6 +241,7 @@ class Relevance:
         return {
             "text": L(f"Netze hinter {name}: {listed}", f"Networks behind {name}: {listed}"),
             "kind": "nets",
+            "nets": nets,
         }
 
     def check(self, rule: Rule, side: str, values: list[str], zone: str | None = None) -> dict:
@@ -221,30 +255,30 @@ class Relevance:
         results = [self._one(rule, side, names, v) for v in dict.fromkeys(values)]
         results = [r for r in results if r is not None]
         if not results:
-            return {"state": UNKNOWN, "text": L("keine IP zum Prüfen", "no IP to check")}
+            return {"state": UNKNOWN, "text": L("keine IP zum Prüfen", "no IP to check"),
+                    "cause": NO_IP}  # fmt: skip
         for state in (POSSIBLE, UNKNOWN):
             hit = next((r for r in results if r[0] == state), None)
             if hit is not None:
-                return {"state": state, "text": hit[1]}
-        return {"state": IMPOSSIBLE, "text": results[0][1]}
+                return {"state": state, "text": hit[1], "cause": hit[2]}
+        return {"state": IMPOSSIBLE, "text": results[0][1], "cause": results[0][2]}
 
     def _one(self, rule: Rule, side: str, names: list[str], value: str):
         ip = _ip(value)
         if ip is None:
             return None
         if not names or any(n.lower() == "any" for n in names):
-            return POSSIBLE, ""  # ohne Interface bzw. any: jede Richtung
+            return POSSIBLE, "", None  # ohne Interface bzw. any: jede Richtung
         key = self._node(rule)
         if key is None:
-            return UNKNOWN, L(
-                "Routing der Firewall nicht gelesen", "routing of the firewall not read"
-            )
+            text = L("Routing der Firewall nicht gelesen", "routing of the firewall not read")
+            return UNKNOWN, text, NO_ROUTING
         cache_key = (key, side, tuple(names), str(ip))
         if cache_key not in self._cache:
             self._cache[cache_key] = self._decide(key, side, names, ip)
         return self._cache[cache_key]
 
-    def _decide(self, key: Key, side: str, names: list[str], ip) -> tuple[str, str]:
+    def _decide(self, key: Key, side: str, names: list[str], ip) -> tuple[str, str, str | None]:
         g = self.graph
         node = g.nodes[key]
         # VRF: die des Interfaces der Regel (Zonen und unbekannte Namen = Standard-VRF)
@@ -252,7 +286,7 @@ class Relevance:
         route = g.route(key, ip, table)
         if route is None:
             return UNKNOWN, L(f"keine Route zu {ip} auf {node.label}",
-                              f"no route to {ip} on {node.label}")  # fmt: skip
+                              f"no route to {ip} on {node.label}"), NO_ROUTE  # fmt: skip
         ports: dict[str, str | None] = {}
         for h in route["next_hops"] or []:
             iface = h.get("interface")
@@ -261,28 +295,31 @@ class Relevance:
             if iface:
                 ports[iface] = g.zone(key[0], iface)
         if not ports:
-            return UNKNOWN, L(
+            text = L(
                 f"Interface der Route zu {ip} auf {node.label} unbekannt",
                 f"interface of the route to {ip} on {node.label} unknown",
             )
+            return UNKNOWN, text, ROUTE_INTERFACE
         have = set(ports) | {z for z in ports.values() if z}
         if have & set(names):
-            return POSSIBLE, ""
+            return POSSIBLE, "", None
         if side == "dst":
             policies = [
                 p for p in g.policies(key, None, ip, None) if p["output_device"] or p["gateway"]
             ]
             if any(set(p["output_device"]) & set(names) for p in policies):
-                return POSSIBLE, ""
+                return POSSIBLE, "", None
             if policies:
-                return UNKNOWN, L(
+                text = L(
                     f"Policy-Route bzw. SD-WAN auf {node.label} kann {ip} anders leiten",
                     f"policy route or SD-WAN on {node.label} can route {ip} differently",
                 )
+                return UNKNOWN, text, POLICY_ROUTE
         if not all(n in self.known(key[0]) for n in names):
             listed = ", ".join(names)
-            return UNKNOWN, L(f"Interface bzw. Zone {listed} auf {node.label} unbekannt",
-                              f"interface or zone {listed} on {node.label} unknown")  # fmt: skip
+            text = L(f"Interface bzw. Zone {listed} auf {node.label} unbekannt",
+                     f"interface or zone {listed} on {node.label} unknown")  # fmt: skip
+            return UNKNOWN, text, INTERFACE_UNKNOWN
         via = ", ".join(f"{i} (Zone {z})" if z else i for i, z in ports.items())
         rule_side = ", ".join(names)
         if side == "dst":
@@ -298,7 +335,7 @@ class Relevance:
                 f"traffic from {ip} arrives at {node.label} via {via} – the rule only applies to "
                 "the incoming interface",
             )
-        return IMPOSSIBLE, f"{text} {rule_side}"
+        return IMPOSSIBLE, f"{text} {rule_side}", OTHER_INTERFACE
 
 
 def summarize(states: list[str]) -> str:
@@ -379,7 +416,7 @@ def _aci_for_ip(
     if not rows:
         return {}
     epgs = {e.id: e for e in session.scalars(select(Epg).where(Epg.id.in_({r[2] for r in rows})))}
-    cls = aci_relevance.Classifier(session, tenant_id, lambda: rel.graph)
+    cls = rel.classifier
     found: dict[int, dict[str, list[tuple[str, str]]]] = defaultdict(lambda: defaultdict(list))
     internal: dict[tuple[int, str], list[Epg]] = defaultdict(list)
     members: dict[tuple[int, str], list[Epg]] = defaultdict(list)
@@ -445,7 +482,8 @@ def _covering(session: Session, epgs: list[Epg], ip, cls=None) -> tuple[set[int]
 
     if not epgs:
         return set(), {}
-    loc = epg_locate.Locator(session, epgs[0].tenant_id, cls)
+    # Locator des Classifiers: einmal je Durchgang geladen (VMs, Endpunkte, Subnetze)
+    loc = cls.locator if cls is not None else epg_locate.Locator(session, epgs[0].tenant_id)
     out: set[int] = set()
     placed: dict[tuple, str] = {}
     for sid, vrf in {(e.source_system_id, loc.cls.vrf_of(e)) for e in epgs}:

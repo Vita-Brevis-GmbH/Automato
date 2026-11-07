@@ -70,7 +70,9 @@ auf Automato-Rollen gemappt):
 
 Das Modell ist additiv: weitere Rollen/Rechte kommen dazu, ohne Bruch. Als
 Zielbild dient Magisters **dynamische Rollen-/Rechte-Matrix** (Magister ADR 0010);
-Durchsetzung per FastAPI-`Depends(require_role(...))` am Endpunkt.
+Durchsetzung per FastAPI-`Depends(require_role(...))` am Endpunkt. Kunden-Benutzer (ADR 0018)
+haben eigene Kunden-Rollen `viewer`/`triage`/`editor`/`customer_admin`, die sich in
+Capabilities auflösen (ADR 0018, Ergänzung „Feinere Rollen“).
 
 ### D3 – Mandanten-Scoping in jeder Query erzwingen
 

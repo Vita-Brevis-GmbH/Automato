@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from app import credentials
 from app.models import Agent, CollectorRun, RunStatus, SourceSystem
+from app.models.source_system import Platform
 
 
 def hash_token(token: str) -> str:
@@ -94,22 +95,29 @@ def claim_next_run(
 def target_for(src: SourceSystem, agent_id: int | None) -> dict:
     """Ziel eines Laufs; die Zugangsdaten (FortiGate: token, ACI: username/password) nur fuer
     den zugewiesenen Agenten (bzw. den zentralen Worker, `agent_id=None` bei einem Geraet
-    ohne Agent). Wirft CredentialsUnavailable."""
+    ohne Agent). Wirft CredentialsUnavailable. Switches & Router mit Zugang SNMPv3 (ADR 0033):
+    Benutzer, Protokolle, Passwoerter und Context des SNMPv3-Benutzers."""
     secret: dict = {}
     if src.credentials and src.agent_id == agent_id:
         secret = credentials.decrypt(src.credentials)
-    return {
+    target = {
         "source_system_id": src.id,
         "name": src.name,
         "platform": src.platform.value,
         "base_url": src.base_url,
         "verify_tls": src.verify_tls,
         "read_scope": src.read_scope,
-        "known_hosts": dict(src.ssh_host_keys or {}),  # Switches: festgehaltene Schluessel
         "token": secret.get("token"),
         "username": secret.get("username"),
         "password": secret.get("password"),
     }
+    if src.platform is Platform.CISCO_SWITCH:
+        target["known_hosts"] = dict(src.ssh_host_keys or {})  # festgehaltene SSH-Schluessel
+        target["access"] = src.access or "ssh"
+        if credentials.is_snmp(src.platform.value, src.access):
+            target.update({k: secret.get(k) for k in credentials.SNMP_FIELDS[1:]
+                           + credentials.SNMP_OPTIONAL})  # fmt: skip
+    return target
 
 
 def assigned_systems(session: Session, agent: Agent) -> list[SourceSystem]:

@@ -20,8 +20,6 @@ RESOURCES = frozenset(
         "nat",
         "findings",
         "applications",
-        "published_services",
-        "appdoc",
         "routing",
         "objects",
         "virtual",

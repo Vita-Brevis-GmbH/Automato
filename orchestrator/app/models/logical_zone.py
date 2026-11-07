@@ -46,6 +46,10 @@ ZONE_KINDS = ("dc", "edge", "transfer", "core", "distribution", "access", "exter
               "dmz", "management", "shared")  # fmt: skip
 # Selektoren wie beim Kunden, dazu die Netze hinter einer Anbindung (`topo_exit`, Name)
 ZONE_SELECTOR_KINDS = (*SELECTOR_KINDS, "exit")
+# Geraete einer Zone (0.106.0, ADR 0035, Netzwerkdesign → Kategorien): Firewall bzw. VDOM,
+# ACI-Tenant, ACI-VRF und Anbindungen aus dem Routing - daraus und aus dem Routing ergibt sich,
+# welche Zone hinter einem Interface bzw. L3Out liegt (Ausgaenge, `appdoc_zones`)
+DEVICE_SELECTOR_KINDS = ("fw_vdom", "aci_tenant", "aci_vrf", "exit")
 # Absicht je Zonenpaar: erlaubt, eingeschraenkt (nur bestimmte Dienste), gesperrt
 INTENTS = ("allow", "limited", "deny")
 
@@ -66,6 +70,12 @@ class LogicalZone(Base):
     color: Mapped[str | None] = mapped_column(String(16), nullable=True)  # #rrggbb im Plan
     position: Mapped[int] = mapped_column(Integer, default=0)  # Reihenfolge in Matrix und Plan
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Zonentyp von Hand (0.105.0, ADR 0035): Zone des Grundschemas; leer = automatisch nach
+    # Name, Kurzname bzw. Vorlage je Kunde (`store/zone_types.py`)
+    zone_type: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # Fremd verwaltet (0.132.0, ADR 0041 Nr. 24): Geraete der Zone verwaltet nicht der Betreiber
+    # (WAN, MPLS, fremde Anbindungen) - nur zu ihnen gehoert ein Eingangsfilter; Vorgabe nein
+    external_managed: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )

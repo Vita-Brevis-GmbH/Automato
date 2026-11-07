@@ -1,6 +1,7 @@
 """Routing, BGP, HA und L3Out speichern und abfragen (ADR 0019 Stufe 2).
 
-`replace` ersetzt je Lauf den Stand des Quellsystems. `lookup` sucht je Routing-Kontext die
+`replace` ersetzt je Lauf den Stand des Quellsystems (die Aenderungen gegenueber dem alten Stand
+gehen vorher in den Verlauf, `topo_changes`, ADR 0030). `lookup` sucht je Routing-Kontext die
 wirksame Route fuer eine IP (laengstes Praefix der RIB) und die Policy-Routen bzw. SD-WAN-Regeln,
 die fuer sie vorgehen koennen - die Grundlage fuer die Pfade (Stufe 3).
 """
@@ -14,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.models import (
     TOPOLOGY_MODELS,
     InvInterface,
+    TopoBgpObject,
     TopoContext,
     TopoHa,
     TopoL3Out,
@@ -62,6 +64,18 @@ def is_net(x) -> bool:
     return isinstance(x, ipaddress.IPv4Network | ipaddress.IPv6Network)
 
 
+_PRIVATE = tuple(ipaddress.ip_network(n) for n in (
+    "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "169.254.0.0/16",
+    "127.0.0.0/8", "fc00::/7", "fe80::/10"))  # fmt: skip
+
+
+def is_private(x) -> bool:
+    """Adresse bzw. ganzes Netz privat (RFC 1918, CGNAT, Link-Local, ULA) - kein Land, kein
+    Internet Service, nicht ueber eine Default-Route ins Internet (0.112.0)."""
+    net = x if is_net(x) else ipaddress.ip_network(x)
+    return any(net.version == p.version and net.subnet_of(p) for p in _PRIVATE)
+
+
 def span(x) -> tuple[int, int]:
     """Erste und letzte Adresse einer IP bzw. eines Netzes als Zahl."""
     if is_net(x):
@@ -107,11 +121,24 @@ def route_range(prefix: str) -> tuple[int, int, str, str, str] | None:
 
 
 def replace(session: Session, run, inv: RoutingInventory) -> None:
-    """Routing-Stand des Quellsystems ersetzen (wie das Netzinventar)."""
+    """Routing-Stand des Quellsystems ersetzen (wie das Netzinventar); vorher die Aenderungen
+    gegenueber dem alten Stand in den Verlauf (ADR 0030)."""
     if run.source_system_id is None or run.tenant_id is None:
         return
+    from app.store import topo_changes  # spaet: topo_changes nutzt dieses Modul
+
+    rows = _rows(run, inv)
+    topo_changes.record(session, run, rows)
     for model in TOPOLOGY_MODELS:
         session.execute(delete(model).where(model.source_system_id == run.source_system_id))
+    for model, values in rows.items():
+        if values:
+            session.execute(insert(model), values)
+    session.flush()
+
+
+def _rows(run, inv: RoutingInventory) -> dict:
+    """Zeilen je Tabelle (`topo_*`) des neuen Stands."""
     base = {"tenant_id": run.tenant_id, "source_system_id": run.source_system_id}
     contexts = [
         {**base, "node": c.node, "context": c.context, "kind": c.kind, "missing": c.missing or None}
@@ -176,20 +203,20 @@ def replace(session: Session, run, inv: RoutingInventory) -> None:
             "paths": o.paths or None,
             "peers": o.peers or None,
             "ext_epgs": o.ext_epgs or None,
+            "route_control": o.route_control or None,
         }
         for o in inv.l3outs
     ]
-    for model, rows in (
-        (TopoContext, contexts),
-        (TopoRoute, routes),
-        (TopoPeer, peers),
-        (TopoHa, ha),
-        (TopoPolicyRoute, policy),
-        (TopoL3Out, l3outs),
-    ):
-        if rows:
-            session.execute(insert(model), rows)
-    session.flush()
+    bgp = [{**base, **b.model_dump(exclude={"data"}), "data": b.data or None} for b in inv.bgp]
+    return {
+        TopoContext: contexts,
+        TopoRoute: routes,
+        TopoPeer: peers,
+        TopoHa: ha,
+        TopoPolicyRoute: policy,
+        TopoL3Out: l3outs,
+        TopoBgpObject: bgp,
+    }
 
 
 class Interfaces:

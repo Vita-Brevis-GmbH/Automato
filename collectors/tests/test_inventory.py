@@ -206,3 +206,25 @@ def test_aci_vlans_ausgerollt_auch_ohne_statischen_pfad():
     pc = ifaces[("leaf-101", "PG_esx")]
     assert (pc.kind, pc.tagged_vlans) == ("lag", [300])
     assert ifaces[("leaf-101", "eth1/7")].lag == "PG_esx"
+
+
+def test_sd_wan_zonen_wie_zonen():
+    """0.133.4: Mitglieder der SD-WAN-Zonen (`system/sdwan`) bekommen ihre Zone wie mit
+    `system/zone` - Policies nennen die SD-WAN-Zone; ein Interface in einer Zone bleibt dort,
+    SD-WAN aus = keine Zonen."""
+    cfg = {"status": "enable", "members": [
+        {"seq-num": 1, "interface": "wan1", "zone": "virtual-wan-link"},
+        {"seq-num": 2, "interface": "wan2", "zone": "virtual-wan-link"},
+        {"seq-num": 3, "interface": "lan", "zone": "SDWAN_LAN"}]}  # fmt: skip
+    zones = [{"name": "LAN", "interface": [{"interface-name": "lan"}]}]
+    sd = norm.sdwan_zones(cfg, zones)
+    assert sd == [
+        {
+            "name": "virtual-wan-link",
+            "interface": [{"interface-name": "wan1"}, {"interface-name": "wan2"}],
+        }
+    ]
+    raw = [{"name": n, "type": "physical", "ip": "0.0.0.0 0.0.0.0"} for n in ("wan1", "lan")]
+    inv = norm.normalize_inventory(raw, zones + sd, {}, "fw")
+    assert {i.name: i.zone for i in inv.interfaces} == {"wan1": "virtual-wan-link", "lan": "LAN"}
+    assert norm.sdwan_zones({**cfg, "status": "disable"}) == [] and norm.sdwan_zones(None) == []

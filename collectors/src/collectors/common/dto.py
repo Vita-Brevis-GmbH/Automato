@@ -184,7 +184,8 @@ class NormalizedMac(BaseModel):
 
 
 class NormalizedArp(BaseModel):
-    """ARP-Eintrag eines Switches mit L3-Interface (0.63.0): IP -> MAC."""
+    """ARP-Eintrag eines Switches mit L3-Interface (0.63.0): IP -> MAC; seit 0.94.0 auch
+    IPv6-Nachbarn (NDP) mit IPv6-Adresse ohne Zone (Link-local bleibt, `cisco_switch/nd.py`)."""
 
     device: str
     ip: str
@@ -362,6 +363,9 @@ class NormalizedL3Out(BaseModel):
     paths: list[dict[str, Any]] = Field(default_factory=list)  # path, nodes, kind, encap, ips
     peers: list[dict[str, Any]] = Field(default_factory=list)  # ip, asn, path
     ext_epgs: list[str] = Field(default_factory=list)
+    # Route Control (0.113.0, ADR 0041): enforce (export/import) und die Subnetze der externen
+    # EPGs mit `export-rtctrl` (angekuendigt) bzw. `import-rtctrl` (erwartet)
+    route_control: dict[str, Any] = Field(default_factory=dict)
 
 
 class NormalizedRoutingContext(BaseModel):
@@ -373,6 +377,19 @@ class NormalizedRoutingContext(BaseModel):
     missing: list[str] = Field(default_factory=list)
 
 
+class NormalizedBgpObject(BaseModel):
+    """BGP-Konfiguration eines Routing-Kontexts (0.113.0, ADR 0041), nur lesend: `bgp` = der
+    BGP-Prozess (AS, Router-ID, network, aggregate, redistribute), `prefix_list`, `route_map`
+    und `access_list` = die Filter mit ihren Regeln in der Reihenfolge des Geraets."""
+
+    node: str
+    context: str
+    kind: Literal["bgp", "prefix_list", "route_map", "access_list"]
+    name: str
+    family: int | None = None  # 4 | 6 bei Prefix- und Access-Listen
+    data: dict[str, Any] = Field(default_factory=dict)
+
+
 class RoutingInventory(BaseModel):
     """Routing, BGP, HA und L3Out eines Laufs (ADR 0019 Stufe 2) - je Quellsystem ersetzt."""
 
@@ -382,6 +399,7 @@ class RoutingInventory(BaseModel):
     ha: list[NormalizedHa] = Field(default_factory=list)
     policy_routes: list[NormalizedPolicyRoute] = Field(default_factory=list)
     l3outs: list[NormalizedL3Out] = Field(default_factory=list)
+    bgp: list[NormalizedBgpObject] = Field(default_factory=list)  # BGP-Filter (0.113.0)
 
 
 class CollectorResult(BaseModel):
@@ -396,7 +414,10 @@ class CollectorResult(BaseModel):
     # Referenzquellen (Infoblox/NetBox): Eintraege kommen in Teilen ueber .../references,
     # hier nur die Gesamtzahl zur Kontrolle (ADR 0010)
     reference_count: int | None = None
-    message: str | None = None
+    message: str | None = None  # deutsch - der Orchestrator speichert sie (ADR 0028)
+    # Meldung fuer die Konsole des Agenten in `AUTOMATO_LANG` (0.90.0): die Uebersetzung aus
+    # der Quittung des Orchestrators; geht nicht mit dem Ergebnis an den Orchestrator
+    shown: str | None = Field(default=None, exclude=True)
     # Switches (0.62.0): beim ersten Kontakt uebernommene SSH-Host-Schluessel je Adresse
     # (`<typ> <base64>`), der Orchestrator haelt sie fest
     host_keys: dict[str, str] = Field(default_factory=dict)
@@ -407,7 +428,9 @@ class Target(BaseModel):
 
     Der zugewiesene Agent bekommt es beim Abholen eines Laufs. Zugangsdaten je Plattform:
     FortiGate `token`, Cisco ACI `username`/`password`; sie fehlen, wenn am Geraet keine
-    hinterlegt sind (dann gilt die lokale Konfiguration).
+    hinterlegt sind (dann gilt die lokale Konfiguration). Switches & Router mit Zugang SNMPv3
+    (`access` = `snmp`, ADR 0033): `username` = SNMPv3-Benutzer, `auth_protocol`/`auth_password`,
+    `priv_protocol`/`priv_password` (nur authPriv), optional `context`.
     """
 
     source_system_id: int | None = None
@@ -416,7 +439,17 @@ class Target(BaseModel):
     base_url: str = ""
     verify_tls: bool = True
     read_scope: str = ""  # ACI: zu lesende Tenants (kommagetrennt, leer = alle); Switches: Adressen
+    # 0.139.0: `rules` = nur Regeln, Objekte und NAT lesen (FortiGate, Cisco ACI) - fuer eine
+    # Applikation; Inventar und Routing bleiben vom letzten vollen Lauf
+    scope: str | None = None
     known_hosts: dict[str, str] = Field(default_factory=dict)  # Switches: gespeicherte Schluessel
     token: str | None = None
     username: str | None = None
     password: str | None = None
+    # Switches & Router: Zugang ssh (Standard) | snmp (ADR 0033) mit SNMPv3 authPriv
+    access: str | None = None
+    auth_protocol: str | None = None  # sha | sha224 | sha256 | sha384 | sha512
+    auth_password: str | None = Field(default=None, repr=False)
+    priv_protocol: str | None = None  # aes128 | aes192 | aes256
+    priv_password: str | None = Field(default=None, repr=False)
+    context: str | None = None

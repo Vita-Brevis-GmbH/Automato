@@ -69,7 +69,30 @@ export function buildAgentEnv(v: { orchestratorUrl: string; agentToken: string; 
     "# AUTOMATO_CLIENT_CERT=C:\\Automato\\pki\\agent.crt",
     "# AUTOMATO_CLIENT_KEY=C:\\Automato\\pki\\agent.key",
     "",
+    // Sprache der Konsole (0.90.0, ADR 0028 Schritt 4) - Vorgabe = Sprache der Oberflaeche
+    L(
+      "# --- Sprache der Agent-Konsole (de | en); Meldungen an den Orchestrator bleiben deutsch ---",
+      "# --- Language of the agent console (de | en); messages to the orchestrator stay German ---",
+    ),
+    L("# AUTOMATO_LANG=en", "AUTOMATO_LANG=en"),
+    "",
   ].join("\r\n");
+}
+
+// Meldung des Agenten in beiden Sprachen: seine Konsole folgt AUTOMATO_LANG in der agent.env
+// (0.90.0), unabhängig von der Sprache der Oberfläche
+function AgentMsg({ de, en }: { de: string; en: string }) {
+  return (
+    <td>
+      {de}
+      {en !== de && (
+        <>
+          <br />
+          <span className="faint">{en}</span>
+        </>
+      )}
+    </td>
+  );
 }
 
 const mask = (text: string) => text.replace(/^(AUTOMATO_AGENT_TOKEN=)(?!<)(.+)$/gm, "$1••••••••");
@@ -272,6 +295,20 @@ export default function AgentGuide({
               </>,
             )}
           </p>
+          <p className="faint" id="ag-lang">
+            {L(
+              <>
+                Sprache der Agent-Konsole und des Logs: <code>AUTOMATO_LANG=de</code> (Standard) bzw.{" "}
+                <code>AUTOMATO_LANG=en</code>. Was der Agent an Automato meldet, bleibt deutsch gespeichert und
+                erscheint in der Oberfläche in der gewählten Sprache.
+              </>,
+              <>
+                Language of the agent console and log: <code>AUTOMATO_LANG=de</code> (default) or{" "}
+                <code>AUTOMATO_LANG=en</code>. What the agent reports to Automato is stored in German and shown in
+                the user interface in the chosen language.
+              </>,
+            )}
+          </p>
           <div className="envgen">
             <div className="field">
               <label htmlFor="ag-orch">
@@ -414,9 +451,9 @@ powershell -ExecutionPolicy Bypass -File .\\install.ps1 -IntervalMinutes 15`}</C
               </>,
               <>
                 Checks all assigned devices, one line per device – expected e.g.{" "}
-                <code>fw-01 (fortigate) check: OK - erreichbar: https://…</code> or{" "}
-                <code>apic-01 (cisco_aci) check: OK - erreichbar: https://… (5 Tenants sichtbar)</code>. Read-only,
-                nothing is transferred.
+                <code>fw-01 (fortigate) check: OK - reachable: https://…</code> or{" "}
+                <code>apic-01 (cisco_aci) check: OK - reachable: https://… (5 tenants visible)</code> (with{" "}
+                <code>AUTOMATO_LANG=en</code>, otherwise German). Read-only, nothing is transferred.
               </>,
             )}
           </p>
@@ -458,7 +495,7 @@ powershell -ExecutionPolicy Bypass -File .\\install.ps1 -IntervalMinutes 15`}</C
           <table className="trouble">
             <tbody>
               <tr>
-                <td>keine offenen Laeufe</td>
+                <AgentMsg de="keine offenen Laeufe" en="no open runs" />
                 <td>
                   {L(
                     "Noch kein Lauf gestartet (Schritt 8) – oder das Gerät ist einem anderen Agenten zugewiesen.",
@@ -467,7 +504,7 @@ powershell -ExecutionPolicy Bypass -File .\\install.ps1 -IntervalMinutes 15`}</C
                 </td>
               </tr>
               <tr>
-                <td>keine Geraete zugewiesen</td>
+                <AgentMsg de="keine Geraete zugewiesen" en="no devices are assigned" />
                 <td>
                   {L(
                     "Beim Quellsystem „Verwaltet von“ auf diesen Agenten setzen (Schritt 3).",
@@ -476,7 +513,7 @@ powershell -ExecutionPolicy Bypass -File .\\install.ps1 -IntervalMinutes 15`}</C
                 </td>
               </tr>
               <tr>
-                <td>keine Zugangsdaten fuer „fw-01“</td>
+                <AgentMsg de="keine Zugangsdaten fuer „fw-01“" en="no credentials for “fw-01”" />
                 <td>
                   {L(
                     "Beim Quellsystem die Zugangsdaten hinterlegen (Bearbeiten → API-Token bzw. APIC-Benutzer/Passwort).",
@@ -485,7 +522,7 @@ powershell -ExecutionPolicy Bypass -File .\\install.ps1 -IntervalMinutes 15`}</C
                 </td>
               </tr>
               <tr>
-                <td>401 invalid agent token</td>
+                <AgentMsg de="401 invalid agent token" en="401 invalid agent token" />
                 <td>
                   {L(
                     "Agent-Token falsch oder Agent deaktiviert – ggf. neuen Agenten anlegen.",
@@ -494,7 +531,7 @@ powershell -ExecutionPolicy Bypass -File .\\install.ps1 -IntervalMinutes 15`}</C
                 </td>
               </tr>
               <tr>
-                <td>Zugangsdaten nicht lesbar</td>
+                <AgentMsg de="Zugangsdaten nicht lesbar" en="Credentials not readable" />
                 <td>
                   {L(
                     <>
@@ -509,7 +546,7 @@ powershell -ExecutionPolicy Bypass -File .\\install.ps1 -IntervalMinutes 15`}</C
                 </td>
               </tr>
               <tr>
-                <td>Verbindung abgelehnt / Timeout</td>
+                <AgentMsg de="Verbindung abgelehnt / Timeout" en="connection refused / timeout" />
                 <td>
                   {L(
                     "Port 8000 vom Agent-Rechner zum Orchestrator in der Firewall freigeben; Adresse prüfen.",
@@ -518,7 +555,7 @@ powershell -ExecutionPolicy Bypass -File .\\install.ps1 -IntervalMinutes 15`}</C
                 </td>
               </tr>
               <tr>
-                <td>check: FEHLER … certificate</td>
+                <AgentMsg de="check: FEHLER … certificate" en="check: ERROR … certificate" />
                 <td>
                   {L(
                     "Selbstsigniertes Geräte-Zertifikat: beim Quellsystem „TLS-Zertifikat prüfen“ ausschalten (nur Lab).",
@@ -527,7 +564,7 @@ powershell -ExecutionPolicy Bypass -File .\\install.ps1 -IntervalMinutes 15`}</C
                 </td>
               </tr>
               <tr>
-                <td>check: FEHLER … 401/403</td>
+                <AgentMsg de="check: FEHLER … 401/403" en="check: ERROR … 401/403" />
                 <td>
                   {L(
                     <>
@@ -542,7 +579,7 @@ powershell -ExecutionPolicy Bypass -File .\\install.ps1 -IntervalMinutes 15`}</C
                 </td>
               </tr>
               <tr>
-                <td>ACI-Tenant nicht gefunden</td>
+                <AgentMsg de="ACI-Tenant nicht gefunden" en="ACI tenant not found" />
                 <td>
                   {L(
                     "Name unter „ACI-Tenants“ beim Quellsystem prüfen (Gross-/Kleinschreibung) oder das Feld leeren.",

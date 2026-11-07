@@ -1,28 +1,32 @@
 import logging
+import secrets
 from contextlib import asynccontextmanager
 
 from anyio import to_thread
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
-from app import __version__, scheduler
+from app import __version__, modules, scheduler
 from app.api import (
     agents,
-    appdoc,
     applications,
     auth_config,
+    bgp,
     cabling,
+    checks,
     customer_users,
     customers,
+    data_quality,
     findings,
     health,
     internal,
     jobs,
     naming_profiles,
     nat,
+    net_assign,
     netbox_sync,
     objects,
-    published_services,
     reconcile,
     routing,
     rules,
@@ -33,11 +37,12 @@ from app.api import (
     virtual,
     zones,
 )
+from app.api import modules as module_api
 from app.config import Settings, check_security_config, get_settings
 from app.db import get_sessionmaker
 from app.i18n import middleware as i18n_middleware
 from app.secrets import resolve_settings
-from app.store import customer_alias
+from app.store import customer_alias, version_refresh
 
 log = logging.getLogger(__name__)
 
@@ -58,11 +63,26 @@ def _lifespan(settings: Settings):
                 settings.scheduler_timezone,
                 settings.scheduler_interval_seconds,
             )
+            # 0.133.0: nach einem Update die Befunde je Mandant einmal mit der neuen Version
+            version_refresh.start(get_sessionmaker(), stop)
         yield
         if stop is not None:
             stop.set()
 
     return lifespan
+
+
+async def _internal_error(request: Request, exc: Exception) -> JSONResponse:
+    """Unerwarteter Fehler (0.94.1, Dev-Befund „HTTP 500 beim Laden der Doku“): ins Protokoll mit
+    einer kurzen Referenz, die Antwort nennt nur die Referenz - nie Details oder Daten. Mit der
+    Referenz findet der Betrieb die Ursache (`docker compose logs orchestrator | grep <ref>`)."""
+    ref = secrets.token_hex(4)
+    log.error("Interner Fehler %s bei %s %s", ref, request.method, request.url.path,
+              exc_info=exc)  # fmt: skip
+    # beide Sprachen: die Sprache der Anfrage gilt hier ausserhalb der Middleware nicht mehr
+    detail = (f"Interner Fehler – Referenz {ref} im Protokoll des Orchestrators / "
+              f"internal error – reference {ref} in the orchestrator log")  # fmt: skip
+    return JSONResponse(status_code=500, content={"detail": detail, "ref": ref})
 
 
 def create_app() -> FastAPI:
@@ -73,6 +93,7 @@ def create_app() -> FastAPI:
     check_security_config(settings)  # Fail-closed bei unsicheren Defaults (ADR 0005)
 
     app = FastAPI(title="Automato Orchestrator", version=__version__, lifespan=_lifespan(settings))
+    app.add_exception_handler(Exception, _internal_error)
 
     # CORS aus Konfiguration; Default nur localhost (Dev), Produktion explizit setzen
     app.add_middleware(
@@ -96,25 +117,29 @@ def create_app() -> FastAPI:
     app.include_router(agents.router)
     app.include_router(agents.agent_router)
     app.include_router(rules.router)
-    app.include_router(findings.router)
+    app.include_router(findings.router, dependencies=[Depends(modules.guard("findings"))])
+    app.include_router(checks.router, dependencies=[Depends(modules.guard("findings"))])
     app.include_router(systems.router)
     app.include_router(tenants.router)
     app.include_router(nat.router)
-    app.include_router(published_services.router)
-    app.include_router(applications.router)
-    app.include_router(appdoc.router)
+    app.include_router(applications.router, dependencies=[Depends(modules.guard("doku"))])
     app.include_router(naming_profiles.router)
-    app.include_router(reconcile.router)
+    app.include_router(reconcile.router, dependencies=[Depends(modules.guard("analyse"))])
     app.include_router(objects.router)
     app.include_router(virtual.router)
-    app.include_router(netbox_sync.router)
+    app.include_router(netbox_sync.router, dependencies=[Depends(modules.guard("schreibpfad"))])
     app.include_router(system.router)
-    app.include_router(routing.router)
-    app.include_router(topology.router)
+    # vor dem Routing: /routing/net-assignments gehoert zum Wegsucher (0.111.0)
+    app.include_router(net_assign.router, dependencies=[Depends(modules.guard("wege"))])
+    app.include_router(bgp.router, dependencies=[Depends(modules.guard("analyse"))])  # 0.113.0
+    app.include_router(routing.router, dependencies=[Depends(modules.guard(None))])
+    app.include_router(topology.router, dependencies=[Depends(modules.guard("analyse"))])
     app.include_router(customers.router)
     app.include_router(customer_users.router)
-    app.include_router(zones.router)
-    app.include_router(cabling.router)
+    app.include_router(zones.router, dependencies=[Depends(modules.guard("design"))])
+    app.include_router(cabling.router, dependencies=[Depends(modules.guard("analyse"))])
+    app.include_router(data_quality.router, dependencies=[Depends(modules.guard("analyse"))])
+    app.include_router(module_api.router)
     return app
 
 

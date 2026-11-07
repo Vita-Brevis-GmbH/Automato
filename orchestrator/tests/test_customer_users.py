@@ -144,12 +144,6 @@ def test_kunden_benutzer_sehen_nur_ihren_ausschnitt(client):
     pg_b = next(p for p in pgs if p["name"] == "TE_kb|AP_100|EPG_app")
     get(f"/portgroups/{pg_b['id']}", 404)
     assert [p["name"] for p in get("/portgroups", tenant_id=tid).json()] == ["TE_ka|AP_007|EPG_web"]
-    systems = {s["name"]: s for s in get("/appdoc/systems", tenant_id=tid).json()}
-    assert "EPG_app" not in systems and "EPG_web" in systems
-    assert systems["EPG_dns"]["rule_count"] == 0  # geteilt, CT_dns gehoert zu B
-    get("/appdoc/systems/EPG_app", 404, tenant_id=tid)
-    doc = get("/appdoc/systems/EPG_web", tenant_id=tid).json()
-    assert doc
     apps = {x["name"]: x for x in client.get(f"/applications?tenant_id={tid}").json()}
     assert [x["name"] for x in get("/applications", tenant_id=tid).json()] == ["Web"]
     get(f"/applications/{apps['App']['id']}", 404)
@@ -203,8 +197,8 @@ def test_kunden_doku_ohne_geraetenamen(client):
     objects = get("/objects").json()["rows"]
     pgs = get("/portgroups").json()
     apps = get("/applications").json()
-    paths = ["/rules/summary", "/findings", "/findings/summary", "/nat", "/vms", "/appdoc/systems",
-             "/appdoc/systems/EPG_web", "/systems/labels", "/customers", "/zones",
+    paths = ["/rules/summary", "/findings", "/findings/summary", "/nat", "/vms",
+             "/systems/labels", "/customers", "/zones",
              "/zones/matrix", "/zones/plan", "/auth/me", f"/customers/{a}/members"]  # fmt: skip
     paths += [f"/rules/{r['id']}" for r in rules] + [f"/objects/{o['id']}" for o in objects]
     paths += [f"/nat/{n['id']}" for n in get("/nat").json()]
@@ -287,7 +281,6 @@ def test_kunden_benutzer_ohne_zuordnung_und_ohne_admin(client):
         ("GET", f"/customers/{a}"),
         ("POST", "/customers"),
         ("POST", "/jobs/collect-all"),
-        ("GET", "/published-services"),
         ("GET", "/inventory/devices"),
     ):
         r = client.request(method, path, params={"tenant_id": tid}, headers=uv)

@@ -9,6 +9,9 @@ oder nur eine Seite weicht ab - die Abweichungen stehen in `diff`. Reine Funktio
 Von Hand entschieden (0.12.0, `RulePairDecision`): ein bestaetigtes Paar gilt immer
 (`confirmed`, Abweichungen bleiben sichtbar), ein abgelehntes wird nie vorgeschlagen.
 
+Automatisch (0.138.0, Mandant `rule_pairs_auto`): ein aehnlicher Vorschlag gilt ohne
+Bestaetigung als Paar (`auto`, wie bestaetigt) - „Kein Paar“ (abgelehnt) trennt ihn dauerhaft.
+
 Paare entstehen nur innerhalb eines VDOMs (ADR 0019); Policy-IDs gelten je VDOM.
 """
 
@@ -38,8 +41,11 @@ class PairInfo:
 @dataclass(frozen=True)
 class Pair:
     partner_id: int
-    match: str  # same | similar | confirmed
+    match: str  # same | similar | confirmed | auto (aehnlich, automatisch bestaetigt)
     diff: tuple[str, ...]
+
+
+PAIRED = ("same", "confirmed", "auto")  # gilt als Paar (eine Zeile in der Doku)
 
 
 # (Quellsystem, VDOM, IPv4-Policy-ID, IPv6-Policy-ID) -> confirmed | rejected; VDOM None =
@@ -97,10 +103,12 @@ def decided(decisions: Decisions, sid: int, vdom: str | None, ext4: str, ext6: s
     return decisions.get((sid, vdom, ext4, ext6)) or decisions.get((sid, None, ext4, ext6))
 
 
-def pair(rules: list[PairInfo], decisions: Decisions | None = None) -> dict[int, Pair]:
+def pair(rules: list[PairInfo], decisions: Decisions | None = None,
+         auto: bool = False) -> dict[int, Pair]:  # fmt: skip
     """Gegenstuecke je Regel-ID (beidseitig). Je Firewall und VDOM; jede Regel hoechstens ein
     Paar - zuerst die von Hand bestaetigten, dann die gleichen, dann die aehnlichsten, bei
-    Gleichstand die naechstgelegene. Abgelehnte Paare werden nie vorgeschlagen."""
+    Gleichstand die naechstgelegene. Abgelehnte Paare werden nie vorgeschlagen. `auto`
+    (0.138.0): aehnliche gelten als automatisch bestaetigt (`auto`)."""
     decisions = decisions or {}
     out: dict[int, Pair] = {}
     by_source: dict[tuple[int, str | None], list[PairInfo]] = {}
@@ -147,7 +155,7 @@ def pair(rules: list[PairInfo], decisions: Decisions | None = None) -> dict[int,
         for neg, _, a, b, diff in candidates:
             if a.rule_id in out or b.rule_id in out:
                 continue
-            match = "same" if -neg >= 100 else "similar"
+            match = "same" if -neg >= 100 else "auto" if auto else "similar"
             out[a.rule_id] = Pair(b.rule_id, match, diff)
             out[b.rule_id] = Pair(a.rule_id, match, diff)
     return out

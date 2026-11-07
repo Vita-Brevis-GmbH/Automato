@@ -1,0 +1,28 @@
+# Proxy des NetBox-Hosts (netbox-host.sh, ADR 0044): einziger veröffentlichter Port (443).
+# Die NetBox-Instanzen hängen mit dem Namen nb-<kunde> im Netz netbox-front und haben selbst
+# keinen Port nach aussen.
+name: netbox-host-proxy
+services:
+  proxy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      ALLOW: ${ALLOW:-0.0.0.0/0 ::/0}
+    ports:
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./sites:/etc/caddy/sites:ro
+      - ./www:/srv/www:ro
+      - ./pki:/etc/caddy/pki:ro
+      - proxy-data:/data
+      - proxy-config:/config
+    networks:
+      - front
+networks:
+  front:
+    name: netbox-front
+    external: true
+volumes:
+  proxy-data:
+  proxy-config:

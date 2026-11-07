@@ -45,6 +45,7 @@ const KIND: Record<MemberKind, string> = {
   ap: "AP",
   epg: "EPG",
   host: "Server",
+  vm: "VM",
   rule: L("Regel", "Rule"),
   norule: L("ohne Regel", "excluded rule"),
 };
@@ -299,6 +300,19 @@ export default function Apps({
                     )}
                     <td>
                       <b>{a.name}</b>
+                      {a.editable && (
+                        // feinere Rollen: Kunden-Editor darf diese Applikation pflegen
+                        <span
+                          className="chip info app-editable"
+                          style={{ marginLeft: 6 }}
+                          title={L(
+                            "Sie dürfen diese Applikation pflegen: Stammdaten, Regeln zuordnen/ausschliessen, Regeln je Kategorie ausblenden",
+                            "You may maintain this application: master data, assign/exclude rules, hide rules per category",
+                          )}
+                        >
+                          {L("pflegbar", "editable")}
+                        </span>
+                      )}
                       {(a.external_name || a.internal_name) && (
                         <div className="faint">{[a.external_name, a.internal_name].filter(Boolean).join(" · ")}</div>
                       )}
@@ -569,15 +583,16 @@ function AppDrawer({
                 <Icon name="apps" size={13} /> {L("Doku", "Documentation")}
               </button>
             )}
+            {(me.isOperator || !!d.editable) && (
+              <button className="btn btn-ghost btn-sm" onClick={() => onEdit(d)}>
+                {L("Bearbeiten", "Edit")}
+              </button>
+            )}
+            {/* Löschen und Mitglieder (AP, EPG, Server) bleiben Betreuern – auch Kunden-Editoren nicht */}
             {me.isOperator && (
-              <>
-                <button className="btn btn-ghost btn-sm" onClick={() => onEdit(d)}>
-                  {L("Bearbeiten", "Edit")}
-                </button>
-                <button className="btn btn-danger btn-sm" onClick={() => setConfirmDelete(true)}>
-                  {L("Löschen", "Delete")}
-                </button>
-              </>
+              <button className="btn btn-danger btn-sm" onClick={() => setConfirmDelete(true)}>
+                {L("Löschen", "Delete")}
+              </button>
             )}
           </div>
           <dl className="kv">
@@ -620,8 +635,8 @@ function AppDrawer({
           {d.members.length === 0 ? (
             <div className="faint">
               {L(
-                "Noch keine Mitglieder – Application Profile, EPG oder Server hinzufügen.",
-                "No members yet – add an Application Profile, EPG or server.",
+                "Noch keine Mitglieder – Application Profile, EPG, Server oder einzelne VMs hinzufügen.",
+                "No members yet – add an Application Profile, EPG, server or individual VMs.",
               )}
             </div>
           ) : (
@@ -647,6 +662,11 @@ function AppDrawer({
                       )}
                       {m.kind === "ap" && m.systems.length > 0 && (
                         <div className="faint">{m.systems.map((s) => s.split("/").pop()).join(", ")}</div>
+                      )}
+                      {m.kind === "vm" && m.systems.length > 1 && (
+                        <div className="faint">
+                          {L(`${m.systems.length} VMs dieses Namens`, `${m.systems.length} VMs with this name`)}
+                        </div>
                       )}
                     </td>
                     <td style={{ width: 30 }}>
@@ -778,6 +798,7 @@ function MemberPicker({
           <option value="ap">Application Profiles</option>
           <option value="epg">EPGs</option>
           <option value="host">Server</option>
+          <option value="vm">{L("VMs (vCenter)", "VMs (vCenter)")}</option>
         </select>
         <div className="search">
           <span className="ico">
@@ -856,6 +877,7 @@ function AppForm({
   const [crit, setCrit] = useState<Criticality | "">(app?.criticality ?? "");
   const [siteId, setSiteId] = useState<number | "">(app?.site?.id ?? "");
   const [description, setDescription] = useState(app?.description ?? "");
+  const [infrastructure, setInfrastructure] = useState(!!app?.infrastructure);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<unknown>(null);
 
@@ -874,6 +896,7 @@ function AppForm({
       criticality: crit || null,
       site_id: siteId === "" ? null : siteId,
       description: description.trim() || null,
+      infrastructure,
     };
     try {
       onSaved(app ? await patchApp(app.id, body) : await createApp(tenantId, { ...body, name: name.trim() }));
@@ -1011,6 +1034,13 @@ function AppForm({
             onChange={(e) => setDescription(e.target.value)}
           />
         </div>
+        <label className="check" id="ap-infra">
+          <input type="checkbox" checked={infrastructure} onChange={(e) => setInfrastructure(e.target.checked)} />{" "}
+          {L(
+            "Infrastruktur (Monitoring, Backup, DNS …) – Abhängigkeiten zu ihr stehen getrennt von den fachlichen",
+            "Infrastructure (monitoring, backup, DNS …) – dependencies on it are listed apart from the business ones",
+          )}
+        </label>
         {!app && (
           <div className="hint faint">
             {L(

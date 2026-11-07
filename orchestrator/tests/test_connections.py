@@ -83,7 +83,7 @@ def test_zeitueberschreitung_zum_docker_host_nennt_die_ufw_regel(client, monkeyp
     viewer = {"X-Dev-Roles": "viewer", "X-Dev-Tenants": str(tid)}
     assert client.get("/system/connections", headers=viewer).status_code == 403
     other = client.get("/system/connections", params={"tenant_id": tid + 1}, headers=ADMIN)
-    assert [i["key"] for i in other.json()["items"]] == ["database", "redis"]
+    assert [i["key"] for i in other.json()["items"]] == ["database", "redis", "worker"]
 
 
 def test_erreichbar_netbox_mit_schreib_token(client, monkeypatch, tmp_path):

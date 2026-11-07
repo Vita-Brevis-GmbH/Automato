@@ -20,7 +20,12 @@ die Seite mit „Zone“ oder „Schema“ im Namen):
   oben nach unten, links nach rechts). Ohne Art: aus dem Namen, sonst intern. Farbe =
   Fuellfarbe. Seit 0.82.0 `automato_customer` = „je Kunde“: die Zone ist eine **Vorlage je
   Kunde** - vorgeschlagen wird je Kunde eine eigene Zone „<Name> <Kunde>“ (Kurzname
-  „<Kurzname>-<Kuerzel>“) mit seinen Treffern.
+  „<Kurzname>-<Kuerzel>“) mit seinen Treffern. Seit 0.128.0 `automato_join_same` = „ja“:
+  die Zone verbindet **gleiche Zonen** (desselben Zonentyps, z. B. zweier Kunden) miteinander -
+  sonst ist sie fuer das Soll der BGP- bzw. Import-Filter aus den Zonen (`bgp_zones`) kein
+  Durchgang zwischen ihnen (Anwender: „Eine Internet Firewall sieht zwar vielleicht alle Tenants,
+  soll sie aber nicht mit einander verbinden“, „Generell sollte der Schalter aus sein als
+  Default“).
 - jede Verbindung zwischen zwei Zonen ist ein Uebergang (seit 0.57.0 bei „eingeschraenkt“ mit den
   erlaubten Diensten aus `automato_services`). Absicht aus `automato_intent`, sonst
   aus der Beschriftung (erlaubt, eingeschraenkt, gesperrt), sonst gestrichelt = eingeschraenkt,
@@ -156,6 +161,9 @@ class SchemaZone:
     description: str | None = None
     geometry: list[float] | None = None  # x, y, Breite, Hoehe (Vorschau)
     per_customer: bool = False  # Vorlage je Kunde (0.82.0)
+    # verbindet gleiche Zonen (desselben Zonentyps) miteinander (0.128.0, `automato_join_same`;
+    # Vorgabe aus, Anwender)
+    joins_same: bool = False
 
     @property
     def key(self) -> str:
@@ -168,7 +176,7 @@ class SchemaZone:
                 "kind_reason": reason, "code": self.code, "color": self.color,
                 "match": self.match, "position": self.position, "group": self.group,
                 "description": self.description, "geometry": self.geometry,
-                "per_customer": self.per_customer}  # fmt: skip
+                "per_customer": self.per_customer, "joins_same": self.joins_same}  # fmt: skip
 
     def for_customer(self, name: str, code: str | None) -> tuple[str, str | None]:
         """Name und Kurzname der Zone eines Kunden aus der Vorlage je Kunde."""
@@ -420,6 +428,17 @@ def per_customer(value) -> bool:
     return str(value or "").strip().casefold() in CUSTOMER_WORDS
 
 
+YES_WORDS = ("ja", "yes", "true", "1", "x", "ein", "on", "verbindet", "join")
+
+
+def joins_same(value) -> bool:
+    """Eigenschaft `automato_join_same` (0.128.0): „ja“ = verbindet gleiche Zonen, leer bzw.
+    „nein“ = nicht (Vorgabe)."""
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().casefold() in YES_WORDS
+
+
 def _patterns(value: str | None) -> list[str]:
     out = []
     for p in re.split(r"[,;\n]+", value or ""):
@@ -506,6 +525,7 @@ def parse(content: str) -> Schema:
         z.color = _color(c.style.get("fillColor"))
         z.match = _patterns(c.props.get("automato_match"))
         z.per_customer = per_customer(c.props.get("automato_customer"))
+        z.joins_same = joins_same(c.props.get("automato_join_same"))
         if z.key in seen:
             out.warnings.append(L(f"Zone „{name}“ doppelt - die erste gilt",
                                   f"Zone “{name}” twice - the first one applies"))  # fmt: skip
@@ -698,6 +718,7 @@ def edited(session: Session, profile_id: int, zones: list[dict], links: list[dic
             description=(str(z.get("description") or "").strip() or None),
             geometry=geometry if geometry is not None else (prev.geometry if prev else None),
             per_customer=per_customer(z.get("per_customer")),
+            joins_same=joins_same(z.get("joins_same")),
         ))  # fmt: skip
     old_links = {(key_of(x.src), key_of(x.dst)): x for x in (old.links if old else [])}
     seen: set[tuple[str, str]] = set()
@@ -807,6 +828,7 @@ def load(session: Session, profile_id: int | None) -> Schema | None:
             position=int(x.get("position") or 0), group=x.get("group"),
             description=x.get("description"), geometry=x.get("geometry"),
             per_customer=bool(x.get("per_customer")),
+            joins_same=bool(x.get("joins_same")),
         ))  # fmt: skip
     out.zones.sort(key=lambda z: (z.position, z.name.casefold()))
     for r in rows:
@@ -852,7 +874,8 @@ def diff(old: Schema | None, new: Schema) -> dict:
     for k in before.keys() & after.keys():
         a, b = before[k], after[k]
         what = [
-            f for f in ("kind", "code", "color", "match", "group", "per_customer")
+            f for f in ("kind", "code", "color", "match", "group", "per_customer",
+                        "joins_same")
             if getattr(a, f) != getattr(b, f)
         ]  # fmt: skip
         if what:
@@ -944,12 +967,14 @@ def _legend() -> str:
         "Jede Form = Zone (erste Zeile = Name). Eigenschaften (Daten bearbeiten): automato_kind "
         "(intern, DMZ, extern, Management, geteilt, Transfer), automato_code, automato_match "
         "(Muster, mit Komma getrennt), automato_customer (je Kunde = Vorlage für eine Zone je "
-        "Kunde).<br>Pfeil = Übergang; Beschriftung bzw. automato_intent: erlaubt, eingeschränkt, "
+        "Kunde), automato_join_same (ja = verbindet gleiche Zonen, z. B. zweier Kunden).<br>"
+        "Pfeil = Übergang; Beschriftung bzw. automato_intent: erlaubt, eingeschränkt, "
         "gesperrt (gestrichelt = eingeschränkt, rot = gesperrt).",
         "Each shape = zone (first line = name). Properties (Edit data): automato_kind (internal, "
         "DMZ, external, management, shared, transfer), automato_code, automato_match (patterns, "
         "separated by commas), automato_customer (per customer = template for one zone per "
-        "customer).<br>Arrow = transition; label or automato_intent: allow, limited, deny "
+        "customer), automato_join_same (yes = connects equal zones, e.g. of two customers).<br>"
+        "Arrow = transition; label or automato_intent: allow, limited, deny "
         "(dashed = limited, red = deny).",
     )
 
@@ -994,6 +1019,8 @@ def drawing(schema: Schema, title: str) -> str:
         }  # fmt: skip
         if z.per_customer:
             attrs["automato_customer"] = L("je Kunde", "per customer")
+        if z.joins_same:
+            attrs["automato_join_same"] = L("ja", "yes")
         obj = ET.SubElement(root, "object", attrs)
         cell = ET.SubElement(obj, "mxCell", {
             "vertex": "1", "parent": "1",

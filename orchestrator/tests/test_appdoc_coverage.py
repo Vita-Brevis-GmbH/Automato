@@ -2,6 +2,8 @@
 Netze, Gruppen und any (gleichwertig, mit Bezug), ACI-Contracts direkt, ueber vzAny der VRF und
 ueber ESGs; die EPG eines Servers bringt ihre Contracts mit; Regeln je Subnetz."""
 
+from system_doc import system_doc
+
 ADMIN = {"X-Dev-Roles": "admin"}
 TOKEN = {"X-Internal-Token": "dev-only-token"}
 APP = "uni/tn-TE/ap-AP_001/epg-EG_app"
@@ -103,7 +105,7 @@ def _rows(doc) -> dict[str, list[dict]]:
 
 def test_server_doku_mit_netzen_any_und_epg(client):
     tid = _seed(client)
-    doc = client.get("/appdoc/systems/10.20.0.5", params={"tenant_id": tid}).json()
+    doc = system_doc(client, "10.20.0.5", tid)
     rows = _rows(doc)
     assert rows["direct-in"][0]["Bezug"] == "direkt"
     assert rows["net-in"][0]["Bezug"] == "G_srv"  # ueber die Gruppe mit dem Netz
@@ -119,7 +121,7 @@ def test_server_doku_mit_netzen_any_und_epg(client):
 
 def test_epg_doku_mit_vzany_esg_und_firewall(client):
     tid = _seed(client)
-    doc = client.get("/appdoc/systems/EG_app", params={"tenant_id": tid}).json()
+    doc = system_doc(client, "EG_app", tid)
     rows = _rows(doc)
     assert rows["CT_direct:SJ"][0]["Bezug"] == "direkt"
     assert rows["CT_vz:SJ"][0]["Bezug"] == "vzAny VRF1"

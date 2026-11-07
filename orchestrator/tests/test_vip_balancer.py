@@ -66,16 +66,6 @@ def test_regeln_und_publizierte_dienste(client):
     assert lb["source"] == "avi-01" and lb["pool"] == "pool-web" and lb["ext_ip"] == VIP
     assert "10.10.0.20:8080" in lb["servers"]
 
-    # Publizierte Dienste: Kette in beide Richtungen, Regeln der VIP davor zaehlen mit
-    rows = client.get("/published-services", params={"tenant_id": tid}).json()
-    shop = next(r for r in rows if r["name"] == "V-EXT_shop")
-    assert {b["name"] for b in shop["balancers"]} == {"vs-web"}
-    web = next(r for r in rows if r["name"] == "vs-web" and r["ext_port"] == "443")
-    assert [f["name"] for f in web["fronted_by"]] == ["V-EXT_shop"]
-    assert web["fronted_by"][0]["ext_ip"] == PUBLIC and web["rule_count"] >= 1
-    one = client.get("/published-services/vs-web", params={"tenant_id": tid}).json()
-    assert "inet-to-shop" in {r["name"] for r in one["rules"]}
-
 
 def test_applikations_doku_ueber_den_load_balancer(client):
     tid = _seed(client)
@@ -180,3 +170,182 @@ def test_verbindung_ende_zu_ende_ueber_vip_und_load_balancer(client):
     assert any("se-to-web" in line for line in lbn["rule_lines"])
     fw = next(n for n in plan["nodes"] if n["kind"] == "firewall")
     assert f"VIP V-EXT_shop → {VIP}" in fw["lines"]
+
+
+def test_weg_nennt_alle_server_mit_details(client):
+    """0.114.1 (Anwender: „bei den VIPs den Zielserver, aber nur einer und nur die IP“): der Hop
+    nennt alle Ziel-Server - je mit Port, Zustand, Gewicht, Health-Check und Objekt der Firewall -
+    sowie Methode und Health-Check der VIP bzw. des Pools."""
+    tid = client.post("/tenants", json={"name": "Kunde A"}, headers=ADMIN).json()["id"]
+    fw = _fw()
+    fw["objects"] += [
+        {"name": "H_web01", "category": "address", "values": ["10.10.0.20"], "vdom": "root"},
+        {"name": "H_web02", "category": "address", "values": ["10.10.0.21"], "vdom": "root"},
+    ]  # fmt: skip
+    fw["nat_rules"] = [
+        {"source_platform": "fortigate", "external_id": "V-EXT_shop", "name": "V-EXT_shop",
+         "ext_ip": PUBLIC, "ext_port": "443", "mapped_ip": "10.10.0.20", "mapped_port": "8080",
+         "portforward": True, "vip_type": "server-load-balance", "vdom": "root",
+         "targets": [{"id": 1, "ip": "10.10.0.20", "port": 8080, "status": "active", "weight": 1},
+                     {"id": 2, "ip": "10.10.0.21", "port": 8080, "status": "standby",
+                      "weight": 2, "monitor": ["HC_tcp"]}],
+         "attrs": {"ldb-method": "round-robin", "monitor": [{"name": "HC_https"}]},
+         "raw": {"extintf": "wan", "comment": "Shop extern"}},
+    ]  # fmt: skip
+    body = {"tenant_id": tid, "name": "fw-r", "platform": "fortigate", "base_url": "https://x"}
+    sid = client.post("/systems", json=body, headers=ADMIN).json()["id"]
+    _deliver(client, tid, sid, "fortigate", fw)
+
+    params = {"tenant_id": tid, "src": "198.51.100.1", "dst": PUBLIC, "service": "tcp/443"}
+    r = client.get("/routing/trace", params=params)
+    assert r.status_code == 200, r.text
+    nat = r.json()["paths"][0]["hops"][0]["nat"]
+    assert nat["to"] == ["10.10.0.20", "10.10.0.21"]
+    assert nat["method"] == "round-robin" and nat["health"] == ["HC_https"]
+    assert nat["extintf"] == "wan" and nat["comment"] == "Shop extern"
+    first, second = nat["servers"]
+    assert first == {"ip": "10.10.0.20", "port": 8080, "status": "active", "weight": 1,
+                     "object": ["H_web01"]}  # fmt: skip
+    assert second["status"] == "standby" and second["weight"] == 2
+    assert second["health"] == ["HC_tcp"] and second["object"] == ["H_web02"]
+
+
+def test_load_balancer_mit_allen_servern_des_pools(client):
+    """0.114.1: der Load Balancer im Hop nennt alle Server des Pools (auch deaktivierte) und die
+    Methode."""
+    tid = _seed(client)
+    params = {"tenant_id": tid, "src": "198.51.100.1", "dst": PUBLIC, "service": "tcp/443"}
+    front = client.get("/routing/trace", params=params).json()["paths"][0]["hops"][0]
+    lb = front["lb"]
+    assert lb["method"] == "LB_ALGORITHM_ROUND_ROBIN" and lb["servers"] == 2
+    assert [(m["ip"], m["port"], m["status"]) for m in lb["members"]] == [
+        ("10.10.0.20", 8080, "active"),
+        ("10.10.0.21", 8080, "disable"),
+    ]
+    assert all(m["pool"] == "pool-web" for m in lb["members"])
+
+
+def test_ziel_hinter_vip_und_load_balancer_ist_die_epg_der_server(client, session_factory):
+    """0.117.0 (Anwender: „wenn ich ein V-EXT_ auflöse, nimmt er als Ziel nicht die VMs hinter dem
+    Loadbalancer, sondern das Subnetz … Es sollte dann die EG wählen und diese darstellen“): Ziel
+    und Zielzone kommen von den Servern am Ende des Wegs, nicht von der VIP bzw. dem Netz des
+    Load Balancers; die Namenssuche nennt die Kette."""
+    from app.models import InvSubnet, SourceSystem
+
+    tid = _seed(client)
+    s = session_factory()
+    fw = s.query(SourceSystem).filter_by(tenant_id=tid, name="fw-r").one()
+    s.add(InvSubnet(tenant_id=tid, source_system_id=fw.id, prefix="10.10.0.0/24",
+                    context="epg", context_name="EG_web", aci_tenant="TE", ap="AP_shop",
+                    epg="EG_web"))  # fmt: skip
+    s.commit()
+    s.close()
+
+    def zone(name, net):
+        body = {"tenant_id": tid, "name": name, "selectors": [{"kind": "prefix", "value": net}]}
+        r = client.post("/zones", json=body, headers=OP)
+        assert r.status_code == 201, r.text
+
+    zone("Shop", "10.10.0.0/24")
+    zone("DMZ", "10.30.0.0/24")  # Netz der VIP des Load Balancers
+    # VIP des Load Balancers als Ziel (Treffer „V-EXT_shop → 10.30.0.50“)
+    params = {"tenant_id": tid, "src": "10.30.0.10", "dst": VIP, "service": "tcp/443"}
+    got = client.get("/routing/trace", params=params).json()
+    target = got["target"]
+    assert target["balancer"] == "vs-web" and target["ips"] == ["10.10.0.20", "10.10.0.21"]
+    assert target["epgs"] == [{"epg": "TE|AP_shop|EG_web", "servers": 2}]
+    assert [z["name"] for z in got["zones"]["dst"]] == ["Shop"]  # nicht DMZ
+    # von aussen über die VIP der FortiGate: dieselbe EPG, mit der VIP
+    params = {"tenant_id": tid, "src": "198.51.100.1", "dst": PUBLIC, "service": "tcp/443"}
+    target = client.get("/routing/trace", params=params).json()["target"]
+    assert target["vip"] == "V-EXT_shop" and target["balancer"] == "vs-web"
+    assert target["epgs"][0]["epg"] == "TE|AP_shop|EG_web"
+    # Server als Ziel von aussen (0.134.0): der Weg geht über die VIP, Rückweg symmetrisch
+    params = {"tenant_id": tid, "src": "198.51.100.1", "dst": "10.10.0.20", "service": "tcp/443"}
+    got = client.get("/routing/trace", params=params).json()
+    assert got["via_vip"]["name"] == "V-EXT_shop" and got["via_vip"]["balancer"] == "vs-web"
+    assert got["target"]["vip"] == "V-EXT_shop"
+    (path,) = got["paths"]
+    assert path["return"]["state"] == "symmetric", path["return"]
+    assert not any("Rückweg" in n for n in got["notes"]), got["notes"]
+    # ohne VIP bzw. Load Balancer auf dem Weg (Quelle intern): kein Ziel dahinter
+    params = {"tenant_id": tid, "src": "10.30.0.10", "dst": "10.10.0.20"}
+    got = client.get("/routing/trace", params=params).json()
+    assert "target" not in got and "via_vip" not in got
+
+    # Namenssuche: die VIP selbst (externe IP) mit der Kette dahinter
+    hits = client.get("/routing/resolve", params={"tenant_id": tid, "q": "V-EXT_shop"}).json()
+    vip = next(h for h in hits["hits"] if h["ip"] == PUBLIC)
+    assert vip["name"] == "V-EXT_shop"
+    assert vip["detail"].endswith(f"→ {VIP} · Load Balancer vs-web → EPG TE|AP_shop|EG_web "
+                                  "(2 Server)")  # fmt: skip
+
+
+def test_dienst_je_stelle_client_load_balancer_server(client):
+    """0.137.0 (Anwender: „Der Dienst soll zugewiesen werden können, auswahlfeld, also
+    Clientseitig, Eingang Loadbalancer oder beim Ziel Server, Standard wäre Clientseitig“): der
+    Dienst gilt beim Client (Vorgabe), am Eingang des Load Balancers bzw. am Ziel-Server - die
+    Weg-Suche rechnet rückwärts zum Port des Clients und zeigt die Ports entlang des Wegs."""
+    tid = _seed(client)
+
+    def trace(**params) -> dict:
+        params = {"tenant_id": tid, "src": "198.51.100.1", "dst": PUBLIC, **params}
+        r = client.get("/routing/trace", params=params)
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    chain = [("client", "tcp/443"), ("lb", "tcp/443"), ("server", "tcp/8080")]
+    got = trace(service="tcp/443")  # Vorgabe: beim Client
+    assert got["service_at"]["at"] == "client" and got["service"] == "tcp/443"
+    assert [(x["at"], x["service"]) for x in got["service_chain"]] == chain
+    front, back = got["paths"][0]["hops"]
+    assert "checked_service" not in front and back["checked_service"] == "tcp/8080"
+    # am Ziel-Server 8080: beim Client 443 (vs-web), auch Port 80 führt zum Pool
+    got = trace(service="tcp/8080", service_at="server")
+    assert got["service"] == "tcp/443" and got["service_at"]["given"] == "tcp/8080"
+    assert got["service_at"]["note"] == ("Dienst tcp/8080 am Ziel-Server = beim Client tcp/443 "
+                                         "(auch möglich: Port 80)")  # fmt: skip
+    assert got["paths"][0]["policy"]["verdict"] == "allow"
+    # Server als Ziel (über die VIP, 0.134.0) mit seinem Port
+    got = trace(dst="10.10.0.20", service="tcp/8080", service_at="server")
+    assert got["via_vip"]["name"] == "V-EXT_shop" and got["service"] == "tcp/443"
+    # am Eingang des Load Balancers
+    got = trace(service="tcp/443", service_at="lb")
+    assert got["service"] == "tcp/443" and got["service_at"]["label"] == (
+        "am Eingang des Load Balancers"
+    )
+    # unbekannte Stelle: 422
+    r = client.get("/routing/trace", params={"tenant_id": tid, "src": "198.51.100.1",
+                                             "dst": PUBLIC, "service_at": "vip"})  # fmt: skip
+    assert r.status_code == 422
+
+
+def test_load_balancer_nach_der_port_weiterleitung(client):
+    """0.137.0: leitet die VIP der Firewall einen anderen Port auf den Load Balancer weiter
+    (8443 -> 443), wählt die Weg-Suche den Virtual Service mit dem weitergeleiteten Port - bis
+    0.136.0 suchte sie ihn mit dem Port des Clients und fand keinen."""
+    tid = client.post("/tenants", json={"name": "Kunde A"}, headers=ADMIN).json()["id"]
+    fw = _fw()
+    fw["nat_rules"][0] |= {"ext_port": "8443", "mapped_port": "443", "portforward": True}
+    body = {"tenant_id": tid, "name": "fw-r", "platform": "fortigate", "base_url": "https://x"}
+    _deliver(client, tid, client.post("/systems", json=body, headers=ADMIN).json()["id"],
+             "fortigate", fw)  # fmt: skip
+    body = {"tenant_id": tid, "name": "avi-01", "platform": "avi", "base_url": "https://avi",
+            "username": "ro", "password": "x", "read_scope": "admin"}  # fmt: skip
+    _deliver(client, tid, client.post("/systems", json=body, headers=ADMIN).json()["id"],
+             "avi", AVI)  # fmt: skip
+    params = {"tenant_id": tid, "src": "198.51.100.1", "dst": PUBLIC, "service": "tcp/8443"}
+    got = client.get("/routing/trace", params=params).json()
+    front, back = got["paths"][0]["hops"]
+    assert front["lb"]["name"] == "vs-web" and back["dst"] == "10.10.0.20"
+    assert front["checked_service"] == "tcp/443" and back["checked_service"] == "tcp/8080"
+    assert [(x["at"], x["service"]) for x in got["service_chain"]] == [
+        ("client", "tcp/8443"),
+        ("vip", "tcp/443"),
+        ("lb", "tcp/443"),
+        ("server", "tcp/8080"),
+    ]
+    # rückwärts: am Ziel-Server 8080 = beim Client 8443
+    back = params | {"service": "tcp/8080", "service_at": "server"}
+    got = client.get("/routing/trace", params=back).json()
+    assert got["service"] == "tcp/8443"

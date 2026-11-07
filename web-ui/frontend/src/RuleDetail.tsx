@@ -1,10 +1,12 @@
 import { ReactNode, useEffect, useState } from "react";
 import {
+  ApiError,
   decidePair,
   Endpoint,
   fetchRuleDetail,
   isCustomerUser,
   NatBrief,
+  PairResult,
   rejectParallel,
   resetPairDecision,
   RuleDetail,
@@ -15,6 +17,7 @@ import { EpgCard } from "./EpgCard";
 import { FamilyMarks, RefCard, serviceNames, SideMarks, useVdomShown, VdomChip, VmChip, VmSection } from "./refs";
 import { ActionBadge, Dash, Drawer, ErrorBox, fmtTime, Loading, MatchBadge, Note } from "./ui";
 import { L } from "./i18n";
+import { RuleWegeLink } from "./modules/wege/RuleWegeLink";
 
 function EndpointList({ items }: { items: Endpoint[] }) {
   if (!items.length) return <Dash />;
@@ -143,11 +146,17 @@ function NatList({ items, onOpen }: { items: NatBrief[]; onOpen?: (name: string)
 // Paar bestätigen ("ähnlich" → bestätigt), ablehnen ("Kein Paar") oder zurücknehmen
 function PairActions({
   detail,
+  busy,
+  pending,
+  error,
   onConfirm,
   onReject,
   onReset,
 }: {
   detail: RuleDetail;
+  busy: boolean;
+  pending: boolean;
+  error: unknown;
   onConfirm: (partnerId: number) => void;
   onReject: (partnerId: number) => void;
   onReset: (decisionId: number) => void;
@@ -156,13 +165,24 @@ function PairActions({
   const decisions = detail.pair_decisions ?? [];
   const confirmed = decisions.find((d) => d.decision === "confirmed" && d.partner_id === p?.rule_id);
   const rejected = decisions.filter((d) => d.decision === "rejected");
-  if (!p && !rejected.length) return null;
+  if (!p && !rejected.length && !error) return null;
   return (
-    <div style={{ marginTop: 4 }}>
+    <div style={{ marginTop: 4 }} id="pair-actions">
+      <ErrorBox error={error} prefix={L("Paar entscheiden", "Decide pair")} />
+      {busy && <div className="faint">{L("wird gespeichert …", "saving …")}</div>}
+      {pending && !busy && (
+        <div className="note" id="pair-pending">
+          {L(
+            "Gespeichert – die Markierung folgt, sobald das laufende Einspielen bzw. der Abgleich fertig ist.",
+            "Saved – the mark follows as soon as the running import or reconciliation has finished.",
+          )}
+        </div>
+      )}
       {p && p.match === "similar" && (
         <>
           <button
             className="linkbtn"
+            disabled={busy}
             title={L(
               "Die beiden Policies decken (trotz Abweichungen) dasselbe ab – gilt auch nach neuen Läufen",
               "Both policies cover the same traffic (despite deviations) – also applies after new runs",
@@ -174,10 +194,21 @@ function PairActions({
           ·{" "}
         </>
       )}
+      {p && p.match === "auto" && (
+        // 0.138.0: automatisch bestätigt (Einstellung des Mandanten) – „Kein Paar“ trennt es dauerhaft
+        <span className="faint" id="pair-auto">
+          {L("automatisch bestätigt (Einstellung des Mandanten) · ", "confirmed automatically (tenant setting) · ")}
+        </span>
+      )}
       {p && !confirmed && (
         <button
           className="linkbtn"
-          title={L("Kein Gegenstück – nicht mehr als Paar vorschlagen", "No counterpart – do not suggest as pair any more")}
+          disabled={busy}
+          title={
+            p.match === "auto"
+              ? L("Paar auseinandernehmen – dauerhaft, auch nach neuen Läufen", "Separate the pair – permanently, also after new runs")
+              : L("Kein Gegenstück – nicht mehr als Paar vorschlagen", "No counterpart – do not suggest as pair any more")
+          }
           onClick={() => onReject(p.rule_id)}
         >
           {L("Kein Paar", "No pair")}
@@ -193,7 +224,7 @@ function PairActions({
               confirmed by {confirmed.decided_by}, {fmtTime(confirmed.decided_at)} ·{" "}
             </>,
           )}
-          <button className="linkbtn" onClick={() => onReset(confirmed.id)}>
+          <button className="linkbtn" disabled={busy} onClick={() => onReset(confirmed.id)}>
             {L("zurücknehmen", "undo")}
           </button>
         </div>
@@ -210,7 +241,7 @@ function PairActions({
               {d.partner_id ? ` (#${d.partner_id})` : ""} – by {d.decided_by}, {fmtTime(d.decided_at)} ·{" "}
             </>,
           )}
-          <button className="linkbtn" onClick={() => onReset(d.id)}>
+          <button className="linkbtn" disabled={busy} onClick={() => onReset(d.id)}>
             {L("zurücknehmen", "undo")}
           </button>
         </div>
@@ -257,12 +288,32 @@ export default function RuleDetailDrawer({
       .catch(setError);
   }, [ruleId, reload]);
 
-  // IPv4/IPv6-Paar von Hand entscheiden (operator); gilt sofort und für neue Läufe
-  const decide = (action: Promise<void>) =>
-    action.then(() => {
+  // IPv4/IPv6-Paar von Hand entscheiden (operator); gilt sofort und für neue Läufe. 0.113.1 (Anwender: „kann klicken,
+  // macht nichts“): während des Speicherns gesperrt mit Hinweis, Fehler beim Knopf; ist der Mandant gerade gesperrt
+  // (Einspielen, Abgleich), folgt die Markierung im Hintergrund – das Detail lädt dann ein paar Mal neu
+  const [pairBusy, setPairBusy] = useState(false);
+  const [pairError, setPairError] = useState<unknown>(null);
+  const [pairPending, setPairPending] = useState(0);
+  const decide = (action: Promise<PairResult>) => {
+    setPairBusy(true);
+    setPairError(null);
+    action
+      .then((r) => {
+        setPairPending(r?.pending ? 12 : 0);
+        setReload((n) => n + 1);
+        onChanged?.();
+      }, setPairError)
+      .finally(() => setPairBusy(false));
+  };
+  useEffect(() => {
+    if (!pairPending) return;
+    const t = window.setTimeout(() => {
+      setPairPending((n) => n - 1);
       setReload((n) => n + 1);
-      onChanged?.();
-    }, setError);
+      if (pairPending === 1) onChanged?.();
+    }, 5000);
+    return () => window.clearTimeout(t);
+  }, [pairPending]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const focused = (e: Endpoint) => !focus || showAll || !e.epg?.dn || focus.dns.includes(e.epg.dn);
   const all = detail?.endpoints ?? [];
@@ -296,7 +347,19 @@ export default function RuleDetailDrawer({
       }
       onClose={onClose}
     >
-      <ErrorBox error={error} />
+      {error instanceof ApiError && error.status === 404 ? (
+        // 0.141.2 (Anwender: Klick auf die Regel in den Findings – „404“): Regel gibt es nicht mehr
+        <Note warn>
+          <span id="rule-gone">
+            {L(
+              `Diese Regel gibt es nicht mehr (Kennung ${ruleId}) – sie wurde auf dem Gerät gelöscht bzw. seit dem Befund neu eingelesen. Befunde und Doku ziehen nach den Läufen nach.`,
+              `This rule no longer exists (ID ${ruleId}) – it was deleted on the device or re-read since the finding. Findings and documentation catch up after the runs.`,
+            )}
+          </span>
+        </Note>
+      ) : (
+        <ErrorBox error={error} />
+      )}
       {!detail && !error && <Loading />}
       {detail && (
         <>
@@ -304,7 +367,7 @@ export default function RuleDetailDrawer({
           <dl className="kv">
             <dt>{L("Aktion", "Action")}</dt>
             <dd>
-              <ActionBadge action={detail.action} />
+              <ActionBadge action={detail.action} /> <RuleWegeLink ruleId={detail.id} />
             </dd>
             {vdomShown(detail.source_system_id, detail.vdom) && (
               <>
@@ -365,7 +428,10 @@ export default function RuleDetailDrawer({
                             `Dissolve parallel group “${detail.parallel!.group}” and do not suggest it again?`,
                           );
                           if (!window.confirm(msg)) return;
-                          decide(rejectParallel(detail.tenant_id, { group: detail.parallel!.group }).then(() => undefined));
+                          rejectParallel(detail.tenant_id, { group: detail.parallel!.group }).then(() => {
+                            setReload((n) => n + 1);
+                            onChanged?.();
+                          }, setError);
                         }}
                       >
                         {L("Verbund auflösen", "Dissolve parallel group")}
@@ -406,6 +472,9 @@ export default function RuleDetailDrawer({
                   {!isCustomerUser() && (
                     <PairActions
                       detail={detail}
+                      busy={pairBusy}
+                      pending={pairPending > 0}
+                      error={pairError}
                       onConfirm={(id) => decide(decidePair(detail.id, id, "confirmed"))}
                       onReject={(id) => decide(decidePair(detail.id, id, "rejected"))}
                       onReset={(id) => decide(resetPairDecision(id))}
@@ -491,7 +560,12 @@ export default function RuleDetailDrawer({
                     <dt>{L("Richtung", "Direction")}</dt>
                     <dd id="rule-aci-direction">
                       {detail.aci_direction.both ? (
-                        <span className="chip warn">{L("↔ beide Richtungen", "↔ both directions")}</span>
+                        <span className="chip warn">
+                          {L(
+                            `↔ auch vom Provider aus: ${detail.aci_direction.reverse.join(", ")}`,
+                            `↔ also from the provider: ${detail.aci_direction.reverse.join(", ")}`,
+                          )}
+                        </span>
                       ) : detail.aci_direction.replies_only ? (
                         <span className="chip warn">
                           {detail.aci_direction.reverse.length

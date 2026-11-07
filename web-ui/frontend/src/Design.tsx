@@ -9,6 +9,7 @@
 import { CSSProperties, Fragment, PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   acceptZoneSuggestions,
+  AppdocCatalog,
   applySchemaIntents,
   assignZoneNodes,
   createZone,
@@ -54,6 +55,8 @@ import {
   savePlanArrangement,
   savePlanVersion,
   SchemaZone,
+  setAppdocZones,
+  fetchAppdocCatalog,
   setZonePolicy,
   SuggestionNode,
   System,
@@ -61,6 +64,7 @@ import {
   updateZone,
   ZoneCell,
   ZoneCellRules,
+  ZoneDevice,
   ZoneIn,
   ZoneIntent,
   ZoneKind,
@@ -106,7 +110,10 @@ const INTENT: Record<ZoneIntent, [string, string]> = {
   limited: ["warn", L("eingeschränkt", "limited")],
   deny: ["crit", L("gesperrt", "deny")],
 };
-const ZONE_SELECTOR_LABEL: Record<ZoneSelectorKind, string> = { ...SELECTOR_LABEL, exit: L("Anbindung", "Exit") };
+const ZONE_SELECTOR_LABEL: Record<ZoneSelectorKind, string> = {
+  ...SELECTOR_LABEL,
+  exit: L("Anbindung", "Exit"),
+};
 const PLACEHOLDER: Partial<Record<ZoneSelectorKind, string>> = {
   aci_tenant: "TE_ka",
   aci_epg: "TE_ka/AP_007/EPG_web",
@@ -126,7 +133,8 @@ const SOURCE: Record<ZoneSuggestionSource, string> = {
   schema: L("Grundschema", "Base schema"),
 };
 
-type Tab = "zones" | "suggestions" | "matrix" | "plan" | "versions";
+type Tab = "zones" | "appdoc" | "suggestions" | "matrix" | "plan" | "versions";
+const TAB_KEYS: Tab[] = ["zones", "appdoc", "suggestions", "matrix", "plan", "versions"];
 
 export default function Design({
   tenantId,
@@ -134,14 +142,18 @@ export default function Design({
   canEdit,
   isAdmin,
   isCustomer = false,
+  params = {},
 }: {
   tenantId: number | null;
   tenantLabel: string;
   canEdit: boolean;
   isAdmin: boolean;
   isCustomer?: boolean; // Kunden-Benutzer (0.53.0): eigene Zonen, geteilte nur mit Namen
+  params?: Record<string, string>; // 0.102.0: `tab` (z. B. aus der Applikations-Doku)
 }) {
-  const [tab, setTab] = useState<Tab>("zones");
+  const [tab, setTab] = useState<Tab>(
+    TAB_KEYS.includes(params.tab as Tab) && !(isCustomer && params.tab === "appdoc") ? (params.tab as Tab) : "zones",
+  );
   return (
     <>
       <PageHead title={L("Netzwerkdesign", "Network design")}>
@@ -183,13 +195,14 @@ export default function Design({
             {(
               [
                 ["zones", L("Zonen", "Zones")],
+                ["appdoc", L("Kategorien", "Categories")],
                 ["suggestions", L("Vorschläge", "Suggestions")],
                 ["matrix", L("Zonenmatrix", "Zone matrix")],
                 ["plan", L("Zonenplan", "Zone plan")],
                 ["versions", L("Versionen", "Versions")],
               ] as const
             )
-              .filter(([k]) => !isCustomer || (k !== "versions" && k !== "suggestions"))
+              .filter(([k]) => !isCustomer || (k !== "versions" && k !== "suggestions" && k !== "appdoc"))
               .map(([k, label]) => (
               <button key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>
                 {label}
@@ -197,12 +210,335 @@ export default function Design({
             ))}
           </div>
           {tab === "zones" && <ZonesTab tenantId={tenantId} canEdit={canEdit} isCustomer={isCustomer} />}
+          {tab === "appdoc" && !isCustomer && <AppdocTab tenantId={tenantId} canEdit={canEdit} />}
           {tab === "suggestions" && <SuggestionsTab tenantId={tenantId} canEdit={canEdit} />}
           {tab === "matrix" && <MatrixTab tenantId={tenantId} canEdit={canEdit} />}
           {tab === "plan" && <PlanTab tenantId={tenantId} isCustomer={isCustomer} canArrange={canEdit && !isCustomer} />}
           {tab === "versions" && <VersionsTab tenantId={tenantId} canEdit={canEdit} isAdmin={isAdmin} />}
         </>
       )}
+    </>
+  );
+}
+
+// -- Kategorien der Applikations-Doku ------------------------------------------------------------
+// 0.102.0 (Anwender: „das Zuordnen gehört zu den Zonen ins Netzwerkdesign“): je Zone ihre Netze mit Ausschlüssen
+// (Selektoren „Netz“). Seit 0.106.0 (ADR 0035, Anwender: „einfacher ist besser“) dazu der Zonentyp (Zone des
+// Grundschemas, erkannt bzw. von Hand) und die Geräte (Firewall/VDOM, ACI-Tenant/-VRF, Anbindungen aus dem Routing):
+// daraus und aus dem Routing ergibt sich, welche Zone hinter einem Interface bzw. L3Out liegt. Die Kategorie folgt
+// der Richtung Zonentyp → Zonentyp im Namenskonzept; die übrigen Selektoren pflegt der Reiter Zonen.
+type AppdocDraft = { type: string | null; nets: string; excluded: string; devices: ZoneDevice[]; external: boolean };
+const DEVICE_KINDS: ZoneDevice["kind"][] = ["fw_vdom", "aci_tenant", "aci_vrf", "exit"];
+const DEVICE_LABEL: Record<ZoneDevice["kind"], string> = {
+  fw_vdom: L("Firewall/VDOM", "Firewall/VDOM"),
+  aci_tenant: L("ACI-Tenant", "ACI tenant"),
+  aci_vrf: L("ACI-VRF", "ACI VRF"),
+  exit: L("Anbindung", "Exit"),
+};
+const splitNets = (text: string) =>
+  text
+    .split(/[\s,;]+/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+const zonePrefixes = (z: LogicalZone, exclude: boolean) =>
+  z.selectors.filter((x) => x.kind === "prefix" && !!x.exclude === exclude).map((x) => x.value);
+const zoneDevices = (z: LogicalZone): ZoneDevice[] =>
+  z.selectors
+    .filter((x) => DEVICE_KINDS.includes(x.kind as ZoneDevice["kind"]) && !x.exclude)
+    .map((x) => ({ kind: x.kind as ZoneDevice["kind"], value: x.value, source_system_id: x.kind === "fw_vdom" ? (x.source_system_id ?? null) : null }));
+const sameNets = (a: string, b: string) => splitNets(a).join(" ") === splitNets(b).join(" ");
+const deviceKey = (d: ZoneDevice) => `${d.kind}|${d.value}|${d.source_system_id ?? ""}`;
+const sameDevices = (a: ZoneDevice[], b: ZoneDevice[]) => a.map(deviceKey).join(",") === b.map(deviceKey).join(",");
+
+function AppdocTab({ tenantId, canEdit }: { tenantId: number; canEdit: boolean }) {
+  const [rows, setRows] = useState<LogicalZone[] | null>(null);
+  // Zonentypen, erkannte Typen und Geräte zur Auswahl (0.105.0/0.106.0)
+  const [catalog, setCatalog] = useState<AppdocCatalog | null>(null);
+  const [systems, setSystems] = useState<System[]>([]);
+  const [draft, setDraft] = useState<Record<number, AppdocDraft>>({});
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [err, setErr] = useState<unknown>(null);
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    // eine spätere Antwort überschreibt die Eingaben nicht (StrictMode lädt zweimal, 0.101.1)
+    let live = true;
+    Promise.all([fetchZones(tenantId), fetchAppdocCatalog(tenantId)])
+      .then(([zs, cat]) => {
+        if (!live) return;
+        setRows(zs);
+        setCatalog(cat);
+        setDraft({});
+      })
+      .catch((e) => live && setErr(e));
+    return () => {
+      live = false;
+    };
+  }, [tenantId, tick]);
+  useEffect(() => {
+    fetchSystems(tenantId).then(setSystems).catch(() => setSystems([]));
+  }, [tenantId]);
+
+  const initial = (z: LogicalZone): AppdocDraft => ({
+    type: z.zone_type ?? null,
+    nets: zonePrefixes(z, false).join("\n"),
+    excluded: zonePrefixes(z, true).join("\n"),
+    devices: zoneDevices(z),
+    external: !!z.external_managed,
+  });
+  const value = (z: LogicalZone) => draft[z.id] ?? initial(z);
+  const set = (z: LogicalZone, patch: Partial<AppdocDraft>) => {
+    setSaved(false);
+    setDraft((d) => ({ ...d, [z.id]: { ...(d[z.id] ?? initial(z)), ...patch } }));
+  };
+  const netsChanged = (z: LogicalZone) => {
+    const v = value(z);
+    const i = initial(z);
+    return !sameNets(v.nets, i.nets) || !sameNets(v.excluded, i.excluded);
+  };
+  const devicesChanged = (z: LogicalZone) => !sameDevices(value(z).devices, initial(z).devices);
+  const externalChanged = (z: LogicalZone) => value(z).external !== initial(z).external;
+  const changed = (rows ?? []).filter(
+    (z) => draft[z.id] && (value(z).type !== initial(z).type || netsChanged(z) || devicesChanged(z) || externalChanged(z)),
+  );
+  const devices = catalog?.devices ?? [];
+  const deviceLabel = (d: ZoneDevice) => {
+    const known = devices.find((x) => deviceKey(x) === deviceKey(d));
+    if (known?.label) return known.label;
+    const where = d.source_system_id ? `${systems.find((x) => x.id === d.source_system_id)?.name ?? "?"} · ` : "";
+    return `${where}${d.value}`;
+  };
+  const save = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await setAppdocZones(
+        tenantId,
+        changed.map((z) => {
+          const v = value(z);
+          return {
+            id: z.id,
+            zone_type: v.type,
+            ...(netsChanged(z) ? { nets: splitNets(v.nets), excluded: splitNets(v.excluded) } : {}),
+            ...(devicesChanged(z) ? { devices: v.devices.map(({ kind, value: val, source_system_id }) => ({ kind, value: val, source_system_id })) } : {}),
+            ...(externalChanged(z) ? { external_managed: v.external } : {}),
+          };
+        }),
+      );
+      setSaved(true);
+      setTick((t) => t + 1);
+    } catch (e) {
+      setErr(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <ErrorBox error={err} onClose={() => setErr(null)} />
+      <div className="card" id="appdoc-zones">
+        <div className="card-head">
+          <h2>{L("Kategorien der Applikations-Doku", "Categories of the application documentation")}</h2>
+          <span className="faint">
+            {L(
+              <>
+                Je Zone der Zonentyp, ihre Netze und ihre Geräte. Eine Firewall-Regel bzw. ein Contract steht in der Kategorie
+                der Richtung Zonentyp der Quelle → Zonentyp des Ziels (Namenskonzept, Administration → Namensprofile). Liegt
+                eine Gegenstelle nicht in den Netzen einer Zone (any, grosser Bereich), zählt die Zone hinter dem Interface
+                bzw. L3Out der Regel – aus den Geräten und dem Routing; nicht eindeutig: unspezifisch.
+              </>,
+              <>
+                Per zone the zone type, its networks and its devices. A firewall rule or contract goes into the category of the
+                direction source zone type → destination zone type (naming concept, Administration → Naming profiles). If a
+                peer is not in the networks of a zone (any, large range), the zone behind the interface or L3Out of the rule
+                counts – from the devices and the routing; not unique: unspecific.
+              </>,
+            )}
+          </span>
+          {canEdit && (
+            <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+              <button className="btn btn-primary btn-sm" id="appdoc-save" disabled={busy || changed.length === 0} onClick={() => void save()}>
+                {busy ? L("Speichere…", "Saving…") : L(`Speichern (${changed.length})`, `Save (${changed.length})`)}
+              </button>
+            </div>
+          )}
+        </div>
+        {saved && changed.length === 0 && (
+          <div className="faint" id="appdoc-saved" style={{ padding: "0 14px", fontSize: 12 }}>
+            {L("Gespeichert – die Applikations-Doku ordnet beim nächsten Laden neu.", "Saved – the application documentation re-sorts on the next load.")}
+          </div>
+        )}
+        <div className="card-body scroll">
+          {rows == null ? (
+            <Loading />
+          ) : rows.length === 0 ? (
+            <Empty title={L("Noch keine Zonen", "No zones yet")}>
+              {L("Zonen im Reiter „Zonen“ anlegen bzw. unter „Vorschläge“ übernehmen.", "Create zones in the “Zones” tab or apply them under “Suggestions”.")}
+            </Empty>
+          ) : (
+            <table className="compact form-table">
+              <colgroup>
+                <col style={{ width: "15%" }} />
+                <col style={{ width: "14%" }} />
+                <col style={{ width: "16%" }} />
+                <col style={{ width: "16%" }} />
+                <col style={{ width: "24%" }} />
+                <col />
+              </colgroup>
+              <thead>
+                <tr>
+                  <th>{L("Zone", "Zone")}</th>
+                  <th title={L("Zone des Grundschemas im Namenskonzept", "zone of the base schema in the naming concept")}>{L("Zonentyp", "Zone type")}</th>
+                  <th title={L("ein Netz je Zeile (CIDR)", "one network per line (CIDR)")}>{L("Netze (Quell-Adressen)", "Networks (source addresses)")}</th>
+                  <th title={L("ein Netz je Zeile – aus den Netzen herausgeschnitten", "one network per line – cut out of the networks")}>
+                    {L("ohne (Ausschlüsse)", "without (exclusions)")}
+                  </th>
+                  <th title={L("Firewall bzw. VDOM, ACI-Tenant, ACI-VRF und Anbindungen (Routing → Anbindungen) in dieser Zone", "firewall or VDOM, ACI tenant, ACI VRF and exits (Routing → Exits) in this zone")}>
+                    {L("Geräte", "Devices")}
+                  </th>
+                  <th>{L("weitere Selektoren", "other selectors")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((z) => {
+                  const v = value(z);
+                  const others = z.selectors.filter((x) => x.kind !== "prefix" && !(DEVICE_KINDS.includes(x.kind as ZoneDevice["kind"]) && !x.exclude));
+                  const auto = catalog?.auto_types?.[String(z.id)] ?? null;
+                  const mine = new Set(v.devices.map(deviceKey));
+                  const choices = devices.filter((d) => !mine.has(deviceKey(d)));
+                  return (
+                    <tr key={z.id} className={changed.includes(z) ? "row-changed" : ""}>
+                      <td>
+                        <Swatch color={z.color} /> <b>{z.name}</b>
+                        {z.code ? <span className="faint"> · {z.code}</span> : null}
+                        <div className="faint" style={{ fontSize: 11 }}>
+                          {L(`${z.nets} Netze`, `${z.nets} networks`)}
+                          {z.epgs ? L(` · ${z.epgs} EPGs`, ` · ${z.epgs} EPGs`) : ""}
+                        </div>
+                        {/* 0.132.0: fremd verwaltet – nur zu solchen Zonen gehört ein BGP-Eingangsfilter */}
+                        <label
+                          className="faint appdoc-external"
+                          style={{ fontSize: 11, display: "flex", gap: 4, alignItems: "center", marginTop: 2 }}
+                          title={L(
+                            "Geräte dieser Zone verwaltest nicht du (WAN, MPLS, fremde Anbindungen) – nur zu solchen Nachbarn gehört ein Eingangsfilter",
+                            "You do not manage the devices of this zone (WAN, MPLS, third-party links) – only such neighbors need an inbound filter",
+                          )}
+                        >
+                          <input
+                            type="checkbox"
+                            aria-label={L(`Zone ${z.name} fremd verwaltet`, `Zone ${z.name} managed externally`)}
+                            checked={v.external}
+                            disabled={!canEdit}
+                            onChange={(e) => set(z, { external: e.target.checked })}
+                          />
+                          {L("fremd verwaltet", "managed externally")}
+                        </label>
+                      </td>
+                      <td>
+                        <select
+                          className="sel"
+                          aria-label={L(`Zonentyp der Zone ${z.name}`, `Zone type of zone ${z.name}`)}
+                          value={v.type ?? ""}
+                          disabled={!canEdit}
+                          onChange={(e) => set(z, { type: e.target.value || null })}
+                        >
+                          <option value="">{auto ? L(`automatisch: ${auto}`, `automatic: ${auto}`) : L("— keiner (automatisch)", "— none (automatic)")}</option>
+                          {(catalog?.zone_types ?? []).map((t) => (
+                            <option key={t} value={t}>
+                              {t}
+                            </option>
+                          ))}
+                          {v.type && !(catalog?.zone_types ?? []).includes(v.type) ? <option value={v.type}>{v.type}</option> : null}
+                        </select>
+                      </td>
+                      <td>
+                        <textarea
+                          className="input mono"
+                          rows={Math.min(6, Math.max(2, splitNets(v.nets).length + 1))}
+                          aria-label={L(`Netze der Zone ${z.name}`, `Networks of zone ${z.name}`)}
+                          placeholder="10.70.0.0/16"
+                          value={v.nets}
+                          readOnly={!canEdit}
+                          onChange={(e) => set(z, { nets: e.target.value })}
+                        />
+                      </td>
+                      <td>
+                        <textarea
+                          className="input mono"
+                          rows={Math.min(6, Math.max(2, splitNets(v.excluded).length + 1))}
+                          aria-label={L(`Ausschlüsse der Zone ${z.name}`, `Exclusions of zone ${z.name}`)}
+                          placeholder="10.70.99.0/24"
+                          value={v.excluded}
+                          readOnly={!canEdit}
+                          onChange={(e) => set(z, { excluded: e.target.value })}
+                        />
+                      </td>
+                      <td className="appdoc-devices">
+                        <div className="chips">
+                          {v.devices.map((d) => (
+                            <span key={deviceKey(d)} className="chip info" title={DEVICE_LABEL[d.kind]}>
+                              {DEVICE_LABEL[d.kind]} {deviceLabel(d)}
+                              {canEdit && (
+                                <button
+                                  className="chip-x"
+                                  aria-label={L(`${deviceLabel(d)} aus der Zone ${z.name} entfernen`, `Remove ${deviceLabel(d)} from zone ${z.name}`)}
+                                  onClick={() => set(z, { devices: v.devices.filter((x) => deviceKey(x) !== deviceKey(d)) })}
+                                >
+                                  ✕
+                                </button>
+                              )}
+                            </span>
+                          ))}
+                          {v.devices.length === 0 && !canEdit && <Dash />}
+                        </div>
+                        {canEdit && (
+                          <select
+                            className="sel"
+                            style={{ fontSize: 12, marginTop: 4 }}
+                            aria-label={L(`Gerät der Zone ${z.name}`, `Device of zone ${z.name}`)}
+                            value=""
+                            onChange={(e) => {
+                              const d = choices.find((x) => deviceKey(x) === e.target.value);
+                              if (d) set(z, { devices: [...v.devices, { kind: d.kind, value: d.value, source_system_id: d.source_system_id, label: d.label }] });
+                            }}
+                          >
+                            <option value="">{L("+ Gerät", "+ device")}</option>
+                            {DEVICE_KINDS.map((k) =>
+                              choices.some((d) => d.kind === k) ? (
+                                <optgroup key={k} label={DEVICE_LABEL[k]}>
+                                  {choices
+                                    .filter((d) => d.kind === k)
+                                    .map((d) => (
+                                      <option key={deviceKey(d)} value={deviceKey(d)}>
+                                        {d.label ?? d.value}
+                                      </option>
+                                    ))}
+                                </optgroup>
+                              ) : null,
+                            )}
+                          </select>
+                        )}
+                      </td>
+                      <td>
+                        {others.length === 0 ? (
+                          <Dash />
+                        ) : (
+                          others.map((x, i) => (
+                            <span key={i} className={`chip ${x.exclude ? "warn" : ""}`}>
+                              {selectorText(x, systems)}
+                            </span>
+                          ))
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
     </>
   );
 }
@@ -1173,6 +1509,20 @@ function ZoneEditor({
   const [customerId, setCustomerId] = useState<number | null>(base?.customer_id ?? null);
   const [position, setPosition] = useState(base?.position ?? 0);
   const [description, setDescription] = useState(base?.description ?? "");
+  // Zonentyp von Hand (0.105.0): Zone des Grundschemas; leer = automatisch
+  const [zoneType, setZoneType] = useState<string | null>(base?.zone_type ?? null);
+  // fremd verwaltet (0.132.0): nur zu solchen Zonen gehört ein BGP-Eingangsfilter; Vorgabe nein
+  const [external, setExternal] = useState<boolean>(!!base?.external_managed);
+  const [catalog, setCatalog] = useState<AppdocCatalog | null>(null);
+  useEffect(() => {
+    let live = true;
+    fetchAppdocCatalog(tenantId)
+      .then((c) => live && setCatalog(c))
+      .catch(() => live && setCatalog(null));
+    return () => {
+      live = false;
+    };
+  }, [tenantId]);
   const [selectors, setSelectors] = useState<ZoneSelector[]>(base?.selectors.map((s) => ({ ...s })) ?? [{ ...EMPTY_SELECTOR }]);
   const [preview, setPreview] = useState<ZonePreview | null>(null);
   // Vorschläge beim Erfassen (0.66.0): Firewall-Zonen, Interfaces, IPAM, ACI, Anbindungen nach dem Namen
@@ -1227,6 +1577,8 @@ function ZoneEditor({
       position,
       description: description.trim() || null,
       selectors: valid.map((s) => ({ ...s, value: s.value.trim(), source_system_id: FW_KINDS.includes(s.kind) ? s.source_system_id : null })),
+      zone_type: zoneType,
+      external_managed: external,
     };
     try {
       if (initial) await updateZone(initial.id, body);
@@ -1331,6 +1683,40 @@ function ZoneEditor({
       <div className="field">
         <label htmlFor="zo-desc">{L("Beschreibung (optional)", "Description (optional)")}</label>
         <input id="zo-desc" className="input" value={description} onChange={(e) => setDescription(e.target.value)} />
+      </div>
+      <div className="field">
+        <label htmlFor="zo-type">{L("Zonentyp (Zone des Grundschemas)", "Zone type (zone of the base schema)")}</label>
+        <select id="zo-type" className="input" value={zoneType ?? ""} onChange={(e) => setZoneType(e.target.value || null)}>
+          <option value="">
+            {initial && catalog?.auto_types?.[String(initial.id)]
+              ? L(`automatisch: ${catalog.auto_types[String(initial.id)]}`, `automatic: ${catalog.auto_types[String(initial.id)]}`)
+              : L("— automatisch (Name, Kurzname, Vorlage je Kunde)", "— automatic (name, short name, template per customer)")}
+          </option>
+          {(catalog?.zone_types ?? []).map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+          {zoneType && !(catalog?.zone_types ?? []).includes(zoneType) ? <option value={zoneType}>{zoneType}</option> : null}
+        </select>
+        <div className="hint">
+          {L(
+            "Mit der Richtung der Kategorien im Namenskonzept (z. B. „Edge Internet → DC“) bestimmt der Zonentyp die Kategorie in der Applikations-Doku",
+            "With the direction of the categories in the naming concept (e.g. “Edge Internet → DC”) the zone type determines the category in the application documentation",
+          )}
+        </div>
+      </div>
+      <div className="field">
+        <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <input id="zo-external" type="checkbox" checked={external} onChange={(e) => setExternal(e.target.checked)} />
+          {L("Fremd verwaltet", "Managed externally")}
+        </label>
+        <div className="hint">
+          {L(
+            "Die Geräte dieser Zone verwaltest nicht du (WAN, MPLS, fremde Anbindungen) – nur zu BGP-Nachbarn in solchen Zonen gehört ein Eingangsfilter; sonst ist ein fehlender Eingangsfilter keine Abweichung",
+            "You do not manage the devices of this zone (WAN, MPLS, third-party links) – only BGP neighbors in such zones need an inbound filter; otherwise a missing inbound filter is no deviation",
+          )}
+        </div>
       </div>
 
       <h3 style={{ marginTop: 12 }}>{L("Selektoren", "Selectors")}</h3>

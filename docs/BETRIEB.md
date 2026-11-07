@@ -49,7 +49,11 @@ wirksame Routing-Tabelle, alle BGP-Pfade und -Nachbarn, statische Routen, Policy
 SD-WAN-Regeln sowie global HA und Session-Sync; ein APIC-Lauf die L3Outs und je Border-Leaf
 und VRF dessen Routing-Tabelle und BGP-Nachbarn. Das Read-only-Profil der FortiGate braucht
 Lesezugriff auf Router und System (inkl. Monitor), der APIC-Benutzer auf die Fabric-Knoten.
-Passwörter und Schlüssel (HA, FGSP, BGP-Peers) werden nie gelesen.
+Passwörter und Schlüssel (HA, FGSP, BGP-Peers) werden nie gelesen. Seit 0.113.0 (ADR 0041)
+dazu die BGP-Konfiguration je VDOM (`router bgp`: Filter je Nachbar, network, aggregate,
+redistribute) mit Prefix-Listen, Route-Maps und Access-Listen sowie die Route Control der
+L3Outs – dafür braucht das Profil Lesezugriff auf die Router-Konfiguration, nicht nur den
+Monitor; fehlt er, steht „BGP-Konfiguration“ als nicht lesbar in der Lauf-Meldung.
 
 **Zeitgesteuert:** Mit einem Zeitplan am Quellsystem legt der Orchestrator zum Termin selbst
 einen Lauf an (`AUTOMATO_SCHEDULER_ENABLED=true`, in docker-compose Standard). Wie „Jetzt
@@ -69,7 +73,8 @@ aktive Quellsystem des Mandanten einen Lauf an (Referenzquellen zuerst).
 einmal am Tag – beendete Läufe nach `AUTOMATO_RETENTION_RUNS_DAYS` (90), NetBox-Sync-Vorschauen
 nach `AUTOMATO_RETENTION_SYNC_DAYS` (90), Audit-Einträge nach `AUTOMATO_RETENTION_AUDIT_DAYS`
 (365), seit 0.63.0 MAC-/ARP-Einträge der Switches, die so lange kein Lauf mehr gesehen hat, nach
-`AUTOMATO_RETENTION_L2_DAYS` (30); `0` = nie. Es bleiben immer: Läufe, auf die der aktuelle Stand zeigt (Regeln, Objekte,
+`AUTOMATO_RETENTION_L2_DAYS` (30), seit 0.92.0 der Verlauf des Routings nach
+`AUTOMATO_RETENTION_TOPO_CHANGES_DAYS` (180); `0` = nie. Es bleiben immer: Läufe, auf die der aktuelle Stand zeigt (Regeln, Objekte,
 NAT, VMs, Referenzstand), je Quellsystem der neuste und der neuste erfolgreiche Lauf, offene
 Läufe und die neuste Vorschau je NetBox (übernommene Syncs stehen mit ihren Zahlen weiter im
 Audit). System → **Aufbewahrung** zeigt Fristen, was fällig ist und wann zuletzt aufgeräumt
@@ -104,16 +109,55 @@ Aufruf als `Accept-Language` mit.
   Browser (`automato_export_lang`), Vorgabe = Sprache der Oberfläche – so entsteht z. B. eine
   englische Doku aus der deutschen Oberfläche. Markdown und Druck folgen der Oberfläche. Für
   Aufrufe von Hand: `?lang=en` an der Export-Adresse.
-- **Bleibt deutsch:** was gespeichert wird – Meldungen der Läufe, gespeicherte Teile eines
+- **Bleibt deutsch gespeichert:** Meldungen der Läufe (seit 0.90.0 beim Abruf übersetzt: Läufe,
+  „Letzte Läufe“, Betriebszustand, Agentenliste, `automato status`), gespeicherte Teile eines
   Befunds (z. B. Gründe der Verbindungen in einem englischen Satz), Gründe der Kunden-Zuordnung
   in der Datenbank (angezeigt übersetzt), Audit, alles, was der NetBox-Sync nach NetBox schreibt
-  (Beschreibungen, Tags), Versionen des Zonenplans; dazu Meldungen von Collector/Agent, CLI und
-  Logs (folgen später). Der Abgleich, das Einspielen und die Befunde laufen immer deutsch, egal
-  in welcher Sprache sie ausgelöst werden.
+  (Beschreibungen, Tags), Versionen des Zonenplans, Server-Logs. Der Abgleich, das Einspielen und
+  die Befunde laufen immer deutsch, egal in welcher Sprache sie ausgelöst werden. Neue
+  gespeicherte Meldungen, die noch nicht in `orchestrator/app/store/run_text.py` stehen,
+  erscheinen auch auf Englisch deutsch.
+- **Agent und CLI (0.90.0):** Konsole und Log des Agenten folgen `AUTOMATO_LANG` in
+  `C:\Automato\collector\agent.env` (`de` Standard, `en`; die Einrichtung der Oberfläche setzt
+  `en` bei englischer Oberfläche). Was der Agent meldet, speichert Automato deutsch und zeigt es
+  in der gewählten Sprache. CLI im Container: `docker compose exec orchestrator automato --lang en
+  status --run-id <id>` (oder `AUTOMATO_LANG=en`); speichernde Befehle laufen deutsch.
 - Begriffe in beiden Sprachen: `docs/GLOSSAR.md`; Fachbegriffe bleiben englisch.
 
+**Datenqualität** (seit 0.91.0, ADR 0029): *Abgleich → Datenqualität* (bzw. Kachel in der
+Übersicht) zeigt, wo Doku, Weg-Suche, Zonen und Kunden unsicher sind – je Bereich Quellsysteme,
+Regeln, VMs, IPAM, Zonen & Kunden mit Ampel. Je Eintrag steht die Ursache mit Link in die Ansicht
+zum Nachbessern (Läufe, Routing-Kontext, Regel, Findings, Netzwerkdesign, Kunden). „Prüfungen
+ohne Befund zeigen“ blendet auch die erfüllten Prüfungen ein; ein oben gewählter Kunde schränkt
+Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
+- **Stand veraltet** (Befund `source_stale`, Betriebszustand): nach `AUTOMATO_STALE_DAYS` Tagen
+  (Standard 7, `0` = nie) ohne erfolgreichen Lauf; mit Zeitplan mindestens der Abstand der
+  Termine plus ein Tag (wöchentlich = 8 Tage). Der Zeitplan rechnet das stündlich nach.
+- **Nur teilweise gelesen** (`source_partial`): Teilfehler aus der Laufmeldung und
+  Routing-Kontexte „nicht lesbar“. Erreichbarkeit bzw. Leserechte prüfen und neu einlesen. Nur
+  „Hinweise“ (Befehle ohne Ausgabe) erscheinen als Hinweis.
+- Die Relevanz-Ursachen sind eine Stichprobe (höchstens 300 Firewall-Regeln, je Seite die erste
+  Adresse); die Seite nennt ihre Grösse.
+
 **Dokumentation**
-- **Übersicht:** KPIs (Regeln, NAT/VIPs, offene Findings, Abdeckung gegen die SoT),
+- **Übersicht:** seit 0.117.0 aus **Bereichen**, die sich über **Ansicht anpassen** an- und
+  abwählen und verschieben lassen („Vorgabe“ stellt alles wieder her; die Auswahl merkt sich der
+  Browser). Seit 0.122.0 je Bereich eine **Breite** (⅓, ½, ganz) und **Verschieben per Ziehen**
+  (in der Liste oder direkt im Raster, solange „Ansicht anpassen“ offen ist); die Bereiche einer
+  Zeile teilen sich die Breite ohne Lücke und sind gleich hoch, in schmalen Fenstern werden sie
+  breiter. Letzte Läufe als Liste (Meldungen umbrochen, kein Querscrollen), Regeln je Zone als
+  waagrechte Balken (Klick sucht die Zone in „Regeln & Contracts“). Bereiche: Betriebszustand, Kennzahlen, **Schnellansichten** (Ansichten mit fertigem Filter, z. B.
+  offene Findings, Regel nie auf dem Weg, Applikationen mit Abweichung, VIPs `V-EXT_`, Weg-Suche,
+  Routing-Verlauf), **offene Findings je Gruppe** und **Läufe der letzten 14 Tage** als Grafik,
+  letzte Läufe, Regeln je Zone, **Routing-Änderungen der letzten 7 Tage**, **Applikationen**,
+  **Regeln je Firewall und Aktion**, **Objekte nach Kategorie und Präfix der Namenskonvention**,
+  seit 0.129.0 **Stand der Doku** (je Applikation aktuell, veraltet, rechnet gerade, noch nie
+  berechnet; „Vorrechnen läuft“, „Befunde nachziehen“, seit 0.139.0 „Durchgang 2: 340 von 808 ·
+  danach erneut“; die nicht aktuellen mit Zustand, letzter
+  Berechnung und Dauer, Klick öffnet die Applikation; neue Bereiche stehen zuerst hinten);
+  ein Klick auf einen Balken öffnet die Ansicht mit diesem Filter. Bereiche eines abgeschalteten
+  Moduls bzw. des Betriebs (für Kunden-Benutzer) fehlen.
+  KPIs (Regeln, NAT/VIPs, offene Findings, Abdeckung gegen die SoT),
   **Letzte Läufe** und **Jetzt einlesen** (Operator): Mandant + Quellsystem wählen,
   Ausführung *Extern (Agent)* oder *Zentral (Worker)*. **Alle einlesen** legt für jedes aktive
   Quellsystem des Mandanten einen Lauf an (IPAM-Quellen zuerst; läuft/wartet schon einer oder
@@ -123,9 +167,23 @@ Aufruf als `Accept-Language` mit.
   - **Hängende Läufe** (Agent beendet bzw. neu gestartet, Ergebnis-Upload verloren) beendet
     Automato selbst: laufend ohne Ergebnis nach `AUTOMATO_RUN_TIMEOUT_MINUTES` (Standard 120),
     nicht abgeholt nach `AUTOMATO_RUN_QUEUE_TIMEOUT_HOURS` (Standard 24).
+  - **Wartet und wird nicht abgeholt (0.109.1):** die Meldung des Laufs sagt, wer ihn abholen
+    muss – „wartet auf Agent „…“ (zuletzt gesehen …)“ bzw. „wartet auf den zentralen Worker“.
+    Redis hält die Warteschlange zum zentralen Worker ohne Datenträger: wird der Container neu
+    erstellt (Update, Neustart), sind wartende Aufträge weg. Automato schickt zentral gelesene
+    Läufe deshalb nach `AUTOMATO_RUN_REDISPATCH_MINUTES` (Standard 5, `0` = aus) erneut
+    („– erneut geschickt …“); gelesen wird trotzdem nur einmal. Antwortet der Worker nicht,
+    zeigt das System → Verbindungen bzw. `deploy/aufbau.sh pruefen` unter **Zentraler Worker**
+    (antwortet er, Aufträge in der Warteschlange, wartende Läufe) mit dem Befehl zum Starten
+    (`docker compose --profile collectors up -d collector`) und den Logs.
   - Sofort geht es mit **Abbrechen** (Letzte Läufe) bzw. **Abbrechen & neu starten** im
     Dialog „Alle einlesen“ (Operator). Liefert der Agent danach doch noch ab, wird das
     Ergebnis eingespielt.
+  - **Referenzquellen (NetBox, DDI) nur einmal zugleich (0.113.2):** „Jetzt einlesen“ während
+    eines offenen Laufs antwortet „… wird schon gelesen: Lauf läuft seit … – abwarten bzw. den
+    Lauf abbrechen“. Ist das Ziel eines zentralen Laufs nicht abrufbar, versucht der Worker es
+    dreimal (2, 5, 15 s) und lässt den Lauf sonst stehen (erneut geschickt bzw. nach der Frist
+    beendet) – er liest nie ohne Adresse.
   - „Letzte Läufe“ zeigt immer **alle offenen Läufe** (auch ältere), dazu die letzten acht und
     den Link **Alle Läufe (N)** (0.13.0).
 - **Läufe** (0.13.0, seit 0.14.0 unter Administration): alle Collector-Läufe des Mandanten,
@@ -134,7 +192,8 @@ Aufruf als `Accept-Language` mit.
   erfolgreich), Quellsystem, Plattform, Auslöser (von Hand, Zeitplan). Je Lauf Ausführung
   (Agent/zentral, Zeitplan), **Einträge** (seit 0.78.5; Regeln, ohne Regeln die publizierten
   Dienste des NSX ALB, VMs des vCenters bzw. Geräte der Switches; beim IPAM die Datensätze),
-  Status mit Meldung, angelegt/begonnen, beendet mit Dauer; offene Läufe **Abbrechen**
+  Status mit Meldung, angelegt/begonnen, beendet mit Dauer (seit 0.139.0 „nur Regeln“ bei einem
+  Lauf für eine Applikation); offene Läufe **Abbrechen**
   (Operator). Offene Läufe auf der Seite aktualisieren sich alle 10 s. Beim NSX ALB steht seit
   0.78.5 auch bei Erfolg eine Zusammenfassung: Version, gelesene Avi-Tenants, Anzahl Virtual
   Services, VS VIPs, Pools, Pool Groups und Einträge (VIP × Port), dazu, was nicht lesbar war –
@@ -182,8 +241,18 @@ Aufruf als `Accept-Language` mit.
     Regeln.
   - **Bestätigen bzw. ablehnen** (Operator, 0.12.0): im Detail „Als Paar bestätigen“ (für
     „ähnlich“) bzw. „Kein Paar“, mit „zurücknehmen“. Die Entscheidung gilt sofort und bleibt über
-    neue Läufe erhalten (Policy-ID). Filter „Paar“: ähnlich (offen) zum Abarbeiten, bestätigt,
+    neue Läufe erhalten (Policy-ID). Läuft gerade ein Einspielen bzw. Abgleich (Sperre des
+    Mandanten), ist sie gespeichert und die Markierung folgt im Hintergrund – „Gespeichert – die
+    Markierung folgt …“, das Detail lädt selbst neu (0.113.1). Filter „Paar“: ähnlich (offen) zum Abarbeiten, bestätigt,
     gleich, mit/ohne Paar.
+  - **Automatisch bestätigen** (0.138.0, Einstellung je Mandant unter *Mandanten & Standorte*,
+    Admin): „IPv4/IPv6-Paare automatisch bestätigen“ – jeder Vorschlag („ähnlich“) zählt dann als
+    Paar mit der Marke „✓ automatisch“ (grün, Abweichungen im Tooltip), in der Applikations-Doku
+    wie ein bestätigtes Paar. Stimmt ein Paar nicht: im Detail „Kein Paar“ – das trennt es
+    dauerhaft, auch nach neuen Läufen; „zurücknehmen“ macht es wieder automatisch. Filter
+    „automatisch bestätigt“ zum Durchsehen. Das Umschalten bildet die Paare im Hintergrund neu
+    (Audit `rule_pairs.rebuilt`); ausgeschaltet sind die Vorschläge wieder „ähnlich“, bestätigte
+    und abgelehnte bleiben, wie sie sind.
   Klick → Detail: je Objekt Typ, Kommentar, Gruppenmitglieder (Objektnamen verlinkt) und je
   Wert die **Referenzdaten** aus dem IPAM (DNS-Name, Netz, VLAN, Standort; aufklappbar mit
   allen Feldern und Link in NetBox), die **VM** dahinter (vCenter: Name, Status, Portgruppe,
@@ -198,6 +267,9 @@ Aufruf als `Accept-Language` mit.
   bei NAT: Attribute, Werte, Mitglieder, Befunde und die Firewall-Regeln, die es nutzen (auch
   über Gruppen), mit „In Regeln anzeigen“. „Objekt öffnen“ (z. B. aus NAT / VIPs) filtert
   seit 0.36.0 auch die Liste dahinter auf genau dieses Objekt („nur „…“ ✕“ hebt es auf).
+  **Präfix der Namenskonvention** (0.117.0): Filter nach dem Präfix des Namens aus dem
+  Namensprofil des Mandanten (`V-EXT_`, `H_`, `N_` … und eigene wie `CVS_`), mit Anzahl je
+  Präfix und „ohne Präfix“ – zusätzlich zum Typ wie auf dem Gerät (IP, FQDN, Geo …).
   Dazu das Netzinventar aus FortiGate/APIC:
   **Subnetze** (mit Abgleich gegen führendes IPAM und Anreicherung, VLAN-Abweichung
   markiert), **VLANs** (inkl. EPGs), **Ports** (Modus, untagged/tagged VLANs, LAG/Parent,
@@ -247,6 +319,9 @@ Aufruf als `Accept-Language` mit.
   (Namenskonvention, unbenutzt, nicht im IPAM) und „Ziel nicht im IPAM“ (Mapped-IP bzw. Real
   Server fehlt im führenden IPAM); Schalter **nur Abweichungen**. Im Detail dazu die VM
   hinter dem internen Ziel und „Objekt öffnen“.
+  - **VIP ohne Ziel (0.134.0):** Befund (Findings → Regeln) für eine VIP der Firewall ohne
+    Load Balancer dahinter, deren interne IP weder im IPAM noch an einer VM bzw. einem
+    ACI-Endpunkt vorkommt – meist eine alte Freigabe. Klick → NAT / VIPs mit der VIP.
   - Virtual Server (Lastverteilung) zeigen alle Real Server mit Status (aktiv/Standby/aus),
     Gewicht, Firewall-Objekt, DNS-Name und Health-Check. Im Detail stehen zusätzlich
     Server-Typ, Lastverteilung, Persistenz und die Health-Checks.
@@ -256,6 +331,19 @@ Aufruf als `Accept-Language` mit.
   Pool-Bereich), Port, DNS-Name, Server, Interface, Kommentar. Klick → Detail mit
   Einstellungen, IPAM-Sicht (Netz, VLAN, Standort) und den Firewall-Regeln, die den Eintrag
   nutzen.
+  - **Kette über den Load Balancer (0.96.0):** Zeigt eine VIP der Firewall auf eine VIP des
+    NSX ALB, steht unter dem internen Ziel „→ vs-… (Load Balancer)“, in „Ziel-Server“ die Server
+    mit „über vs-…“; am Virtual Service „davor <externe IP> · <VIP>“. Im Detail „Kette über den
+    Load Balancer“ bzw. „Davor: VIPs der Firewall“ – ein Klick auf den Namen öffnet den anderen
+    Eintrag. Die Suche findet die Kette auch über Server-IP, externe IP, Virtual Service, Pool
+    und VIP-Gruppe. „Export (CSV)“ speichert die Liste mit Suche und Filter, je Weg eine Zeile
+    (`;`, UTF-8). Regel-Zahlen am Virtual Service und VIP-Gruppen wirken nach dem nächsten
+    Einlesen der Firewall bzw. des NSX ALB (VIP-Gruppen mit dem Agenten ab 0.96.0).
+  - **Namen der VIPs und IP-Pools (0.96.0):** der Abgleich prüft sie gegen die Präfixe ihres
+    Typs (Namensprofile → Objekt-Präfixe → Typ „VIP“, „VIP / DNAT“, neu „Virtual Server“,
+    „SNAT IP-Pool“); ein Adress-Präfix wie `H_` genügt an einer VIP nicht. Hat das Profil kein
+    Präfix eines Typs, werden diese Namen nicht geprüft; NSX-ALB-Namen nie. Nach einer Änderung
+    im Profil „Abgleich“ ausführen.
 - **Parallele Firewalls (Verbund, 0.18.0, ADR 0020):** Firewalls mit denselben Regeln (z. B.
   zwei Cluster mit Session-Sync) bilden einen Verbund.
   - Gleiche Policies erscheinen in Regeln, Suche und Applikations-Doku nur einmal (führend: die
@@ -287,6 +375,19 @@ Aufruf als `Accept-Language` mit.
       Server, Einstellungen).
     - Im Befund steht zuerst der Wert der Firewall des Befunds, dann der führenden; „Anzeigen“
       öffnet die Routen des VDOMs, die Policy-Routen bzw. die NAT-Ansicht.
+- **Verlauf des Routings** (0.92.0, ADR 0030, Routing → Reiter „Verlauf“): Jeder Lauf einer
+  FortiGate bzw. eines APIC vergleicht das Routing mit dem vorigen Stand und hält die Änderungen
+  fest – Routen, BGP-Nachbarn, HA, Policy-Routen/SD-WAN, Kontexte, L3Outs. Der erste Lauf je
+  Quellsystem ist der „Ausgangsstand“; bei bestehenden Installationen beginnt der Verlauf mit dem
+  nächsten Lauf. Filter: Quellsystem, Kontext, Art, Änderung (hinzugefügt/entfernt/geändert/
+  Vermerke), Zeitraum, Suche nach Präfix, Next-Hop oder Nachbar; „▸“ zeigt die Felder
+  vorher/nachher, „#Lauf“ öffnet den Lauf in der Ansicht Läufe. Ist ein Teil nicht lesbar (z. B.
+  HTTP 403), steht ein Vermerk „nicht lesbar“ mit der Anzahl nicht verglichener Einträge – nichts
+  zählt als entfernt; beim nächsten lesbaren Lauf „wieder lesbar“. An einer Route zeigt
+  „geändert <Zeit>“ die letzte Änderung (Klick öffnet ihren Verlauf); „Routing-Änderungen
+  (7 Tage)“ in „Gelesene Kontexte“. Frist `AUTOMATO_RETENTION_TOPO_CHANGES_DAYS` (180 Tage,
+  `0` = nie); Läufe haben eine kürzere Frist (90 Tage) – ältere Einträge zeigen nur noch die
+  Kennung des Laufs. Nicht für Kunden-Benutzer; ein oben gewählter Kunde zeigt seinen Ausschnitt.
 - **Routing** (0.16.0, ADR 0019; bis 0.34.0 „Routing & Wege“): oben die gelesenen Kontexte mit
   Anzahl Routen und dem, was nicht lesbar war (dort ist die Aussage „unbekannt“) – seit 0.75.0
   zugeklappt (Klick auf den Titel; die Zahl der Kontexte mit nicht Lesbarem bleibt sichtbar),
@@ -304,6 +405,50 @@ Aufruf als `Accept-Language` mit.
     VDOM, ACI-VRF), dazu das **Ziel** – für Fehlersuche und die Kontrolle von Arbeiten.
     - **⇄ Richtung tauschen** (0.65.1): Quelle und Ziel tauschen (der Start ergibt sich wieder aus
       der neuen Quelle); war schon gesucht, zeigt die Weg-Suche gleich den Rückweg.
+    - **Ziel hinter VIP bzw. Load Balancer** (0.117.0): führt der Weg über eine VIP der Firewall
+      bzw. einen Virtual Service des NSX ALB, zeigt die Karte „Ziel“ die **EPG der Server**
+      dahinter (mit Anzahl und den Servern); Zielzone und Absicht gelten für diese Server, nicht
+      für das Netz der VIP. Die Namenssuche findet auch die VIP selbst (`V-EXT_…`, externe IP) und
+      nennt die Kette („→ 10.30.0.50 · Load Balancer vs-shop → EPG T|AP|web (3 Server)“).
+    - **Details am Weg (0.98.0):** ein Klick auf Policy, Contract, Route, Knoten, Interface, VIP
+      bzw. Virtual Service oder Objekt am Weg öffnet das Detail rechts im Seitenpanel, die
+      Weg-Suche bleibt stehen; „↗“ bzw. Ctrl-/Mittelklick öffnet die Ansicht in einem neuen Tab.
+      „mehr“ in der Spalte # klappt je Hop Ein-/Ausgang mit Zone, Route mit Next-Hops,
+      entscheidende Regel (Interfaces, Quelle, Ziel, Dienst), NAT/SNAT, Load Balancer, Zone und L2
+      auf – je Firewall eines Verbunds. Die Suche steht in der Adresse (`#wege?src=…&dst=…&
+      service=…`): Zurück aus einer anderen Ansicht, Neuladen oder ein weitergegebener Link
+      zeigen sie wieder (neu berechnet).
+    - **Ziel-Server einer VIP (0.114.1):** beim DNAT bzw. Load Balancer stehen alle Ziel-Server
+      (höchstens 20) mit IP:Port, Name (VM, IPAM, Hostname), Zustand, Gewicht, Health-Check,
+      Adressobjekt der Firewall (Klick öffnet es) und EPG der VM; „Weg“ markiert den Server, über
+      den der gezeigte Weg führt. Dazu Methode, Health-Check, Bereich, Eingang und Kommentar der
+      VIP bzw. Methode, Health-Monitore und FQDN des Virtual Service.
+    - **Anbindung als Quelle bzw. Ziel (0.98.0):** im Feld z. B. „Internet“, „Anbindung“, den
+      Namen eines Interfaces bzw. einer Firewall tippen und den Treffer unter „Anbindungen“
+      wählen (von Hand erfasste immer, erkannte bei Art, Firewall, Interface bzw. Zone; mit Kunde
+      oben nur an seinen Firewalls). Als Quelle beginnt der Weg an der Firewall der Anbindung
+      mit ihrem Eingang (z. B. wan1) – so zeigt die Weg-Suche, welche Policy Verkehr von dort
+      erlaubt. Geprüft wird das erste Netz der Anbindung als Ganzes bzw. bei Internet eine
+      beliebige Adresse (Test-Adresse aus dem Dokumentationsbereich, „beliebige Adresse im
+      Internet“). Die Karte der Anbindung zeigt Firewalls, Netze und Router; dort ein anderes
+      Netz bzw. eine der Firewalls wählen (mehrere Firewalls = je ein Weg, Verbund als ein Hop).
+      Als Ziel zeigt jeder Weg, ob er über die Anbindung hinausgeht („über die Anbindung“ bzw.
+      Hinweis); das Routing lenkt die Anbindung nicht um.
+    - **Warum dieser Weg? (0.109.0):** der Knopf an jeder Weg-Karte öffnet rechts den Weg Hop für
+      Hop in Sätzen – Start (wo die Quelle angeschlossen ist), je Hop Eingang mit Zone und
+      Routing-Tabelle, NAT, Policy-Routen bzw. SD-WAN-Regeln (passt sicher, möglich, keine
+      passt), **alle Routen zum Ziel** in einer Tabelle (gewählt bzw. verworfen mit Grund:
+      kürzeres Präfix, höhere Distanz, nur BGP-Tabelle, statische Route nicht aktiv, Policy-Route
+      geht vor), der Next-Hop und wem er gehört, am Ende das Ergebnis mit Hinweis (fehlende
+      Route, unbekannter Next-Hop mit IPAM-Name, Schleife, Default-Route nach aussen). Je Hop
+      steht, wann das Routing des Geräts gelesen wurde (orange = alt). Grün = passt, orange =
+      prüfen, rot = hier endet bzw. bricht der Weg. **„Erwartet über …“** wählt ein Gerät, über das
+      der Verkehr gehen müsste: liegt es auf dem Weg, steht der Hop; sonst zeigt die Erklärung,
+      wo der Weg an diesem Gerät vorbeigeht (direkt verbunden, Netz und Interface), welche Route
+      über das Gerät es gäbe und warum sie verliert – bzw. dass sie fehlt –, und wie das Gerät
+      selbst Ziel und Rückweg routet. Als Operator „+ Als Finding erfassen“ an jedem orangen bzw.
+      roten Schritt (vorausgefüllt mit Satz, Hinweis, Gerät und Weg) bzw. „+ Finding erfassen“
+      oben (frei). Rein lesend; erfasst wird nur in Automato.
     - **Quelle und Ziel als Name** (0.35.0): IP, Netz oder Name bzw. FQDN. Ab zwei Zeichen
       schlägt das Feld Treffer vor – DNS-Namen aus dem IPAM (auch nur das erste Label,
       `web01`), Adressobjekte der Firewalls (auch ohne Präfix, `web01` findet `H_web01`;
@@ -346,8 +491,9 @@ Aufruf als `Accept-Language` mit.
       mit dem Link als Aus- bzw. Eingang geprüft.
     - Das Ende steht oben in der Karte: Ziel erreicht, im Fabric, extern, Weg endet (Next-Hop
       ohne gelesenes Gerät), keine Route.
-    - Ohne Quelle und Start: je Kontext die wirksame Route wie bisher. Geräte, deren Routing
-      nicht gelesen ist (Switches, Router der Provider), beenden den Weg.
+    - Ohne Quelle und Start (seit 0.113.1): der Hinweis „Quelle oder Startpunkt angeben“ – die
+      Routen je Gerät stehen unter Routing → Routen. Geräte, deren Routing nicht gelesen ist
+      (Switches, Router der Provider), beenden den Weg.
     - **Zonen** (0.57.0, wenn logische Zonen gepflegt sind): die Karte **Zonen** oben nennt
       Quell- und Zielzone und die Kette des Wegs mit den Übergängen („LAN →LAN-EINET→ Edge
       Internet →DMZ-EINET→ DMZ“), jeder Hop seine Zone, die Übersicht je Weg die Kette. Dazu die
@@ -367,6 +513,13 @@ Aufruf als `Accept-Language` mit.
       - Je Weg stehen die Knoten nacheinander, die Next-Hops, die Anzahl Hops und das Ende.
       - Die Auswahl „Backup“ steuert, wie viel länger ein Backup-Weg sein darf: gleich lang,
         bis +1 Hop (Standard), bis +2 Hops, ausblenden.
+      - **Nur, was das Gerät gelernt hat (0.112.0):** kein Backup über die Default-Route für ein
+        privates Ziel (das Gerät kennt das Netz nicht – auch wenn die Firewall dahinter es
+        lernt), kein BGP-Bestpfad als Backup und keine statische Route auf ein Adressobjekt
+        (`dstaddr`). Fehlt ein erwarteter Backup-Weg, fehlt dem Gerät die Route dafür.
+      - **Gegen die BGP-Filter (0.114.0):** ein BGP-Backup, das der Eingangsfilter des Geräts
+        bzw. der Ausgangsfilter der Nachbar-FortiGate sperrt, ist kein Weg; der Hinweis unter
+        dem Weg sagt „Backup an … über … verworfen: Eingangsfilter … sperrt …“.
       - Die Spalte „Länge“ (0.20.0) sagt je Weg „gleich lang“ bzw. „+1 Hop“ gegenüber dem
         kürzesten Weg mit Ziel.
       - **Verbund als ein Hop (0.29.0):** Die Firewalls eines Verbunds (z. B. Session-Sync-
@@ -385,6 +538,55 @@ Aufruf als `Accept-Language` mit.
       - „möglich (…)“ nennt, was sich nicht prüfen lässt: Eingang/Quelle bei gewähltem Start,
         FQDN/ISDB, Benutzer/Gruppen, Zeitplan, Dienst. Kann eine solche Policy vor der
         entscheidenden greifen, ist der Hop „abhängig“.
+        - Seit 0.112.0 steht der Grund im Urteil des Wegs („abhängig an fw-x (Policy 3 … kann
+          vor Policy 7 … greifen – abhängig von: Ziel)“); in den Verbindungen Ende zu Ende bei
+          mehreren aktiven Wegen jeder Weg mit seinem Urteil.
+        - Länder (Geografie-Objekte) und Internet Services (FortiGuard) treffen keine private
+          Adresse – eine Sperre „Land X“ zuoberst macht internen Verkehr nicht „abhängig“;
+          eigene Internet Services bleiben „möglich“.
+        - **VIP und Sperren (0.132.1):** Wie auf der FortiGate greift eine sperrende Policy für
+          Verkehr zu einer VIP (DNAT) nur mit `set match-vip enable` bzw. wenn die VIP selbst ihr
+          Ziel ist. Ohne match-vip entscheidet die Policy mit der VIP („Policy 5 „block-bad“
+          sperrt Verkehr zur VIP VIP_app nicht (match-vip aus)“).
+        - **Sperrlisten (0.132.2):** Eine sperrende Policy mit Internet Service von FortiGuard
+          (Botnet-C&C, Malicious …) bzw. Land als Quelle oder Ziel macht den Hop nicht
+          „abhängig“: „erlaubt durch Policy 10 … – ausser Sperrliste Policy 5 …“, in der Zeile
+          der Policy „Sperrliste (Quelle)“. Eigene Internet Services, FQDN und dynamische Objekte
+          bleiben „möglich“. Kommen nur Sperren in Frage, ist der Hop „gesperrt … bzw. implizit“.
+          Ist ein Hop „abhängig“ und gibt es dort genau eine erlaubende Policy, geht der Weg mit
+          ihrem NAT weiter (z. B. SNAT der VIP-Policy bis zum Server).
+        - Startpunkt gewählt und die Quelle hängt dort nicht an: der Eingang ist das Interface
+          der Route zur Quelle („gewählt, Eingang lan nach der Route zur Quelle“).
+        - **Wo der Dienst gilt (0.137.0):** Neben dem Dienst die Auswahl „Dienst beim Client“
+          (Vorgabe: der Port, den der Client an der VIP bzw. am Ziel nutzt), „am Eingang Load
+          Balancer“ bzw. „am Ziel-Server“. Die Weg-Suche rechnet über die Port-Weiterleitung der
+          VIP und den Pool zurück zum Port des Clients („Dienst tcp/8443 am Ziel-Server = beim
+          Client tcp/443“). Ändern VIP bzw. Load Balancer den Port, steht oben „Ports: Client …
+          → VIP … → Eingang Load Balancer … → Server …“ und je Hop „geprüft mit tcp/…“ – die
+          FortiGate prüft die Policy nach der Port-Weiterleitung, der Dienst der Policy ist darum
+          der weitergeleitete Port. Die Verbindungen der Applikations-Doku zeigen den Port des
+          Clients, darunter die Ports entlang des Wegs.
+        - **Server hinter einer VIP von aussen (0.134.0):** Ist das Ziel ein Server hinter
+          einer VIP der Firewall (direkt bzw. über den Load Balancer) und kommt die Suche von
+          aussen (Start an einer Firewall ohne Quelle, öffentliche Quelle, Anbindung als
+          Quelle), geht der Weg über die externe IP der VIP – Eingang ist ihr externes
+          Interface, ohne Quelle gilt eine beliebige Adresse im Internet. Oben steht „über VIP
+          … → Load Balancer → Server“. Mit einer privaten Quelle sucht die Weg-Suche direkt.
+          Die Verbindungen der Applikations-Doku gehen seit 0.135.0 ebenso zur externen IP,
+          wenn die Regel den Server über eine VIP erreicht (auch ohne Load Balancer).
+      - **Rückweg (0.134.0):** Je Weg zeigt ein Zeichen, ob die Antwort über dieselben
+        Firewalls zurückgeht („Rückweg ✓“), über eine andere („Rückweg über andere Firewall“ –
+        die Firewall verwirft die Antwort, asymmetrisches Routing) oder nicht prüfbar ist
+        („Rückweg ?“, z. B. ohne Quell-IP); der Hinweis beim Darüberfahren nennt den Rückweg.
+        Nur das Routing zählt, ACI-Knoten und Router nicht, im Verbund genügt derselbe
+        Verbund, bei Session-Sync (FGSP) der Partner (seit 0.141.1). Ist der Rückweg nicht
+        symmetrisch, steht über der Hop-Tabelle je Abschnitt „Rückweg von → an“ Hop für Hop
+        (seit 0.141.1): rot die Firewall, die nicht auf dem Hinweg liegt, grün die des Hinwegs,
+        darunter „Hinweg über …“; mehrere Rückwege mit „bzw.“. Hinter dem Load Balancer antwortet der Server dem Load Balancer, nach einem
+        SNAT der Adresse des Pools. Sind nicht alle Wege symmetrisch, nennt ein Hinweis oben
+        den einzig möglichen. Antwortet eine Adresse ausserhalb der gelesenen Geräte (Internet),
+        kommt die Antwort über den Ausgang des Hinwegs zurück (seit 0.136.0); hängt die Quelle
+        an mehreren Firewalls (Transfernetz), zählt der Weg ab der letzten davon.
       - Seit 0.78.4 steht je Policy, **über welches Objekt** Quelle und Ziel passen
         („Quelle any, Ziel G_darknet“), und unter **„dahinter, nicht erreicht“** bis zu fünf
         weitere passende Policies nach der entscheidenden – z. B. hinter einer Sperre
@@ -404,16 +606,29 @@ Aufruf als `Accept-Language` mit.
         TE/AP/EG_a (Portgruppe der VM vm-a)“). Sonst die externe EPG über das längste
         Subnetz mit `import-security` (wie in der Doku, 0.28.0). Erfasst keine EPG die IP,
         verwirft das Fabric den Verkehr.
+      - **Ohne Quell-IP von aussen (0.135.0):** Kommt der Weg über eine Firewall ins Fabric
+        (z. B. Start an der Firewall ohne Quelle), prüft die Weg-Suche jede externe EPG der VRF:
+        „abhängig von der Quelle (ohne IP) – erlaubt für externe EPG …, gesperrt für …“,
+        „gesperrt für jede Quelle von aussen“ bzw. „erlaubt für jede Quelle von aussen“ (nur
+        mit einer externen EPG für 0.0.0.0/0). Nach einem SNAT bzw. über die VIP prüft sie die
+        Adresse selbst; beginnt der Weg im Fabric ohne Quelle, bleibt es „nicht prüfbar“.
       - Gleiche EPG: ohne Contract erlaubt. Taboo-Contracts des Ziels sperren zuerst. Sonst
         erlaubt ein Contract mit der Quelle als Consumer und dem Ziel als Provider – direkt,
         über vzAny der VRF, eine ESG oder die Preferred Group – mit passendem Filter. Kein
-        Contract: im ACI gesperrt.
+        Contract: im ACI gesperrt. Stimmen Consumer und Provider, öffnet der Contract den Dienst
+        aber nicht (0.111.0), heisst es „Contract CT_x von … zu … öffnet tcp/80 nicht (offen:
+        tcp/443) – im ACI gesperrt“; der Contract steht mit „öffnet den Dienst nicht“ bei den
+        Regeln des Hops.
       - Ohne Dienst ist nur ein Filter `ip/any` sicher, sonst „möglich“. Ordnet das ACI die
         Quelle nicht eindeutig zu (z. B. 0.0.0.0/0 in zwei L3Outs), ist der Hop „abhängig“,
         wenn die Kandidaten verschieden ausgehen.
       - **ACI ist zustandslos (0.69.1):** Filter ohne Ports (`ip`, `tcp/any`, ICMP) gelten auch
-        vom Provider zum Consumer („↩ Rückrichtung“, Regel-Detail „↔ beide Richtungen“); mit
-        Zielport (`tcp/443`) bzw. `stateful` kommen zurück nur Antworten.
+        vom Provider zum Consumer („↩ Rückrichtung“; Regel-Detail und Doku nach Kategorie seit
+        0.112.0 „↔ auch vom Provider aus: icmp/any“ mit genau diesen Diensten); mit Zielport
+        (`tcp/443`) bzw. `stateful` kommen zurück nur Antworten. Grund: ein Subject mit „Apply
+        Both Directions“ (Standard) wendet seine Filter auch rückwärts an, ohne Ports ist das
+        derselbe Verkehr. Nur in eine Richtung: „Apply Both Directions“ ausschalten bzw. Filter
+        mit Zielport.
       - **Nur Antworten (0.72.1):** Lassen die Filter eines Subjects vom Consumer zum Provider
         nur Antworten zu (Eintrag nur mit Quellport, z. B. 443, bzw. TCP ohne SYN), greift der
         Contract in dieser Richtung nicht – das Urteil ist „gesperrt“ statt „möglich“, der
@@ -466,11 +681,69 @@ Aufruf als `Accept-Language` mit.
         - Central-NAT ist bewusst nicht abgebildet (Entscheid des Anwenders).
   - **Routen:** wirksam (RIB), BGP-Pfade (bester bzw. Backup) und statische Routen (aktiv bzw.
     inaktiv); Suche, „enthält IP“ (längstes Präfix zuerst), Filter Tabelle und Kontext.
-  - **BGP-Nachbarn** (mit Name aus dem IPAM und, falls gelesen, dem Knoten dahinter), **HA &
+  - **BGP-Nachbarn** (mit Name aus dem IPAM und, falls gelesen, dem Knoten dahinter; seit
+    0.113.0 mit **Filter (ein / aus)** und **Soll/Ist**: erwartet = was die Eingangsfilter
+    ausdrücklich erlauben, mit „nichts angekommen“; erhalten = BGP-Pfade vom Nachbarn mit
+    „erlaubt/gesperrt/unbekannt“ nach dem Filter; angekündigt = berechnet aus besten Pfaden,
+    network, aggregate und redistribute durch die Ausgangsfilter – die FortiGate meldet es nicht;
+    seit 0.114.1 mit `default-originate` (0.0.0.0/0, Chip) und ohne Routen, deren AS-Pfad das AS
+    des eBGP-Nachbarn schon enthält (Schleifenschutz, gezählt).
+    Darüber aufklappbar die gelesene BGP-Konfiguration je Firewall mit konfigurierten Nachbarn
+    ohne Sitzung. Abweichungen stehen unter Findings → BGP-Filter. Seit 0.114.0 im Soll/Ist
+    zusätzlich **„Soll aus den Zonen dahinter“**: Zone am Nachbarn und alle Zonen, die über ihn
+    erreicht werden (Netzwerkdesign → Zonen mit Geräten), ihre Netze und Ausschlüsse als
+    Prefix-Liste, „fehlt im Filter“ / „zu offen“ und ein FortiOS-CLI-Vorschlag zum Kopieren – nur
+    Text, eingespielt wird auf der Firewall von Hand; seit 0.116.0 mit Umschalter **Eingang /
+    Ausgang**: Ausgang = Netze der Zonen diesseits (Zone der Firewall und alles, was der Nachbar
+    über sie erreicht), an einen Nachbarn in einer Zone der Art `external` nur öffentliche Netze;
+    dazu „n Routen ausserhalb der Zonen angekündigt“ und der Vorschlag `PL_<Zone>_OUT` mit
+    `prefix-list-out`; seit 0.127.0 mit Begründung: woher die Zonen kommen (Zone der Firewall,
+    Zone am Nachbarn über das Netz des Übergangs bzw. gelesenes Gerät, Zonen dahinter mit Abstand),
+    je Netz in „Filter heute“ die entscheidende Regel und je Abweichung Netz, Zone und Regel bzw.
+    „keine Regel passt – am Ende gesperrt“ mit den erlaubten Teilen – ebenso im Befund; seit
+    0.130.0 aufklappbar **„Weg je Zone“**: je Zone dahinter bzw. diesseits die Zonen bis zu ihr mit
+    dem Netz jedes Übergangs, z. B. „DC FW → Lan (über 10.70.0.0/30) → Aussen (über …)“ – so ist
+    sichtbar, welcher Übergang eine Zone hereinbringt. Netze des Session-Sync (FGSP: Netz mit der
+    Adresse des Sync-Partners, nur die beiden Partner daran) sind seit 0.130.0 kein Übergang und
+    kein Netz einer Zone mehr. Seit 0.131.0: die **Netze von Hand** einer Zone (Selektor „Netz“,
+    auch aus Netzwerkdesign → Kategorien) sind nur der **Rahmen** – im Soll stehen die bekannten
+    Netze darin aus den Routing-Tabellen; ein Rahmen ohne bekanntes Netz steht als Hinweis, nicht
+    im Filter, und eine Regel im Rahmen ist nicht „zu offen“. **Transfernetze** zählen nicht zum
+    Soll. Vorschläge nur für die **Adressfamilien der Sitzung** (`activate6 disable` = kein IPv6).
+    Mit `default-originate` stehen Routen mit nicht auswertbarem Ausgangsfilter nicht mehr als
+    „unbekannt“ unter „angekündigt“ (nur gezählt); ohne Eingangsfilter nennt das Soll, was heute
+    ankommt („nur die Default-Route“). Nachbar und Soll kommen aus dem **vorab berechneten Stand**
+    (nach jedem Lauf und jeder Änderung an Zonen, Verbund und L3Outs im Hintergrund; passt er
+    nicht, wird einzeln gerechnet). Im Befund stehen die **betroffenen Netze** mit Bedeutung und
+    Gesamtzahl und der Link „BGP-Nachbar … öffnen“. Seit 0.132.0: eine Zone lässt sich als
+    **„fremd verwaltet“** markieren (Netzwerkdesign → Kategorien bzw. Zone bearbeiten; Vorgabe
+    selbst verwaltet) – nur ein Nachbar in so einer Zone braucht einen Eingangsfilter (sonst „kein
+    Eingangsfilter nötig“, keine Abweichung, kein Befund), ebenso der ACI Import; mit
+    `default-originate` gilt im Ausgang nur die Default-Route – kein Ausgangsfilter, kein
+    Vorschlag. Seit 0.133.0 Spalte **Prüfung** je Nachbar mit gelesener Konfiguration: grünes ✓
+    ohne offene bzw. bestätigte Befunde der Routing-Filter, sonst gelb ⚠ mit ihrer Zahl
+    (Tooltip: welche) – Klick öffnet die Findings zu diesem Nachbarn; ignorierte zählen nicht),
+    **HA &
     Session-Sync** (Modus, Gruppe, Mitglieder mit Rolle, FGSP-Peers), **Policy-Routen &
     SD-WAN** (Bedingung, Weg, Mitglieder nach Vorrang), **L3Outs (ACI)** (VRF, Border-Leafs mit
     Namen, Router-ID und statischen Routen, Interfaces/SVIs mit VLAN und Adressen, BGP-Peers
-    mit Namen).
+    mit Namen; seit 0.113.0 **Route Control**: erzwungen (export, import), Anzahl Subnetze
+    mit import-/export-rtctrl, „Soll/Ist“ mit Import erwartet/erhalten und Export; seit 0.116.0
+    darunter **„Soll aus den Zonen dahinter (Import)“**: Zone der VRF, Zone am Peer, je Netz der
+    Zonen das Urteil der Route Control, Abweichungen (Import nicht erzwungen, ohne
+    `import-rtctrl`, importiert ausserhalb der Zonen, Ausschluss importiert) und die Subnetze der
+    externen EPG als Vorschlag zum Kopieren – nur Text, eingespielt wird im APIC von Hand).
+    - **Firewall dahinter (0.97.0, ADR 0034):** Spalte „Firewall dahinter“ je L3Out – die
+      Firewall (VDOM, Interface, Zone) mit Herkunft abgeleitet / bestätigt / von Hand / keine;
+      abgeleitet aus dem Transfernetz (SVI im Netz eines Firewall-Interfaces) bzw. BGP-Peer oder
+      statischem Next-Hop auf eine Firewall-Adresse. Operator: „bestätigen“, „ändern“ (Firewall
+      und Interface wählen bzw. „keine Firewall“), „zurücksetzen“ (wieder abgeleitet). „Nicht
+      erkannt“ = kein Firewall-Interface im Transfernetz bzw. als Peer – von Hand zuordnen,
+      sonst gilt für diesen L3Out weiter das ACI. Befunde der Applikationen und Zonen sowie die
+      Kunden ziehen danach von selbst nach.
+    - **Transfernetz (0.111.0):** das Netz am Interface der Firewall zu diesem L3Out gehört zu
+      ihm („hinaus“), auch wenn die Firewall es direkt angeschlossen hat – der Weg ins
+      Transfernetz läuft nicht über einen anderen L3Out.
   - **Namen aus dem IPAM:** DNS-Name bzw. Name der IP aus DDI/NetBox. Ohne Eintrag zur IP
     erscheint blass das kleinste IPAM-Netz mit Beschreibung. Für Transfernetze lohnt sich
     deshalb eine Beschreibung im IPAM (z. B. „Transfer ISP B“).
@@ -500,6 +773,33 @@ Aufruf als `Accept-Language` mit.
       eingetragen“ markiert erkannte Router, die noch fehlen; ein Knopf übernimmt sie.
     - Danach in der Weg-Suche einfach neu suchen. Das Ende nennt bei mehreren Routern
       „Router n von N“. „Als Anbindung erfassen“ in der Weg-Suche öffnet das Formular hier.
+    - **Netze dahinter als Liste** (0.111.0, bis 5 000): eine Liste einfügen, je Zeile bzw. mit
+      Komma, in jeder Schreibweise (`10.80.0.0/16`, `10.81.0.0 255.255.0.0`, Wildcard
+      `0.0.255.255`, Text dazwischen wird übergangen).
+      - „Prüfen“ zählt gültige, doppelte und ungültige Einträge; „Zusammenfassen“ fasst
+        angrenzende Netze zusammen (z. B. vier /24 zu einem /22).
+      - „Aus dem Routing“ schlägt die Routen vor, die über die Next-Hops bzw. Interfaces der
+        Anbindung gelernt sind (ohne Default-Route), zum Übernehmen. Die grossen Netze (z. B.
+        10.0.0.0/8 hinter dem MPLS) bleiben von Hand einzutragen – sie entscheiden, wohin ein
+        grosses Netz einer Regel gehört (unten).
+      - „Aus den BGP-Filtern“ (0.113.0, ADR 0041) schlägt die Netze vor, die die
+        Eingangsfilter für diese Next-Hops ausdrücklich erlauben (Prefix-Listen und Route-Maps
+        der FortiGate, import-rtctrl der L3Outs mit diesem Peer) – ohne „alles“-Regeln und
+        Default-Route; oft genau die grossen Netze dahinter.
+      - Speichern mit ungültigen Einträgen nennt sie und speichert nicht.
+    - **Grosse Netze der Regeln** (0.111.0, ADR 0040): routet eine Firewall ein Netz einer Regel
+      (z. B. 10.0.0.0/8) nicht als Ganzes – Teile laufen über genauere Routen, oder es bleibt nur
+      die Default-Route (private Netze) –, gehört es zu, in dieser Reihenfolge:
+      1. der Zuordnung von Hand (Operator): zur Zone …, über die Anbindung …, „Weg nach dem
+         Routing stimmt“ bzw. „nur die genauer gerouteten Teile zählen“ (die Verbindung über das
+         ganze Netz fällt weg, die Teile bleiben);
+      2. der Zone, die das ganze Netz enthält (Netzwerkdesign);
+      3. der Anbindung, deren Netze dahinter es enthalten.
+      Sonst bleibt es „aufgeteilt“ bzw. „unklar“: Befund **„Netz der Regel grösser als die
+      Routen“** (Findings → Topologie) mit Route, Next-Hop, Teilen und Regeln, dort „Netz
+      zuordnen“. In den Verbindungen Ende zu Ende steht der Zustand als Chip mit „zuordnen“ bzw.
+      „ändern“. Die Liste „Grosse Netze der Regeln“ hier unter Anbindungen zeigt die Zuordnungen
+      von Hand; „ändern“ öffnet den Dialog mit „Zuordnung entfernen“.
   - **Topologie** (0.50.0, ADR 0019, `GET /topology`): das Modell der Umgebung als Liste.
     - Knoten: Firewalls bzw. VDOMs, ACI-VRFs (alle Border-Leafs), Segmente (ein Netz mit mehr
       als zwei gelesenen Geräten), Anbindungen (von Hand) und Router ohne gelesenes Gerät
@@ -516,10 +816,38 @@ Aufruf als `Accept-Language` mit.
     - Nicht für Kunden-Benutzer (zeigt die ganze Umgebung). Zeichnung und Export folgen
       (0.52.0), Korrekturen im Designer später. Die logischen Zonen hängt der Zonenplan an
       diese Knoten (Netzwerkdesign, 0.51.0).
+  - **Routing bis an die Firmengrenze** (0.99.0, ADR 0032): Router, Core- und WAN-Router als
+    Quellsystem „Switches & Router“ erfassen (Adressen im Lesebereich, Read-only-Konto wie bei
+    den Switches – NX-OS `network-operator`, Junos `read-only`, Arista `network-operator`, IOS
+    privilege 1 bzw. Parser-View mit den Routing-Befehlen des Lesevertrags). Gelesen werden nur
+    `show`-Befehle der Positivliste: RIB je VRF (IPv4/IPv6), BGP-Nachbarn und -Pfade.
+    - Der Lauf meldet „Routing: n L3-Geräte, m Kontexte, k Routen“; fehlende Rechte bzw.
+      gekürzte Tabellen (Obergrenze 20 000 Routen je Kontext, Tabelle und Familie – Default-Route
+      und private Netze bleiben zuerst) stehen als Hinweis und im Routing unter „nicht lesbar“.
+    - Routing → Kontexte zeigt die Router als „Router/L3-Switch“ (je Gerät und VRF,
+      Management-VRFs fallen weg); die Weg-Suche geht durch sie hindurch bis zur
+      **Firmengrenze**: eBGP zu einem fremden AS, eine Anbindung der Art Internet, MPLS bzw.
+      Partner oder eine Default-Route über eine öffentliche Adresse bzw. ein WAN-Interface –
+      Chip „Firmengrenze · AS …“ am Weg und am letzten Hop.
+    - Routing → Topologie: Knotenart „Router (gelesen)“, Filter „Firmengrenze“ zeigt Grenzknoten
+      und Provider. Partner- bzw. MPLS-Übergänge ohne BGP als Anbindung der Art Partner/MPLS
+      erfassen, damit sie als Grenze gelten. Erkannte Anbindungen gibt es nur noch für nicht
+      gelesene Router.
+    - Kunde oben: Router-Kontexte sind geteilt und gehören zum Ausschnitt, wenn sie ein Netz des
+      Kunden routen; Kunden-Benutzer sehen in der Doku „Router“. Der Verlauf des Routings nimmt
+      die Router mit.
 - **Verkabelung** (0.62.0, ADR 0025): welches Gerät an welchem Port welches anderen hängt –
   abgeleitet aus CDP/LLDP aller gelesenen Geräte (Switches & Router, ACI-Leafs), nichts von Hand.
   Seit 0.68.0 auch Catalyst 1200/1300 und Juniper MX/EX/QFX; ein MX steht als **Router** da
-  (in der L2-Sicht ein Endgerät, kein Switch), seine Interface-Netze im Inventar.
+  (in der L2-Sicht ein Endgerät, kein Switch), seine Interface-Netze im Inventar. Seit 0.94.0
+  auch **Arista EOS** (Konto mit Rolle `network-operator`) und **HPE Aruba CX/AOS-CX** (Konto
+  in der Gruppe `operators`) – einfach die Adressen im Quellsystem eintragen, die Plattform
+  erkennt Automato an `show version`. ArubaOS-Switch/ProCurve wird nicht gelesen; der Lauf
+  meldet „ArubaOS-Switch/ProCurve wird nicht gelesen“. Endpunkte zeigen neben IPv4 auch
+  **IPv6-Adressen** aus den IPv6-Nachbarn (NDP) der Switches; Link-local-Adressen stehen
+  getrennt („link-local …“) und zählen nicht als Identität. „Wo hängt …“ findet Geräte auch über
+  eine IPv6- bzw. Link-local-Adresse. Ältere Software ohne den IPv6-Befehl: kein Hinweis, der
+  Teil bleibt leer.
   Oben die Kennzahlen (gelesene Geräte, Switches, Verbindungen je Zustand, Abweichungen,
   Gegenstellen ohne CDP/LLDP, seit 0.63.0 Endpunkte), darunter die Reiter:
   - **Plan** (0.64.0, ADR 0025 Nr. 9): die L2-Sicht als Zeichnung – oben der Kern (Spines bzw.
@@ -604,7 +932,7 @@ Aufruf als `Accept-Language` mit.
   - Nicht für Kunden-Benutzer (Infrastruktur).
 - **Applikationen** (ADR 0012): *Applikationen* mit Kürzel, externem und internem Namen,
   Verwendungszweck (Dev/Test/Prod), Verantwortlichen, Kritikalität, Standort und Mitgliedern
-  (Application Profiles, EPGs, Server); **Vorschläge** nach der Projektnummer aus
+  (Application Profiles, EPGs, Server, seit 0.124.0 auch **einzelne VMs**); **Vorschläge** nach der Projektnummer aus
   `AP_<nr>`/`H_…-<nr>-…` mit einem Klick übernehmen (Operator) – seit 0.38.0 unter der
   Liste der Applikationen, seit 0.74.1 je ACI-Tenant getrennt („Projekt 001 · TE_a“).
   - **Stammdaten aus CSV** (0.75.0, Operator, einzige Ausnahme vom „kein CSV-Import“):
@@ -616,7 +944,17 @@ Aufruf als `Accept-Language` mit.
     liefert die Kopfzeile. Gleicher Name = bestehende Applikation: ausgefüllte Zellen ändern,
     leere lassen den Wert; Zeilen mit Fehler werden ausgelassen. Mitglieder danach in der Doku
     bzw. im Drawer zuordnen. Audit `application.imported` (nur Zahlen und Kennungen).
-  - **Ohne VMs** (0.75.0): Spalte „VMs“ (an den Portgruppen der EPGs bzw. hinter den Servern);
+  - **Einzelne VMs** (0.124.0, Operator): Doku → **Mitglieder** → **+ Mitglied** → Art „VMs
+    (vCenter)“ → VM suchen (Name, IP, Cluster) und hinzufügen. Die VM zählt per Name (gleicher
+    Name in mehreren vCentern = alle; Vorlagen nicht) und steht in der Doku als System mit
+    Grund „VM <Name>“ – mit ihren IPs, Regeln, EPGs und Portgruppen wie eine VM über EPG bzw.
+    Server. Wird sie nicht mehr gelesen, bleibt das Mitglied „nicht mehr gelesen“ stehen.
+    Kunden-Benutzer pflegen Applikationen mit VM-Mitgliedern nicht selbst (fail-closed).
+    Seit 0.126.1 steht die EPG der VM (Portgruppe, sonst gelernter Endpunkt) als „EPG der VM …“
+    unter EPGs und im Netzwerkplan – nicht als Mitglied, also ohne ihre übrigen VMs und Regeln
+    anderer Hosts; Firewall-Regeln über das Netz dieser EPG gelten für die VM spezifisch (Bezug
+    „… · Netz der EPG …“). Soll die ganze EPG dazugehören, die EPG als Mitglied nehmen.
+  - **Ohne VMs** (0.75.0): Spalte „VMs“ (an den Portgruppen der EPGs, hinter den Servern bzw. als Mitglied);
     „ohne VMs ausblenden“ (bleibt im Browser), „ohne VMs auswählen“ bzw. einzeln ankreuzen und
     „N löschen“ (Operator, mit Bestätigung; gelesene Daten bleiben).
   - **Klick auf eine Applikation öffnet ihre Doku** (0.14.0, Link `#apps?app=<id>`). Oben
@@ -629,7 +967,14 @@ Aufruf als `Accept-Language` mit.
     dem Grund, warum das System dazugehört. **EPGs im ACI** mit BD, VRF, Subnetzen, VMs,
     Endpunkten. Klick auf ein System bzw. eine EPG filtert die Regeln.
   - **Regeln & Contracts** wie in der Regel-Ansicht (Aktion, Herkunft Firewall/ACI mit
-    Quellsystem, Quelle, Ziel, Dienste, NAT) mit Richtung, Bezug und Kategorie. Unter
+    Quellsystem, Quelle, Ziel, Dienste, NAT) mit Richtung, Bezug und Kategorie. **Knopf
+    Weg-Suche (0.112.0)** je Regel – auch in der Regel-Liste, im Regel-Detail und in der Doku
+    nach Kategorie: die Weg-Suche öffnet sich in einem neuen Tab mit Quelle, Ziel und Dienst
+    der Regel und sucht gleich; darüber „Aus Regel …“ mit den übrigen Quellen, Zielen und
+    Diensten der Regel zum Anklicken (any steht nicht zur Wahl). Ist die Quelle any (0.113.1),
+    sucht sie über die Anbindung am Eingang der Regel (Interface bzw. Zone in einer Anbindung)
+    bzw. ab der Firewall der Regel mit ihrem Eingang – so geht der Weg bis zum Ziel, auch durch
+    eine VIP (DNAT). Unter
     Quelle bzw. Ziel steht je Objekt der Regel, über das sie Systeme der Applikation erfasst
     (Host, Netz, any, EPG), welche Systeme darin liegen – eine Regel über ein Subnetz oder any
     erscheint einmal, nicht je VM (0.14.1). **Unspezifische Regeln** (any, Netz, vzAny,
@@ -672,19 +1017,22 @@ Aufruf als `Accept-Language` mit.
       weniger als die Firewall-Regeln, es fehlt tcp/8443“ und ist ein Befund (Findings →
       Applikationen, „Contract enger als Firewall“; auch in der Applikations-Doku). Nur-ACI-
       Mandanten ohne Firewall sehen die Contracts wie bisher.
+    - **Hilfs-Contracts (0.97.0, ADR 0034):** steht hinter dem L3Out eine Firewall, ist ein
+      Contract zur externen EPG nur noch ein Hilfs-Contract: keine eigene Zeile in den
+      Kategorien, in „Regeln & Contracts“, im Export und in den Kennzahlen, sondern an der
+      Firewall-Regel in der Spalte **L3Out** („L3O_inet · Contract CT_inet“, enger als die
+      Firewall „– es fehlt tcp/8443“ mit dem Befund). Ohne Firewall dahinter bleibt der Contract
+      sichtbar mit „L3O_vpn (ohne Firewall)“. In den Verbindungen Ende zu Ende ist er keine
+      eigene Verbindung, prüft aber im ACI-Hop mit.
+    - **Nach L3Out geordnet (0.97.0):** je Kategorie zuerst die spezifischen Zugriffe, dann die
+      unspezifischen je L3Out, über den sie hereinkommen (Zwischenüberschrift „über L3O_x“, in
+      Markdown/Word die Spalte L3Out).
     - **Kategorie 10 (0.78.2):** nur Zugriffe auf die Applikation, nicht ihre Zugriffe auf
       andere Systeme bzw. Adressen ohne Zonensignal. Alle Regeln stehen weiter unter
       „Regeln & Contracts“.
-  Dazu
-  *Doku je System* (10 Kategorien, Standort verorten) und *Publizierte Dienste* (VIPs mit
-  Regeln; seit 0.77.0 auch die **Virtual Services des NSX ALB** – je VIP und Port mit Quelle,
-  Pool und Zahl der Server, Regeln über die VIP-Adresse; im NAT als Virtual Server mit den
-  Servern des Pools und Avi-Tenant, Pool, Methode, Health-Monitor, Zustand und „Quelle zum
-  Server“ – Service Engine (SNAT) bzw. Client-IP; seit 0.79.0 die **Kette**: bei der VIP der
-  FortiGate „→ NSX ALB vs-… · n Server“ mit Virtual Service, Pool und Servern im Detail, beim
-  Virtual Service „über V-EXT_… (öffentliche IP)“ – die Regeln der VIP davor zählen mit; das
-  Regel-Detail zeigt bei der VIP ebenso den Virtual Service mit Pool und Servern, und die
-  Suche in den Regeln findet die Regel auch über den Server, Virtual Service oder Pool). Die Doku erfasst **alle** Regeln eines Systems. Der **Bezug** (in den Regeln der
+  Die *Doku je System* und die *Publizierte Dienste* sind seit 0.107.0 entfernt (Anwender
+  2026-10-28): die Doku läuft über die Applikationen, VIPs mit Kette VIP → Load Balancer →
+  Server zeigt NAT / VIPs. Die Doku erfasst **alle** Regeln eines Systems. Der **Bezug** (in den Regeln der
   Applikation und in der Erklärung, nicht mehr als Spalte der Kategorien) sagt, wie die Regel
   greift:
   - direkt,
@@ -696,7 +1044,7 @@ Aufruf als `Accept-Language` mit.
   die VMs an den Portgruppen der EPG; ein Server bringt auch die Contracts der EPG seiner
   Portgruppe mit (ohne gelernten Endpunkt).
   - **Rückrichtung (0.72.1):** Gilt ein ACI-Contract in beide Richtungen und fallen beide in
-    dieselbe Kategorie, steht er in der Doku je System wie in der Applikations-Doku als eine
+    dieselbe Kategorie, steht er in der Applikations-Doku als eine
     Zeile mit „(↔ beide Richtungen)“; in verschiedenen Kategorien (z. B. aus dem Internet und
     ins Internet) bleibt die Rückrichtung eine eigene Zeile „(Rückrichtung)“.
   - **Nur, wo der Verkehr durchkommt (0.24.0):** Automato prüft jede Firewall-Regel gegen das
@@ -706,8 +1054,6 @@ Aufruf als `Accept-Language` mit.
     - Wenn nicht, ist die Regel für dieses System **routingtechnisch nicht möglich** – z. B.
       „lan → internet, any“ für einen Server in der DMZ.
     - Solche Treffer fehlen in den Kategorien, im Export und in den Kennzahlen.
-      - *Doku je System:* Sie stehen oben unter „Routingtechnisch nicht möglich“ mit
-        Begründung.
       - *Applikations-Doku:* Seit 0.34.0 stehen sie gar nicht drin, nur „N routingtechnisch
         unmögliche ausgelassen“. Beispiel: intern → Internet mit `any` im Ziel – die Antwort
         braucht keine Regel, ein Zugriff von dort bräuchte eine eigene.
@@ -723,6 +1069,11 @@ Aufruf als `Accept-Language` mit.
   - **ACI-Contracts über externe EPGs (0.28.0):** Ein System ausserhalb des Fabrics (z. B.
     hinter der Firewall) bekommt die Contracts der externen EPG, der das ACI seine IP
     zuordnet. Bezug: „externe EPG L3O_fw|EN_srv (10.20.0.0/24)“.
+    - Seit 0.97.0 (ADR 0034) entscheiden die **Firewalls hinter den L3Outs:** es gilt der
+      L3Out, dessen Firewall die IP am genauesten nach aussen routet; leitet sie die IP zurück
+      ins ACI, kommt sie nicht über diesen L3Out (Grund z. B. „über L3O_inet: fw-inet routet
+      192.168.50.0/24 über dmz“). So gehört eine DMZ hinter der Internet-Firewall zum L3O_inet,
+      auch wenn L3O_bit 192.168.0.0/16 importiert. Ohne Firewall bzw. ohne Aussage gilt das ACI:
     - Es zählt das längste Subnetz mit Scope `import-security` in der VRF – über alle
       L3Outs. Contracts weniger genauer externer EPGs (z. B. 0.0.0.0/0) stehen unter
       „Routingtechnisch nicht möglich“ mit Begründung, ebenso Subnetze, die nur das Routing
@@ -734,6 +1085,11 @@ Aufruf als `Accept-Language` mit.
       leitet; die übrigen bleiben sichtbar („unbekannt“).
     - Das Regel-Detail zeigt bei Subnetzen externer EPGs „nur Routing“, wenn sie nicht
       zuordnen.
+    - **Export Route Control ist kein Netz der EPG (0.111.0):** ein Subnetz nur mit
+      `export-rtctrl` (ohne `import-security`) steuert, welche Routen der L3Out ankündigt, und
+      ordnet keinen Verkehr zu. Es zählt nicht als Gegenstelle der Verbindungen, nicht in der
+      IP-Suche, nicht für Zonen und nicht in der Applikations-Doku; ein Contract nur darüber
+      steht unter „ohne prüfbare Gegenstelle“.
   - **Nur Tenant/VRF des Systems (0.42.3):** Gleiche Adressen gibt es in mehreren ACI-Tenants
     bzw. VRFs.
     - Steht ein System in einer EPG (Portgruppe seiner VM), zählen gelernte Endpunkte mit
@@ -783,7 +1139,7 @@ Aufruf als `Accept-Language` mit.
   - **Contracts zwischen VRFs (0.44.0):** Ein Contract zwischen EPGs verschiedener VRFs (z. B.
     einem anderen Tenant) zählt nur, wenn das Fabric die Subnetze leakt – geteiltes Subnetz
     beider Seiten (Shared Service) bzw. Route-Leaking. Sonst fehlt er in der Applikations-Doku
-    und steht in der Doku je System unter „nicht möglich“: „… kein geteiltes Subnetz … im
+    (Grund: „… kein geteiltes Subnetz … im
     Fabric kein Weg. Verkehr geht über das Routing der VRF (L3Out, Firewall) – siehe
     Weg-Suche“. Doku und Weg-Suche urteilen so gleich. Fehlt der Scope der Subnetze (Lauf
     vor 0.44.0), bleibt er „unbekannt“ – neu einlesen. Das Regel-Detail zeigt geteilte
@@ -793,8 +1149,20 @@ Aufruf als `Accept-Language` mit.
     Weg-Suche, je Knoten eingefärbt nach seinem Urteil, und dem Gesamturteil.
     - Abgeleitet aus den Regeln der Doku: System der Applikation mit seiner IP; Gegenseite die
       Objekte der Regel (Host, Netz als Ganzes) bzw. beim Contract die Gegenstellen im Scope
-      (EPG mit der IP ihrer ersten VM bzw. ihres ersten Endpunkts). Gegenstelle any, vzAny und
-      Preferred Group bleiben Regeln ohne Verbindung; FQDN/ISDB stehen als Hinweis da.
+      (EPG mit der IP ihrer ersten VM bzw. ihres ersten Endpunkts). vzAny und Preferred Group
+      auf der Seite der Applikation bleiben Regeln ohne Verbindung; FQDN/ISDB stehen als Hinweis
+      da.
+    - **Gegenstelle any (seit 0.127.0):** eine Firewall-Regel mit „all“/any als Gegenstelle (z. B.
+      ins Internet bzw. nach extern über einen L3Out) ist eine Verbindung zu den Netzen hinter
+      Interface bzw. Zone der Regel, sonst zur Default-Route („any → extern (Default-Route über
+      wan1)“); der Weg zeigt ACI-VRF, L3Out und Firewall, Hilfs-Contracts prüfen im ACI-Hop mit.
+      Führt das Routing nicht über die Firewall der Regel, entfällt die Verbindung ohne Befund.
+      Eine externe EPG nur mit 0.0.0.0/0 ohne Firewall hinter dem L3Out ist eine eigene
+      Verbindung über ihren L3Out.
+    - **Regeln ohne Verbindung (seit 0.127.0):** unter der Tabelle zugeklappt „Regeln ohne
+      Verbindung (n)“ mit dem Grund je Regel (FQDN/ISDB/Geo, externe EPG ohne prüfbares Netz,
+      unspezifisch, Hilfs-Contract, nur Antworten, nicht möglich, Adressfamilie, Grenze); Klick
+      öffnet die Regel.
     - **Netz als Ziel (seit 0.79.1):** Die Route, die das ganze Netz enthält (oft 0.0.0.0/0),
       gilt nicht für seine genauer gerouteten Teile. Diese Teile (z. B. Netze hinter einem
       anderen L3Out bzw. Interface) sind eigene Verbindungen mit ihrem Weg, beschriftet „Netz ›
@@ -807,13 +1175,27 @@ Aufruf als `Accept-Language` mit.
       Ziel, Dienste), Ein-/Ausgang, NAT und Leak, dazu je Regel der Doku: *entscheidet*,
       *möglich*, *greift nicht* (vorher entscheidet eine andere bzw. sie passt nicht), *nicht auf
       dem Weg* (ihr Gerät liegt nicht auf dem Weg), *nicht prüfbar* (kein Weg bekannt).
-    - **Abweichung:** Eine Regel erlaubt, aber der Weg sperrt, sie liegt nicht auf dem Weg bzw.
-      greift dort nicht. Abweichungen stehen zuerst; „nur Abweichungen und Gesperrte“ filtert.
+    - **Abweichung:** Eine Regel erlaubt, aber der Weg sperrt bzw. sie greift dort nicht.
+      Abweichungen stehen zuerst; „nur Abweichungen und Gesperrte“ filtert.
+    - **Nur, was auf dem Weg liegt (0.107.0, Anwender: „Wege, welche Routing technisch keinen
+      Sinn ergeben“):** liegt das Gerät einer Regel nicht auf dem Weg bis zum Ziel (z. B. eine
+      andere Firewall mit denselben Regeln), gehört die Regel nicht zur Verbindung – keine
+      Abweichung, sondern unten „Nie auf dem Weg ihres Verkehrs …“ und der Befund
+      **„Applikation: Regel nie gebraucht“** (Hinweis, Findings → Applikationen, mit dem Weg, den
+      der Verkehr nimmt). Seit 0.139.3 nur für Regeln, die das System konkret nennen (Host,
+      Gruppe, Netz der EPG, direkt zugeordnet): eine Regel über ein breites Netz (z. B.
+      10.0.0.0/8 für das Monitoring) abseits des Wegs gehört nicht zur Applikation – kein Befund,
+      der Grund steht unter „Regeln ohne Verbindung“. Verbindungen nur aus solchen Regeln
+      entfallen. Kommt die Quelle von
+      ausserhalb (Internet, Partner), beginnt der Weg dort, wo der **Rückweg** vom Ziel das
+      gelesene Netz verlässt (z. B. `wan1` der Internet-Firewall) – nicht mehr auf irgendeinem
+      Gerät mit einer Regel dafür. Die Doku nach Kategorien zeigt die Regel weiter.
     - **Filter nach Art (0.80.0):** unter der Suche je Gruppe Knöpfe mit Zahl – *Urteil*
       (erlaubt, gesperrt, abhängig, offen = nicht prüfbar bzw. der Weg endet vor dem Ziel),
       *Regeln* (erlaubende bzw. sperrende Regeln der Doku), *Regel auf dem Weg* (entscheidet,
       möglich, greift nicht, nicht auf dem Weg, nicht prüfbar), *Richtung*, *Hinweise*
-      (Abweichungen, Wege uneinheitlich, gegen die Zonen-Absicht). In einer Gruppe „oder“,
+      (Abweichungen, Wege uneinheitlich, Rückweg über andere Firewall, gegen die
+      Zonen-Absicht). In einer Gruppe „oder“,
       zwischen den Gruppen „und“ (z. B. „gesperrt“ + „Abweichungen“ = erlaubende Regel, deren
       Weg sperrt); die Zahl am Knopf gilt mit den übrigen Filtern. Es erscheinen nur Arten, die
       es in der Applikation gibt; „N von M“ zeigt, wie viele Verbindungen übrig sind, „Filter
@@ -822,6 +1204,13 @@ Aufruf als `Accept-Language` mit.
       anderen gesperrt (aktive Wege bzw. ECMP, Backup-Wege gleicher Länge, die Firewalls eines
       Verbunds), steht in der Zeile „Wege uneinheitlich“; das Detail zeigt je Weg (aktiv bzw.
       Backup, über welche Firewalls) das Urteil. Im Kopf der Karte „N Wege uneinheitlich“.
+    - **Rückweg (0.136.0):** Je Verbindung prüft die Doku wie die Weg-Suche, ob die Antwort über
+      dieselben Firewalls zurückgeht (ACI-Knoten und Router zählen nicht, im Verbund derselbe
+      Verbund). Sonst steht in der Zeile „Rückweg über andere Firewall“ (Hinweis: über welche),
+      im Kopf der Karte „N Rückweg über andere Firewall“, als Filter unter *Hinweise* und bei
+      „nur Auffälliges“; das Detail nennt den Rückweg („Rückweg ✓“, „Rückweg ?“ mit Grund) und
+      zeigt ihn seit 0.141.1 Hop für Hop wie die Weg-Suche (andere Firewall rot). Bei mehreren
+      aktiven Wegen genügt einer über eine andere Firewall. Kein Befund.
     - **Als Befund (0.59.0, seit 0.73.0 nur bei uneinheitlichen Wegen):** je erlaubender Regel
       und Applikation ein Befund „Applikation: Wege uneinheitlich“ (Findings → Applikationen,
       auch in der Applikations-Doku bei den Befunden) mit den Verbindungen und dem Urteil je
@@ -830,12 +1219,53 @@ Aufruf als `Accept-Language` mit.
       „Abgleich“ und beim Ändern bzw. Löschen einer Applikation; Triage bleibt erhalten. Nach
       einem Lauf höchstens `AUTOMATO_APP_FINDINGS_SECONDS` (120, `0` = ohne Grenze) – was nicht
       drankommt, behält seine Befunde und ist beim nächsten Lauf zuerst dran (Hinweis im Log).
+      Je Applikation prüfen die Befunde die Wege der ersten `AUTOMATO_APP_FINDINGS_TRACES`
+      Verbindungen (120, `0` = alle, seit 0.130.0).
+    - **Grenze der Verbindungen (0.130.0, vorher fest 120):** geprüft werden die Wege der ersten
+      `AUTOMATO_APP_TRACES_MAX` Verbindungen je Applikation (Vorgabe 2000, `0` = alle) –
+      Verbindungen, Netzwerkplan und Export; Verbindungen zu any (Gegenstelle hinter dem
+      Interface der Regel) zuletzt. Sind es mehr, steht unter den Verbindungen „n Verbindungen –
+      nur die ersten m geprüft (…)“, die übrigen Regeln stehen unter „Regeln ohne Verbindung“
+      mit „mehr Verbindungen als geprüft werden“. Ändern in der `.env` (`AUTOMATO_APP_TRACES_MAX=0`)
+      und Orchestrator neu starten; die Stände der Doku rechnen danach neu. Grosse Applikationen
+      brauchen entsprechend länger (die Doku rechnet im Hintergrund, Übersicht → Stand der Doku).
+    - **Unvollständig geprüft (0.140.0, ADR 0048):** keine Grenze kürzt mehr still. Greift eine
+      (Verbindungen je Applikation, mehr als 64 Gegenstellen je Regel und Seite, mehr als 16
+      Dienste je Regel, mehr als 32 genauer geroutete Teile eines Netzes, Fehler im Programm),
+      steht oben in den Verbindungen rot „unvollständig geprüft“, darunter je Art der Hinweis, und
+      unter Findings → Applikationen der Befund **„Applikation: unvollständig geprüft“** mit Link
+      zur Applikation. Für den nicht geprüften Teil fehlen Befunde. Abhilfe: Grenze erhöhen
+      (`AUTOMATO_APP_TRACES_MAX=0`) bzw. die Applikation kleiner schneiden. In der Doku zeigt
+      „n Regeln: Weg nicht geprüft“ Regeln, deren Weg eine Grenze nicht prüfen liess – sie
+      bleiben stehen (im Zweifel zeigen).
+    - **Wege einmal je Mandant (0.140.0, ADR 0048):** Doku, Verbindungen und Befunde aller
+      Applikationen teilen die Wege, die Policies und die Urteile je Hop eines Datenstands; das
+      Urteil je Hop gilt für alle Adressen derselben Klasse (gleiche Objekte der Policies). Ein
+      neuer Lauf bzw. eine Änderung verwirft den Speicher. Grösse: `AUTOMATO_PATH_STORE_MB`
+      (Vorgabe 256) – darüber werden die ältesten Wege bei Bedarf neu gerechnet. Im Log beim
+      Wechsel des Datenstands: „Mandant 2: Wege-Speicher neu (… hits …, misses …)“.
+    - **Nur bei Änderung, nur Betroffenes, erst nach den Läufen (0.141.0, ADR 0049):** ein Lauf
+      ohne Änderung am Inhalt rechnet nichts (Log: „Quellsystem 7: Lauf ohne Änderung am
+      Datenstand“). Mit Änderung rechnen nur die Applikationen neu, die sie betrifft (z. B. eine
+      geänderte Regel, die sie zeigen bzw. auf ihren Wegen prüfen); die anderen übernehmen den
+      neuen Datenstand (Log: „Datenstand 12 – 140 Stände übernommen (nicht betroffen), 6 neu zu
+      rechnen“). Übersicht → Stand der Doku zeigt je veralteter Applikation den Grund (z. B.
+      „Regel 812 (Urteil auf dem Weg)“) und „wartet auf n Läufe“: Befunde und Vorrechnen beginnen
+      erst nach dem letzten wartenden bzw. laufenden Lauf des Mandanten und halten an, wenn
+      während des Rechnens ein Lauf dazukommt. Hängt ein Lauf, endet die Wartezeit mit seiner
+      Frist (`AUTOMATO_RUN_TIMEOUT_MINUTES`, `AUTOMATO_RUN_QUEUE_TIMEOUT_HOURS`). Angeschlossene
+      Netze, Interfaces, IPAM/DNS und Änderungen an Zonen, Kategorien oder Namensprofilen rechnen
+      wie bisher alle Applikationen. Kennungen von Regeln, NAT, Objekten und VMs bleiben über
+      Läufe gleich (Links bleiben gültig).
     - **Export und Druck (0.59.0):** der Export der Applikations-Doku enthält den Abschnitt
       „Verbindungen Ende zu Ende“ (Richtung, Quelle, Ziel, Dienst, Weg mit der entscheidenden
       Regel je Hop, Urteil, Abweichung bzw. Wege uneinheitlich); „Drucken / PDF“ zeigt je
       Verbindung den Weg mit den entscheidenden Regeln und die Abweichung ausgeschrieben.
     - Liegt die Quelle an keinem gelesenen Gerät (Internet, Partner), beginnt der Weg auf dem
-      Gerät der Regel. „In der Weg-Suche öffnen“ zeigt den ganzen Weg mit allen Varianten.
+      Gerät der Regel. „In der Weg-Suche öffnen“ zeigt den ganzen Weg mit allen Varianten (seit
+      0.109.1 in einem neuen Tab, die Doku bleibt offen).
+      **„Warum dieser Weg?“** (0.109.0) erklärt denselben Weg wie die Verbindung Hop für Hop (wie
+      in der Weg-Suche, mit „Erwartet über …“ und „Als Finding erfassen“).
     - **Zonen (0.78.0):** mit logischen Zonen steht unter dem Weg „Zonen: Server → Edge
       Internet → Public“ (die Zonen auf dem Weg, sonst die von Quelle und Ziel) und die Absicht
       zwischen Quell- und Zielzone als Chip (grün = passt, rot = gegen die Absicht, orange =
@@ -847,7 +1277,9 @@ Aufruf als `Accept-Language` mit.
       (Tenant/AP) mit einem Kasten je EPG und ihren VMs bzw. Servern (höchstens sechs, sonst
       „+n weitere“), Systeme ohne EPG im Rahmen „ohne EPG“; in der Mitte L3Outs, Firewalls und
       VDOMs auf den Wegen (das ACI als der L3Out zur Gegenstelle hin – nach dem Routing bzw. der
-      externen EPG –, sonst als VRF), rechts die Gegenstellen.
+      externen EPG –, sonst als VRF), rechts die Gegenstellen. Ein Verbund paralleler Firewalls
+      ist seit 0.133.0 immer ein Knoten („Verbund …“), gleich welche seiner Firewalls ein Weg
+      zuerst nennt.
       - **Ebene „Regeln“:** unter jedem Knoten des Wegs ein Kasten mit den entscheidenden
         Policies bzw. Contracts und ihren Diensten („web-lan (#11) · tcp/443“, „Contract CT_web ·
         tcp/443“, „✕ implizit gesperrt“). Häkchen **Regeln** bzw. **Dienste und Interfaces**
@@ -892,7 +1324,13 @@ Aufruf als `Accept-Language` mit.
         Richtung und die Interfaces (`automato_ports_a`/`_b`) als Eigenschaften; die Rahmen der
         APs stehen hinter den Kästen, die Regeln auf der eigenen Ebene „Regeln“ (in draw.io
         über *Ansicht → Ebenen* ein- und ausblendbar). API
-        `GET /applications/{id}/connections/plan/export?format=svg|drawio&key=…&rules=false`.
+        `GET /applications/{id}/connections/plan/export?format=svg|drawio&key=…&rules=false`,
+        seit 0.130.0 auch `POST` mit `{"format", "keys", "rules"}` im Rumpf (die Oberfläche;
+        viele hervorgehobene Verbindungen passen nicht in eine Adresse).
+      - **Verbindungen innerhalb der Applikation (0.130.0):** ist die Gegenstelle eine EPG bzw.
+        ein System derselben Applikation (z. B. Contract zwischen zwei EPGs eines AP), endet die
+        Linie an deren Kasten im Rahmen der Applikation – nicht mehr an einer eigenen
+        Gegenstelle rechts.
     - Nicht für Kunden-Benutzer (zeigt die Infrastruktur).
   - **Regeln direkt zuordnen bzw. ausschliessen (0.60.0, ADR 0012):** Im Regel-Detail der
     Applikations-Doku „Der Applikation zuordnen“ (die Regel gehört dazu, auch wenn sie nur über
@@ -926,7 +1364,8 @@ Aufruf als `Accept-Language` mit.
     (Übersicht, Systeme, EPGs, Verbindungen Ende zu Ende, Netzwerkplan, Regeln & Contracts,
     Findings, Doku nach Kategorien, ausgeblendete Regeln; der Kopf mit dem Steckbrief steht
     immer da). Die Auswahl bleibt im Browser.
-    - **Markdown** – die gewählten Abschnitte (ohne Netzwerkplan).
+    - **Markdown** – die gewählten Abschnitte (ohne Netzwerkplan); seit 0.104.0 vom Server aus
+      demselben Aufbau wie Word (gleiche Gliederung und Tabellen).
     - **Word + draw.io (ZIP)** bzw. **Word (.docx)**, wenn der Netzwerkplan nicht gewählt ist –
       für Confluence, siehe unten.
     - **Drucken / PDF** – die gewählten Abschnitte offen, die übrigen fallen im Druck weg.
@@ -941,15 +1380,214 @@ Aufruf als `Accept-Language` mit.
       *Inhalt importieren*); den Plan in draw.io (diagrams.net) bearbeiten und auf der Seite
       mit dem draw.io-Makro *Diagramm importieren* einfügen. Änderungen in Confluence fliessen
       nicht zurück.
-    - Nicht für Kunden-Benutzer (die Verbindungen zeigen die Infrastruktur). API
-      `GET /applications/{id}/export?format=zip|docx&sections=…` (Komma-Liste `overview`,
-      `systems`, `epgs`, `connections`, `plan`, `rules`, `findings`, `categories`, `hidden`;
-      leer = alle).
-  - **Abhängigkeiten (0.60.0, seit 0.73.0 vorerst entfernt):** sie zeigten z. B. einen
-    Monitoring-Contract als Abhängigkeit ohne fachliche Aussage. Keine Karte, kein Export; die
-    API liefert sie nur noch mit `GET /applications/{id}/doc?dependencies=true` (abgeleitet
-    aus den erlaubenden Regeln mit spezifischem Treffer, deren Gegenseite EPGs, Server bzw. ein
-    Netz im Subnetz der EPGs einer anderen Applikation trifft).
+    - Kunden-Benutzer (seit 0.104.0): Markdown bzw. Word ihres Ausschnitts – ohne Verbindungen
+      und Netzwerkplan (sie zeigen die Infrastruktur), ohne Gerätenamen. API
+      `GET /applications/{id}/export?format=zip|docx|md&sections=…` (Komma-Liste `overview`,
+      `systems`, `epgs`, `connections`, `plan`, `rules`, `dependencies`, `findings`,
+      `categories`, `hidden`; leer = alle).
+  - **Detail statt Sprung (0.95.0):** Klick auf eine EPG (Karte „EPGs im ACI“ bzw. im Detail
+    eines Systems) öffnet ihr Detail – Lage im ACI, Subnetze mit IPAM, Endpunkte, VMs,
+    Leaf-Ports. „Regeln dieser EPG zeigen“ filtert die Regeln wie bisher; „In Objekte & Inventar
+    öffnen“ zeigt ihre Portgruppen bzw. Subnetze. Firewall-Objekte im Detail eines Systems öffnen
+    sich ebenfalls in der Doku. Die Kennzahlen oben filtern weiter.
+  - **Namen der Gegenstellen (0.95.0):** Administration → Mandanten & Standorte → Mandant →
+    „Applikations-Doku: Namen der Gegenstellen zeigen“ (nur Admin, im Audit). Danach nennen die
+    Kategorien, Markdown und Word bei Gegenstellen, von denen die Firewall-Regel nur die Adresse
+    kennt, den Namen (IPAM, VM, EPG bzw. Firewall-Objekt): „db01.example.ch (10.30.0.5)“. Gilt nur
+    für Betreuer – Kunden-Benutzer sehen weiter nur die Adressen.
+    Seit 0.101.0 schaltet der Global Admin die Namen auch direkt in der Karte „Doku nach
+    Kategorien“ um („Namen der Gegenstellen“); Netze und Bereiche nennen dann zuerst die Gruppe,
+    wie sie in der Regel steht: „G_clients (10.70.0.0/16, 10.71.0.0/16)“. Seit 0.107.0 steht der
+    Schalter sofort auf dem neuen Stand („– lädt…“), bis die Doku neu geladen ist; das IPAM
+    bleibt im Speicher (`AUTOMATO_REF_CACHE`, Vorgabe 4 Referenzquellen, `0` = aus) statt je
+    Anfrage neu gelesen zu werden – ein neuer IPAM-Lauf ersetzt es.
+  - **Stand der Doku (seit 0.108.0, ADR 0037):** Doku und Verbindungen Ende zu Ende (mit Plan)
+    werden je Applikation gespeichert und nur neu gerechnet, wenn sich etwas ändert, das sie
+    betrifft – ein Lauf eines Quellsystems (Geräte, IPAM), Zonen, Kategorien, Namensprofil,
+    Verbund, L3Outs, Mitglieder bzw. ausgeblendete Regeln. Über der Doku bzw. in der Karte der
+    Verbindungen steht „Stand von heute 14:05“; ändert sich etwas, zeigt die Seite sofort den
+    letzten Stand mit „– wird im Hintergrund aktualisiert…“ und lädt von selbst neu, sobald er
+    fertig ist. „↻ neu berechnen“ rechnet auf Wunsch neu (z. B. nach einer Änderung direkt an
+    einem Gerät, bevor der nächste Lauf sie liest). Befunde in der Doku sind immer aktuell.
+    Exporte (Word, Markdown, Plan) nehmen immer den aktuellen Stand. Nach Läufen und Änderungen
+    rechnet der Orchestrator die zuletzt angesehenen Applikationen im Hintergrund vor.
+    Einstellungen: `AUTOMATO_DOC_SNAPSHOTS` (Vorgabe `true`; `false` = jedes Mal neu wie bis
+    0.107.0), `AUTOMATO_DOC_STALE_SECONDS` (1,5 – kürzere Berechnungen wartet die Seite ab),
+    `AUTOMATO_DOC_WARM_DAYS` (7 – so lange angesehene Stände werden vorgerechnet, `0` = nie),
+    `AUTOMATO_DOC_WARM_SECONDS` (seit 0.133.2 `0` = ohne Grenze; vorher 600 je Durchgang),
+    `AUTOMATO_DOC_WARM_ALL` (seit 0.133.2, Vorgabe `true`: Doku und Verbindungen **aller**
+    Applikationen im Standard vorrechnen, auch nie geöffnete und nach dem Start – weitere Stände
+    wie Sprache, Namen, Kunde nur die angesehenen; `false` = nur angesehene wie bis 0.133.1).
+    **Seit 0.133.2:** ein Anstoss während des Vorrechnens (z. B. ein Lauf) wartet nicht, das
+    Vorrechnen schaut danach erneut, bis nichts mehr aussteht. Schlägt eine Berechnung fehl, zeigt
+    die Übersicht beim Stand „Fehler“ (Text beim Darüberfahren) und rechnet ihn erst wieder, wenn
+    sich etwas ändert – Einzelheiten im Log (`docker compose logs orchestrator | grep -A30
+    fehlgeschlagen`). Ein Fehler bei einem einzelnen Weg bricht die Verbindungen nicht mehr ab: der
+    Weg fehlt mit dem Hinweis „n Wege nicht berechnet (Fehler im Programm …)“. Das Log des
+    Orchestrators zeigt jetzt auch die Meldungen zum Fortschritt mit Zeit (`… INFO app.store…`),
+    bis 0.133.1 nur Warnungen und Fehler ohne Zeit.
+    **Durchgänge (0.139.0, ADR 0047):** das Vorrechnen nimmt zu Beginn alles, was aussteht
+    (schnelle zuerst), und rechnet jede Applikation einmal – auch wenn währenddessen weitere Läufe
+    eingehen. Ein Lauf bzw. eine Änderung währenddessen bricht nichts ab, sondern merkt einen
+    weiteren Durchgang mit allem, was danach nicht mehr passt („danach erneut“). Bis 0.138.0 kamen
+    mit Importen im Gang dieselben schnellen Applikationen immer wieder zuerst dran. Die Befunde
+    Regel ↔ Weg rechnen nicht mehr im Einspielen jedes Laufs, sondern zusammengefasst danach
+    (Übersicht „Befunde nachziehen“). Nach dem Speichern einer Applikation rechnet sie gleich,
+    ohne auf den Durchgang zu warten. **Seit 0.139.1** kommen diese Befunde aus den eben
+    gerechneten Verbindungen der Applikation (keine zweite Berechnung der Wege nach Update, Lauf
+    oder Änderung; „Abgleich neu berechnen“ von Hand rechnet wie bisher), das Vorrechnen geht
+    Applikation für Applikation (Doku, dann Verbindungen) und meldet im Log je Durchgang und Stand
+    den Fortschritt: `docker compose logs orchestrator | grep -E "Durchgang|Vorrechnen"`.
+    **Regeln neu einlesen (0.139.0, ADR 0047, Operator):** in der Applikation „⟳ Regeln neu
+    einlesen“ – nach einer Regeländerung auf Firewalls bzw. im ACI. Zur Auswahl stehen alle
+    FortiGates und Cisco ACI des Mandanten, die der Applikation vorgewählt („Regeln der Doku“,
+    „auf dem Weg“). Je Gerät liest ein Lauf **nur Regeln, Objekte und NAT** bzw. beim ACI den
+    Tenant-Baum (Contracts, Filter, EPGs) – Interfaces, Routing, HA, Fabric und Border-Leafs
+    bleiben vom letzten vollen Lauf. Das Fenster zeigt je Gerät „wartet / liest / eingelesen“;
+    sind alle fertig, rechnet **nur diese Applikation** neu und die Doku lädt sich. Andere
+    Applikationen zeigen danach „veraltet“ und rechnen beim nächsten Durchgang bzw. beim Öffnen.
+    Wer am Gerät auch Interfaces oder Routing geändert hat, liest es voll („Jetzt einlesen“). Ein
+    Teil-Lauf zählt nicht als voller Lauf (Stand des Quellsystems in der Datenqualität). Agenten
+    vor 0.139.0 lesen dabei alles (bis zu ihrem Selbst-Update).
+    **Dauer der Berechnung (0.132.1):** unter den Verbindungen „Berechnet in … s: n Wege in … s“ –
+    aufgeklappt je Teil (Doku, Verbindungen bilden, Vorbereitung, Plan) und die langsamsten Wege;
+    dieselben Zahlen schreibt der Orchestrator ins Log („Applikation 12: Verbindungen in …“).
+    Eine Applikation rechnet in einem Prozess nacheinander – mehr RAM bringt nichts, mehr CPU nur
+    für mehrere Applikationen bzw. Mandanten zugleich.
+    **Seit 0.133.1:** dazu die Zahl der **Abfragen an die Datenbank** („· 998 Abfragen an die
+    Datenbank“, im Log „… n Abfragen“); viele Abfragen je Weg zeigen, dass die Zeit in Postgres
+    steckt. Lange Berechnungen schreiben jede Minute den Fortschritt ins Log („Applikation 12: 340
+    von 2000 Wegen in 754 s“), die Übersicht zeigt bei „rechnet gerade“ „· 340 von 2000 Wegen ·
+    seit 12 min“. „rechnet gerade“ gilt je Stand (Doku bzw. Verbindungen, je Sprache) – zwischen
+    zwei Ständen kann es kurz fehlen. Das Vorrechnen nimmt die **schnellen Stände zuerst**; eine
+    riesige Applikation hält die übrigen nicht mehr bis zum nächsten Durchgang auf. Backup-Routen
+    je Präfix, genauere Routen in einem Netz und gelernte ACI-Endpunkte je IP holt die Berechnung
+    nur noch einmal (Migration `0073`: Indizes `topo_route` Knoten + Präfix, `epg_endpoint.ip`) –
+    vorher las Postgres dafür je Verbindung und Hop alle Routen des Geräts (grosse BGP-Tabellen).
+  - **Kategorien nach Zonentyp (seit 0.106.0, ADR 0035):** jede Firewall-Regel bzw. jeder
+    Contract steht in der Kategorie seiner **Richtung** Zonentyp der Quelle → Zonentyp des Ziels.
+    In drei Schritten einrichten:
+    1. **Netzwerkdesign → Kategorien** (Operator) je Zone:
+       - **Zonentyp**: die Zone des Grundschemas, das im Namensprofil hochgeladen ist (ohne
+         eigenes die Vorlage: DC, Edge Internet, Edge Office, Edge VPN, Public, …).
+         „automatisch: …“ übernimmt die Erkennung nach Name bzw. Kurzname; nur von Hand wählen,
+         wenn sie nicht passt.
+       - **Netze** (Quell-Adressen, ein Netz je Zeile) mit **Ausschlüssen** („ohne“, z. B.
+         10.0.0.0/8 ohne 10.20.0.0/16).
+       - **Geräte**: Firewall bzw. VDOM, ACI-Tenant, ACI-VRF und Anbindungen (zuerst unter
+         Routing → Anbindungen erfassen bzw. übernehmen).
+       - Danach „Speichern“. Die übrigen Selektoren (EPG, Firewall-Zone, IPAM …) pflegt der
+         Reiter Zonen.
+    2. **Namensprofile → Kategorien der Applikations-Doku** (Admin): je Kategorie Titel,
+       Titel englisch, **Source-Zone** und **Dest-Zone**. Je Seite einen oder mehrere Zonentypen
+       wählen, „* jeder“ = jeder Zonentyp, z. B. „Zugriff aus den Ressourcen“ mit `DC-Ressourcen
+       → DC`, „Zugriff aus anderen Kunden“ mit `DC → DC`.
+       - Seit 0.125.0 (ADR 0046) jeden Zonentyp auch mit **Zusatz**: „(Applikation)“ = die
+         Seite der Systeme der Applikation, „(andere)“ = die Gegenstelle, z. B. „Zugriff auf
+         andere DC“ mit `DC (Applikation) → DC (andere)`; ohne Zusatz beide Seiten.
+       - Je Seite **spezifisch** und/oder **unspezifisch** (Häkchen unter Source- bzw.
+         Dest-Zone, Vorgabe beides). Spezifisch: auf der Seite der Applikation das System selbst,
+         bei der Gegenstelle Host bzw. Netz in einer Zone oder eine EPG. Unspezifisch: Subnetz,
+         any, vzAny, Preferred Group bzw. bei der Gegenstelle any und Netze über mehrere Zonen.
+         Abgewählte Zugriffe stehen nicht in der Kategorie, nur unter „Regeln & Contracts“
+         („Nicht gezeigt in Kategorie …“); direkt zugeordnete Regeln immer.
+       - Fest, nur Titel und die Auswahl spezifisch/unspezifisch änderbar: **innerhalb der
+         Applikation** (7), **innerhalb des Security Tenants** (8) und **unspezifisch** (10).
+       - **Reihenfolge** (seit 0.126.0): je Zeile ↑/↓ wie beim Regelwerk, auch die festen. So
+         zeigen Doku und Word-Export die Kategorien, die Nummern fortlaufend (Spalte „Nr.“);
+         ausgeblendete Regeln bleiben beim Verschieben erhalten.
+       - **Welches Profil gilt?** (seit 0.130.0) Die Doku nimmt die Kategorien aus dem
+         Namensprofil ihres Mandanten (Administration → Mandanten), ohne eigenes aus „default“.
+         Über der Tabelle der Kategorien steht „Gilt für die Doku der Mandanten: …“ bzw. „Kein
+         Mandant nutzt dieses Namensprofil“; in der Doku unter „Doku nach Kategorie“ „Titel und
+         Reihenfolge der Kategorien aus dem Namensprofil „Kunde / Name““. Stimmt die Reihenfolge
+         nicht, zuerst dort nachsehen, ob das richtige Profil bearbeitet wurde.
+       - Die Vorgaben (Internet, Unternehmensnetzwerk, VPN, andere Security Tenants, Management)
+         lassen sich ändern oder entfernen; „Auf Vorgaben zurücksetzen“ stellt sie wieder her.
+    3. Die **Doku** teilt so ein:
+       - zuerst innerhalb der Applikation (Server intern, ACI im selben Application Profile),
+         dann innerhalb des Security Tenants (ACI im selben Tenant bzw. Gegenstelle in der eigenen
+         Zone);
+       - dann die genaueste Richtung: mit Zusatz vor ohne, beide genannt vor „*“, bei
+         Gleichstand die weiter oben in der Reihenfolge;
+       - sonst unspezifisch.
+       - Eine Firewall-Regel mit Gegenstellen in mehreren Zonen steht **je Zone** in ihrer
+         Kategorie, jede Zeile nur mit ihren Gegenstellen (seit 0.125.0).
+    4. **Namensprofile → Regelwerk der Applikations-Doku** (Admin, seit 0.118.0, ADR 0043):
+       welche Firewall-Regeln und Contracts die Doku zeigt.
+       - Das Regelwerk wird **von oben nach unten** gelesen: die erste eingeschaltete Regel, die
+         eine Zeile trifft, entscheidet die **Wirkung** (in der Kategorie markiert, nur als
+         Treffer unter „Regeln & Contracts“, nur als Vermerk in der Spalte L3Out, nicht gezeigt
+         und nur gezählt, nicht gezeigt und nicht gezählt). Trifft keine, steht die Zeile in
+         ihrer Kategorie. „Direkt zugeordnete Regeln“ ist eine Ausnahme: sie hebt die gewählten
+         Regeln darunter auf.
+       - **Profil** wählen und „Aktivieren“: **Regelwerk 1** = Stand bis 0.117.0 (Vorgabe),
+         **Regelwerk 2** = Rückmeldung 2026-10-30 (nicht im Pfad und über das Internet-Gateway
+         hinaus weder gezeigt noch gezählt; ausgehend mit breiter Quelle und deaktivierte Regeln
+         als Vorschlag ausgeschaltet).
+       - Ändern: Schalter „Ein“, Wirkung, Pfeile für die Reihenfolge. Eingebaute Profile bleiben
+         unverändert – „Als neues Profil speichern“. Eigene Profile lassen sich speichern
+         (gleiche Reihenfolge) und löschen; **eine neue Reihenfolge nur als neues Profil**. Ein
+         neues Profil gilt erst nach „Aktivieren“.
+       - **Name & Beschreibung** (seit 0.119.0): Titel, Titel englisch, Beschreibung – auch für
+         die eingebauten Regelwerke (die Regeln bleiben; „Vorgabe“ setzt Name und Beschreibung
+         zurück). Die Beschreibung steht unter der Auswahl.
+       - **Löschen** (seit 0.119.0): eigene ganz, eingebaute werden ausgeblendet und lassen sich
+         unter „Gelöschte eingebaute Profile“ wiederherstellen. Das aktive Profil lässt sich
+         nicht löschen – zuerst ein anderes aktivieren.
+       - Die Doku zeigt im Kopf von „Regeln & Contracts“ die gezählten Regeln je Bedingung und
+         das aktive Regelwerk (Link hierher). Umschalten rechnet den Stand der Doku neu.
+       - **Vergleichen** (seit 0.120.0, nicht für Kunden-Benutzer): in der Doku „Vergleichen“
+         neben „Regelwerk: …“, Profil wählen, „Vergleichen“ – erst dann wird gerechnet (bei
+         grossen Applikationen etwas Geduld). Zeigt je Regelwerk die Anzahl und die gezählten
+         Regeln sowie, welche Regeln dazukommen bzw. wegfallen, mit der entscheidenden
+         Bedingung; Klick öffnet die Regel. Die Doku selbst bleibt beim aktiven Regelwerk.
+
+    **Ohne Netz einer Zone** (any, grosse Bereiche) zählt, was hinter dem Interface der Regel
+    liegt: die Anbindung, die Netze, die die Firewall dort routet, bzw. die Default-Route (Zonen
+    mit 0.0.0.0/0). Ein grosser Bereich zählt nur mit seinen Zonen, die dort liegen. Bei einer
+    externen EPG zählt die Zone der Firewall hinter ihrem L3Out. Ist das nicht eindeutig, bleibt
+    der Zugriff unspezifisch.
+
+    **Ohne gepflegte Zone** nimmt Automato den Zonentyp nach dem Namen der Firewall-Zone bzw. des
+    L3Outs, nach den Mustern des Grundschemas („L3O_inet“ → Edge Internet). Externe Gegenstellen
+    gelten als Internet, Systeme im ACI und die dokumentierten Systeme als DC.
+
+    Zur Anzeige der Doku:
+    - Die Titel bleiben die der Kategorien. Der Kopf nennt die Zonen der Gegenstellen mit Netzen
+      und Ausschlüssen, die Spalte **Zone** die Zonen der Gegenstelle. Kunden-Benutzer sehen
+      Spalte und Zonen nicht.
+    - Die VIP- und NAT-Spalten erscheinen, wenn eine Zeile sie hat.
+    - In der Doku führt „Zonen der Kategorien ↗“ ins Netzwerkdesign.
+
+    Lernt eine Firewall, die einer Zone als Gerät zugewiesen ist, ein Netz einer anderen Zone
+    nicht über den Übergang Richtung dieser Zone im Zonenplan, steht der Befund **„Netz nicht über
+    den Übergang zur Zone“** unter Findings → Zonen. Das gilt bei einem anderen Interface, nur über
+    die Default-Route oder ohne Route; der Befund nennt das Interface und die Zonen dahinter.
+  - **Nur relevante Firewall-Regeln (0.103.0):** ausgehende Firewall-Regeln, die die Systeme nur
+    über eine breite Quelle erfassen (z. B. 10.0.0.0/8 → irgendwohin, any → Internet), stehen
+    nicht mehr in der Doku – weder in den Kategorien noch unter „Regeln & Contracts“, in den
+    Verbindungen; oben steht „n ausgehende mit breiter Quelle
+    ausgelassen“. Eingehende Regeln über grosse Bereiche (Zugriffe auf die Systeme) und Regeln,
+    die den Server konkret nennen, bleiben. Gehört eine solche Regel doch zur Applikation: im
+    Regel-Detail „der Applikation zuordnen“.
+  - **Freigaben ins Internet (0.114.1):** eine Firewall-Regel, die die Systeme nur über `all` im
+    Ziel erfasst und deren Ausgang ins Internet führt (Default-Route bzw. Anbindung Internet
+    hinter dem Ziel-Interface, auch einer SD-WAN-Zone, oder Zone vom Typ Internet), ist kein
+    Zugriff auf die Applikation – sie fehlt in der Doku, oben steht „n Freigaben ins Internet
+    ausgelassen“. Direkt zugeordnete Regeln bleiben.
+  - **ACI im Weg (0.103.0):** leitet die Firewall hinter dem L3Out eine IP zurück ins ACI, ordnet
+    die Prüfung im Fabric sie trotzdem der externen EPG mit dem längsten Subnetz zu („… –
+    Zuordnung im ACI“), ein Contract erlaubt dann. Ordnet keine externe EPG zu, steht der Grund in
+    Klammern dahinter.
+  - **Abhängigkeiten (0.60.0, seit 0.88.0 wieder):** Bereich „Abhängigkeiten“ (zugeklappt,
+    lädt beim Aufklappen) mit „nutzt“ und „wird genutzt von“ je Applikation und den Regeln.
+    Abgeleitet aus den erlaubenden Regeln mit spezifischem Treffer, deren Gegenseite EPGs,
+    Server bzw. ein Netz im Subnetz der EPGs einer anderen Applikation trifft. Applikationen wie
+    Monitoring, Backup oder DNS im Formular als **Infrastruktur** kennzeichnen – Abhängigkeiten
+    zu ihnen stehen dann eingeklappt unter „Infrastruktur“, getrennt von den fachlichen.
+    Export-Abschnitt „Abhängigkeiten“ (Markdown, Word, Druck). API
+    `GET /applications/{id}/dependencies`.
   - **Nur die Beteiligten (0.43.2):** Ein Contract zeigt in der Applikation nur ihre EPGs bzw.
     VMs und die Gegenstellen, die über ihn zugreifen können. Die Regel-Liste nennt „von N im
     Contract“. Das Regel-Detail blendet die übrigen Consumer bzw. Provider mit ihren VMs aus,
@@ -963,7 +1601,11 @@ Aufruf als `Accept-Language` mit.
   IPAM unter 10.30.0.9. Firewall-Objekt H_db01 …, verwendet in 1 Regel“. Aufklappen zeigt alle
   Angaben und Links auf die betroffenen Regeln. Filter Status/Typ, Suche; Status setzen
   (Triage) als Operator – bleibt über spätere Läufe erhalten (Findings werden nach jedem Lauf
-  neu berechnet). Der Abgleich berücksichtigt, dass das IPAM den Server **ohne Präfix**
+  neu berechnet; seit 0.133.0 auch einmal nach einem **Update** der Plattform, je Mandant kurz
+  nach dem Start im Hintergrund – Audit `reconcile.version` –, damit die Befunde gleich der neuen
+  Version entsprechen und nicht erst nach dem nächsten Lauf). **Mehrere auf einmal** (0.117.0): Kästchen je Befund bzw. „alle auf der
+  Seite“, dann in der Leiste Status (Vorgabe „ignoriert“) und optional eine Notiz für alle →
+  „Übernehmen“ – ganz oder gar nicht, je Befund ein Audit-Eintrag. Der Abgleich berücksichtigt, dass das IPAM den Server **ohne Präfix**
   führt: `H_web01` passt zu `web01` bzw. `web01.example.ch` (Kurzname nur, wenn eindeutig).
   **Externe Adressen** (seit 0.76.1): öffentliche Hosts und Netze, die in keinem Netz der
   gelesenen Geräte liegen (Interface-Netze der Firewalls inkl. WAN, ACI-BD/-EPG-Subnetze),
@@ -971,6 +1613,24 @@ Aufruf als `Accept-Language` mit.
   öffentliche Adresse im Interface-Netz am WAN-Anschluss bleibt ein Befund, ebenso das WAN-Netz
   selbst („Subnetz fehlt im IPAM“), private Adressen und VIPs. Steht die Adresse später im
   IPAM, gilt sie wieder als gefunden.
+  **Fenster (0.109.1):** Seitenpanels und Dialoge lassen sich am Rand mit der Maus breiter bzw.
+  schmaler ziehen (die Breite merkt sich der Browser je Art; Doppelklick auf den Rand = Vorgabe),
+  **⤢** öffnet sie fast über die ganze Breite, **⤡** zurück. Die Vorgabe richtet sich nach dem
+  Bildschirm; lange Namen in Tabellen der Panels brechen um, wenn der Platz fehlt.
+  **Finding von Hand (0.109.0):** „+ Finding erfassen“ oben (Operator, nicht für Kunden-Benutzer)
+  bzw. „Als Finding erfassen“ in „Warum dieser Weg?“: was nicht stimmt, was anzupassen ist,
+  Schwere, Gerät, Quelle/Ziel/Dienst. Typ „Von Hand erfasst“ (Kategorie „Von Hand“); der Abgleich
+  nach einem Lauf lässt es stehen, Triage wie bei jedem Finding (z. B. „erledigt“, sobald die
+  Konfiguration angepasst ist). Im Audit `finding.created` ohne Titel und Text.
+  **Prüfungen (0.110.0, ADR 0039):** Reiter „Prüfungen“ (`#findings?tab=pruefungen`) – je
+  Prüfung Zweck, Modul, Befund-Typen (Klick zeigt die Befunde des Typs), wann sie läuft (nach
+  jedem Lauf; Zonen auch beim Speichern einer Zone, Stand der Quellsysteme auch im Zeitplan,
+  Applikationen im Hintergrund), **Dauer** und **Anzahl** des letzten Durchgangs (seit dem Start
+  des Orchestrators; „–“ = seither nicht gelaufen bzw. ausgeschaltet). Der **Admin** schaltet eine
+  Prüfung je Mandant aus bzw. ein (Audit `check.switched`; `GET /checks?tenant_id=`,
+  `PUT /checks/{key}?tenant_id=`): aus = sie läuft nicht, ihre Befunde fallen beim nächsten
+  Abgleich weg (nach dem nächsten Lauf bzw. mit „Neu abgleichen“, Operator); wieder an = sie
+  kommen mit ihrem Status zurück. Ist das Modul einer Prüfung aus, steht „Modul aus“.
 - **Abgleich:** Referenzquellen des Mandanten (führend/Anreicherung, eingelesen?), Kacheln je
   Befund-Typ (Klick → Findings vorgefiltert): nicht im IPAM, Name ≠ DNS-Name, Subnetz fehlt
   im IPAM, VLAN weicht ab, Namenskonvention, Präfix/Typ, doppelte Werte, unbenutzte
@@ -982,6 +1642,11 @@ Aufruf als `Accept-Language` mit.
   ihre Zonen (ohne Selektoren), die geteilten Zonen dahinter nur mit Namen, die Matrix
   mit Zellen ihrer Zonen (Zonen anderer Kunden als „anderer Kunde“), ihren Plan ohne Geräte und
   ohne Netze ohne Zone und können ihn exportieren; keine Versionen, keine Änderungen.
+  **Speichern ohne Warten (seit 0.108.0):** Zone anlegen, ändern, löschen, Absichten,
+  Vorschläge, Zonenplan-Import, Kategorien und Grundschema kehren sofort zurück; die Befunde der
+  Zonen (Absicht, ausserhalb des Schemas, Netz nicht über den Ausgang) rechnet der Orchestrator
+  danach im Hintergrund – in der Liste der Findings stehen sie nach einigen Sekunden. Ebenso nach
+  einem geänderten Verbund paralleler Firewalls.
   - **Zonenmodell** (0.56.0, ADR 0024 Nr. 12): Zonen nach Ebenen – **Datacenter** (die
     ACI-Tenants), **Edge** (Internet, Office-Anbindung, VPN, Management), **Transfer** (zwischen
     den Firewalls), **Core**, **Distribution** und **Access** (Office, Branch), **Public**.
@@ -1177,11 +1842,23 @@ Aufruf als `Accept-Language` mit.
 - **Benutzer & Rollen:** Rollen viewer/operator/admin, eigenes Konto, Links in die
   Keycloak-Benutzerverwaltung (`AUTOMATO_OIDC_ADMIN_CONSOLE_URL`, sonst aus dem Issuer
   abgeleitet). Benutzer selbst werden in Keycloak gepflegt (`tenant_ids` = Mandanten-ID).
+- **Module je Mandant (0.107.0, ADR 0036):** Mandanten & Standorte → Mandant → Karte
+  **Module** (Admin schaltet, Audit `module.switched`; `GET /modules?tenant_id=`,
+  `PUT /modules/{key}?tenant_id=`). Kern und Einstellungen sind immer an; ein- bzw. ausschalten
+  lassen sich **Worker** (Läufe), **Gateway** (Referenzquellen IPAM/DNS), **Analyse** (Routing,
+  Verkabelung, Abgleich, Topologie, Datenqualität), **Wegsucher** (Weg-Suche, Verbindungen Ende
+  zu Ende), **Findings**, **Doku** (Applikationen), **Design** (Netzwerkdesign) und der
+  **Schreibpfad** (NetBox-Sync; braucht das Gateway – „Abhängigkeit aus“, einschalten erst mit
+  dem Gateway). Aus heisst: Ansicht weg (auch die Karten Verbindungen bzw. Befunde der
+  Applikations-Doku), API 403 „Modul … ist für diesen Mandanten ausgeschaltet“, keine Läufe
+  (auch nicht nach Zeitplan) bzw. keine Befunde der Applikationen im Hintergrund. Die gelesenen
+  Daten bleiben; wieder an = sofort wieder da.
 - **Mandanten & Standorte (Admin schreibt):** **+ Mandant**, Kürzel, Namensprofil,
-  Lese-Audit, **Standorte** (ADR 0015): *virtuell* (dreistellige Nummer, z. B. `000` =
+  Lese-Audit, „IPv4/IPv6-Paare automatisch bestätigen“ (0.138.0, siehe Regeln & Contracts),
+  **Standorte** (ADR 0015): *virtuell* (dreistellige Nummer, z. B. `000` =
   Stretched DC) und *physisch* (Ort-Code, z. B. `chzrh1`); **+ Standort** mit Art, Code, Name
   und – bei virtuellen – den physischen Standorten, an denen er läuft (**Zuordnen** ändert das
-  später). Die Standort-Auswahl in Quellsystem, Doku je System und Applikation ist nach Art
+  später). Die Standort-Auswahl in Quellsystem und Applikation ist nach Art
   gruppiert. Den Standort aus dem Namen (Netz `N_<tenant>-000-…`, Cluster
   `fwc11-000-<tenant>`, Host `evh01-chzrh1-<tenant>`) zeigen Objekte, Inventar (Geräte,
   Subnetze) und der Quellsystem-Dialog als Vorschlag („?“ = Code nicht erfasst). Weiter: die **Quellsysteme des
@@ -1201,7 +1878,12 @@ Aufruf als `Accept-Language` mit.
   (IOS/IOS-XE), Nexus 9000 (NX-OS), Catalyst 1200/1300 (Business-CLI, gelesen über eine
   begrenzte Sitzung, weil diese Geräte kein Exec annehmen) und Juniper MX/EX/QFX (Junos) – die
   Plattform erkennt der Collector je Gerät, „Verbindung prüfen“ nennt sie; die **SSH-Host-Schlüssel** hält der erste
-  Lauf je Adresse fest (Fingerabdruck im Dialog, „vergessen“ nach Tausch des Geräts), **NSX ALB (Avi)**
+  Lauf je Adresse fest (Fingerabdruck im Dialog, „vergessen“ nach Tausch des Geräts); seit 0.100.0
+  (ADR 0033) **Zugang SSH | SNMPv3** – bei SNMPv3 statt SSH-Benutzer/Passwort ein **SNMPv3-Benutzer**
+  (nur authPriv), **Auth-Protokoll** (SHA bzw. SHA-2, Vorgabe SHA-256) und **-Passwort**,
+  **Priv-Protokoll** (AES-128/-192/-256, Vorgabe AES-128) und **-Passwort** (je mindestens 8
+  Zeichen), optional **Context**; Adressen wie bei SSH (optional `:Port`, Standard UDP 161); ein
+  Wechsel des Zugangs verwirft die hinterlegten Zugangsdaten, **NSX ALB (Avi)**
   (seit 0.77.0, ADR 0027): Adresse des Controllers, **Avi-Benutzer/Passwort** eines Kontos in einer
   Rolle nur mit Leserechten (Virtual Service, VS VIP, Pool, Pool Group, VRF Context, Application
   Profile, Tenant) und **Avi-Tenants** (kommagetrennt, leer = alle, die das Konto sieht) –
@@ -1209,13 +1891,34 @@ Aufruf als `Accept-Language` mit.
   Services des ersten gewählten Avi-Tenants (seit 0.78.3), NetBox: **Lese-Token** + optional **Schreib-Token** (nur
   NetBox-Sync, geht nie an einen Agenten) – nur schreibbar, verschlüsselt gespeichert, Anzeige
   nur „hinterlegt"; bei Infoblox/NetBox die **Rolle** *IPAM führend* oder *Anreicherung*
-  (genau ein führendes IPAM je Mandant); TLS-Prüfung, aktiv; **Zeitplan** (stündlich,
+  (genau ein führendes IPAM je Mandant); **AD-DNS** (seit 0.123.0, ADR 0045): **DNS-Server**
+  (Name oder IP eines DCs, optional `:Port`, gespeichert als `dns://…`) und **Zonen** (je Zeile,
+  Forward- und Reverse-Zonen wie `kunde.lan`, `10.in-addr.arpa`), ohne Zugangsdaten und ohne
+  TLS, Rolle immer *Anreicherung* (Liste: „keine nötig“) – siehe „AD-DNS als Referenzquelle“
+  unten; TLS-Prüfung, aktiv; **Zeitplan** (stündlich,
   täglich 02:00, werktags 06:00, wöchentlich oder eigener Cron-Ausdruck; Zeitzone
   `AUTOMATO_SCHEDULER_TIMEZONE`, Standard Europe/Zurich – die Tabelle zeigt den nächsten
   Termin); Name je Mandant eindeutig; ADR 0009/0010). **Löschen:** Quellsystem (✕, Rückfrage nennt die mit
   gelöschten Regeln/NAT-Einträge) und **Mandant löschen** (nur nach Eintippen des Namens;
   löscht alle Daten des Mandanten inkl. seiner Collector-Agenten; Audit-Log bleibt).
   Altbestände ohne Mandant erscheinen unter „Nicht zugeordnete Quellsysteme“ zum Zuordnen.
+- **AD-DNS als Referenzquelle (0.123.0, ADR 0045):** liest die angegebenen Zonen per
+  **Zonentransfer** (AXFR, TCP 53) und ergänzt jede IP um ihre DNS-Namen (A/AAAA, CNAME auf
+  Hosts der gelesenen Zonen, PTR) – in Objekten, NAT/VIP, Weg-Suche, Namen der Gegenstellen und
+  Doku. Dienst-Einträge des AD (`_msdcs`, `_sites`, `_tcp` …), `DomainDnsZones`/`ForestDnsZones`,
+  der Zonenkopf und Unterzonen werden übergangen. Einrichten:
+  1. Auf dem DC (DNS-Manager) je Zone → *Eigenschaften* → *Zonenübertragungen* →
+     „Zonenübertragungen zulassen“ → **„Nur an folgende Server“** → Adresse der Automato-VM
+     (bzw. des Agenten, der das Quellsystem liest). Kein AD-Konto nötig.
+  2. TCP 53 von der Automato-VM (bzw. dem Agenten) zum DC freigeben – auch auf einer Firewall
+     davor.
+  3. In Automato beim Mandanten **+ Quellsystem** → *AD-DNS*, DNS-Server und Zonen eintragen,
+     **Verbindung prüfen** (Name, TCP 53, je Zone der Anfang des Transfers mit SOA-Seriennummer),
+     dann einlesen (Zeitplan z. B. täglich).
+  Eine abgelehnte Zone lässt den Lauf mit Zone und Hinweis scheitern (kein halber Stand). Im
+  **Abgleich** ist die Anreicherung wählbar („Vergleich mit …“); gegen AD-DNS zeigt er nur
+  *DNS-Name abweichend* (das IPAM hat einen anderen bzw. keinen Namen) und *nur im DNS* (IP fehlt
+  im IPAM) – IPs ohne DNS-Eintrag sind kein Fehler. Netz, VLAN und Standort kommen nie aus dem DNS.
 - **Kunden (0.30.0, ADR 0018, Operator schreibt):** Ein Kunde ist ein Ausschnitt der
   Umgebung (des Mandanten). Statt Listen beschreiben ihn **Selektoren**:
   - ACI-Tenant, VRF (`TE_ka:VRF_ka` bzw. `VRF_ka`), Application Profile (`TE_ka/AP_007`),
@@ -1281,6 +1984,21 @@ Aufruf als `Accept-Language` mit.
     Audit (`customer_user.*`). Das Attribut `customer_ids` bleibt als Alternative, beides
     zusammen ergibt die Kunden beider Quellen. Vorführen im dev-Modus:
     `localStorage.setItem("automato_dev_user", "<Benutzer>")`.
+  - **Kunden-Rollen (0.89.0, ADR 0018 Ergänzung „Feinere Rollen“):** je Zuordnung die Rolle
+    **Lesen** (`viewer`), **Triage** (`triage`, eigene Findings quittieren/kommentieren – bisher
+    „lesen + eigene Findings triagieren“), **Editor** (`editor`, zusätzlich eigene Applikationen
+    pflegen: Stammdaten, Regeln zuordnen/ausschliessen, Regeln je Kategorie ausblenden – nur
+    Applikationen, die ganz beim Kunden liegen; Chip „pflegbar“) oder **Kunden-Admin**
+    (`customer_admin`, zusätzlich die Kunden-Benutzer des eigenen Kunden zuordnen – höchstens
+    mit der eigenen Rolle, nie das eigene Konto, nie andere Kunden). Kunden-Admins finden unter
+    Administration → Kunden-Benutzer nur ihre Kunden; ihre Zuordnungen wirken nie auf Betreuer.
+    Die Rolle gilt je Kunde. Alternativ das Keycloak-Attribut `customer_role` (Mapper
+    `customer_role`; im bestehenden Realm von Hand anlegen, `deploy/keycloak/README.md`;
+    `AUTOMATO_OIDC_CUSTOMER_ROLE_CLAIM`); Claim und Zuordnung zusammen = je Kunde die höhere
+    Rolle. Die Attribute `customer_ids`/`customer_role` im User Profile nur für Admins
+    bearbeitbar machen. Anlegen, Löschen, CSV-Import und die Mitglieder AP/EPG/Server bleiben
+    den Betreuern. Nach dem Update `alembic upgrade head` (Migration `0058`). Vorführen im
+    dev-Modus: `automato_dev_customer` als `<Mandant>:<Kunden>:<Rolle>`, z. B. `1:2:editor`.
   - **Zonen des Kunden (0.53.0):** In Netzwerkdesign → Zonen „Kunde“ setzen; ihre Netze, EPGs und
     alles daran gehören dann zum Kunden (Spalte „Zonen“ in der Kundenliste). Die Selektoren des
     Kunden bleiben für Ausnahmen; ausschliessende gelten auch für seine Zonen.
@@ -1314,6 +2032,12 @@ Aufruf als `Accept-Language` mit.
       der Zone selbst. Zonen eines Kunden passen ohne Name bzw. Kürzel des Kunden auf die
       Vorlage (kein Hinweis „ausserhalb des Schemas“); die Absichten der Vorlage gelten nur
       zwischen Zonen desselben Kunden (bzw. mit geteilten Zonen).
+    - **Verbindet gleiche Zonen** (seit 0.128.0): `automato_join_same` = ja – im Editor das
+      Häkchen „verbindet gleiche Zonen“, Vorgabe aus. Für das Soll der BGP- bzw. Import-Filter aus
+      den Zonen ist eine Zone sonst kein Durchgang zwischen zwei Zonen desselben Zonentyps (z. B.
+      die Internet-Firewall zwischen den Transferzonen zweier Kunden); setzen für die Zone, die
+      Kunden bzw. Tenants wirklich verbindet (Zonen-Firewall). Die Zonenkette im BGP-Nachbarn und
+      im Befund nennt die Zonen, die deshalb nicht dazu gehören.
     - Pfeil = Übergang: Beschriftung „erlaubt“, „eingeschränkt“ bzw. „gesperrt“ (oder
       `automato_intent`), sonst gestrichelt = eingeschränkt, rote Linie = gesperrt, sonst
       erlaubt; Linie ohne bzw. mit zwei Pfeilen gilt in beide Richtungen.
@@ -1329,6 +2053,26 @@ Aufruf als `Accept-Language` mit.
       hochgeladen) – zum Weiterzeichnen in draw.io. Audit `zone_schema.edited`.
     - Das Schema gilt für alle Mandanten des Profils (bzw. „default“) und ist ohne Funktionszwang:
       ohne Schema arbeiten Zonen und Vorschläge wie bisher.
+  - **Kategorien der Applikations-Doku** (0.104.0, ADR 0012 Ergänzung 0.104.0): die Auswahl je
+    Zone im Netzwerkdesign → Kategorien und die Kategorien selbst – Vorgaben im Code, hier
+    anpassen bzw. erweitern (Admin; gilt für die Mandanten des Profils bzw. „default“).
+    - **Kategorien:** Titel deutsch/englisch, **Titel mit Zonen** (`{z}` = Namen der Zonen,
+      z. B. „Zugriff aus {z}“; leer = Titel bleibt), **Spalten** (Standard, Internet ausgehend,
+      Internet eingehend) und „nur mit Zone“ (erscheint nur mit einer Zone dieser Kategorie bzw.
+      mit Zeilen). **+ Kategorie** legt eine eigene an (nächste freie Nummer, entfernbar).
+      Eingebaute (1–11) bleiben; ACI intern (7/8/9) und unspezifisch (10) behalten ihre Rolle.
+    - **Auswahl je Zone (Bereiche):** Kürzel (1–8 Kleinbuchstaben, Ziffern, `-`, `_`),
+      Bezeichnung, **Kategorie eingehend** (Zugriffe aus der Zone) und **ausgehend** (Zugriffe des
+      Systems in die Zone), **Merkmal** im Namen der Firewall-Zone (`L3O_inet`, gilt ohne Bereich
+      an der Zone), **Vorschlag bei** (Muster nach dem Zonennamen, `*` = beliebig, z. B.
+      `*partner*`), **angeboten** (eingebaute lassen sich ausschalten). **+ Bereich** legt einen
+      eigenen an, z. B. „Partner“ → eigene Kategorie 12.
+    - **Optionen:** ausgehende Firewall-Regeln mit breiter Quelle ausblenden (0.103.0),
+      unspezifische Kategorie nur mit Zugriffen auf die Applikation (0.78.2).
+    - **Speichern** übernimmt (gespeichert werden nur Abweichungen), die Doku der Applikationen
+      ordnet beim nächsten Laden neu; **Auf Vorgaben zurücksetzen** entfernt die Anpassungen.
+      Zonen mit einem nicht mehr angebotenen Bereich zählen wie ohne Bereich (die Auswahl zeigt
+      „nicht mehr angeboten“). Audit `appdoc_catalog.saved` bzw. `appdoc_catalog.reset`.
 - **Collector-Agenten (nur Admin):** **+ Agent** erzeugt das Token einmalig; Spalte
   **Geräte** (zugewiesene Quellsysteme); Status online/keine Meldung aus dem Heartbeat;
   Aktivieren/Deaktivieren. **Einrichtung Schritt für Schritt** direkt in der Ansicht: Geräte
@@ -1372,12 +2116,32 @@ Aufruf als `Accept-Language` mit.
   unverändert; fehlt nur die Zuordnung zur VM, steht das als Konflikt da. Ohne den Abschnitt
   *Virtualisierung* bleiben VMs in NetBox unangetastet. Für diesen Abschnitt braucht der
   Sync-Benutzer die Rechte auf `virtualization.*` – `source-of-truth/netbox/sync-user.sh`
-  nach dem Update erneut ausführen (idempotent). **Vorschau
+  nach dem Update erneut ausführen (idempotent). Seit 0.93.0 zwei weitere Abschnitte (ADR 0031,
+  nur ausdrücklich gewählt, Vorgabe aus): *Verkabelung* – gelesene Switches & Router mit Ports
+  und Kabeln zwischen zwei Ports, die beide Seiten per CDP/LLDP melden; Modus/VLANs nur, wenn die
+  VLANs in NetBox eindeutig vorhanden sind (sonst Hinweis, Automato legt dafür keine VLANs an);
+  Kabel zu ACI-Leafs brauchen deren Ports (Abschnitt Netzinventar mitwählen); ohne Standort bzw.
+  Modell kein Gerät (Hinweis); belegter Port = Konflikt, umgesteckter Port mit „Löschen
+  zulassen“ in einem Durchgang. *Applikationen* – je Applikation ein Tag `automato-app-…` an VMs
+  und IP-Adressen ihrer Systeme (nur Objekte mit Tag `automato`, die es in NetBox gibt bzw. die
+  der Sync anlegt – Virtualisierung/DDI-Spiegel mitwählen); fremde Tags bleiben, von Hand
+  gepflegte Objekte sind ein Konflikt, Tags gelöschter Applikationen nur mit „Löschen
+  zulassen“ entfernt. Objekte eines nicht gewählten Abschnitts bleiben unangetastet (auch nicht
+  „veraltet“). Für Kabel braucht der Sync-Benutzer `dcim.cable` – `sync-user.sh` erneut
+  ausführen. **Vorschau
   erstellen** liest NetBox nur und zeigt je Art: anlegen / ändern / unverändert / Konflikt
   (von Hand gepflegtes Objekt weicht ab – bleibt unverändert) / löschen / veraltet, mit
   Aktionsliste. **Übernehmen** (Bestätigung) berechnet neu, schreibt nur bei unveränderter
-  Lage, auditiert und liest NetBox danach neu ein. Geändert/gelöscht werden nur Objekte mit
-  Tag `automato`. Geräte ohne Standort werden übersprungen (Hinweis) – Standort am
+  Lage, auditiert und liest NetBox danach neu ein. Seit 0.115.0 (ADR 0042) folgt dem Schreiben
+  die **Nachkontrolle**: Automato liest NetBox über einen eigenen, rein lesenden Zugang (Lese-Token,
+  sonst Schreib-Token – Schreib-Methoden blockiert) neu und vergleicht jedes geschriebene Objekt.
+  Am Plan steht „Nachkontrolle: geschrieben = gelesen (n)“ bzw. „n Abweichungen von m“ mit Tabelle
+  (Art, Objekt, geschrieben, nach dem Lesen: fehlt in NetBox / andere Werte mit Feld alt → neu /
+  noch in NetBox); je Abweichung ein Befund unter Findings → NetBox-Sync. Ursache meist ein
+  Validator, eine Event Rule bzw. ein Skript in NetBox oder ein fehlendes Recht des Tokens; nach
+  dem Beheben neue Vorschau und erneut übernehmen. Ist NetBox beim Zurücklesen nicht erreichbar,
+  bleibt die Übernahme gültig („Nachkontrolle nicht möglich: …“). Geändert/gelöscht werden nur
+  Objekte mit Tag `automato`. Geräte ohne Standort werden übersprungen (Hinweis) – Standort am
   Quellsystem setzen (bei genau einem Standort des Mandanten wird dieser genutzt).
 
 ## 4. API
@@ -1394,8 +2158,8 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
 | `GET /vms?tenant_id=` (`q`, `source_system_id`, `epg`, `limit`, `offset`), `GET /portgroups?tenant_id=` (`q`), `GET /portgroups/{id}` | VMware-Inventar (ADR 0017): VMs mit NICs, IPs (DNS, im IPAM?) und EPG der Portgruppe, Seite mit `total`; Portgruppen mit EPG und Art der Zuordnung; Detail mit EPG (BD/VRF), Subnetzen je Quelle und VMs |
 | `GET /reconcile/summary`, `GET /reconcile/ipam`, `POST /reconcile` | Abgleich: Befunde je Typ, DDI ↔ NetBox, neu berechnen (operator) |
 | `GET /findings` (`?status=`,`?type=`,`?q=`,`?limit=`,`?offset=`, `X-Total-Count`), `GET /findings/summary`, `PATCH /findings/{id}` | Datenqualität seitenweise (je Befund `message` = was nicht stimmt, `hint` = was tun), Zähler je Status/Typ, Triage |
-| `GET /nat` (`?nat_type=`,`?q=`,`?issues_only=`,`?limit=`,`?offset=`, `X-Total-Count`), `GET /nat/{id}`, `GET /published-services[/{name}]`, `GET /appdoc/systems[/{name}]` | Doku: NAT mit DNS-Namen, Server, Regelzahl und Prüfung (`issues`) / Detail mit IPAM-Sicht, Regeln, VMs und `object_id`, publizierte Dienste (VIPs), Doku je System |
-| `GET/POST /applications`, `GET/PATCH/DELETE /applications/{id}`, `POST …/{id}/members`, `DELETE …/{id}/members/{mid}`, `POST …/{id}/rules`, `GET …/{id}/doc`, `GET …/{id}/connections` (seit 0.67.0 mit `plan`), `GET …/{id}/connections/plan/export?format=svg\|drawio[&key=…]` (0.67.0), `POST …/{id}/hidden` (`rule_ids`, `category`, `reason`; 0.69.0), `DELETE …/{id}/hidden/{hide_id}`, `GET …/{id}/export?format=zip\|docx` (0.71.0, nicht Kunden-Benutzer) | Applikationen (ADR 0012; Schreiben = operator): Stammdaten (inkl. `external_name`, `internal_name`, `purpose` dev/test/prod), Mitglieder AP/EPG/Server und Regeln (`rule`/`norule`, seit 0.60.0 über `POST …/rules` mit `rule_id`, `exclude`), Doku mit `summary`, `systems` (VMs), `epgs`, `hits` (Regel × System: Richtung, Bezug, `scope` inkl. `assigned`), `rules`, `rule_members`, `dependencies` (`uses`/`used_by`), `findings`, `tables` |
+| `GET /nat` (`?nat_type=`,`?q=`,`?issues_only=`,`?limit=`,`?offset=`, `X-Total-Count`), `GET /nat/{id}` | Doku: NAT mit DNS-Namen, Server, Regelzahl und Prüfung (`issues`) / Detail mit IPAM-Sicht, Regeln, VMs und `object_id`, publizierte Dienste (VIPs), Doku je System |
+| `GET/POST /applications`, `GET/PATCH/DELETE /applications/{id}`, `POST …/{id}/members`, `DELETE …/{id}/members/{mid}`, `POST …/{id}/rules`, `GET …/{id}/doc`, `GET …/{id}/connections` (seit 0.67.0 mit `plan`), `GET …/{id}/connections/plan/export?format=svg\|drawio[&key=…]` (0.67.0), `POST …/{id}/hidden` (`rule_ids`, `category`, `reason`; 0.69.0), `DELETE …/{id}/hidden/{hide_id}`, `GET …/{id}/export?format=zip\|docx` (0.71.0, nicht Kunden-Benutzer) | Applikationen (ADR 0012; Schreiben = operator): Stammdaten (inkl. `external_name`, `internal_name`, `purpose` dev/test/prod), Mitglieder AP/EPG/Server/VM (`vm` seit 0.124.0, per Name) und Regeln (`rule`/`norule`, seit 0.60.0 über `POST …/rules` mit `rule_id`, `exclude`), Doku mit `summary`, `systems` (VMs), `epgs`, `hits` (Regel × System: Richtung, Bezug, `scope` inkl. `assigned`), `rules`, `rule_members`, `dependencies` (`uses`/`used_by`), `findings`, `tables` |
 | `GET /applications/candidates` (`?kind=`,`?q=`), `GET /applications/suggestions`, `POST /applications/suggestions/{nr}/accept` | Mögliche Mitglieder; Vorschläge nach Projektnummer übernehmen (operator) |
 | `GET/POST /tenants`, `PATCH /tenants/{id}`, `DELETE /tenants/{id}?confirm=<Name>` | Mandanten |
 | `GET/POST /customers`, `PUT/DELETE /customers/{id}`, `GET …/{id}/members?kind=`, `POST /customers/preview`, `GET /customers/suggestions`, `GET /customers/unassigned` (je `tenant_id`) | Kunden (ADR 0018; Schreiben = operator; Filter `customer_id` an den Listen, 0.32.0): Selektoren (`kind`, `value`, `source_system_id`, `exclude`), `shared`, Anzahl je Art (`epg`, `net`, `object`, `rule`, `vm`); Vorschau ohne Speichern (seit 0.58.0 mit `off_path`: Regeln über Netze nicht auf dem Weg, `count`/`samples` mit `why`); Vorschläge je ACI-Tenant; nicht Zugeordnetes |
@@ -1413,7 +2177,7 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
 | `POST /internal/collector-runs/{id}/result`, `GET …/{id}/target` | Ergebnis (Agent-Token des abholenden Agenten oder internes Token; Antwort = Quittung `status`/`message`); Ziel für den zentralen Worker |
 | `POST /internal/collector-runs/{id}/references` | Teil-Upload einer Referenzquelle (Infoblox/NetBox, je bis 2000 Einträge; das Ergebnis meldet `reference_count`, sonst wird der Lauf verworfen) |
 | `GET /netbox-sync/targets`, `GET/POST /netbox-sync/plans`, `GET …/plans/{id}[/items]`, `POST …/plans/{id}/apply` | NetBox-Sync (admin): Vorschau, Aktionen, Übernahme |
-| `GET/POST /naming-profiles`, `…/{id}/dictionary`, `DELETE …/dictionary/{id}`; seit 0.55.0 `GET/PUT/DELETE …/{id}/zone-schema`, `POST …/{id}/zone-schema/preview`, `GET …/{id}/zone-schema/drawing`, `GET /naming-profiles/zone-schema/template[?tenant_id=]` | Namensprofile; Grundschema der Zonen (`content` = draw.io-XML, `filename`; schreiben = admin): `schema` mit `zones` (Name, Art, Kurzname, Farbe, `match`, Gruppe, Position) und `links` (`src`, `dst`, `intent`, `reason`), `warnings`, Vorschau mit `diff`; Zeichnung bzw. Vorlage als Datei |
+| `GET/POST /naming-profiles`, `…/{id}/dictionary`, `DELETE …/dictionary/{id}`; seit 0.55.0 `GET/PUT/DELETE …/{id}/zone-schema`, `POST …/{id}/zone-schema/preview`, `GET …/{id}/zone-schema/drawing`, `GET /naming-profiles/zone-schema/template[?tenant_id=]`; seit 0.104.0 `GET/PUT/DELETE …/{id}/appdoc-catalog`, `GET /naming-profiles/appdoc-catalog/default`, `GET /zones/appdoc/catalog?tenant_id=` | Namensprofile; Kategorien der Applikations-Doku (`categories`, `areas`, `options`; schreiben = admin; je Mandant mit `suggestions` je Zone); Grundschema der Zonen (`content` = draw.io-XML, `filename`; schreiben = admin): `schema` mit `zones` (Name, Art, Kurzname, Farbe, `match`, Gruppe, Position) und `links` (`src`, `dst`, `intent`, `reason`), `warnings`, Vorschau mit `diff`; Zeichnung bzw. Vorlage als Datei |
 | `GET /system/status` | Betriebsstand (admin, siehe System-Seite) |
 | `GET /system/connections` (`?tenant_id=`) | Verbindungen jetzt prüfen (admin, 0.40.0): `status`, `problems`, `container.network`, `items` je Ziel mit `area`, `status` (ok/warn/error/info), `steps`, `hint`, `ufw` (Regel); dasselbe auf der VM: `automato check-connections [--json]` |
 | `GET /system/health` (`?tenant_id=`) | Betriebszustand als Ampel (viewer, mandantsgescoped): `status`, `problems`, `checks` je Prüfung mit `area`, `status` (ok/warn/error), `title`, `detail`, `view` |
@@ -1545,8 +2309,37 @@ an (`deploy/agent-gateway`, Port 8443).
   Wiederherstellung laufen weiter als `automato`.
 - **AuthN/RBAC** über Keycloak (OIDC, `AUTOMATO_AUTH_MODE=oidc`, ADR 0007); im
   `dev`-Modus laufen alle Anfragen als Standard-Admin — nur im Lab verwenden.
-- Ausserhalb `AUTOMATO_ENVIRONMENT=dev` verweigert der Orchestrator ohne RBAC den Start,
-  solange `AUTOMATO_ALLOW_UNAUTHENTICATED_READ_API` nicht bewusst gesetzt ist (ADR 0005).
+- Ausserhalb `AUTOMATO_ENVIRONMENT=dev` verweigert der Orchestrator im Modus
+  `AUTOMATO_AUTH_MODE=dev` (ohne Anmeldung) den Start, solange
+  `AUTOMATO_ALLOW_UNAUTHENTICATED_READ_API` nicht bewusst gesetzt ist (ADR 0005); mit `oidc`
+  ist sie seit 0.116.0 nicht nötig und bleibt `false`.
+- **Produktiv installieren** (0.116.0, R14): `docs/INSTALLATION-PROD.md` – VM mit LUKS
+  (automatisch entsperrt über Clevis + Tang oder vTPM), gehärtetes Ubuntu und Docker, Automato
+  mit Anmeldung, Agent-Gateway, Sicherung und Abnahme-Liste.
+- **NetBox je Kunde** (0.121.0, ADR 0044): `docs/INSTALLATION-NETBOX-HOST.md` – eigene VM, je Kunde
+  eine NetBox hinter einem Proxy mit Startseite; anlegen, an Automato anbinden (`token`), sichern,
+  aktualisieren und löschen mit `deploy/netbox-host/netbox-host.sh`.
+- **Oberfläche nur aus erlaubten Netzen** (0.116.0, R14): `AUTOMATO_UI_ALLOW` in `.env`
+  (Netze mit Leerzeichen getrennt, z. B. `"10.0.10.0/24 10.8.0.0/16"`; Vorgabe alles) – der
+  Proxy antwortet anderen Quellen mit 403. Docker muss dafür die Quell-IP erhalten
+  (`"userland-proxy": false`). Orchestrator (8000) und Web-UI (5173) mit
+  `AUTOMATO_API_BIND=127.0.0.1` bzw. `AUTOMATO_UI_DEV_BIND=127.0.0.1` nur lokal; von aussen dann
+  nur Proxy (443) und Agent-Gateway (8443). Docker veröffentlicht an ufw vorbei – Einschränkung
+  in der Kette `DOCKER-USER` (Installationsanleitung, Schritt 4.3).
+- **Oberfläche als Produktions-Build** (1.0.0, R14): Der Dienst `web-ui` liefert die gebaute
+  Oberfläche als statische Dateien aus (Caddy, `web-ui/frontend/deploy/Caddyfile`) und leitet
+  `/api` an den Orchestrator weiter – kein Vite-Entwicklungsserver mehr im Betrieb (keine
+  Entwickler-Hinweise in der Browser-Konsole, kleinere Dateien, Startseite nie im Cache, Dateien
+  mit Fingerabdruck ein Jahr). Ein Update baut die Oberfläche neu (`docker compose … up -d
+  --build`). Im Labor optional der Vite-Server: `AUTOMATO_UI_TARGET=dev` und
+  `AUTOMATO_UI_READ_ONLY=false` in `.env`. Fehler der Weiterleitung im Log der Web-UI:
+  `docker compose logs --since 30m web-ui 2>&1 | grep '"level":"error"'`.
+- **Container gehärtet** (1.0.0, R14): Orchestrator, Migration, Collector, Web-UI, Proxy und
+  Agent-Gateway laufen ohne Linux-Capabilities (`cap_drop: ALL`; nur der Proxy darf Port 443
+  binden, die Migration für `tls-intern` Dateien übergeben), ohne neue Rechte
+  (`no-new-privileges`) und mit nur lesendem Dateisystem – geschrieben wird nur in Volumes und
+  `/tmp`. Postgres und Redis laufen mit `no-new-privileges`, Keycloak unverändert. Meldet ein
+  Dienst „Read-only file system“, schreibt er an eine neue Stelle – Meldung an die Entwicklung.
 - Agent-Tokens werden nur gehasht gespeichert und einmalig angezeigt. Produktiv sprechen
   Agenten nur über das **mTLS-Agent-Gateway** (`deploy/agent-gateway`, Modus `bind`:
   Zertifikat und Token gehören zum selben Agenten); Port 8000 nicht in Agent-Netze freigeben.
@@ -1561,19 +2354,27 @@ an (`deploy/agent-gateway`, Port 8443).
   hinterlegt werden. Ein Agent bekommt nur die Tokens der ihm zugewiesenen Geräte.
 - **Nur lesen, ausser NetBox (ADR 0010):** Die Lese-Clients für FortiGate, APIC, Infoblox und
   NetBox lassen technisch nur GET zu (APIC zusätzlich Login/Logout) – ein Schreibversuch
-  bricht vor dem Senden ab. Der vCenter-Client (SOAP) lässt nur lesende vSphere-Methoden zu
+  bricht vor dem Senden ab. Das AD-DNS wird nur per Zonentransfer gelesen (ADR 0045); dynamische
+  Updates sind im Adapter nicht eingebunden. Der vCenter-Client (SOAP) lässt nur lesende vSphere-Methoden zu
   (Anmelden, Container-View, Eigenschaften abrufen; ADR 0017). Der Switch-Client (SSH) setzt je
   Befehl einen Exec-Aufruf ohne Shell und Terminal ab und lässt nur die festen `show`-Befehle
   des Lesevertrags zu (kein `show running-config`); er verlangt den beim ersten Lauf
-  festgehaltenen Host-Schlüssel, bevor er das Passwort sendet (ADR 0025, R22). Einziger Schreibweg ist der
+  festgehaltenen Host-Schlüssel, bevor er das Passwort sendet (ADR 0025, R22) – seit 0.100.0 auch
+  bei Läufen über den Agenten. Der SNMP-Client (SNMPv3 authPriv, ADR 0033) sendet nur GET/GETBULK
+  auf die Positivliste der Standard-MIBs; SET ist nicht eingebunden. Einziger Schreibweg ist der
   NetBox-Sync im Orchestrator mit dem Schreib-Token des NetBox-Quellsystems; er schreibt nur
   die synchronisierten Objekttypen (Tags, Tenants, Standort-Gruppen, Sites, Hersteller,
-  Geräterollen/-typen, Geräte, Interfaces, VRFs, VLAN-Gruppen, VLANs, Prefixe, Ranges,
+  Geräterollen/-typen, Geräte, Interfaces, Kabel (seit 0.93.0), VRFs, VLAN-Gruppen, VLANs, Prefixe, Ranges,
   IP-Adressen, Cluster-Typen/-Gruppen, Cluster, VMs, VM-Interfaces) und nur an diese NetBox.
   Das Schreib-Token in NetBox auf genau diese Objekttypen begrenzen (`sync-user.sh`).
 
 ## 6. Fehlerbehebung
 
+- **„Interner Fehler – Referenz 1a2b3c4d …“ (HTTP 500, seit 0.94.1)** — der Orchestrator hat
+  einen unerwarteten Fehler; die Antwort nennt nur die Referenz, die Ursache steht im
+  Protokoll: `docker compose logs orchestrator 2>&1 | grep -A40 1a2b3c4d` (Zeile „Interner
+  Fehler 1a2b3c4d bei GET /…“ mit Traceback). Die Ausgabe an den Entwickler geben – sie
+  enthält keine Zugangsdaten, kann aber Namen und IPs der Umgebung zeigen.
 - **„Anmeldung nicht möglich: Der Orchestrator lehnt das Anmelde-Token ab …“** (UI) —
   der Orchestrator nennt den Grund und loggt ihn (`docker compose logs orchestrator |
   grep OIDC`): `token audience invalid` → im Realm fehlt der Audience-Mapper
@@ -1589,6 +2390,23 @@ an (`deploy/agent-gateway`, Port 8443).
   synchronized: yes“), sonst NTP aktivieren (`sudo timedatectl set-ntp true`, intern ggf.
   den DC als NTP-Server eintragen). Toleranz: `AUTOMATO_OIDC_CLOCK_SKEW_SECONDS` (Default 60). Nach Änderungen an `.env`: `docker compose … up -d` (neu
   erstellt den Container).
+- **„Keine Antwort vom Server – Verbindung abgebrochen“** (bis 0.139.1: „Failed to fetch“) bzw.
+  **HTTP 500 ohne Text** (z. B. „Läufe laden“) — die Anfrage kam nicht bis zum Orchestrator
+  oder brach unterwegs ab; im Log des Orchestrators steht dann nichts. Nachsehen im Log der
+  Web-UI: `docker compose logs --since 30m web-ui 2>&1 | grep '"level":"error"'` (seit 1.0.0
+  Caddy; mit dem Vite-Server im Labor `grep -A6 "proxy error"`).
+  „socket hang up“ mit TLS intern war bis 0.139.1 der Wettlauf beim Wiederverwenden der
+  Verbindungen (seit 0.139.2 behoben: der Orchestrator hält unbenutzte Verbindungen 75 s offen,
+  der Proxy schliesst sie nach 30 s). Andere Meldungen dort (z. B. `ECONNREFUSED`) heissen: der
+  Orchestrator lief in dem Moment nicht (Neustart, `docker compose ps`). Im Browser zeigt der
+  Reiter „Netzwerk“ (mit „Log beibehalten“), ob die Anfrage „(canceled)“ war – dann leitete der
+  Tab gerade zu Keycloak um.
+- **„Anmeldung nicht möglich: Keycloak hat die Anmeldung nicht abgeschlossen: …“** (seit
+  0.139.2) — Keycloak hat statt einer Anmeldung einen Fehler zurückgeschickt, und ein neuer
+  Anlauf brachte denselben Fehler. `authentication_expired`: die Anmeldung bei Keycloak lief ab
+  (Anmeldeseite lange offen) bzw. ein anderer Tab hat sie schon abgeschlossen – „Erneut
+  anmelden“ genügt. `access_denied`: die Anmeldung wurde abgebrochen oder abgelehnt. Bis 0.139.1
+  blieb in diesem Fall `?error=…` in der Adresszeile stehen, ohne dass etwas geschah.
 
 - **FortiGate „antwortet auf <Pfad> nicht mit JSON (HTTP 200, …)“** (bis 0.11.1: „Expecting
   value: line 1 column 1 (char 0)“) — die FortiGate liefert für diese Tabelle eine leere bzw.
@@ -1656,6 +2474,17 @@ an (`deploy/agent-gateway`, Port 8443).
   `show ssh key`), dann im Quellsystem beim Switch „vergessen“ anhaken und speichern – der
   nächste Lauf lernt den neuen Schlüssel. Sonst: Adresse und Netz prüfen (anderes Gerät unter
   der Adresse?).
+- **Switch über SNMPv3: „ohne Antwort (Tabelle fehlt bzw. nicht in der View): …“** (ab 0.100.0) —
+  der SNMPv3-Benutzer sieht die Tabelle nicht: View des Benutzers auf dem Gerät erweitern (Gruppe
+  nur mit Read-View, ACL auf die Adresse des Agenten) bzw. das Gerät kennt die MIB nicht. Cisco
+  IOS/IOS-XE: VLANs je Port nur per SSH vollständig. „Anmeldung abgelehnt“ = Benutzer, Protokolle
+  bzw. Passwörter prüfen; „keine Antwort“ = UDP 161 vom Agenten zum Gerät freigeben. Auf der
+  Station prüft `.\run-agent.ps1 -Check` je Gerät ein GET auf sysName; „Prüfen“ im Web-UI löst
+  beim zentralen Worker nur den Namen auf (UDP ist ohne Anfrage nicht prüfbar). „pysnmp fehlt“ =
+  Installation des Agenten unvollständig (Selbst-Update abwarten bzw. Agent-Paket neu
+  installieren). Seit 0.100.0 gilt der festgehaltene SSH-Host-Schlüssel auch für Läufe über den
+  Agenten: meldet ein Switch danach „Host-Schlüssel hat sich geändert“, Gerät prüfen und den
+  Schlüssel im Quellsystem „vergessen“.
 - **„Wo hängt …“ findet eine VM nicht bzw. zeigt „zurzeit in keiner MAC-Tabelle“** (ab 0.63.0) —
   die MAC-Tabelle kennt nur Geräte, die in den letzten Minuten gesendet haben (Standard 300 s),
   und nur auf gelesenen Switches. Steht unter „früher“ ein Port, hing das Gerät dort beim
@@ -1770,7 +2599,10 @@ an (`deploy/agent-gateway`, Port 8443).
 - **Infoblox/NetBox „Teil-Upload unvollstaendig (N von M)“** — bis 0.11.1 konnte der letzte
   Teil-Upload noch nicht gespeichert sein, wenn das Ergebnis eintraf. Behoben in 0.11.2
   (Orchestrator aktualisieren; der Agent muss nichts tun). Tritt die Meldung danach noch auf,
-  ist ein Teil-Upload tatsächlich abgewiesen worden: Agent-Log prüfen.
+  ist ein Teil-Upload tatsächlich abgewiesen worden: Agent-Log prüfen. **„(0 von N)“, danach
+  „keine Adresse fuer die Referenzquelle“** (bis 0.113.1): zwei Läufe derselben Quelle bzw. ein
+  Worker-Auftrag ohne abrufbares Ziel verwarfen die Teil-Uploads des anderen – behoben in
+  0.113.2 (Orchestrator und zentralen Worker aktualisieren, dann neu einlesen).
 
 - **`deploy/update.sh`: „service "netbox" has neither an image nor a build context specified“**
   (Befund 0.42.0) — im Automato-Ordner liegt eine `docker-compose.override.yml` mit einem

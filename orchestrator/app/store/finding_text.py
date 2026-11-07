@@ -282,6 +282,40 @@ def _zone_overlap(subject: str, d: dict) -> tuple[str, str]:
     )
 
 
+def _zone_net_exit(subject: str, d: dict) -> tuple[str, str]:
+    """Netz einer Zone nicht ueber den Uebergang Richtung Zone gelernt (0.105.0, seit 0.106.0 aus
+    den Geraeten der Zonen und dem Zonenplan, ADR 0035)."""
+    fw = d.get("source") or L("die Firewall", "the firewall")
+    ctx = f" (VDOM {d['context']})" if d.get("context") and d["context"] != "root" else ""
+    net, zone = d.get("net"), d.get("zone")
+    expected = ", ".join(d.get("expected") or [])
+    toward = ", ".join(d.get("toward") or [])
+    via = ", ".join(d.get("via") or [])
+    others = ", ".join(d.get("others") or [])
+    if d.get("missing"):
+        how = L("gar nicht", "not at all")
+    elif d.get("default"):
+        how = L(f"nur über die Default-Route ({via})", f"only via the default route ({via})")
+    else:
+        how = L(f"über {via}", f"via {via}")
+    tail = L(f" – {via} führt zur Zone {others}", f" – {via} leads to zone {others}") \
+        if others and not d.get("missing") else ""  # fmt: skip
+    return (
+        L(
+            f"{fw}{ctx} lernt das Netz {net} der Zone {zone} {how}, erwartet über {expected} "
+            f"Richtung {toward}{tail}.",
+            f"{fw}{ctx} learns the network {net} of zone {zone} {how}, expected via {expected} "
+            f"towards {toward}{tail}.",
+        ),
+        L(
+            "Routing prüfen bzw. Netze oder Geräte der Zonen anpassen (Netzwerkdesign → "
+            "Kategorien).",
+            "Check the routing or adjust the networks or devices of the zones (Network design → "
+            "Categories).",
+        ),
+    )
+
+
 def _zone_outside_schema(subject: str, d: dict) -> tuple[str, str]:
     profile = d.get("profile")
     return (
@@ -316,6 +350,25 @@ def _variant(v: dict) -> str:
     return L(f"über {via} {verdict}", f"{verdict} via {via}")
 
 
+def _app_coverage(subject: str, d: dict) -> tuple[str, str]:
+    """Applikation unvollstaendig geprueft (0.140.0): was eine Grenze ausgelassen hat."""
+    from app.store.app_paths import cut_text
+
+    cuts = d.get("cuts") or {}
+    parts = "; ".join(cut_text(k, v) for k, v in cuts.items() if isinstance(v, dict))
+    app = _q(d.get("application") or subject)
+    return (
+        L(f"Applikation {app} nicht vollständig geprüft: {parts}.",
+          f"Application {app} not completely checked: {parts}."),
+        L("Für den nicht geprüften Teil fehlen Befunde (Abweichungen, Regeln nie gebraucht). "
+          "Grenze erhöhen (z. B. AUTOMATO_APP_TRACES_MAX, 0 = ohne Grenze) bzw. die Applikation "
+          "kleiner schneiden; danach rechnet sie neu.",
+          "Findings for the part not checked are missing (deviations, rules never needed). Raise "
+          "the limit (e.g. AUTOMATO_APP_TRACES_MAX, 0 = no limit) or split the application; it "
+          "is computed again afterwards."),
+    )  # fmt: skip
+
+
 def _app_narrower(subject: str, d: dict) -> tuple[str, str]:
     """Contract Richtung L3Out enger als die Firewall-Regeln (0.78.2)."""
     name = d.get("name") or subject
@@ -347,6 +400,40 @@ def _app_narrower(subject: str, d: dict) -> tuple[str, str]:
             "The firewall is leading: what it allows, the contract to the L3Out blocks in the "
             "ACI. Add the missing services to the contract or restrict the firewall rule "
             "(application documentation, categories; “End-to-end connections” shows the path).",
+        ),
+    )
+
+
+def _app_unused(subject: str, d: dict) -> tuple[str, str]:
+    """Regel nie gebraucht (0.107.0): ihr Geraet liegt nicht auf dem Weg der Verbindungen."""
+    name = d.get("name") or subject
+    on = L(f" auf {d['source']}", f" on {d['source']}") if d.get("source") else ""
+    conns = d.get("connections") or []
+    shown = [f"{c.get('src')} → {c.get('dst')}{' ' + c['service'] if c.get('service') else ''}"
+             f" ({L('Weg', 'path')}: {c.get('path') or '–'})" for c in conns[:3]]  # fmt: skip
+    count = d.get("count") or len(conns)
+    rest = count - len(shown)
+    more = L(f" (+{rest} weitere)", f" (+{rest} more)") if rest > 0 else ""
+    app, listed = _q(d.get("application")), "; ".join(shown)
+    device = d.get("source") or L("das Gerät", "the device")
+    return (
+        L(
+            f"Regel {_q(name)}{on} wird nie gebraucht: der Verkehr von {count} "
+            f"Verbindung{'en' if count != 1 else ''} der Applikation {app} geht nicht über "
+            f"{device}: {listed}{more}.",
+            f"Rule {_q(name)}{on} is never needed: the traffic of {count} "
+            f"connection{'s' if count != 1 else ''} of the application {app} does not pass "
+            f"{device}: {listed}{more}.",
+        ),
+        L(
+            "Nach dem Routing nimmt der Verkehr einen anderen Weg – die Regel greift dafür nie. "
+            "Regel prüfen und entfernen, falls sie nichts anderes braucht, bzw. das Routing "
+            "prüfen, wenn der Verkehr über dieses Gerät gehen soll (Weg-Suche). Die Doku nach "
+            "Kategorien zeigt die Regel weiter, die Verbindungen Ende zu Ende nicht.",
+            "According to the routing the traffic takes another path – the rule never applies to "
+            "it. Check the rule and remove it if nothing else needs it, or check the routing if "
+            "the traffic should pass this device (path search). The documentation by category "
+            "still shows the rule, the end-to-end connections do not.",
         ),
     )
 
@@ -507,7 +594,347 @@ def _l2(subject: str, d: dict, ftype: str) -> tuple[str, str]:
     return f"{d.get('text') or subject}.", L(*_L2_HINT[ftype])
 
 
+def _net_wider(subject: str, d: dict) -> tuple[str, str]:
+    """Netz der Regel groesser als die Routen (0.111.0, ADR 0040)."""
+    value, device = d.get("value") or subject, d.get("source") or L("dem Gerät", "the device")
+    via = d.get("route") or "?"
+    parts = d.get("parts") or []
+    total = d.get("parts_total") or len(parts)
+    rules = d.get("rules") or []
+    used = (
+        L(
+            f", verwendet in {len(rules)} Regel{'n' if len(rules) != 1 else ''}",
+            f", used in {len(rules)} rule{'s' if len(rules) != 1 else ''}",
+        )
+        if rules
+        else ""
+    )
+    if total:
+        shown = ", ".join(parts[:4]) + (L(" …", " …") if total > 4 else "")
+        what = L(f"{total} Teile darin sind genauer geroutet ({shown}), der Rest geht nur über "
+                 f"{via}",
+                 f"{total} parts of it are routed more specifically ({shown}), the rest only via "
+                 f"{via}")  # fmt: skip
+    else:
+        what = L(f"es geht nur über {via}", f"it only goes via {via}")
+    return (
+        L(
+            f"{device} routet {value} nicht als Ganzes{used}: {what}.",
+            f"{device} does not route {value} as a whole{used}: {what}.",
+        ),
+        L(
+            "Unklar, wohin das Netz der Regel gehört: von Hand einer Zone bzw. Anbindung "
+            "zuordnen, „nur die Teile“ oder „Weg nach dem Routing stimmt“ wählen – oder das Netz "
+            "in einer Zone bzw. bei den Netzen einer Anbindung eintragen.",
+            "Unclear where the network of the rule belongs: assign it to a zone or exit by hand, "
+            "choose “only the parts” or “path by the routing is right” – or enter the network in "
+            "a zone or in the networks of an exit.",
+        ),
+    )
+
+
+def _bgp_where(d: dict) -> str:
+    """Nachbar bzw. L3Out eines BGP-Befunds (0.113.0)."""
+    if d.get("l3out"):
+        return L(f"L3Out {d['l3out']} (VRF {d.get('vrf') or '?'})",
+                 f"L3Out {d['l3out']} (VRF {d.get('vrf') or '?'})")  # fmt: skip
+    asn = f", AS {d['remote_as']}" if d.get("remote_as") else ""
+    return L(f"{d.get('label')} vom Nachbarn {d.get('peer')}{asn}",
+             f"{d.get('label')} from neighbor {d.get('peer')}{asn}")  # fmt: skip
+
+
+def _bgp_missing(subject: str, d: dict) -> tuple[str, str]:
+    """Filter erlaubt Netze, der Nachbar liefert nichts davon (0.113.0, ADR 0041)."""
+    where, nets = _bgp_where(d), _list(d.get("entries") or [], 5)
+    total = d.get("total") or len(d.get("entries") or [])
+    de_n, en_n = f"Netz{'e' if total != 1 else ''}", f"network{'s' if total != 1 else ''}"
+    via = _list(d.get("filters") or [], 3)
+    if d.get("l3out"):
+        text = L(
+            f"{where}: Import Route Control erwartet {total} {de_n}, über die Peers kommt nichts "
+            f"davon an ({nets}).",
+            f"{where}: import route control expects {total} {en_n}, none of them arrives via the "
+            f"peers ({nets}).",
+        )
+    else:
+        text = L(
+            f"{where}: der Filter {via} erlaubt {total} {de_n}, angekommen ist nichts davon "
+            f"({nets}).",
+            f"{where}: the filter {via} permits {total} {en_n}, none of them arrived ({nets}).",
+        )
+    return (
+        text,
+        L(
+            "Gegenstelle prüfen (kündigt sie die Netze an, eigener Ausgangsfilter) bzw. den "
+            "Filter bereinigen; Wege über diesen Nachbarn zu diesen Netzen gibt es nicht.",
+            "Check the peer (does it announce the networks, its own outbound filter) or clean up "
+            "the filter; there are no paths to these networks via this neighbor.",
+        ),
+    )
+
+
+def _bgp_outside(subject: str, d: dict) -> tuple[str, str]:
+    """Erhalten, obwohl der Filter sperrt (0.113.0)."""
+    where, nets = _bgp_where(d), _list(d.get("prefixes") or [], 5)
+    total = d.get("total") or 0
+    de_n, en_n = f"Netz{'e' if total != 1 else ''}", f"network{'s' if total != 1 else ''}"
+    via = _list(d.get("filters") or [], 3)
+    return (
+        L(
+            f"{where}: {total} erhaltene {de_n} sperrt der Filter {via} nach der gelesenen "
+            f"Konfiguration ({nets}).",
+            f"{where}: the filter {via} denies {total} received {en_n} according to the "
+            f"configuration read ({nets}).",
+        ),
+        L(
+            "Konfiguration und Routing-Tabelle passen nicht zusammen: Filter seit dem Lauf "
+            "geändert (Soft-Reset ausstehend) bzw. Bedingung, die die Plattform anders liest.",
+            "Configuration and routing table do not match: filter changed since the run (soft "
+            "reset pending) or a condition the platform reads differently.",
+        ),
+    )
+
+
+def _bgp_open(subject: str, d: dict) -> tuple[str, str]:
+    """BGP-Nachbar ohne Eingangsfilter (0.113.0), seit 0.132.0 nur in einer fremd verwalteten
+    Zone (`neighbor_zone`)."""
+    where, n = _bgp_where(d), d.get("received") or 0
+    de_n, en_n = f"Netz{'e' if n != 1 else ''}", f"network{'s' if n != 1 else ''}"
+    zone = d.get("neighbor_zone")
+    de_z = f" in der fremd verwalteten Zone {zone}" if zone else ""
+    en_z = f" in the externally managed zone {zone}" if zone else ""
+    return (
+        L(
+            f"{where}: Nachbar{de_z} ohne Eingangsfilter – die Firewall übernimmt alles, was der "
+            f"Nachbar ankündigt ({n} {de_n}).",
+            f"{where}: neighbor{en_z} without inbound filter – the firewall accepts everything "
+            f"the neighbor announces ({n} {en_n}).",
+        ),
+        L(
+            "Prefix-Liste bzw. Route-Map für die erwarteten Netze setzen; ohne Filter entstehen "
+            "Wege, die niemand geplant hat.",
+            "Set a prefix list or route map for the expected networks; without a filter, paths "
+            "nobody planned come about.",
+        ),
+    )
+
+
+def _aci_import(subject: str, d: dict) -> tuple[str, str]:
+    """import-rtctrl ohne enforce import (0.113.0)."""
+    where, nets = _bgp_where(d), _list(d.get("entries") or [], 5)
+    return (
+        L(
+            f"{where}: Subnetze mit Import Route Control ({nets}), am L3Out ist Import aber nicht "
+            "erzwungen – sie wirken nicht, der L3Out übernimmt alle Routen.",
+            f"{where}: subnets with import route control ({nets}), but import is not enforced on "
+            "the L3Out – they have no effect, the L3Out accepts all routes.",
+        ),
+        L(
+            "Am L3Out „Route Control Enforcement: Import“ setzen bzw. die import-rtctrl-Subnetze "
+            "entfernen, wenn alles übernommen werden soll.",
+            "Set “Route Control Enforcement: Import” on the L3Out or remove the import-rtctrl "
+            "subnets if everything is to be accepted.",
+        ),
+    )
+
+
+def _bgp_nets(d: dict, kind: str) -> list[str]:
+    """Netze einer Abweichung mit ihrer Zone (0.127.0, Anwender: „ich sehe keine Details,
+    weshalb“) - aus `why`, sonst wie bis 0.126 nur die Netze."""
+    why = [w for w in d.get("why") or [] if w.get("kind") == kind]
+    if not why:
+        return list(d.get(kind) or [])
+    out = []
+    for w in why:
+        zones = ", ".join(w.get("zones") or [])
+        if kind == "too_open":
+            where = L(f"Zone {zones}", f"zone {zones}") if zones else L("keine Zone", "no zone")
+            out.append(f"{w.get('prefix')} ({w.get('filter')}; {where})")
+        else:
+            out.append(f"{w.get('prefix')} ({zones})" if zones else str(w.get("prefix")))
+    return out
+
+
+def _bgp_chain(d: dict) -> str:
+    """Woher die Zonen kommen (0.127.0): Zone der Firewall, Zone am Nachbarn und warum."""
+    c = d.get("chain") or {}
+    if not c:
+        return ""
+    if c.get("device"):
+        via = L(" (gelesenes Gerät)", " (read device)")
+    elif c.get("network"):
+        via = L(f" (Übergang über {c['network']})", f" (transition via {c['network']})")
+    else:
+        via = ""
+    return L(
+        f" Firewall in Zone {c.get('home')}, Nachbar in Zone {c.get('neighbor')}{via}.",
+        f" Firewall in zone {c.get('home')}, neighbor in zone {c.get('neighbor')}{via}.",
+    )
+
+
+def _bgp_zones(subject: str, d: dict) -> tuple[str, str]:
+    """Eingangsfilter passt nicht zu den Zonen dahinter (0.114.0, ADR 0041 Stufe 2)."""
+    where, zones = _bgp_where(d), _list(d.get("zones") or [], 6)
+    parts_de, parts_en = [], []
+    if d.get("open"):
+        parts_de.append("kein Eingangsfilter")
+        parts_en.append("no inbound filter")
+    if d.get("missing"):
+        nets = _list(_bgp_nets(d, "missing"), 6)
+        parts_de.append(f"gesperrt: {nets}")
+        parts_en.append(f"denied: {nets}")
+    if d.get("too_open"):
+        nets = _list(_bgp_nets(d, "too_open"), 6)
+        parts_de.append(f"ausserhalb der Zonen erlaubt: {nets}")
+        parts_en.append(f"permitted outside the zones: {nets}")
+    if d.get("excluded_allowed"):
+        nets = _list(d["excluded_allowed"], 4)
+        parts_de.append(f"Ausschluss erlaubt: {nets}")
+        parts_en.append(f"exclusion permitted: {nets}")
+    chain = _bgp_chain(d)
+    return (
+        L(
+            f"{where}: der Eingangsfilter passt nicht zu den Zonen dahinter ({zones}) – "
+            f"{'; '.join(parts_de)}.{chain}",
+            f"{where}: the inbound filter does not match the zones behind ({zones}) – "
+            f"{'; '.join(parts_en)}.{chain}",
+        ),
+        L(
+            "Routing → BGP-Nachbarn → Soll/Ist → „Soll aus den Zonen“: Prefix-Liste als "
+            "CLI-Vorschlag prüfen und auf der Firewall übernehmen bzw. die Zonen im "
+            "Netzwerkdesign anpassen.",
+            "Routing → BGP neighbors → expected/actual → “target from the zones”: review the "
+            "prefix list proposal (CLI) and apply it on the firewall, or adjust the zones in the "
+            "network design.",
+        ),
+    )
+
+
+def _bgp_zones_out(subject: str, d: dict) -> tuple[str, str]:
+    """Ausgangsfilter passt nicht zu den Zonen diesseits (0.116.0, ADR 0041 Stufe 3)."""
+    where = L(f"{d.get('label')} zum Nachbarn {d.get('peer')}",
+              f"{d.get('label')} to neighbor {d.get('peer')}")  # fmt: skip
+    zones = _list(d.get("zones") or [], 6)
+    parts_de, parts_en = [], []
+    if d.get("open"):
+        parts_de.append("kein Ausgangsfilter")
+        parts_en.append("no outbound filter")
+    if d.get("missing"):
+        nets = _list(_bgp_nets(d, "missing"), 6)
+        parts_de.append(f"gesperrt: {nets}")
+        parts_en.append(f"denied: {nets}")
+    if d.get("announced_outside"):
+        nets = _list(d["announced_outside"], 4)
+        n = d.get("announced_outside_total") or len(d["announced_outside"])
+        parts_de.append(f"{n} Routen ausserhalb der Zonen angekündigt: {nets}")
+        parts_en.append(f"{n} routes announced outside the zones: {nets}")
+    if d.get("too_open"):
+        nets = _list(_bgp_nets(d, "too_open"), 6)
+        parts_de.append(f"Filter erlaubt ausserhalb der Zonen: {nets}")
+        parts_en.append(f"filter permits outside the zones: {nets}")
+    if d.get("excluded_allowed"):
+        nets = _list(d["excluded_allowed"], 4)
+        parts_de.append(f"Ausschluss erlaubt: {nets}")
+        parts_en.append(f"exclusion permitted: {nets}")
+    public = ""
+    if d.get("public_only"):
+        public = L(" (nur öffentliche Netze, Nachbar ausserhalb)",
+                   " (public networks only, neighbor outside)")  # fmt: skip
+    chain = _bgp_chain(d)
+    return (
+        L(
+            f"{where}: der Ausgangsfilter passt nicht zu den Zonen diesseits ({zones}){public} – "
+            f"{'; '.join(parts_de)}.{chain}",
+            f"{where}: the outbound filter does not match the zones on this side ({zones}){public}"
+            f" – {'; '.join(parts_en)}.{chain}",
+        ),
+        L(
+            "BGP-Nachbarn öffnen → „Soll aus den Zonen“, Richtung Ausgang: Prefix-Liste als "
+            "Vorschlag (FortiOS-CLI) übernehmen bzw. die Zonen im Netzwerkdesign anpassen.",
+            "Open the BGP neighbor → “Target from the zones”, direction outbound: apply the prefix "
+            "list proposal (FortiOS CLI) or adjust the zones in the network design.",
+        ),
+    )
+
+
+def _aci_import_zones(subject: str, d: dict) -> tuple[str, str]:
+    """ACI Import Route Control passt nicht zu den Zonen dahinter (0.116.0)."""
+    where, zones = _bgp_where(d), _list(d.get("zones") or [], 4)
+    parts_de, parts_en = [], []
+    if d.get("not_enforced"):
+        parts_de.append("Import nicht erzwungen (der L3Out übernimmt alle Routen)")
+        parts_en.append("import not enforced (the L3Out accepts all routes)")
+    if d.get("missing"):
+        nets = _list(d["missing"], 4)
+        parts_de.append(f"ohne Import Route Control: {nets}")
+        parts_en.append(f"without import route control: {nets}")
+    if d.get("too_open"):
+        nets = _list(d["too_open"], 4)
+        parts_de.append(f"importiert ausserhalb der Zonen: {nets}")
+        parts_en.append(f"imported outside the zones: {nets}")
+    if d.get("excluded_allowed"):
+        nets = _list(d["excluded_allowed"], 4)
+        parts_de.append(f"Ausschluss importiert: {nets}")
+        parts_en.append(f"exclusion imported: {nets}")
+    return (
+        L(
+            f"{where}: Import Route Control passt nicht zu den Zonen dahinter ({zones}) – "
+            f"{'; '.join(parts_de)}.",
+            f"{where}: import route control does not match the zones behind ({zones}) – "
+            f"{'; '.join(parts_en)}.",
+        ),
+        L(
+            "L3Out öffnen (Routing → L3Outs) → „Soll aus den Zonen“: Subnetze mit „Import Route "
+            "Control Subnet“ an der externen EPG als Vorschlag, Enforcement „Import“ setzen.",
+            "Open the L3Out (routing → L3Outs) → “Target from the zones”: subnets with “Import "
+            "Route Control Subnet” on the external EPG as proposal, set enforcement “import”.",
+        ),
+    )
+
+
+def _netbox_sync(subject: str, d: dict) -> tuple[str, str]:
+    """Nachkontrolle des NetBox-Syncs (0.115.0, ADR 0042): geschrieben != gelesen."""
+    nb = d.get("netbox") or "NetBox"
+    what = L(d.get("label") or subject, d.get("label_en") or d.get("label") or subject)
+    problem = d.get("problem")
+    if problem == "missing":
+        text = L(
+            f"{nb}: {what} angelegt, steht nach dem Schreiben aber nicht in NetBox.",
+            f"{nb}: {what} created, but not in NetBox after writing.",
+        )
+    elif problem == "still_there":
+        text = L(
+            f"{nb}: {what} gelöscht, steht nach dem Schreiben aber noch in NetBox.",
+            f"{nb}: {what} deleted, but still in NetBox after writing.",
+        )
+    else:
+        changes = d.get("changes") or []
+        fields = _list([f"{c.get('field')}: {c.get('old')} → {c.get('new')}" for c in changes], 3)
+        text = L(
+            f"{nb}: {what} geschrieben, NetBox zeigt danach andere Werte ({fields}).",
+            f"{nb}: {what} written, NetBox shows other values afterwards ({fields}).",
+        )
+    hint = L(
+        "Neue Vorschau erstellen und erneut übernehmen. Bleibt die Abweichung, ändert in NetBox "
+        "etwas den Wert nach dem Schreiben (Custom Validator, Event Rule, Skript) oder ein Recht "
+        "des Tokens fehlt.",
+        "Create a new preview and apply again. If the deviation remains, something in NetBox "
+        "changes the value after writing (custom validator, event rule, script) or the token "
+        "lacks a permission.",
+    )
+    return text, hint
+
+
 _TOPO_TEXT = {
+    "netbox_sync_mismatch": _netbox_sync,
+    "bgp_zone_out_mismatch": _bgp_zones_out,
+    "aci_import_zone_mismatch": _aci_import_zones,
+    "bgp_zone_mismatch": _bgp_zones,
+    "bgp_expected_missing": _bgp_missing,
+    "bgp_outside_filter": _bgp_outside,
+    "bgp_no_inbound_filter": _bgp_open,
+    "aci_import_not_enforced": _aci_import,
+    "net_wider_than_routes": _net_wider,
     "topo_duplicate_ip": _dup_ip,
     "topo_mask_mismatch": _mask,
     "topo_route_loop": _loop,
@@ -516,8 +943,11 @@ _TOPO_TEXT = {
     "zone_policy_violation": _zone_violation,
     "zone_overlap": _zone_overlap,
     "zone_outside_schema": _zone_outside_schema,
+    "zone_net_exit": _zone_net_exit,
     "app_connection_mismatch": _app_mismatch,
     "app_contract_narrower": _app_narrower,
+    "app_rule_unused": _app_unused,
+    "app_coverage": _app_coverage,
     "link_speed_mismatch": _link,
     "link_duplex_mismatch": _link,
     "link_vlan_mismatch": _link,
@@ -538,6 +968,8 @@ def explain(ftype: str, subject: str, detail: dict | None) -> tuple[str, str]:
         on = L(f" auf {d['source']}{in_vdom}", f" on {d['source']}{in_vdom}")
     if ftype == "unmatched_object":
         return _unmatched(subject, d)
+    if ftype == "manual":
+        return _manual(subject, d)
     if ftype in _TOPO_TEXT:
         return _TOPO_TEXT[ftype](subject, d)
     if ftype in _OBJECT_TEXT:
@@ -548,7 +980,23 @@ def explain(ftype: str, subject: str, detail: dict | None) -> tuple[str, str]:
         return _IPAM_TEXT[ftype](subject, d, on)
     if ftype in _PARALLEL_TEXT:
         return _PARALLEL_TEXT[ftype](subject, d, on)
+    if ftype in _SOURCE_TEXT:
+        return _SOURCE_TEXT[ftype](subject, d)
     return subject, ""
+
+
+def _manual(subject: str, d: dict) -> tuple[str, str]:
+    """Von Hand erfasst (0.109.0): Titel und Text so, wie sie eingegeben wurden; dazu der Weg."""
+    parts = [d.get("text") or ""]
+    if d.get("src") or d.get("dst"):
+        svc = f" ({d['service']})" if d.get("service") else ""
+        parts.append(L(f"Weg: {d.get('src') or '?'} → {d.get('dst') or '?'}{svc}",
+                       f"Path: {d.get('src') or '?'} → {d.get('dst') or '?'}{svc}"))  # fmt: skip
+    if d.get("hop"):
+        parts.append(L(f"Bei: {d['hop']}", f"At: {d['hop']}"))
+    if d.get("by"):
+        parts.append(L(f"Erfasst von {d['by']}", f"Captured by {d['by']}"))
+    return d.get("title") or subject, " · ".join(x for x in parts if x)
 
 
 # -- Objekte und Namenskonvention ---------------------------------------------------------
@@ -573,6 +1021,8 @@ def _invalid_name(subject: str, d: dict, on: str) -> tuple[str, str]:
             "FT_https) or FT_<proto><port> (e.g. FT_tcp8443) – or add the prefix in the naming "
             "profile (object prefix → type “Service / ACI filter”).",
         )
+    if d.get("convention") in _NAT_CONVENTION:
+        return _invalid_nat_name(subject, d, on, prefixes)
     return (
         L(
             f"{what} {_q(subject)}{on} beginnt mit keinem Präfix der Namenskonvention{known}.",
@@ -580,6 +1030,41 @@ def _invalid_name(subject: str, d: dict, on: str) -> tuple[str, str]:
             f"convention{known}.",
         ),
         hint,
+    )
+
+
+# Namen der VIPs und IP-Pools (0.96.0): Präfix ihres Typs - (Art im Satz, Typ im Namensprofil,
+# Beispiel nach dem ersten erwarteten Präfix)
+_NAT_CONVENTION = {
+    "vip": (("VIP-Präfix", "VIP prefix"), ("„VIP“ bzw. „VIP / DNAT“", "“VIP” or “VIP / DNAT”"),
+            ("{p}<FQDN>", "{p}<FQDN>")),
+    "virtual_server": (("Präfix für Virtual Server", "prefix for virtual servers"),
+                       ("„Virtual Server“", "“Virtual Server”"), ("{p}<FQDN>", "{p}<FQDN>")),
+    "snat_pool": (("Pool-Präfix", "pool prefix"), ("„SNAT IP-Pool“", "“SNAT IP pool”"),
+                  ("{p}<FQDN> bzw. {p}<Tenant>-<Standort>-<Zweck>",
+                   "{p}<FQDN> or {p}<tenant>-<site>-<purpose>")),
+}  # fmt: skip
+
+
+def _invalid_nat_name(subject: str, d: dict, on: str, prefixes: str) -> tuple[str, str]:
+    """VIP, Virtual Server bzw. IP-Pool ohne Präfix seines Typs (0.96.0)."""
+    prefix, kind, example = (L(*pair) for pair in _NAT_CONVENTION[d["convention"]])
+    example = example.replace("{p}", str((d.get("prefixes") or ["…"])[0]))
+    what = "Virtual Server" if d.get("virtual_server") else _category(d)
+    known = L(f" (erwartet: {prefixes})", f" (expected: {prefixes})") if prefixes else ""
+    return (
+        L(
+            f"{what} {_q(subject)}{on} beginnt mit keinem {prefix} der Namenskonvention{known}.",
+            f"{what} {_q(subject)}{on} does not start with any {prefix} of the naming "
+            f"convention{known}.",
+        ),
+        L(
+            f"Nach Konvention benennen (z. B. {example}) oder den Präfix im Namensprofil ergänzen "
+            f"(Objekt-Präfix → Typ {kind}). NAT / VIPs zeigt den Eintrag mit Kette und Regeln.",
+            f"Name it according to the convention (e.g. {example}) or add the prefix in the "
+            f"naming profile (object prefix → type {kind}). NAT / VIPs shows the entry with its "
+            "chain and rules.",
+        ),
     )
 
 
@@ -1183,4 +1668,119 @@ _PARALLEL_TEXT = {
     ),
     "parallel_nat_mismatch": lambda s, d, on: _parallel_item("parallel_nat_mismatch", d, on),
     "parallel_route_mismatch": lambda s, d, on: _parallel_routes(d),
+}
+
+
+# -- Datenqualitaet (ADR 0029) ------------------------------------------------------------
+
+_PLATFORM = {
+    "fortigate": ("FortiGate", "FortiGate"),
+    "cisco_aci": ("Cisco ACI", "Cisco ACI"),
+    "vmware": ("VMware vCenter", "VMware vCenter"),
+    "cisco_switch": ("Switches & Router", "Switches & routers"),
+    "avi": ("NSX ALB (Avi)", "NSX ALB (Avi)"),
+    "infoblox": ("Infoblox DDI", "Infoblox DDI"),
+    "netbox": ("NetBox", "NetBox"),
+    "ad_dns": ("AD-DNS", "AD DNS"),
+}
+
+_PARTIAL_HINT = {  # Art des Teilfehlers -> was pruefen
+    "unreached": (
+        "Erreichbarkeit der Geräte prüfen (Adresse, SSH, Zugangsdaten, Host-Schlüssel)",
+        "Check the reachability of the devices (address, SSH, credentials, host key)",
+    ),
+    "unreadable": (
+        "Leserechte des Kontos prüfen (Profil mit Lesezugriff auf alle VDOMs, Routing und BGP "
+        "bzw. die Objekte am Controller)",
+        "Check the read permissions of the account (profile with read access to all VDOMs, "
+        "routing and BGP or the objects on the controller)",
+    ),
+    "contexts": (
+        "Leserechte für Routing und BGP prüfen (FortiGate-Profil je VDOM, Border-Leafs am APIC)",
+        "Check the read permissions for routing and BGP (FortiGate profile per VDOM, border "
+        "leafs on the APIC)",
+    ),
+    "notes": (
+        "Befehle ohne auswertbare Ausgabe: Plattform bzw. Version des Geräts prüfen",
+        "Commands without parsable output: check the platform or version of the device",
+    ),
+}
+
+
+def _source_who(subject: str, d: dict) -> str:
+    what = _pick(_PLATFORM, d.get("platform"))
+    return f"{_q(subject)} ({what})" if what else _q(subject)
+
+
+def _source_stale(subject: str, d: dict) -> tuple[str, str]:
+    """Stand eines Quellsystems veraltet: letzter erfolgreicher Lauf aelter als die Grenze."""
+    who, limit, sched = _source_who(subject, d), d.get("limit_days"), d.get("schedule")
+    rule = L(f"Grenze {limit} Tage", f"limit {limit} days")
+    if sched:
+        rule += L(f", Zeitplan {sched}", f", schedule {sched}")
+    if d.get("never"):
+        msg = L(
+            f"Quellsystem {who} wurde noch nie erfolgreich eingelesen ({rule}) – Doku, Weg-Suche "
+            "und Zonen kennen seine Daten nicht.",
+            f"Source system {who} has never been collected successfully ({rule}) – "
+            "documentation, path search and zones do not know its data.",
+        )
+    else:
+        age = d.get("age_days")
+        msg = L(
+            f"Quellsystem {who} wurde zuletzt vor {age} Tagen erfolgreich eingelesen ({rule}) – "
+            "Doku, Weg-Suche und Zonen zeigen einen alten Stand.",
+            f"Source system {who} was last collected successfully {age} days ago ({rule}) – "
+            "documentation, path search and zones show outdated data.",
+        )
+    if d.get("last_failed"):
+        why = (d.get("last_message") or "").rstrip(".")
+        msg += L(f" Letzter Lauf fehlgeschlagen{': ' + why if why else ''}.",
+                 f" Last run failed{': ' + why if why else ''}.")  # fmt: skip
+    return msg, L(
+        "Neu einlesen bzw. die Ursache des Fehlschlags beheben (Läufe, Betriebszustand); für "
+        "regelmässiges Einlesen einen Zeitplan am Quellsystem setzen. Ein bewusst nicht mehr "
+        "gelesenes Quellsystem ausschalten. Grenze: AUTOMATO_STALE_DAYS.",
+        "Collect again or fix the cause of the failure (runs, health); set a schedule on the "
+        "source system for regular collection. Switch off a source system that is intentionally "
+        "no longer read. Limit: AUTOMATO_STALE_DAYS.",
+    )
+
+
+def _source_partial(subject: str, d: dict) -> tuple[str, str]:
+    """Letzter Lauf nur teilweise: Teilfehler aus der Laufmeldung (Text wie gespeichert) und
+    Routing-Kontexte „nicht lesbar“."""
+    parts = d.get("parts") or []
+    items = [str(p["text"]) for p in parts if p.get("text")]
+    contexts = d.get("contexts") or []
+    if contexts:
+        n = d.get("context_count") or len(contexts)
+        shown_ctx = [
+            f"{c.get('node')} · {c.get('context')} ({'; '.join(c.get('missing') or [])})"
+            for c in contexts
+        ]
+        listed = _list(shown_ctx, 3)
+        items.append(L(f"Routing nicht lesbar in {n} Kontext{'en' if n != 1 else ''}: {listed}",
+                       f"routing not readable in {n} context{'s' if n != 1 else ''}: "
+                       f"{listed}"))  # fmt: skip
+    shown = "; ".join(items) or "–"
+    kinds = [p.get("kind") for p in parts] + (["contexts"] if contexts else [])
+    checks = [L(*_PARTIAL_HINT[k]) for k in dict.fromkeys(kinds) if k in _PARTIAL_HINT]
+    return (
+        L(
+            f"Der letzte Lauf von {_q(subject)} hat nur einen Teil gelesen: {shown}.",
+            f"The last run of {_q(subject)} only collected part of the data: {shown}.",
+        ),
+        "; ".join(checks)
+        + L(
+            " – und neu einlesen. Bis dahin fehlen diese Daten in Weg-Suche, Doku und Zonen.",
+            " – and collect again. Until then this data is missing in path search, "
+            "documentation and zones.",
+        ),
+    )
+
+
+_SOURCE_TEXT = {
+    "source_stale": _source_stale,
+    "source_partial": _source_partial,
 }

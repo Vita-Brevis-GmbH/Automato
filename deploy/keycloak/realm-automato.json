@@ -74,6 +74,20 @@
           }
         },
         {
+          "name": "customer_role",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "config": {
+            "user.attribute": "customer_role",
+            "claim.name": "customer_role",
+            "jsonType.label": "String",
+            "multivalued": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
           "name": "audience-automato-api",
           "protocol": "openid-connect",
           "protocolMapper": "oidc-audience-mapper",

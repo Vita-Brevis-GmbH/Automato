@@ -13,12 +13,16 @@ alle ausser infra/mgmt), bei Cisco-Switches die Adressen der Switches (0.62.0, A
 Zeile bzw. kommagetrennt), beim NSX ALB die Avi-Tenants (0.77.0, ADR 0027; leer = alle
 sichtbaren). `ssh_host_keys` = beim ersten Lauf festgehaltene SSH-Host-Schluessel
 je Adresse (`<typ> <base64>`); ein anderer Schluessel bricht die Verbindung ab.
+`access` (Switches & Router, ADR 0033) = Zugang `ssh` (leer, Standard) bzw. `snmp` (SNMPv3
+authPriv, nur lesend); bei `snmp` enthalten die Zugangsdaten `username`, `auth_protocol`,
+`auth_password`, `priv_protocol`, `priv_password` und optional `context`.
 
-Referenzquellen (Infoblox, NetBox; ADR 0010): `ref_role` = primary | enrichment,
+Referenzquellen (Infoblox, NetBox, AD-DNS; ADR 0010): `ref_role` = primary | enrichment,
 `reference_run_id` = Lauf, dessen Eintraege (`reference_record`) der aktuelle Stand sind.
 NetBox kann zusaetzlich ein Schreib-Token tragen (`write_token` in `credentials`) - nur fuer
 den NetBox-Sync des Orchestrators, nie an einen Agenten. `site_id` = Standort des Geraets
-(dort legt der NetBox-Sync Geraete und Ports an).
+(dort legt der NetBox-Sync Geraete und Ports an). AD-DNS (ADR 0045): `base_url` =
+`dns://server[:port]`, `read_scope` = Zonen je Zeile; ohne Zugangsdaten, nur Anreicherung.
 """
 
 import enum
@@ -37,13 +41,17 @@ class Platform(enum.StrEnum):
     NETBOX = "netbox"  # Referenzquelle / Anreicherung, ADR 0010
     VMWARE = "vmware"  # vCenter: VMs, Portgruppen (ADR 0017)
     # Switches und Router per SSH (ADR 0025): Cisco IOS/IOS-XE/NX-OS, seit 0.68.0 auch Business-CLI
-    # (Catalyst 1200/1300) und Juniper Junos (MX, EX, QFX); Gruppe von Geraeten
+    # (Catalyst 1200/1300) und Juniper Junos (MX, EX, QFX), seit 0.94.0 Arista EOS und Aruba CX
+    # (AOS-CX); Gruppe von Geraeten
     CISCO_SWITCH = "cisco_switch"
     AVI = "avi"  # VMware NSX Advanced Load Balancer: Virtual Services, VIPs, Pools (ADR 0027)
+    AD_DNS = "ad_dns"  # DNS-Server (AD) per Zonentransfer: nur DNS-Namen (ADR 0045)
 
 
 # Referenzquellen (IPAM) - liefern keinen Regeln, sondern den Referenz-Stand
-REFERENCE_PLATFORMS = frozenset({Platform.INFOBLOX, Platform.NETBOX})
+REFERENCE_PLATFORMS = frozenset({Platform.INFOBLOX, Platform.NETBOX, Platform.AD_DNS})
+# Referenzquellen nur mit DNS-Namen (keine Netze, Ranges, VLANs): immer Anreicherung (ADR 0045)
+DNS_PLATFORMS = frozenset({Platform.AD_DNS})
 
 
 class RefRole(enum.StrEnum):
@@ -70,6 +78,8 @@ class SourceSystem(Base):
     verify_tls: Mapped[bool] = mapped_column(default=True, server_default=true())
     read_scope: Mapped[str] = mapped_column(Text, default="", server_default="")
     ssh_host_keys: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Switches & Router: Zugang ssh (None) | snmp (ADR 0033, Migration 0062)
+    access: Mapped[str | None] = mapped_column(String(16), nullable=True)
     ref_role: Mapped[str | None] = mapped_column(String(16), nullable=True)  # RefRole
     reference_run_id: Mapped[str | None] = mapped_column(
         ForeignKey(

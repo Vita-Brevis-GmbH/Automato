@@ -192,6 +192,14 @@ class FortiGateClient:
         """IPv6-VIPs inkl. Virtual Server (server-load-balance)."""
         return self._optional("firewall/vip6", vdom)
 
+    def vip_groups(self, vdom: str | None = None) -> list[dict[str, Any]]:
+        """VIP-Gruppen (Policies verweisen auf sie wie auf eine VIP, 0.96.0) - ohne Tabelle
+        bzw. Recht leer."""
+        return self._optional("firewall/vipgrp", vdom)
+
+    def vip_groups6(self, vdom: str | None = None) -> list[dict[str, Any]]:
+        return self._optional("firewall/vipgrp6", vdom)
+
     def ldb_monitors(self, vdom: str | None = None) -> list[dict[str, Any]]:
         """Health-Checks der Virtual Server (Typ, Port, Intervall) - ohne Lese-Recht leer."""
         return self._optional("firewall/ldb-monitor", vdom)
@@ -259,6 +267,13 @@ class FortiGateClient:
             "policy4": lambda: self._get("router/policy", vdom),
             "policy6": lambda: self._get("router/policy6", vdom),
             "sdwan": lambda: self._get("system/sdwan", vdom),
+            # BGP-Konfiguration und Filter (0.113.0, ADR 0041) - Soll gegen die gelernten Pfade
+            "bgp_config": lambda: self._get("router/bgp", vdom),
+            "prefix_lists4": lambda: self._get("router/prefix-list", vdom),
+            "prefix_lists6": lambda: self._get("router/prefix-list6", vdom),
+            "route_maps": lambda: self._get("router/route-map", vdom),
+            "access_lists4": lambda: self._get("router/access-list", vdom),
+            "access_lists6": lambda: self._get("router/access-list6", vdom),
         }
         out: dict[str, Any] = {"missing": []}
         for key, read in reads.items():
@@ -297,6 +312,14 @@ class FortiGateClient:
     def vdom_tables(self, vdom: str | None) -> dict[str, list]:
         """Was die Normalisierung je VDOM braucht (IPv4+IPv6, NAT, Zonen, Interfaces)."""
         return {
+            **self.rule_tables(vdom),
+            "zones": self.zones(vdom),
+            "interfaces": self.interfaces(vdom),
+        }
+
+    def rule_tables(self, vdom: str | None) -> dict[str, list]:
+        """Regeln, Objekte und NAT eines VDOMs (0.139.0: allein fuer einen Lauf nur der Regeln)."""
+        return {
             "policies": self.policies(vdom),
             "policies6": self.policies6(vdom),
             "addresses": self.addresses(vdom),
@@ -307,12 +330,33 @@ class FortiGateClient:
             "service_groups": self.service_groups(vdom),
             "vips": self.vips(vdom),
             "vips6": self.vips6(vdom),
+            "vipgrps": self.vip_groups(vdom),
+            "vipgrps6": self.vip_groups6(vdom),
             "ldb_monitors": self.ldb_monitors(vdom),
             "ippools": self.ippools(vdom),
             "ippools6": self.ippools6(vdom),
-            "zones": self.zones(vdom),
-            "interfaces": self.interfaces(vdom),
         }
+
+    def gather_rules(self) -> dict[str, Any]:
+        """Nur Regeln, Objekte und NAT je VDOM (0.139.0, Anwender: „nicht alle Firewalls und ACI
+        neu integrieren, sondern nur die Regeln“) - ohne Interfaces, Zonen, Routing, HA und
+        System. Nicht lesbare VDOMs wie bei `gather`."""
+        vdoms: list[dict[str, Any]] = []
+        skipped: list[dict[str, str]] = []
+        denied: httpx.HTTPStatusError | None = None
+        for name in self.vdoms():
+            try:
+                tables = self.rule_tables(name)
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code != 403:
+                    raise
+                denied = denied or exc
+                skipped.append({"vdom": str(name), "error": f"HTTP {exc.response.status_code}"})
+                continue
+            vdoms.append({"vdom": name or self.default_vdom, **tables})
+        if not vdoms and denied is not None:
+            raise denied
+        return {"vdoms": vdoms, "skipped": skipped, "rules_only": True}
 
     def gather(self) -> dict[str, Any]:
         """Alles einlesen, je VDOM (ADR 0019): `vdoms` = [{vdom, policies, ..., routing}], dazu

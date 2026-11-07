@@ -32,6 +32,7 @@ _VALUE_TO_CLASS: dict[str, ObjectClass] = {
     "transfer": ObjectClass.NETWORK,  # T_: Transfernetz
     "vip": ObjectClass.VIP,
     "vip_dnat": ObjectClass.VIP,  # V-EXT_: DNAT-VIP
+    "virtual_server": ObjectClass.VIP,  # eigenes Praefix fuer Virtual Server (0.96.0, optional)
     "snat_pool": ObjectClass.NETWORK,  # IPP_: Adressbereich
     "range": ObjectClass.RANGE,
 }
@@ -103,6 +104,26 @@ def short_name(name: str | None) -> str:
 def expects_ipam_match(object_class: ObjectClass) -> bool:
     """H-EXT_/N-EXT_ sind bewusst extern -> kein IPAM-Match erwartet (kein Fehler)."""
     return object_class not in (ObjectClass.EXTERNAL, ObjectClass.UNKNOWN)
+
+
+# -- VIPs und IP-Pools (0.96.0): Praefix je Typ ------------------------------------------
+
+# Typen im Woerterbuch `object_prefix`, die fuer die Namen der VIPs bzw. IP-Pools gelten
+VIP_VALUES = ("vip", "vip_dnat")
+VIRTUAL_SERVER_VALUE = "virtual_server"  # FortiGate Virtual Server; ohne Eintrag: VIP_VALUES
+IPPOOL_VALUES = ("snat_pool",)
+
+
+def typed_prefixes(object_prefixes: dict[str, str], values: Iterable[str]) -> tuple[str, ...]:
+    """Praefixe der `object_prefix`-Eintraege mit einem dieser Typen, laengste zuerst. Ohne
+    Adress-Praefixe im Profil gilt die eingebaute Standard-Konvention (wie
+    `prefixes_from_entries`); hat das Profil Praefixe, aber keines dieser Typen, ist das
+    Ergebnis leer = keine Pruefung (ohne gepflegtes Praefix kein Befund)."""
+    wanted = set(values)
+    own_profile = any(v in _VALUE_TO_CLASS for v in (object_prefixes or {}).values())
+    entries = object_prefixes.items() if own_profile else _DEFAULT_ENTRIES
+    own = {k for k, v in entries if k and v in wanted}
+    return tuple(sorted(own, key=lambda k: (-len(k), k)))
 
 
 # -- Services (FortiGate-Services, ACI-Filter): Namenskonvention FT_ ----------------------

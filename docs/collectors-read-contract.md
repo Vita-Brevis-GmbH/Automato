@@ -1,4 +1,4 @@
-# Collector-Lesevertrag — FortiGate, Cisco ACI, VMware, Cisco-Switches & NSX ALB (read-only)
+# Collector-Lesevertrag — FortiGate, Cisco ACI, VMware, Switches & Router (SSH/SNMPv3), NSX ALB (read-only)
 
 > Was die Collectors **rein lesend** erfassen (Felder/Relationen) und wie es auf das
 > Datenmodell (ADR 0004 + Ergänzung) abgebildet wird. Abgeleitet aus realen Samples einer Referenzumgebung
@@ -27,9 +27,10 @@
 | `firewall.service/custom` | `name` (`FT_…`), `protocol`, `protocol-number`, `icmptype`/`icmpcode`, `tcp-`/`udp-`/`sctp-portrange` (inkl. Quellports nach `:`), `category`, `iprange`/`fqdn`, `session-ttl` und Timer, `helper`, `proxy` | `service_object` (`proto`, `port_start/end`; Ranges `20-21`; tcp+udp möglich); Attribute ohne Standardwerte in `device_object.attrs` |
 | `firewall.service/group` | `name`, `member[]` | Service-Gruppe (`device_object`, Regel-Verweis per Name; Werte aufgelöst) |
 | `firewall/vip` **und** `firewall/vip6` | `name` (`V-EXT_`/`VIP_`), `type`, `extip`, `mappedip`, `extport`, `mappedport`, `portforward`, `protocol`, `extintf`; **Virtual Server** (`type=server-load-balance`): `server-type`, `ldb-method`, `persistence`, `monitor[]`, `ssl-certificate` (nur Name), `realservers[]` (`ip`/`address`, `port`, `status`, `weight`, `healthcheck`, `monitor[]`, `holddown-interval`, `max-connections`, `http-host`) | `nat_rule` (`dnat_vip`, `vip_type`, `family`, `targets` = Real Server, `attrs`); **externer DNS-Name aus dem Objektnamen** |
+| `firewall/vipgrp` **und** `firewall/vipgrp6` (optional, 0.96.0) | `name`, `member[]`, `interface`, `color`, `comments` | Adressgruppe (`device_object`, `obj_type` `vipgrp`, Werte = externe IPs der VIPs); Policies auf die Gruppe lösen in ihre VIPs auf (`vip:<VIP>=<extip>`) |
 | `firewall/ldb-monitor` (optional) | `name`, `type`, `port`, `interval`, `timeout`, `retry`, `http-get`, `http-match` | Health-Checks im Virtual Server (`attrs.monitor`) |
 | `firewall/ippool` | `name` (`IPP_`), `type` (`overload`\|`one-to-one`\|`fixed-port-range`\|`port-block-allocation`), `startip`, `endip`, `source-startip`/`source-endip` (nur `fixed-port-range`) | `nat_rule` (`snat_pool`, `family` v4, `attrs.type`, `attrs.source`) → Spalte „NAT Externe IPv4"; SNAT auf dem Weg (0.47.0) |
-| `firewall/ippool6` (optional, 0.47.0) | `name`, `type`, `startip`, `endip` | `nat_rule` (`snat_pool`, `family` v6); Policies wählen ihn über `nat6`/`ippool6`/`poolname6` |
+| `firewall/ippool6` (optional, 0.47.0) | `name`, `type`, `startip`, `endip` | `nat_rule` (`snat_pool`, `family` v6); Policies wählen ihn über `nat6`/`ippool6`/`poolname6`; seit 0.96.0 auch `device_object` (`ippool`, `family` v6) für die Namenskonvention |
 | `firewall/policy` | `policyid`, `name`, `srcintf`, `dstintf`, `srcaddr`/`dstaddr` (gegen IPv4-Objekte) und `srcaddr6`/`dstaddr6` (gegen IPv6-Objekte, Verweise getrennt `source_refs6`/`destination_refs6`, Familie v4/v6/dual), **Internet Services** `internet-service[6][-src]-name/-group/-custom/-custom-group/-fortiguard` (→ `isdb:<Name>`, extern erwartet), **Identität** `users`/`groups`/`fsso-groups` (→ `user:`/`usergroup:`), ZTNA-Tags `ztna-ems-tag`/`ztna-geo-tag`, Negation `srcaddr-negate`/`dstaddr-negate`/`service-negate`/`internet-service[-src]-negate`, `service`, `action`, `nat`, `poolname`, `utm-status`, **UTM-Refs** `av-profile`/`webfilter-profile`/`dnsfilter-profile`/`application-list`/`ips-sensor`/`waf-profile`/`ssl-ssh-profile`, `schedule`, `comments` | `rule` (+ `rule_endpoint` v4/v6, `rule_service`); UTM-Refs → Spalte „Schutzmechanismen"; `comments` (enthält oft `CTASK…`/`CT_…`) → „Description" |
 | `firewall/policy6` (nur FortiOS 6.x; ab 7.0 fehlt die Tabelle → übersprungen) | wie `firewall/policy`, `srcaddr`/`dstaddr` sind IPv6-Objekte | `rule` mit `external_id` `v6-<policyid>`, Familie v6 |
 | `system/zone` | `name`, `interface[]` | `zone`; Zone je Interface im Netzinventar |
@@ -68,6 +69,8 @@ Positivliste (Passwörter, Pre-Shared-Keys und Schlüssel kommen nie mit):
 | `system/sdwan` | `service[]` (`id`, `name`, `mode`, `dst`, `src`, `priority-members`), `members[]` (`interface`, `gateway`, `zone`) | `topo_policy_route` `sdwan` (Mitglieder nach Vorrang) |
 | `system/ha` (global), Monitor `system/ha-peer` | `mode`, `group-name`, `group-id`, `session-pickup*`, `priority`, `override`; Mitglieder `hostname`, `serial_no`, `priority`, Rolle | `topo_ha` – **ohne** `password` |
 | `system/standalone-cluster` (ab 7.2) bzw. `system/cluster-sync` | `cluster-peer[]`: `sync-id`, `peervd`, `peerip`, `syncvd`; Gruppe/Mitglied | `topo_ha.sync_peers` (FGSP) – **ohne** `psksecret` |
+| `router/bgp` (0.113.0, ADR 0041) | `as`, `router-id`; `neighbor[]`, `neighbor-group[]`: `ip`/`name`, `remote-as`, `interface`, `update-source`, `shutdown`, `next-hop-self`, `ebgp-enforce-multihop`, Filter `route-map-in`/`-out`, `prefix-list-in`/`-out`, `distribute-list-in`/`-out`, `filter-list-in`/`-out` (je auch `…6`); `neighbor-range[]` (`prefix`, `neighbor-group`); `network[]`, `aggregate-address[]`, `redistribute` (nur eingeschaltete) | `topo_bgp_object` `bgp`; je Nachbar `topo_peer.attrs.config` – **ohne** `password`, `auth-options`, `keychain` |
+| `router/prefix-list`, `prefix-list6`, `route-map`, `access-list`, `access-list6` | `name`; `rule[]`: `id`, `action`, `prefix`/`prefix6`, `ge`, `le`, `exact-match`, `wildcard`; Route-Map `match-ip-address`, `match-ip6-address`, `match-as-path`, `match-community`, `match-interface`, `set-local-preference`, `set-metric`, `set-weight`, `set-aspath`, `set-community` | `topo_bgp_object` `prefix_list`, `access_list`, `route_map` |
 
 Monitor-Listen liest der Collector seitenweise (`start`/`count`), wenn die FortiGate kürzt;
 mehr als 50 000 Einträge je Tabelle werden nicht übernommen (Meldung „zu gross“). Fehlt das
@@ -75,8 +78,8 @@ Leserecht (401/403), steht die Tabelle in der Lauf-Meldung („Routing nicht les
 Kontext als nicht lesbar; fehlt die Tabelle (Version, Funktion aus), bleibt sie leer. Das
 Read-only-Profil braucht Lesezugriff auf **Router** und **System** (inkl. Monitor).
 
-**Nicht gelesen:** `vpn ipsec …` (`psksecret`!), die BGP-Konfiguration `router bgp` (Passwörter
-der Nachbarn) – BGP kommt nur aus dem Monitor-API.
+**Nicht gelesen:** `vpn ipsec …` (`psksecret`!). Aus `router bgp` (seit 0.113.0) nur die
+Felder der Positivliste oben – Passwörter und Schlüssel der Nachbarn kommen nie mit.
 
 **Beobachtete Zusatz-Prefixe** (→ Wörterbuch/Kaskade): `N-EXT_` (externes Netz),
 `T_` (Transfernetz), bare-name `geography` (`type geography`, `country` → `not_applicable`),
@@ -159,7 +162,10 @@ Regeln tragen `kind` (`contract` | `taboo` | `preferred_group`) im Rohdatensatz.
 `rtrId`; statische Routen `ipRouteP`/`ipNexthopP`), Interfaces bzw. SVIs
 (`l3extRsPathL3OutAtt`: `tDn`, `ifInstT`, `encap`, `addr`, `mtu`; vPC-Seiten `l3extMember`,
 weitere Adressen `l3extIp`), BGP-Peers (`bgpPeerP` `addr` mit `bgpAsP` `asn` – **ohne**
-`password`) und externe EPGs → `topo_l3out`. Dazu je Border-Leaf und VRF (nur lesend):
+`password`) und externe EPGs → `topo_l3out`; Route Control (0.113.0): `l3extOut.enforceRtctrl`
+(fehlt = `export`) und je `l3extSubnet` mit `export-rtctrl` bzw. `import-rtctrl` im `scope`
+(`aggregate` = alle Längen darin) → `topo_l3out.route_control`. Dazu je Border-Leaf und VRF (nur
+lesend):
 
 - `GET /api/node/mo/topology/pod-<p>/node-<n>/sys/uribv4/dom-<Tenant>:<VRF>.json` mit
   `query-target=subtree&target-subtree-class=uribv4Route,uribv4Nexthop` (IPv6: `uribv6…`) →
@@ -199,7 +205,7 @@ zu – geprüft wird der WSDL-Name, jeder andere Aufruf bricht vor dem Senden ab
 Nicht gelesen: Zugangsdaten, Gast-Inhalte, Leistungsdaten, Snapshots, Ereignisse.
 Portgruppe → EPG ordnet der Orchestrator zu (Name `Tenant|AP|EPG`, sonst eindeutiges VLAN).
 
-## 5. Cisco-Switches (SSH, `show`-Befehle; read-only, ADR 0025)
+## 5. Switches & Router (SSH, `show`-Befehle; read-only, ADR 0025)
 
 Ein Quellsystem `cisco_switch` ist eine Gruppe von Switches (Adressen im Lesebereich, eine je
 Zeile, `host` bzw. `host:port`) mit einem Konto, das nur lesen darf: IOS/IOS-XE
@@ -224,6 +230,7 @@ wird beim ersten Lauf festgehalten und danach verlangt (ADR 0025 Nr. 3).
 | `show spanning-tree` (seit 0.65.0) | je VLAN Port, Rolle, Zustand (auf NX-OS ohne passende Vorlage mit der IOS-Vorlage) | `inv_interface.attrs.stp_blocked` (VLANs mit `BLK` bzw. Alternate/Backup), `attrs.stp_root` (Root-Port), als Bereiche |
 | `show mac address-table` (seit 0.63.0) | MAC, VLAN, Port, Art (dynamic/static); nur Unicast an einzelnen Ports, nicht CPU/Supervisor/Router/vPC-Peer-Link; höchstens 50 000 je Switch | `mac_entry` (gesammelt, `first_seen`/`last_seen`) |
 | `show ip arp` · `show ip arp detail vrf all` (seit 0.63.0) | IP, MAC, L3-Interface, VRF (NX-OS); ohne die eigenen Adressen des Switches | `arp_entry` (gesammelt) |
+| `show ipv6 neighbors` · `show ipv6 neighbor vrf all` (seit 0.94.0) | IPv6-Nachbarn (NDP): IPv6-Adresse ohne Zone, MAC, L3-Interface, VRF (NX-OS, eigene Auswertung); nur Unicast mit MAC, unvollständige Einträge fallen weg; fehlt der Befehl, bleibt der Teil ohne Hinweis leer | `arp_entry` (gesammelt wie ARP); Link-local (`fe80::/10`) bleibt, zählt aber nicht als Identität |
 
 **Seit 0.68.0 weitere Produkte** (ADR 0025 Nr. 11), Plattform nach `show version`:
 
@@ -231,19 +238,80 @@ wird beim ersten Lauf festgehalten und danach verlangt (ADR 0025 Nr. 3).
 |---|---|---|---|
 | IOS/IOS-XE | Catalyst 9200L, 9300, 3650, 4500 | wie oben | privilege 1 bzw. Parser-View |
 | NX-OS | Nexus 9000 | wie oben | `network-operator` |
-| Business-CLI | Catalyst 1200/1300 (CBS) | `show version`, `show system`, `show inventory`, `show interfaces status`, `show interfaces description`, `show vlan`, `show interfaces port-channel`, `show lldp neighbors`, `show mac address-table`, `show arp` – über die **begrenzte Sitzung** (kein Exec): Anmeldung in der Sitzung, nur diese Befehle und `terminal datadump` (Seitenumbruch der Sitzung aus) | Stufe 1 (nur lesen) |
-| Junos | Juniper MX (Router), EX, QFX | `show version`; mit `\| display json \| no-more`: `show chassis hardware`, `show interfaces`, `show lldp neighbors`, `show vlans`, `show arp no-resolve`, `show ethernet-switching table`, `show bridge mac-table` | Klasse `read-only` |
+| Business-CLI | Catalyst 1200/1300 (CBS) | `show version`, `show system`, `show inventory`, `show interfaces status`, `show interfaces description`, `show vlan`, `show interfaces port-channel`, `show lldp neighbors`, `show mac address-table`, `show arp`, seit 0.94.0 `show ipv6 neighbors all` – über die **begrenzte Sitzung** (kein Exec): Anmeldung in der Sitzung, nur diese Befehle und `terminal datadump` (Seitenumbruch der Sitzung aus) | Stufe 1 (nur lesen) |
+| Junos | Juniper MX (Router), EX, QFX | `show version`; mit `\| display json \| no-more`: `show chassis hardware`, `show interfaces`, `show lldp neighbors`, `show vlans`, `show arp no-resolve`, `show ethernet-switching table`, `show bridge mac-table`, seit 0.94.0 `show ipv6 neighbors` | Klasse `read-only` |
+| Arista EOS (seit 0.94.0) | Arista 7000er-Serie | `show version` (Text, erkennt die Plattform); mit `\| json`: `show version`, `show hostname`, `show interfaces status`, `show interfaces description`, `show interfaces switchport`, `show vlan`, `show port-channel`, `show lldp neighbors detail`, `show mac address-table`, `show ip arp vrf all`, `show ipv6 neighbors vrf all` | Rolle `network-operator` |
+| AOS-CX (seit 0.94.0) | HPE Aruba CX 6000/8000 | `show version`, `show system`, `show interface`, `show vlan`, `show lldp neighbor-info detail`, `show mac-address-table`, `show arp all-vrfs`, `show ipv6 neighbors all-vrfs` (ntc-Vorlagen `aruba_aoscx`, IPv6-Nachbarn selbst ausgewertet); ohne Exec über die begrenzte Sitzung mit `no page` | Gruppe `operators` |
 
 Gelesen werden dieselben Inhalte wie oben (Gerät, Ports mit Zustand/Speed/Duplex/VLANs/LAG,
-Nachbarn, MAC, ARP); bei Junos zusätzlich die Adressen der Interfaces (`inv_interface.ips`) und
-ihre Netze (`inv_subnet`, Kontext Interface). Nicht gelesen: Konfiguration, Routing-Tabelle,
-Zähler.
+Nachbarn, MAC, ARP, seit 0.94.0 IPv6-Nachbarn); bei Junos zusätzlich die Adressen der Interfaces
+(`inv_interface.ips`) und ihre Netze (`inv_subnet`, Kontext Interface). Nicht gelesen:
+Konfiguration, Zähler, MLAG der Arista.
+
+**Routing der Router und L3-Switches** (ADR 0032, `cisco_switch/routing.py`): je Gerät nach den
+Befehlen oben die Routing-Befehle seiner Plattform – ebenfalls nur `show` in der Positivliste,
+keine Konfiguration (keine Passwörter, keine BGP-Schlüssel, keine Route-Maps).
+
+| Plattform | Befehle | gelesen | → Automato |
+|---|---|---|---|
+| IOS/IOS-XE | `show ip route`, `show ip route vrf *`, `show ipv6 route` | RIB je VRF: Präfix, Protokoll (Code), Distanz/Metrik, Next-Hops (IP, Interface; ECMP), Typ (z. B. OSPF E2) | `topo_route` (`table` rib) |
+| IOS/IOS-XE | `show ip bgp summary`, `show bgp ipv4 unicast` | BGP-Nachbarn (IP, AS, Zustand, lokales AS, Typ intern/extern, Admin-Status) und alle gültigen Pfade (bester/Backup, Next-Hop, AS-Pfad, Local Preference, Weight, Origin) der globalen Tabelle | `topo_peer`, `topo_route` (`table` bgp) |
+| NX-OS | `show ip route vrf all`, `show ipv6 route vrf all`, `show ip bgp summary vrf all` | RIB je VRF (nur beste Next-Hops `*via`; HSRP/VRRP = eigene Adresse, VRF des Next-Hops), BGP-Nachbarn je VRF | `topo_route`, `topo_peer` |
+| Junos | `show route \| display json \| no-more`, `show bgp neighbor \| display json \| no-more` | `inet.0`/`inet6.0` und `<Instanz>.inet(6).0`: aktiver Eintrag = RIB, alle BGP-Einträge (auch inaktive) und statische (auch schwebende); Nachbarn mit AS beider Seiten, Typ, Zustand, Instanz – nur diese Felder | `topo_route` (rib/bgp/static), `topo_peer` |
+| Arista EOS | `show ip route vrf all \| json`, `show ipv6 route vrf all \| json`, `show ip bgp summary vrf all \| json`, `show ip interface \| json` | RIB je VRF, BGP-Nachbarn je VRF; Interface-Adressen (primär, sekundär, VARP) als eigene Adressen | `topo_route` (Adressen als `local`), `topo_peer` |
+
+Je Gerät und VRF ein Routing-Kontext (`topo_context`, Art `l3`, Name = Gerät bzw. `Gerät:VRF`);
+Management-VRFs, Link-local und Multicast fallen weg. Nur Geräte mit Routen bzw. BGP-Nachbarn
+bekommen Kontexte; ein Switch ohne `ip routing` antwortet „Default gateway is …“ und bekommt nach
+dem ersten Routing-Befehl keine weiteren. Fehlen Rechte bzw. bricht ein Befehl ab, steht der Teil
+unter `missing` („Routing-Tabelle IPv4“, „BGP-Nachbarn“, „BGP-Pfade IPv4“ …) und als Hinweis im
+Lauf; gibt es den Befehl bzw. die Funktion nicht, bleibt der Teil leer. Obergrenze 20 000 Routen
+je Kontext, Tabelle und Familie (alle ausser BGP und die Default-Route zuerst, dann private vor
+öffentlichen BGP-Routen); Text-Ausgaben über 32 MB werden gekürzt ausgewertet, der Teil gilt dann
+als nicht (ganz) lesbar. Das Konto braucht dieselben Leserechte wie oben (NX-OS
+`network-operator`, Junos `read-only`, Arista `network-operator`; bei IOS mit Parser-View die
+Routing-Befehle in die View aufnehmen) – fehlt ein Recht, ist der Teil „nicht lesbar“, der Lauf
+läuft weiter. Nicht gelesen: ACLs, Policy-Routen (PBR), HSRP/VRRP der IOS-Geräte, NAT, SNMP. **ArubaOS-Switch/ProCurve** liest
+Automato nicht (kein Exec, Sitzung nur mit Tastendruck und Bildschirmsteuerung): der Collector
+erkennt das Banner „Press any key to continue“ und bricht ab, bevor er etwas sendet.
 
 Meldet ein Befehl einen Fehler (z. B. LLDP ausgeschaltet) oder fehlt eine Vorlage, bleibt der
 Teil leer und steht als Hinweis in der Meldung des Laufs. Nicht gelesen: Konfiguration,
-Zugangsdaten, Logs, Zähler, IPv6-Nachbarn. MAC- und ARP-Einträge werden gesammelt und nach
+Zugangsdaten, Logs, Zähler. MAC-, ARP- und IPv6-Nachbar-Einträge werden gesammelt und nach
 `AUTOMATO_RETENTION_L2_DAYS` (30) Tagen ohne neue Sichtung gelöscht. Die Verkabelung leitet der Orchestrator
 aus den Nachbarn aller Quellen ab (Switches, ACI-Leafs über `lldpAdjEp`/`cdpAdjEp`).
+
+### 5a. Switches & Router über SNMPv3 (Zugang „SNMPv3“; nur GET/GETBULK, ADR 0033)
+
+Dasselbe Quellsystem `cisco_switch` mit **Zugang SNMPv3** (`source_system.access = snmp`) statt
+SSH: Adressen im Lesebereich wie oben (`host` bzw. `host:port`, Standard **UDP 161**), ein
+SNMPv3-Benutzer für alle Geräte. **Nur SNMPv3 authPriv** – Auth HMAC-SHA/SHA-2 (SHA-1, SHA-224,
+SHA-256, SHA-384, SHA-512), Priv AES (128/192/256), Passwörter mindestens 8 Zeichen, optional ein
+Context; kein SNMPv1/v2c, keine Community, kein MD5/DES. Der Benutzer gehört auf dem Gerät in eine
+Gruppe **nur mit Read-View** (keine Write-View). Gesendet werden nur **GET** (einzelne Werte) und
+**GETBULK** (Spalten der Tabelle, Fortsetzung nur innerhalb der Spalte) auf die Positivliste
+`collectors/snmp/oids.py`; jede andere Abfrage bricht vor dem Senden ab (`ReadOnlyViolation`), ein
+SET gibt es im Collector nicht. Je Spalte höchstens 20 000 Zeilen bzw. 120 s, MAC-Tabelle höchstens
+50 000 Einträge (wie per SSH). Ergebnis in denselben Tabellen wie per SSH.
+
+| MIB | gelesen | → Automato |
+|---|---|---|
+| SNMPv2-MIB | `sysName` (ohne Domäne), `sysDescr` (Version/Modell als Rückfall), `sysObjectID` (Hersteller) | `inv_device` (Rolle `switch`, Juniper MX `router`) |
+| ENTITY-MIB (optional) | `entPhysicalClass` bis zum ersten Chassis, dessen `entPhysicalModelName`, `entPhysicalSerialNum`, `entPhysicalSoftwareRev` | Modell, Seriennummer, Version |
+| IF-MIB | `ifName`/`ifDescr`, `ifType`, `ifAdminStatus`, `ifOperStatus`, `ifHighSpeed`, `ifAlias`, `ifPhysAddress`; übernommen Ethernet, LAG, VLAN-Interfaces | `inv_interface` (`status` up/down/disabled, `enabled`, `speed`, `description`, `attrs.mac`) |
+| EtherLike-MIB (optional) | `dot3StatsDuplexStatus` | `duplex` |
+| IEEE8023-LAG-MIB (optional) | `dot3adAggPortAttachedAggID` bzw. `…SelectedAggID` | `lag` am Mitglied |
+| BRIDGE-MIB | `dot1dBasePortIfIndex` (Bridge-Port → ifIndex); `dot1dTpFdbPort`/`Status` als Rückfall der MAC-Tabelle (ohne VLAN) | Zuordnung der Ports, `mac_entry` |
+| Q-BRIDGE-MIB bzw. IEEE8021-Q-BRIDGE-MIB | `dot1qVlanStaticName`/`EgressPorts`/`UntaggedPorts` (bzw. `dot1qVlanCurrent…`), `dot1qPvid`, `dot1qVlanFdbId`, `dot1qTpFdbPort`/`Status`; IEEE 802.1Q-2011 mit der Komponente im Index | `inv_vlan`; je Port Access (ein VLAN ungetaggt) bzw. Trunk (`trunk_vlans`, `native_vlan`); `mac_entry` (nur gelernt/statisch, Unicast, nicht eigene) |
+| IP-MIB | `ipNetToPhysicalPhysAddress`/`Type`/`State` (IPv4 und IPv6), Rückfall `ipNetToMediaPhysAddress`/`Type` (IPv4); ohne `local`/`invalid`/unvollständige und eigene MACs | `arp_entry` (IPv6-Nachbarn wie per SSH, Link-local nicht als Identität) |
+| LLDP-MIB | `lldpLocPortIdSubtype`/`Id`/`Desc`, `lldpRemChassisId…`, `lldpRemPortId…`, `lldpRemPortDesc`, `lldpRemSysName`, `lldpRemSysDesc`, `lldpRemSysCap…`, `lldpRemManAddrIfSubtype` (Adresse aus dem Index) | `inv_neighbor` (`protocol` lldp) |
+| CISCO-CDP-MIB (optional) | `cdpCacheDeviceId`, `cdpCacheDevicePort`, `cdpCachePlatform`, `cdpCacheAddress`/`Type`, `cdpCacheCapabilities` | `inv_neighbor` (`protocol` cdp); am Port CDP vor LLDP |
+
+Fehlt IF-MIB, Q-BRIDGE, die MAC-Tabelle oder LLDP (bzw. liegt die Tabelle nicht in der View), steht
+ein Hinweis im Lauf; die optionalen MIBs fehlen ohne Hinweis. **Nicht gelesen**: Konfiguration,
+USM/VACM/Community-Tabellen, Zähler, Routing, Spanning Tree, vPC/MLAG, Traps. **Grenzen**: Cisco
+IOS/IOS-XE führt VLANs je Port und die MAC-Tabelle je VLAN in eigenen MIBs bzw. Contexts – dort
+bleibt SSH genauer. Prüfen (`--check`): ein GET auf `sysName` je Gerät.
 
 ## 6. VMware NSX Advanced Load Balancer (Avi; REST, nur GET; ADR 0027)
 

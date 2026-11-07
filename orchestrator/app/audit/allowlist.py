@@ -13,7 +13,15 @@ bewusst: lieber ein lückenhaftes als ein undichtes Log.
 # action -> erlaubte detail-Keys. Nur unkritische, benannte Felder.
 ALLOWLIST: dict[str, frozenset[str]] = {
     "collector_run.queued": frozenset(
-        {"platform", "tenant_id", "source_system_id", "execution", "trigger"}
+        {
+            "platform",
+            "tenant_id",
+            "source_system_id",
+            "execution",
+            "trigger",
+            "scope",
+            "application_id",
+        }
     ),
     "collector_run.completed": frozenset({"rule_count", "persisted"}),
     "collector_run.failed": frozenset({"rule_count", "persisted"}),
@@ -24,6 +32,13 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "agent.update_downloaded": frozenset({"agent_id", "from_version", "to"}),
     "naming_profile.created": frozenset({"profile_id", "customer", "name", "copied_from"}),
     "zone_schema.saved": frozenset({"profile_id", "zones", "links"}),
+    "appdoc_catalog.saved": frozenset({"profile_id", "categories", "stored"}),
+    "appdoc_catalog.reset": frozenset({"profile_id"}),
+    "appdoc_ruleset.activated": frozenset({"profile_id", "key"}),
+    "appdoc_ruleset.saved": frozenset({"profile_id", "key"}),
+    "appdoc_ruleset.deleted": frozenset({"profile_id", "key"}),
+    "appdoc_ruleset.renamed": frozenset({"profile_id", "key"}),
+    "appdoc_ruleset.restored": frozenset({"profile_id", "key"}),
     "zone_schema.deleted": frozenset({"profile_id"}),
     "zone_schema.edited": frozenset(
         {"profile_id", "zones", "links", "added", "removed", "changed", "links_changed"}
@@ -33,9 +48,25 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     ),
     "dictionary_entry.upserted": frozenset({"profile_id", "kind", "key"}),
     "dictionary_entry.deleted": frozenset({"entry_id"}),
-    "finding.triaged": frozenset({"finding_id", "status"}),
+    # bulk (0.117.0): Teil einer Mehrfach-Triage
+    "finding.triaged": frozenset({"finding_id", "status", "customer_roles", "bulk"}),
+    # von Hand erfasst (0.109.0): ohne Titel und Text (frei eingegeben)
+    "finding.created": frozenset(
+        {"finding_id", "tenant_id", "type", "severity", "source_system_id"}
+    ),  # fmt: skip
     "tenant.created": frozenset({"tenant_id", "name", "code"}),
-    "tenant.updated": frozenset({"tenant_id", "code", "audit_reads", "naming_profile_id"}),
+    # IPv4/IPv6-Paare nach dem Umschalten von rule_pairs_auto neu gebildet (0.138.0)
+    "rule_pairs.rebuilt": frozenset({"tenant_id", "auto"}),
+    "tenant.updated": frozenset(
+        {
+            "tenant_id",
+            "code",
+            "audit_reads",
+            "naming_profile_id",
+            "appdoc_foreign_names",
+            "rule_pairs_auto",
+        }
+    ),
     "tenant.deleted": frozenset(
         {
             "tenant_id",
@@ -65,6 +96,7 @@ ALLOWLIST: dict[str, frozenset[str]] = {
             "ref_role",
             "site_id",
             "schedule",
+            "access",  # Switches & Router: Zugang ssh | snmp (ADR 0033)
         }
     ),
     "source.updated": frozenset(
@@ -79,6 +111,7 @@ ALLOWLIST: dict[str, frozenset[str]] = {
             "site_id",
             "schedule",
             "parallel_group",
+            "access",  # Wechsel des Zugangs (ADR 0033)
         }
     ),
     # Parallele Firewalls (0.18.0): Verbund gesetzt bzw. aufgeloest
@@ -92,13 +125,38 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     # erkannte Anbindungen ausblenden bzw. wieder anzeigen (0.21.0): nur die Router-IPs
     "routing.exit.dismissed": frozenset({"tenant_id", "ips"}),
     "routing.exit.undismissed": frozenset({"tenant_id", "ips"}),
+    # Firewall hinter einem L3Out von Hand (ADR 0034): L3Out, Herkunft, Firewalls (ID, VDOM,
+    # Interface)
+    "routing.l3out_firewall.set": frozenset(
+        {"tenant_id", "source_system_id", "dn", "l3out", "origin", "firewalls"}
+    ),
+    "routing.l3out_firewall.removed": frozenset({"tenant_id", "source_system_id", "dn", "l3out"}),
     "reconcile.run": frozenset({"tenant_id", "findings"}),
-    # NetBox-Sync (ADR 0010): nur Anzahlen, keine Inhalte
+    "reconcile.version": frozenset({"version", "findings"}),  # 0.133.0: nach einem Update
+    # NetBox-Sync (ADR 0010): nur Anzahlen und die gewaehlten Abschnitte (ADR 0031), keine Inhalte
     "netbox_sync.planned": frozenset(
-        {"plan_id", "tenant_id", "source_system_id", "create", "update", "delete", "conflict"}
+        {
+            "plan_id",
+            "tenant_id",
+            "source_system_id",
+            "sections",
+            "create",
+            "update",
+            "delete",
+            "conflict",
+        }
     ),
     "netbox_sync.applied": frozenset(
-        {"plan_id", "tenant_id", "source_system_id", "status", "create", "update", "delete"}
+        {
+            "plan_id",
+            "tenant_id",
+            "source_system_id",
+            "status",
+            "sections",
+            "create",
+            "update",
+            "delete",
+        }
     ),
     "netbox_sync.cancelled": frozenset({"plan_id", "tenant_id"}),
     "rule_pair.decided": frozenset({"source_system_id", "vdom", "decision"}),
@@ -110,7 +168,8 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "site.updated": frozenset({"tenant_id", "site_id", "fields"}),
     "site.deleted": frozenset({"tenant_id", "site_id"}),
     "system.site_assigned": frozenset({"tenant_id", "site_id"}),
-    # Applikationen (ADR 0012): Stammdaten-Felder, Mitglieder nur als Art/Verweis
+    # Applikationen (ADR 0012): Stammdaten-Felder, Mitglieder nur als Art/Verweis; handelt ein
+    # Kunden-Benutzer (feinere Rollen), seine Kunden-Rollen je Kunde (`customer_roles`)
     "application.created": frozenset(
         {"application_id", "tenant_id", "name", "code", "members", "suggestion"}
     ),
@@ -123,7 +182,9 @@ ALLOWLIST: dict[str, frozenset[str]] = {
             "criticality",
             "purpose",
             "site_id",
+            "infrastructure",
             "fields",
+            "customer_roles",
         }
     ),
     "application.deleted": frozenset({"application_id", "tenant_id", "name", "members"}),
@@ -132,28 +193,45 @@ ALLOWLIST: dict[str, frozenset[str]] = {
         {"tenant_id", "created", "updated", "errors", "application_ids"}
     ),
     "application.member_added": frozenset(
-        {"application_id", "tenant_id", "kind", "ref", "count", "suggestion"}
+        {"application_id", "tenant_id", "kind", "ref", "count", "suggestion", "customer_roles"}
     ),
-    "application.member_removed": frozenset({"application_id", "tenant_id", "kind", "ref"}),
+    "application.member_removed": frozenset(
+        {"application_id", "tenant_id", "kind", "ref", "customer_roles"}
+    ),
     # 0.69.0: Regel in den Kategorien der Doku aus-/eingeblendet, mit Begruendung
     "application.rule_hidden": frozenset(
-        {"application_id", "tenant_id", "rule_ref", "category", "reason"}
+        {"application_id", "tenant_id", "rule_ref", "category", "reason", "customer_roles"}
     ),
     "application.rule_shown": frozenset(
-        {"application_id", "tenant_id", "rule_ref", "category", "reason"}
+        {"application_id", "tenant_id", "rule_ref", "category", "reason", "customer_roles"}
     ),
     # Kunden als Ausschnitt der Umgebung (ADR 0018): Name und Anzahl der Selektoren
     "customer.created": frozenset({"tenant_id", "customer_id", "name", "selectors"}),
     "customer.updated": frozenset({"tenant_id", "customer_id", "name", "selectors"}),
     "customer.deleted": frozenset({"tenant_id", "customer_id", "name", "selectors"}),
-    # Zuordnung Benutzer -> Kunde in Automato (0.53.0, ADR 0018 Schritt 4)
-    "customer_user.assigned": frozenset({"tenant_id", "customer_id", "login", "role"}),
-    "customer_user.changed": frozenset({"tenant_id", "customer_id", "login", "role"}),
-    "customer_user.removed": frozenset({"tenant_id", "customer_id", "login", "role"}),
+    # Zuordnung Benutzer -> Kunde in Automato (0.53.0, ADR 0018 Schritt 4); seit den feineren
+    # Rollen mit Herkunft (Betreuer bzw. Kunden-Admin) und den Kunden-Rollen des Handelnden
+    "customer_user.assigned": frozenset(
+        {"tenant_id", "customer_id", "login", "role", "origin", "customer_roles"}
+    ),
+    "customer_user.changed": frozenset(
+        {"tenant_id", "customer_id", "login", "role", "previous_role", "origin", "customer_roles"}
+    ),
+    "customer_user.removed": frozenset(
+        {"tenant_id", "customer_id", "login", "role", "origin", "customer_roles"}
+    ),
     # Logische Zonen und Absicht je Zonenpaar (0.51.0, ADR 0024)
     "zone.created": frozenset({"tenant_id", "zone_id", "name", "kind", "selectors", "via"}),
     "zone.updated": frozenset({"tenant_id", "zone_id", "name", "kind", "selectors", "via"}),
     "zone.deleted": frozenset({"tenant_id", "zone_id", "name", "kind", "selectors"}),
+    "zone.appdoc_set": frozenset({"tenant_id", "changes"}),
+    # Module je Mandant (0.107.0, ADR 0036)
+    "module.switched": frozenset({"tenant_id", "module", "enabled", "changed"}),
+    # Pruefungen der Findings je Mandant (0.110.0, ADR 0039)
+    "check.switched": frozenset({"tenant_id", "check", "enabled"}),
+    # Grosse Netze der Regeln von Hand zuordnen (0.111.0, ADR 0040)
+    "net_assignment.set": frozenset({"tenant_id", "prefix", "kind", "zone_id", "exit_id"}),
+    "net_assignment.deleted": frozenset({"tenant_id", "prefix", "kind", "zone_id", "exit_id"}),
     "zone_policy.set": frozenset(
         {"tenant_id", "src_zone_id", "dst_zone_id", "intent", "services", "via"}
     ),
@@ -168,15 +246,14 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "read.nat": frozenset({"tenant_id", "resource", "customers"}),
     "read.findings": frozenset({"tenant_id", "resource", "customers"}),
     "read.applications": frozenset({"tenant_id", "resource", "customers"}),
-    "read.published_services": frozenset({"tenant_id", "resource"}),
-    "read.appdoc": frozenset({"tenant_id", "resource", "customers"}),
     "read.routing": frozenset({"tenant_id", "resource"}),
     "read.objects": frozenset({"tenant_id", "resource", "customers"}),
     "read.virtual": frozenset({"tenant_id", "resource", "customers"}),
     "read.customers": frozenset({"tenant_id", "resource", "customers"}),
     "read.zones": frozenset({"tenant_id", "resource"}),
     "retention.purged": frozenset(
-        {"runs", "sync_plans", "audit", "l2", "runs_days", "sync_days", "audit_days", "l2_days"}
+        {"runs", "sync_plans", "audit", "l2", "topo_changes"}
+        | {"runs_days", "sync_days", "audit_days", "l2_days", "topo_changes_days"}
     ),
 }
 

@@ -381,6 +381,17 @@ function SchemaView({ schema }: { schema: ZoneSchemaData }) {
                     {L("je Kunde", "per customer")}
                   </span>
                 )}
+                {z.joins_same && (
+                  <span
+                    className="chip info schema-joins-same"
+                    title={L(
+                      "Verbindet gleiche Zonen (desselben Zonentyps, z. B. zweier Kunden) – für das BGP-Soll ein Durchgang (automato_join_same)",
+                      "Connects equal zones (of the same zone type, e.g. of two customers) – a passage for the BGP target (automato_join_same)",
+                    )}
+                  >
+                    {L("verbindet gleiche Zonen", "connects equal zones")}
+                  </span>
+                )}
                 {z.description && <div className="faint">{z.description}</div>}
               </td>
               <td>
@@ -541,6 +552,7 @@ function toDraft(schema: ZoneSchemaData): Draft {
     geometry: z.geometry,
     previous: z.name,
     per_customer: !!z.per_customer,
+    joins_same: !!z.joins_same,
   }));
   const byName = new Map(zones.map((z) => [z.name, z.uid]));
   const links = schema.links
@@ -614,6 +626,7 @@ function SchemaEditor({ draft, onChange, onSave, onCancel, busy }: {
           geometry: null,
           previous: null,
           per_customer: false,
+          joins_same: false,
         },
       ],
     });
@@ -742,6 +755,21 @@ function SchemaEditor({ draft, onChange, onSave, onCancel, busy }: {
                     onChange={(e) => setZone(i, { per_customer: e.target.checked })}
                   />{" "}
                   {L("je Kunde", "per customer")}
+                </label>
+                <label
+                  className="check"
+                  title={L(
+                    "Diese Zone verbindet gleiche Zonen (desselben Zonentyps, z. B. zweier Kunden) miteinander – z. B. die Zone der Zonen-Firewall. Ohne Häkchen (Vorgabe) ist sie für das BGP-Soll aus den Zonen kein Durchgang zwischen ihnen, z. B. die Internet-Firewall zwischen zwei Kunden (0.128.0).",
+                    "This zone connects equal zones (of the same zone type, e.g. of two customers) – e.g. the zone of the zone firewall. Without the check mark (default) it is no passage between them for the BGP target from the zones, e.g. the internet firewall between two customers (0.128.0).",
+                  )}
+                >
+                  <input
+                    type="checkbox"
+                    aria-label={L("verbindet gleiche Zonen", "connects equal zones")}
+                    checked={!!z.joins_same}
+                    onChange={(e) => setZone(i, { joins_same: e.target.checked })}
+                  />{" "}
+                  {L("verbindet gleiche Zonen", "connects equal zones")}
                 </label>
               </td>
               <td>

@@ -24,12 +24,15 @@ Neue Texte halten sich an diese Liste, damit derselbe Begriff überall gleich he
 | Mandant | Tenant |
 | Umgebung | Environment |
 | Kunde, Kunden-Benutzer | Customer, customer user |
+| Kunden-Rolle (Lesen, Triage, Editor, Kunden-Admin) | Customer role (read, triage, editor, customer admin) |
+| pflegbar (Applikation) | editable |
 | Ausschnitt (eines Kunden) | Scope |
 | geteilt | shared |
 | Selektor | Selector |
 | Quellsystem | Source system |
 | Gerät | Device |
 | Zugangsdaten | Credentials |
+| Zugang (SSH / SNMPv3) | Access (SSH / SNMPv3) |
 | Lauf, Läufe | Run, runs |
 | einlesen / Alle einlesen | collect / Collect all |
 | einspielen (Ergebnis) | ingest |
@@ -46,7 +49,12 @@ Neue Texte halten sich an diese Liste, damit derselbe Begriff überall gleich he
 | Referenzstand (IPAM) | Reference data |
 | Vorschau → Übernehmen | Preview → Apply |
 | Abgleich | Reconciliation |
+| Datenqualität, Gesamtnote, Bereich | Data quality, overall score, area |
+| Stand veraltet / nur teilweise gelesen | data outdated / only partially collected |
+| Stichprobe | Sample |
 | Befund, Findings | Finding, findings |
+| Finding erfassen, von Hand erfasst | Capture finding, captured manually |
+| Prüfung (steckbar, je Mandant ein/aus), Prüfungen, Neu abgleichen | Check (pluggable, on/off per tenant), checks, reconcile again |
 | Hinweis / Warnung / Fehler | Note / warning / error |
 | offen / bestätigt / ignoriert | open / acknowledged / ignored |
 | Kennzahlen | Key figures |
@@ -69,7 +77,6 @@ Neue Texte halten sich an diese Liste, damit derselbe Begriff überall gleich he
 | eingehend / ausgehend | inbound / outbound |
 | beide Richtungen | both directions |
 | Rückrichtung, Rückweg | Reverse direction, return path |
-| publizierte Dienste | Published services |
 | Bereich (Adressen) | Range |
 
 ## Routing, Weg, Topologie
@@ -78,17 +85,37 @@ Neue Texte halten sich an diese Liste, damit derselbe Begriff überall gleich he
 |---|---|
 | Weg-Suche | Path search |
 | Weg, Hop | Path, hop |
+| Warum dieser Weg? | Why this path? |
+| Erwartet über … | Expected via … |
+| gewählt / verworfen (Route) | chosen / rejected |
 | erlaubt / gesperrt / abhängig | allowed / blocked / depends |
 | möglich / unmöglich / unbekannt | possible / impossible / unknown |
 | implizit gesperrt | implicitly denied |
 | aktiv / Backup | active / backup |
 | Kontext (VDOM/VRF) | Context |
-| nicht lesbar | not readable |
+| nicht lesbar / wieder lesbar | not readable / readable again |
+| Verlauf (des Routings) | History (routing history) |
+| Ausgangsstand | Baseline |
+| hinzugefügt / entfernt / geändert | added / removed / changed |
+| Vermerk, Obergrenze (je Lauf) | Note, limit (per run) |
 | Anbindung (nach aussen) | Exit |
 | erkannte Anbindung | Detected exit |
 | ausblenden / einblenden | hide / show |
 | parallele Firewalls, Verbund | Parallel firewalls, parallel group |
 | Transfernetz | Transfer network |
+| Netze dahinter (Liste prüfen, zusammenfassen) | Networks behind (check, collapse list) |
+| Netz grösser als die Routen | Network wider than the routes |
+| Netz zuordnen, Zuordnung von Hand | Assign network, manual assignment |
+| aufgeteilt / unklar (Zuordnung) | split / unclear (assignment) |
+| Export Route Control (nur Routing) | Export Route Control (routing only) |
+| Soll/Ist (BGP-Filter) | expected/actual (BGP filters) |
+| erwartet / erhalten / angekündigt (berechnet) | expected / received / announced (computed) |
+| Prefix-Liste, Route-Map, Access-Liste | prefix list, route map, access list |
+| Eingangsfilter / Ausgangsfilter | inbound filter / outbound filter |
+| Import Route Control nicht erzwungen | import route control not enforced |
+| aus den BGP-Filtern (Netze dahinter) | from the BGP filters (networks behind) |
+| auch vom Provider aus (ACI, Filter ohne Ports) | also from the provider (ACI, filter without ports) |
+| Eingang nach der Route zur Quelle | incoming by the route to the source |
 | Topologie | Topology |
 | Relevanz | Relevance |
 | Gegenstelle | Peer |
@@ -120,6 +147,16 @@ Neue Texte halten sich an diese Liste, damit derselbe Begriff überall gleich he
 | Verbindungen Ende zu Ende | End-to-end connections |
 | Netzwerkplan | Network diagram |
 | Kategorie | Category |
+| Kategorien (Reiter im Netzwerkdesign, 0.102.0) | Categories |
+| Ausschlüsse („ohne“ Netz einer Zone) | Exclusions (“without”) |
+| Zugriff Management (Kategorie 11) | Management access |
+| Kategorien der Applikations-Doku (Namensprofile, 0.104.0) | Categories of the application documentation |
+| Auf Vorgaben zurücksetzen | Reset to defaults |
+| Zonentyp (Zone des Grundschemas, 0.105.0) | Zone type |
+| Source-Zone / Dest-Zone (Richtung einer Kategorie, 0.106.0) | Source zone / Destination zone |
+| Sonderfall: innerhalb der Applikation / des Security Tenants | special case: within the application / the security tenant |
+| Geräte (einer Zone: Firewall/VDOM, ACI-Tenant/-VRF, Anbindung) | Devices |
+| Netz nicht über den Übergang zur Zone (Befund) | Network not via the transition to the zone |
 | Zweck (Dev/Test/Prod) | Purpose |
 | Kritikalität | Criticality |
 | Verantwortlich | Owner |
@@ -141,6 +178,8 @@ Neue Texte halten sich an diese Liste, damit derselbe Begriff überall gleich he
 | Ausfall | Failure |
 | Patchungen | Patching |
 | Uplink / Anschluss | Uplink / access port |
+| IPv6-Nachbarn (NDP) | IPv6 neighbors (NDP) |
+| Link-local (IPv6) | link-local |
 
 ## Texte vom Server (seit 0.87.0)
 
@@ -174,3 +213,9 @@ Neue Texte halten sich an diese Liste, damit derselbe Begriff überall gleich he
 | wird geladen… | Loading… |
 | keine Einträge | No entries |
 | rückgängig | undo |
+| Modul (Kern, Einstellungen, Worker, Gateway, Analyse, Wegsucher, Findings, Doku, Design, Schreibpfad) | Module (core, settings, worker, gateway, analysis, path finder, findings, documentation, design, write path) |
+| Stand (der Doku), „Stand von …“, „wird im Hintergrund aktualisiert“, neu berechnen | Snapshot, “As of …”, “updating in the background”, recalculate |
+| Regel nie gebraucht | Rule never needed |
+| unvollständig geprüft (Applikation) | not completely checked (application) |
+| Adressklasse, Wege-Speicher | address class, path store |
+| Datenstand, Fussabdruck, übernommen (nicht betroffen), wartet auf Läufe | data state, footprint, carried over (not affected), waiting for runs |

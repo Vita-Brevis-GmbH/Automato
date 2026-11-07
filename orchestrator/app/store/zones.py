@@ -473,6 +473,8 @@ def zone_out(z: LogicalZone, nets: ZoneNets | None = None, color: dict | None = 
         "own_color": z.color,
         "customer_id": z.customer_id,
         "position": z.position,
+        "zone_type": z.zone_type,  # Zonentyp von Hand (0.105.0); erkannt = `schema`
+        "external_managed": bool(z.external_managed),  # fremd verwaltet (0.132.0)
         "nets": len(nets.nets) if nets else 0,
         "epgs": len(nets.epgs) if nets else 0,
     }
@@ -683,14 +685,16 @@ def colors(session: Session, tenant_id: int, items: list[LogicalZone]) -> dict[i
     """Farbe je Zone: aus dem Grundschema (gleiche Zone dort; ohne Grundschema aus der
     eingebauten Vorlage), sonst die eigene, sonst die der Art - so ist dieselbe Zone ueberall
     gleich gefaerbt."""
-    from app.store import zone_schema
+    from app.store import zone_detect, zone_schema
 
     schema, _profile = zone_schema.for_tenant(session, tenant_id)
     source = "schema" if schema is not None else "template"
     schema = schema or zone_schema.default_schema()
+    # Zone des Grundschemas = Zonentyp (0.105.0): von Hand, Name/Kurzname/Muster, Vorlage je Kunde
+    mapped = zone_detect._mapped(schema, items, zone_detect._customer_names(session, tenant_id))
     out = {}
     for z in items:
-        sz = schema.match(z.name, z.code)
+        sz = mapped.get(z.id)
         if sz is not None and sz.color:
             out[z.id] = {"color": sz.color, "color_source": source, "schema": sz.name}
         elif z.color:

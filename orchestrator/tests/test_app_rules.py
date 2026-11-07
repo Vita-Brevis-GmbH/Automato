@@ -7,6 +7,7 @@ EPG_web) und CT_dns (EPG_app -> EPG_dns); fw-k mit kb-out (VDOM kunde-b), fw-u m
 -> N_dns 10.0.53.0/24).
 """
 
+from app.models import AuditLog
 from test_customer_users import FWU
 from test_customers import APP, DB, DNS, OP, WEB, _deliver, _seed, _system
 
@@ -113,3 +114,47 @@ def test_abhaengigkeiten_zwischen_applikationen(client):
     assert deps(db) == ({"Web": ["CT_web"]}, {})
     # 0.73.0: in der Doku nur auf Anfrage (die Oberflaeche zeigt sie vorerst nicht)
     assert _doc(client, web["id"])["dependencies"] == {}
+
+
+def test_abhaengigkeiten_infrastruktur_und_export(client, session_factory):
+    """0.88.0: Abhaengigkeiten wieder in der Doku - eigener Abruf, Infrastruktur getrennt."""
+    import io
+    import zipfile
+
+    tid, ids = _seed(client)
+    app = _app(client, tid, "App", [{"kind": "epg", "ref": APP}])
+    web = _app(client, tid, "Web", [{"kind": "epg", "ref": WEB}])
+    dns = _app(client, tid, "DNS", [{"kind": "epg", "ref": DNS}])
+    assert dns["infrastructure"] is False
+    # DNS als Infrastruktur kennzeichnen (Stammdaten, im Audit)
+    r = client.patch(f"/applications/{dns['id']}", json={"infrastructure": True}, headers=OP)
+    assert r.status_code == 200, r.text
+    assert r.json()["infrastructure"] is True
+    s = session_factory()
+    rows = s.query(AuditLog).filter(AuditLog.action == "application.updated").all()
+    assert any(a.detail.get("infrastructure") is True for a in rows)
+    s.close()
+
+    r = client.get(f"/applications/{app['id']}/dependencies")
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["infrastructure"] is False and d["used_by"] == []
+    assert [(e["name"], e["infrastructure"]) for e in d["uses"]] == [("DNS", True),
+                                                                     ("Web", False)]  # fmt: skip
+    assert client.get(f"/applications/{dns['id']}/dependencies").json()["infrastructure"] is True
+    # neu anlegen mit Kennzeichen
+    body = {"name": "Monitoring", "infrastructure": True, "members": []}
+    mon = client.post(f"/applications?tenant_id={tid}", headers=OP, json=body)
+    assert mon.status_code == 201 and mon.json()["infrastructure"] is True
+
+    # Word-Export: Abschnitt „Abhängigkeiten“ mit Unterabschnitt Infrastruktur
+    r = client.get(f"/applications/{app['id']}/export",
+                   params={"format": "docx", "sections": "dependencies"})  # fmt: skip
+    assert r.status_code == 200, r.text
+    body = zipfile.ZipFile(io.BytesIO(r.content)).read("word/document.xml").decode()
+    assert "Abhängigkeiten" in body and "Infrastruktur" in body
+    assert body.index("CT_app") < body.index("Infrastruktur") < body.index("CT_dns")
+    r = client.get(f"/applications/{web['id']}/export",
+                   params={"format": "docx", "sections": "dependencies", "lang": "en"})  # fmt: skip
+    body = zipfile.ZipFile(io.BytesIO(r.content)).read("word/document.xml").decode()
+    assert "Dependencies" in body and "used by" in body

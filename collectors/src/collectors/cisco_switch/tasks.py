@@ -3,9 +3,15 @@
 Ein Quellsystem ist eine Gruppe von Switches bzw. Routern mit gemeinsamem Read-only-Konto: die
 Adressen stehen im Lesebereich (`read_scope`, eine je Zeile bzw. kommagetrennt, `host[:port]`).
 Je Geraet `show version` (erkennt IOS/IOS-XE, NX-OS, seit 0.68.0 Junos und die Business-CLI der
-Catalyst 1200/1300 - diese ueber die begrenzte Sitzung), danach die festen Befehle der Plattform.
+Catalyst 1200/1300 - diese ueber die begrenzte Sitzung -, seit 0.94.0 Arista EOS und Aruba CX),
+danach die festen Befehle der Plattform (seit 0.94.0 auch die IPv6-Nachbarn) und - ADR 0032 -
+das Routing (`routing.COMMANDS`: RIB, BGP; nur L3-Geraete bekommen Kontexte, ein Switch ohne
+`ip routing` nur den ersten Befehl).
 Ein Switch, der nicht antwortet, fehlt im Ergebnis und steht in der Meldung; antwortet keiner,
 schlaegt der Lauf fehl. Ohne Zugangsdaten liest nur der zentrale Worker (Lab) die Beispieldaten.
+
+Zugang „SNMPv3“ (ADR 0033, `Target.access == "snmp"`): dieselben Geraete und dasselbe Ergebnis,
+gelesen mit SNMPv3 authPriv statt SSH (`collectors/snmp/`).
 """
 
 import json
@@ -14,6 +20,7 @@ from concurrent.futures import ThreadPoolExecutor
 from importlib import resources
 
 from collectors.celery_app import app
+from collectors.cisco_switch import routing
 from collectors.cisco_switch.client import COMMANDS, SwitchClient, fingerprint
 from collectors.cisco_switch.normalize import (
     PLATFORM_LABEL,
@@ -25,6 +32,7 @@ from collectors.cisco_switch.normalize import (
 from collectors.common import agent as agent_api
 from collectors.common import diagnose
 from collectors.common.dto import CollectorResult, Target
+from collectors.common.i18n import L, carry, german_only
 from collectors.common.upload import confirmed, submit_result
 from collectors.config import get_settings
 
@@ -43,8 +51,28 @@ def _sample() -> dict:
 
 
 def _no_credentials(target: Target | None) -> str:
-    name = f"„{target.name}“" if target is not None and target.name else "die Switches"
-    return f"keine Zugangsdaten fuer {name} - im Web-UI beim Quellsystem hinterlegen"
+    name = (
+        L(f"„{target.name}“", f"“{target.name}”")
+        if target is not None and target.name
+        else L("die Switches", "the switches")
+    )
+    return L(
+        f"keine Zugangsdaten fuer {name} - im Web-UI beim Quellsystem hinterlegen",
+        f"no credentials for {name} - store them at the source system in the web UI",
+    )
+
+
+def _snmp(target: Target | None) -> bool:
+    """Zugang SNMPv3 statt SSH (ADR 0033)."""
+    return target is not None and (target.access or "ssh") == "snmp"
+
+
+def _has_credentials(target: Target | None) -> bool:
+    if _snmp(target):
+        from collectors.snmp.tasks import has_credentials
+
+        return has_credentials(target)
+    return bool(target is not None and target.username and target.password)
 
 
 def read_switch(entry: str, target: Target) -> dict:
@@ -69,21 +97,38 @@ def read_switch(entry: str, target: Target) -> dict:
             if error and not quiet(platform, cmd, error):
                 notes.append(f"{cmd}: {error}")
             outputs[cmd] = text
+        # Routing (ADR 0032): Fehler wertet `routing.device` aus (nicht lesbar bzw. Funktion aus)
+        routing_errors: dict[str, str] = {}
+        for i, cmd in enumerate(routing.COMMANDS.get(platform, ())):
+            try:
+                outputs[cmd] = client.run(cmd)
+            except Exception as exc:  # noqa: BLE001 - Teil „nicht lesbar“, die anderen weiter
+                routing_errors[cmd] = type(exc).__name__
+                continue
+            if i == 0 and routing.not_routing(outputs[cmd]):
+                break  # Switch ohne Routing: die weiteren Routing-Befehle sparen
+    cut = sorted(set(getattr(client, "cut", ())) & routing.ALL)
     return {"host": entry, "platform": platform, "outputs": outputs, "notes": notes,
-            "host_key": client.host_key, "mode": mode}  # fmt: skip
+            "host_key": client.host_key, "mode": mode, "routing_errors": routing_errors,
+            "routing_cut": cut}  # fmt: skip
 
 
 def gather(target: Target | None = None) -> dict:
     """Alle Switches des Quellsystems; `errors` je Adresse, die nicht gelesen wurde."""
-    if target is None or not (target.username and target.password):
+    if not _has_credentials(target):
         if get_settings().agent_token:
             raise RuntimeError(_no_credentials(target))
         return _sample()
     entries = hosts(target.read_scope)
     if not entries:
-        raise RuntimeError("keine Switch-Adressen im Quellsystem (Lesebereich) hinterlegt")
+        raise RuntimeError(_no_hosts())
+    if _snmp(target):  # SNMPv3 (ADR 0033)
+        from collectors.snmp import tasks as snmp
+
+        return snmp.gather(target, entries)
     switches, errors = [], []
 
+    @carry  # Threads: Meldungen in der Sprache des Aufrufers (im Lauf deutsch)
     def one(entry: str):
         try:
             return read_switch(entry, target), None
@@ -100,12 +145,19 @@ def gather(target: Target | None = None) -> dict:
 
 
 def check(target: Target | None = None) -> tuple[bool, str]:
-    """Anmeldung und `show version` je Switch (read-only, kein Ingest)."""
-    if target is None or not (target.username and target.password):
-        return False, _no_credentials(target) if target else "keine Switch-Creds"
+    """Anmeldung und `show version` je Switch (read-only, kein Ingest); Zugang SNMPv3: ein GET
+    auf `sysName` je Geraet."""
+    if not _has_credentials(target):
+        return False, _no_credentials(target) if target else L(
+            "keine Switch-Creds", "no switch credentials"
+        )
     entries = hosts(target.read_scope)
     if not entries:
-        return False, "keine Switch-Adressen im Quellsystem (Lesebereich) hinterlegt"
+        return False, _no_hosts()
+    if _snmp(target):
+        from collectors.snmp import tasks as snmp
+
+        return snmp.check(target, entries)
     ok, lines = True, []
     for entry in entries:
         client = SwitchClient(entry, target.username, target.password,
@@ -120,12 +172,21 @@ def check(target: Target | None = None) -> tuple[bool, str]:
             continue
         kind = PLATFORM_LABEL[detect_platform(version)]
         if mode == "shell":
-            kind += ", Sitzung"
-        lines.append(f"{entry}: erreichbar ({kind}, Host-Schluessel "
-                     f"{fingerprint(client.host_key or '')})")  # fmt: skip
+            kind += L(", Sitzung", ", session")
+        key = fingerprint(client.host_key or "")
+        lines.append(L(f"{entry}: erreichbar ({kind}, Host-Schluessel {key})",
+                       f"{entry}: reachable ({kind}, host key {key})"))  # fmt: skip
     return ok, "; ".join(lines)
 
 
+def _no_hosts() -> str:
+    return L(
+        "keine Switch-Adressen im Quellsystem (Lesebereich) hinterlegt",
+        "no switch addresses stored in the source system (read scope)",
+    )
+
+
+@german_only  # Ergebnis und Meldung speichert der Orchestrator - deutsch (ADR 0028)
 def collect_once(
     run_id: str, target: Target | None = None, via_agent: bool = False
 ) -> CollectorResult:
@@ -137,9 +198,15 @@ def collect_once(
         if not switches:
             raise RuntimeError("; ".join(errors) or "kein Switch gelesen")
         inventory = normalize(raw)  # ergaenzt Hinweise je Switch (z. B. MAC-Tabelle gekappt)
+        routed = routing.normalize(raw)  # ADR 0032: Router/L3-Switches (auch leer: ersetzt)
         notes = [f"{sw['host']}: {n}" for sw in switches for n in sw.get("notes") or []]
         kinds = sorted({PLATFORM_LABEL.get(sw.get("platform"), "?") for sw in switches})
+        if _snmp(target):  # Hersteller aus sysObjectID (ADR 0033)
+            vendors = sorted({sw["vendor"] for sw in switches if sw.get("vendor")})
+            kinds = [f"SNMPv3: {', '.join(vendors)}" if vendors else "SNMPv3"]
         message = [f"Switches: {len(switches)} gelesen ({', '.join(kinds)})"]
+        if routing.summary(routed):
+            message.append(routing.summary(routed))
         if errors:
             message.append(f"nicht gelesen: {'; '.join(errors)}")
         if notes:
@@ -147,6 +214,7 @@ def collect_once(
         result = CollectorResult(
             status="completed",
             inventory=inventory,
+            routing=routed,
             host_keys={sw["host"]: sw["host_key"] for sw in switches if sw.get("host_key")},
             message=" · ".join(message),
         )
@@ -158,4 +226,4 @@ def collect_once(
 
 @app.task(name="collectors.cisco_switch.collect")
 def collect(run_id: str) -> None:
-    collect_once(run_id, agent_api.run_target(run_id))
+    agent_api.central(run_id, collect_once)

@@ -58,6 +58,8 @@ class FindingType(enum.StrEnum):
     EPG_ASSIGNMENT_CONFLICT = "epg_assignment_conflict"
     # SNAT (0.47.0): Policy mit NAT auf einen IP-Pool, den die Firewall nicht (mehr) hat
     SNAT_POOL_MISSING = "snat_pool_missing"
+    # VIP der Firewall ohne Ziel: kein Load Balancer, interne IP nirgends vergeben (0.134.0)
+    VIP_TARGET_MISSING = "vip_target_missing"
     # Topologie (0.50.0, `store/topo_model`): Plausibilitaet der gelesenen Netze und Routen
     TOPO_DUPLICATE_IP = "topo_duplicate_ip"  # dieselbe IP auf zwei Knoten im selben Netz
     TOPO_MASK_MISMATCH = "topo_mask_mismatch"  # Gegenstellen mit verschiedener Netzmaske
@@ -71,11 +73,20 @@ class FindingType(enum.StrEnum):
     # Grundschema (0.78.0, ADR 0024): logische Zone, die zu keiner Zone des Grundschemas im
     # Namensprofil passt (Name, Kurzname bzw. Erkennungsmuster)
     ZONE_OUTSIDE_SCHEMA = "zone_outside_schema"
+    # Ausgaenge der Zonen (0.105.0, ADR 0035): ein Netz der Zone lernt die Firewall nicht ueber
+    # einen Ausgang dieser Zone (anderes Interface, nur Default-Route bzw. keine Route)
+    ZONE_NET_EXIT = "zone_net_exit"
     # Verbindungen Ende zu Ende (0.59.0, ADR 0021): erlaubende Regel einer Applikation, deren
     # Verbindung der Weg sperrt, die nicht auf dem Weg liegt bzw. dort nicht greift
     APP_CONNECTION_MISMATCH = "app_connection_mismatch"
     # 0.78.2: Contract Richtung L3Out oeffnet weniger als die Firewall-Regeln (fuehrend)
     APP_CONTRACT_NARROWER = "app_contract_narrower"
+    # 0.107.0 (Anwender): Regel einer Applikation auf einem Geraet, ueber das der Weg ihrer
+    # Verbindungen nicht geht - sie wird fuer diesen Verkehr nie gebraucht
+    APP_RULE_UNUSED = "app_rule_unused"
+    # 0.140.0 (Anwender: „nicht zuverlaessig und daher gefaehrlich“): eine Grenze hat Verbindungen,
+    # Gegenstellen, Dienste bzw. Teile von Netzen der Applikation nicht geprueft
+    APP_COVERAGE = "app_coverage"
     # Verkabelung (0.62.0, ADR 0025, `store/cabling`): Verbindung zwischen zwei gelesenen
     # Switches mit abweichender Konfiguration bzw. nur von einer Seite gemeldet
     LINK_SPEED_MISMATCH = "link_speed_mismatch"
@@ -93,6 +104,35 @@ class FindingType(enum.StrEnum):
     VLAN_SPLIT = "vlan_split"
     # vPC-Paar (0.65.0): Peer nicht verbunden, vPC nur auf einem Peer, down bzw. inkonsistent
     VPC_MISMATCH = "vpc_mismatch"
+    # Datenqualitaet (ADR 0029, `store/data_quality`): Stand eines Quellsystems aelter als die
+    # Grenze (AUTOMATO_STALE_DAYS, Zeitplan beachtet) bzw. letzter Lauf nur teilweise gelesen
+    # (Geraete nicht erreicht, nicht lesbar, Routing-Kontexte unvollstaendig)
+    SOURCE_STALE = "source_stale"
+    SOURCE_PARTIAL = "source_partial"
+    # von Hand erfasst (0.109.0, z. B. aus „Warum dieser Weg?“): bleibt, bis jemand ihn erledigt
+    MANUAL = "manual"
+    # Netz einer Regel groesser als die Routen (0.111.0, ADR 0040): das Routing kennt es nicht als
+    # Ganzes (Teile genauer geroutet bzw. nur die Default-Route), keine Zone/Anbindung bzw.
+    # Zuordnung von Hand sagt, wohin es gehoert
+    NET_WIDER_THAN_ROUTES = "net_wider_than_routes"
+    # BGP-Filter (0.113.0, ADR 0041, `store/bgp_filters`): Filter erlaubt Netze, der Nachbar
+    # liefert nichts davon; erhalten, obwohl der Filter sperrt; eBGP-Nachbar ohne Eingangsfilter;
+    # ACI: import-rtctrl eingetragen, aber am L3Out nicht erzwungen (wirkt nicht)
+    BGP_EXPECTED_MISSING = "bgp_expected_missing"
+    BGP_OUTSIDE_FILTER = "bgp_outside_filter"
+    BGP_NO_INBOUND_FILTER = "bgp_no_inbound_filter"
+    ACI_IMPORT_NOT_ENFORCED = "aci_import_not_enforced"
+    # Stufe 2 (0.114.0): Eingangsfilter passt nicht zu den Zonen hinter dem Nachbarn (Netz der
+    # Zonen gesperrt, Ausschluss erlaubt, Regel ausserhalb der Zonen bzw. ohne Filter)
+    BGP_ZONE_MISMATCH = "bgp_zone_mismatch"
+    # Stufe 3 (0.116.0): Ausgangsfilter passt nicht zu den Zonen diesseits (Netz gesperrt,
+    # angekuendigt ausserhalb der Zonen, zu offen); ACI Import Route Control eines L3Outs passt
+    # nicht zu den Zonen dahinter (nicht erzwungen, fehlt, zu offen)
+    BGP_ZONE_OUT_MISMATCH = "bgp_zone_out_mismatch"
+    ACI_IMPORT_ZONE_MISMATCH = "aci_import_zone_mismatch"
+    # Nachkontrolle des NetBox-Syncs (0.115.0, ADR 0042): nach dem Uebernehmen steht ein
+    # geschriebenes Objekt nicht so in NetBox (fehlt, Felder anders, nicht geloescht)
+    NETBOX_SYNC_MISMATCH = "netbox_sync_mismatch"
 
 
 class Severity(enum.StrEnum):
@@ -121,6 +161,10 @@ class SubjectKind(enum.StrEnum):
     # bzw. ein Port (`<Geraet>|<Port>`, 0.63.0), Geraet, Geraetepaar bzw. `vlan|<VLAN>` (0.64.0)
     NAT = "nat"  # VIP bzw. IP-Pool (`<Quellsystem>|<VDOM>|<Art>|<Familie>|<Name>`, 0.72.0)
     ZONE = "zone"  # logische Zone (Name, 0.78.0)
+    SOURCE = "source"  # Quellsystem (Name; Datenqualitaet, ADR 0029)
+    PATH = "path"  # Weg `<Quelle> → <Ziel>` (von Hand erfasst, 0.109.0)
+    NETBOX = "netbox"  # Objekt in der Ziel-NetBox (`<NetBox>|<Art>|<Schluessel>`, 0.115.0)
+    APPLICATION = "application"  # Applikation (Name, 0.140.0)
 
 
 class Finding(Base):

@@ -1,0 +1,346 @@
+"""Zonen in den Kategorien der Applikations-Doku (0.101.0, ADR 0012 Ergaenzung 0.101.0).
+
+Anwender 2026-10-28: Firewall-Regeln, die grosse Bereiche zulassen, aber direkt auf das System
+zeigen, standen unter „Unspezifische Zugriffe“ - sie gehoeren in die Kategorie, aus der der
+Zugriff kommt. Dafuer haengen die logischen Zonen (ADR 0024) an den Kategorien: eine Zone kann
+einem **Bereich** zugeordnet sein (`logical_zone.appdoc_area`) - Internet (Kategorien 1/2),
+Unternehmensnetzwerk (3/4), VPN (5), Remote Access (6), andere Security Tenants (9). Die Netze
+der Zone (ihre Selektoren, z. B. die Quell-Netze als Praefix) bestimmen, welche Gegenstellen
+dazugehoeren.
+
+Zone einer Gegenstelle (Quelle eingehend, Ziel ausgehend) je Wert der Regel:
+- die Zone des laengsten Zonen-Netzes, das den Wert ganz enthaelt (wie in der Zonenmatrix);
+  ein Zonen-Netz 0.0.0.0/0 bzw. ::/0 (Internet) nur fuer oeffentliche Adressen;
+- sonst - ein grosser Bereich wie 10.0.0.0/8 - die Zonen der Netze darin;
+- any: die Zonen der Anbindung bzw. der Netze hinter dem Interface der Regel.
+Die Kategorie folgt dem Bereich, wenn die Zonen der Gegenstelle genau einen Bereich nennen;
+nennen sie mehrere, bleibt es bei den bisherigen Merkmalen (Zone der Firewall, NAT, extern).
+Die Spalte „Zone“ nennt die Zonen der Gegenstelle, der Kopf jeder Kategorie ihre Zonen mit
+den Netzen.
+
+Rein lesend; nichts davon wird gespeichert. Kunden-Benutzer sehen weder die Spalte noch die
+Zonen im Kopf (Netze der Infrastruktur, `strip`) - die Kategorie gilt fuer sie gleich.
+
+Seit 0.102.0 (Anwender 2026-10-28): zugeordnet wird in Netzwerkdesign → Zonen; der Titel einer
+Kategorie nennt ihre Zonen („Zugriff aus Edge Internet“, `appdoc.zone_title`); der Kopf nennt
+je Zone die Netze wie erfasst und die Ausschluesse („10.0.0.0/8 ohne 10.20.0.0/16“). Neu der
+Bereich DC Management (11): hinter einer eigenen Firewall - Firewall-Regeln und Contracts zu
+EPGs der Zone (ACI-Selektor bzw. Subnetz in der Zone) stehen dort.
+
+Seit 0.105.0 (ADR 0035) hat jede Zone einen **Zonentyp** (Zone des Grundschemas,
+`store/zone_types.py`); seit 0.106.0 entscheidet nur er (Richtung im Namenskonzept), die Bereiche
+je Zone entfallen. Liegt eine Gegenstelle nicht ganz in den Netzen einer Zone (any, grosser
+Bereich), zaehlt, was hinter dem Interface der Regel liegt (Anbindung, Routen, Default-Route) bzw.
+die Zone der Firewall hinter dem L3Out (Geraete der Zonen) - ohne Ausgaenge von Hand. Der Kopf
+einer Kategorie nennt die Zonen ihrer Gegenstellen.
+"""
+
+from __future__ import annotations
+
+import bisect
+import ipaddress
+from collections import defaultdict
+from functools import cached_property
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.i18n import L
+from app.models import Epg, EpgSubnet, LogicalZone
+
+Net = ipaddress.IPv4Network | ipaddress.IPv6Network
+BITS = {4: 32, 6: 128}
+SHOWN_NETS = 6  # Netze je Zone im Kopf einer Kategorie
+SHOWN_ZONES = 4  # Zonen je Zelle
+
+
+def _nets(value: str | None) -> list[Net]:
+    """Netze eines Werts der Regel: CIDR bzw. Host, Bereich „a-b“; sonst keine."""
+    text = (value or "").strip().split(" ")[0]
+    if not text or text.lower() == "any":
+        return []
+    if "-" in text:
+        lo, _, hi = text.partition("-")
+        try:
+            first, last = ipaddress.ip_address(lo.strip()), ipaddress.ip_address(hi.strip())
+            return list(ipaddress.summarize_address_range(first, last))
+        except (ValueError, TypeError):
+            return []
+    try:
+        return [ipaddress.ip_network(text, strict=False)]
+    except ValueError:
+        return []
+
+
+class ZoneMap:
+    """Logische Zonen eines Mandanten mit ihren Netzen - einmal je Doku geladen."""
+
+    def __init__(self, session: Session, tenant_id: int):
+        from app.store import customers, zone_types  # spaet: … -> appdoc
+        from app.store import zones as zone_store
+
+        self.session, self.tenant_id = session, tenant_id
+        self.items: dict[int, LogicalZone] = {z.id: z for z in zone_store.load(session, tenant_id)}
+        self._data = customers._Data(session, tenant_id) if self.items else None
+        derived = (
+            zone_store.derive(session, tenant_id, list(self.items.values()), data=self._data)
+            if self.items
+            else []
+        )
+        self.nets: dict[int, list[Net]] = {
+            d.id: sorted(d.nets, key=lambda n: (n.version, n.prefixlen, int(n.network_address)))
+            for d in derived
+        }
+        # EPGs der Zonen (ACI-Selektoren) fuer die Contracts (0.102.0)
+        self._epg_zones: dict[int, list[int]] = defaultdict(list)
+        for d in derived:
+            for eid in d.epgs:
+                self._epg_zones[eid].append(d.id)
+        self._epg_nets: dict[int, list[str]] | None = None
+        # laengstes Praefix: je Familie und Laenge die Zonen je Netz-Anfang
+        self._by_len: dict[int, dict[int, dict[int, list[int]]]] = {4: {}, 6: {}}
+        spans: dict[int, list[tuple[int, int, int]]] = {4: [], 6: []}
+        for zid, nets in self.nets.items():
+            for n in nets:
+                fam, plen = n.version, n.prefixlen
+                key = int(n.network_address) >> (BITS[fam] - plen)
+                owners = self._by_len[fam].setdefault(plen, {}).setdefault(key, [])
+                if zid not in owners:
+                    owners.append(zid)
+                spans[fam].append((int(n.network_address), int(n.broadcast_address), zid))
+        self._lengths = {f: sorted(self._by_len[f], reverse=True) for f in (4, 6)}
+        self._spans = {f: sorted(spans[f]) for f in (4, 6)}
+        self._starts = {f: [s[0] for s in self._spans[f]] for f in (4, 6)}
+        self._exits: dict[str, list[int]] = defaultdict(list)
+        # Geraete der Zonen (0.106.0): Firewall bzw. VDOM (Quellsystem oder jede, Kontext) -> Zone
+        self._devices: list[tuple[int | None, str, int]] = []
+        for z in self.items.values():
+            for s in z.selectors:
+                if s.kind == "exit" and not s.exclude:
+                    self._exits[s.value.strip().lower()].append(z.id)
+                elif s.kind == "fw_vdom" and not s.exclude:
+                    self._devices.append((s.source_system_id, s.value.strip().casefold(), z.id))
+        # Zonen mit dem Internet (0.0.0.0/0 bzw. ::/0): Gegenstelle ueber die Default-Route
+        self._default = [zid for zid, nets in self.nets.items()
+                         if any(n.prefixlen == 0 for n in nets)]  # fmt: skip
+        self._cache: dict[str, tuple[list[int], bool]] = {}
+        # Zonentyp je Zone (0.105.0): Zone des Grundschemas, von Hand bzw. erkannt
+        self.types: dict[int, str | None] = (
+            zone_types.types(session, tenant_id, list(self.items.values())) if self.items else {}
+        )
+
+    @property
+    def active(self) -> bool:
+        """Gibt es Zonen? Ohne Zonen gelten die Zonentypen nach den Namen (`name_type`)."""
+        return bool(self.items)
+
+    # -- Zonentyp ohne Zone (0.106.0): Vorgaben nach dem Grundschema --------------------------
+
+    @cached_property
+    def schema(self):
+        from app.store import zone_types  # spaet: zone_types -> zone_schema -> …
+
+        return zone_types.schema_for(self.session, self.tenant_id)
+
+    @cached_property
+    def dc_type(self) -> str | None:
+        """Zonentyp eines Systems im DC ohne Zone (ACI, die dokumentierten Systeme): die Zone der
+        Art „dc“ im Grundschema."""
+        sz = self.schema.of_kind("dc")
+        return sz.name if sz else None
+
+    def name_type(self, *names: str | None) -> str | None:
+        """Zonentyp nach einem Namen (Firewall-Zone, L3Out) - wie bei den Zonen nach Name,
+        Kurzname bzw. Erkennungsmuster des Grundschemas („L3O_inet“ → Edge Internet)."""
+        sz = self.schema.match(*names)
+        return sz.name if sz else None
+
+    def _covering(self, net: Net) -> list[int]:
+        fam, bits = net.version, BITS[net.version]
+        lo, hi = int(net.network_address), int(net.broadcast_address)
+        for plen in self._lengths[fam]:
+            if plen > net.prefixlen:
+                continue
+            if plen == 0 and not net.is_global:  # Internet (0/0) nur fuer oeffentliche Adressen
+                continue
+            shift = bits - plen
+            if lo >> shift != hi >> shift:
+                continue
+            ids = self._by_len[fam][plen].get(lo >> shift)
+            if ids:
+                return list(ids)
+        return []
+
+    def _inner(self, net: Net) -> list[int]:
+        fam = net.version
+        lo, hi = int(net.network_address), int(net.broadcast_address)
+        spans, starts = self._spans[fam], self._starts[fam]
+        out: list[int] = []
+        i = bisect.bisect_left(starts, lo)
+        while i < len(spans) and spans[i][0] <= hi:
+            s_lo, s_hi, zid = spans[i]
+            if s_hi <= hi and zid not in out:
+                out.append(zid)
+            i += 1
+        return out
+
+    def match(self, value: str | None) -> tuple[list[int], bool]:
+        """Zonen eines Werts und ob eine Zone ihn ganz enthaelt (sonst: Zonen darin)."""
+        key = value or ""
+        if key not in self._cache:
+            ids: list[int] = []
+            whole = True
+            for net in _nets(value):
+                cover = self._covering(net)
+                if not cover:
+                    whole = False
+                    cover = self._inner(net)
+                ids += [z for z in cover if z not in ids]
+            self._cache[key] = (ids, whole and bool(ids))
+        return self._cache[key]
+
+    def of_exit(self, name: str | None) -> list[int]:
+        """Zonen mit den Netzen hinter einer Anbindung (Selektor `exit`)."""
+        return list(self._exits.get((name or "").strip().lower(), []))
+
+    def zones_of(self, values: list[str], exits: list[str] | None = None) -> list[int]:
+        out: list[int] = []
+        for v in values:
+            out += [z for z in self.match(v)[0] if z not in out]
+        for name in exits or []:
+            out += [z for z in self.of_exit(name) if z not in out]
+        return out
+
+    def own(self, values: list[str]) -> list[int]:
+        """Eigene Zonen eines Systems (0.105.0): die Zonen, die seine Adressen ganz enthalten."""
+        out: list[int] = []
+        for v in values:
+            ids, whole = self.match(v)
+            if whole:
+                out += [z for z in ids if z not in out]
+        return out
+
+    def behind(self, found: dict | None) -> list[int]:
+        """Zonen hinter dem Interface einer Firewall-Regel (0.106.0, `relevance.behind`): die
+        Zonen der Anbindung dort, der Netze, die die Firewall darueber routet, bzw. mit der
+        Default-Route die Zonen mit 0.0.0.0/0 - ohne Ausgaenge von Hand."""
+        if not found:
+            return []
+        out = list(self.zones_of([str(n) for n in found.get("nets") or []],
+                                 list(found.get("exits") or [])))  # fmt: skip
+        if found.get("kind") == "default":
+            out += [z for z in self._default if z not in out]
+        return out
+
+    def of_firewall(self, source_system_id: int | None, context: str | None) -> list[int]:
+        """Zonen einer Firewall bzw. VDOM (Geraete der Zone, 0.106.0) - z. B. hinter einem L3Out."""
+        ctx = (context or "").strip().casefold()
+        return list(dict.fromkeys(
+            zid for sid, value, zid in self._devices
+            if value == ctx and (sid is None or sid == source_system_id)
+        ))  # fmt: skip
+
+    def type_of(self, zone_ids: list[int]) -> str | None:
+        """Zonentyp der Zonen: genau einer (alle Zonen mit diesem Typ), sonst keiner."""
+        from app.store import appdoc_catalog  # spaet: appdoc_catalog -> zone_schema -> …
+
+        named = [self.types.get(z) for z in zone_ids]
+        if not named or not all(named):
+            return None
+        keys = {appdoc_catalog.type_key(t): t for t in named}
+        return next(iter(keys.values())) if len(keys) == 1 else None
+
+    def text(self, zone_ids: list[int]) -> str:
+        """Zonen fuer die Spalte „Zone“, je eine Zeile (die ersten, dann „+n“)."""
+        names = [self.items[z].name for z in zone_ids if z in self.items]
+        more = len(names) - SHOWN_ZONES
+        shown = names[:SHOWN_ZONES] + ([L(f"+{more} weitere", f"+{more} more")] if more > 0 else [])
+        return "\n".join(shown)
+
+    def name_of(self, value: str | None) -> str | None:
+        """Zone, die einen Wert ganz enthaelt (genau eine) - sonst keine."""
+        ids, whole = self.match(value)
+        return self.items[ids[0]].name if whole and len(ids) == 1 else None
+
+    def zones_of_epgs(self, epgs) -> list[int]:
+        """Zonen von EPGs bzw. externen EPGs (Contracts, 0.102.0): ueber einen ACI-Selektor der
+        Zone bzw. ein Subnetz der EPG, das eine Zone ganz enthaelt."""
+        if self._epg_nets is None:  # einmal je Doku: Subnetze aller EPGs des Mandanten
+            self._epg_nets = defaultdict(list)
+            if self.items:
+                from app.store.aci_relevance import assigns
+
+                rows = self.session.execute(
+                    select(EpgSubnet.epg_id, EpgSubnet.ip, EpgSubnet.origin, EpgSubnet.scope)
+                    .join(Epg, Epg.id == EpgSubnet.epg_id)
+                    .where(Epg.tenant_id == self.tenant_id)
+                )
+                for eid, ip, origin, scope in rows:
+                    if assigns(origin, scope):  # Export Route Control: keine Zone (0.111.0)
+                        self._epg_nets[eid].append(ip)
+        out: list[int] = []
+        for e in epgs:
+            found = list(self._epg_zones.get(e.id, []))
+            for value in self._epg_nets.get(e.id, []):
+                ids, whole = self.match(value)
+                if whole:
+                    found += ids
+            out += [z for z in found if z not in out]
+        return out
+
+    def shown_nets(self, zone_id: int) -> tuple[list[str], list[str]]:
+        """Netze einer Zone wie erfasst und ihre Ausschluesse (Kopf der Kategorie, 0.102.0):
+        „10.0.0.0/8“ ohne „10.20.0.0/16“ statt der Teile, die nach dem Ausschneiden bleiben.
+        Zonen mit Knoten (VDOM, ACI-Tenant/VRF) bzw. ohne Ausschluss: die abgeleiteten Netze."""
+        from app.store import customers, zone_struct
+        from app.store import zones as zone_store
+
+        z = self.items[zone_id]
+        derived = [str(n) for n in self.nets.get(zone_id, [])]
+        sel = zone_store.selectors_of(z)
+        if self._data is None or zone_struct.has_nodes([z]) or not any(s.exclude for s in sel):
+            return derived, []
+        include = [s for s in sel if not s.exclude]
+        _epgs, nets = customers.nets_of(self._data, include)
+        shown = sorted(nets, key=lambda n: (n.version, n.prefixlen, int(n.network_address)))
+        removed = [str(n) for s in sel if s.exclude for n in self._data.selector_nets(s)]
+        return [str(n) for n in shown], list(dict.fromkeys(removed))
+
+    def head(self, zone_id: int) -> dict:
+        """Zone im Kopf einer Kategorie: Netze wie erfasst, Ausschluesse, Zonentyp."""
+        z = self.items[zone_id]
+        nets, excluded = self.shown_nets(z.id)
+        return {"id": z.id, "name": z.name, "type": self.types.get(z.id),
+                "nets": nets[:SHOWN_NETS], "nets_total": len(nets),
+                "excluded": excluded[:SHOWN_NETS]}  # fmt: skip
+
+    def row_zones(self, rows: list[dict], column: str) -> list[int]:
+        """Zonen der Gegenstellen in den Zeilen einer Kategorie (Spalte „Zone“, 0.105.0)."""
+        by_name = {z.name: z.id for z in self.items.values()}
+        out: list[int] = []
+        for row in rows:
+            for name in str(row.get(column) or "").split("\n"):
+                if (zid := by_name.get(name)) is not None and zid not in out:
+                    out.append(zid)
+        return out
+
+
+def heads(zm: ZoneMap, tables: list[dict]) -> None:
+    """Zonen je Kategorie in den Kopf: die Zonen der Gegenstellen in ihren Zeilen (0.105.0)."""
+    from app.store import appdoc  # spaet: appdoc -> appdoc_zones
+
+    for t in tables:
+        t["zones"] = [zm.head(z) for z in zm.row_zones(t.get("rows") or [], appdoc.ZONE_COL)]
+
+
+def strip(tables: list[dict], column: str) -> None:
+    """Kunden-Benutzer: ohne Spalte „Zone“ und ohne Zonen im Kopf (Netze der Infrastruktur)."""
+    for t in tables:
+        t["zones"] = []
+        t["columns"] = [c for c in t.get("columns") or [] if c != column]
+        if t.get("labels") is not None and len(t["labels"]) != len(t["columns"]):
+            from app.store import appdoc  # spaet: appdoc -> appdoc_zones
+
+            t["labels"] = appdoc.column_labels(t["columns"])
+        for row in [*(t.get("rows") or []), *(t.get("hidden") or [])]:
+            row.pop(column, None)

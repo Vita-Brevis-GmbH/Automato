@@ -109,3 +109,33 @@ Gemessen mit demselben Regelwerk:
   älteren Version liest sie nicht wieder ein.
 - Die Volltext-Suche ist bewusst `LIKE` ohne Zusatz-Erweiterung (kein `pg_trgm`). Wird sie bei
   sehr grossen Mandanten zu langsam, folgt ein Trigram-Index als eigene Migration.
+
+## Ergänzung 0.96.0 – Namenskonvention der VIPs und IP-Pools
+
+Rückmeldung des Anwenders (Test 2026-10-27): „In den NAT / VIPs hat es Namen, welche nicht in
+die Namenskonvention passen, diese sollte auch geprüft werden.“ Bisher galt für VIPs jedes
+Präfix der Konvention (auch `H_`, `N_`), IP-Pools wurden gar nicht geprüft.
+
+Entscheid (ohne Migration, Abgleich `reconcile._NatConvention`):
+
+1. **Präfix je Typ** aus dem Wörterbuch `object_prefix` des Namensprofils: VIPs (`vip`/`vip6`,
+   alle Typen ausser Virtual Server) mit Typ „VIP“ bzw. „VIP / DNAT“ (`vip`, `vip_dnat`;
+   Standard `V-EXT_`, `VIP_`), Virtual Server mit dem neuen Typ „Virtual Server“
+   (`virtual_server`; ohne Eintrag wie VIPs), IP-Pools (`ippool`/`ippool6`) mit „SNAT IP-Pool“
+   (`snat_pool`; Standard `IPP_`). Die Typen sind in der Oberfläche der Namensprofile wählbar.
+2. **Befund** wie bei den Objekten: `invalid_name` am VIP- bzw. Pool-Objekt (Gegenstand wie
+   bisher, IPv6-Pools mit „(IPv6)“), Detail `convention` und die erwarteten `prefixes`; Satz und
+   Hinweis zweisprachig („VIP „x“ auf fw-01 beginnt mit keinem VIP-Präfix der Namenskonvention
+   (erwartet: V-EXT_, VIP_).“). NAT / VIPs zeigt ihn in der Spalte Prüfung und im Filter „nur
+   Abweichungen“; die Befunde verlinken auf den Eintrag in NAT / VIPs.
+3. **Ohne gepflegtes Präfix kein Befund:** hat das Profil keine Adress-Präfixe, gilt die
+   eingebaute Standard-Konvention (wie für Adressen); hat es Präfixe, aber keines des Typs,
+   werden diese Namen nicht geprüft. Die Plattform funktioniert ohne befüllte Wörterbücher.
+4. **NSX ALB** nicht: Virtual Services sind keine Objekte der Firewall und folgen der Konvention
+   des Load Balancers.
+5. **Collector:** IPv6-Pools (`ippool6`) werden zusätzlich Objekte (Familie v6), damit auch ihre
+   Namen geprüft werden.
+
+Folge: VIPs mit Adress-Präfix (z. B. `H_web01` als VIP) und IP-Pools ohne `IPP_` erscheinen
+nach dem nächsten Abgleich als Befund; Profile ohne VIP-Typ verlieren den bisherigen
+(beliebigen) Präfix-Befund an VIPs.

@@ -50,6 +50,36 @@ def own_view(session: Session, principal: Principal, tenant_id: int) -> customer
     return customer_view(session, principal, tenant_id, None) if principal.is_customer else None
 
 
+def capability_view(
+    session: Session, principal: Principal, tenant_id: int, capability: str
+) -> customer_scope.View | None:
+    """Kunden-Benutzer (feinere Rollen): Sicht nur auf die Kunden, fuer die er diese Capability
+    hat; None = keiner davon im Mandanten. Betreuer: nicht verwenden."""
+    customers = principal.customers_with(capability)
+    if not customers:
+        return None
+    try:
+        return customer_scope.view(session, tenant_id, list(customers))
+    except LookupError:
+        return None
+
+
+def ownership(
+    session: Session, principal: Principal, tenant_id: int, capability: str
+) -> customer_scope.Ownership | None:
+    """Was ganz den Kunden gehoert, fuer die der Kunden-Benutzer die Capability hat."""
+    view = capability_view(session, principal, tenant_id, capability)
+    return None if view is None else customer_scope.Ownership(session, tenant_id, view.own)
+
+
+def actor(principal: Principal) -> dict:
+    """Audit (feinere Rollen): Kunden-Rollen des handelnden Kunden-Benutzers je Kunde."""
+    if not principal.is_customer:
+        return {}
+    roles = {str(c): principal.customer_role(c) for c in principal.customer_ids or ()}
+    return {"customer_roles": {c: r for c, r in roles.items() if r}}
+
+
 def visible(session: Session, view: customer_scope.View | None, kind: str, ref_id) -> None:
     """Element im Ausschnitt? Sonst 404 (Kunden-Benutzer erfahren nicht, dass es existiert)."""
     if view is None:

@@ -28,9 +28,11 @@ test("SNAT-Pool: Regel → NAT-Detail → zurück zu den Regeln", async ({ page 
 test("VIP-Detail zeigt DNS-Namen beider Seiten und den Server", async ({ page }) => {
   await page.goto("/#nat");
   await search(page).fill("web01.example.ch");
-  // seit 0.77.0 auch der Virtual Service des NSX ALB vor web01 (vs-shop)
-  await expect(rows(page)).toHaveCount(2);
-  await expect(rows(page).filter({ hasText: "vs-shop" })).toHaveCount(1);
+  // seit 0.77.0 auch der Virtual Service des NSX ALB vor web01 (vs-shop), seit 0.96.0 die VIP
+  // der Firewall davor (Kette V-EXT_lb.example.ch → vs-shop → web01)
+  await expect(rows(page)).toHaveCount(3);
+  await expect(page.locator("tr[data-nat='vs-shop']")).toHaveCount(1);
+  await expect(page.locator("tr[data-nat='V-EXT_lb.example.ch']")).toHaveCount(1);
   await rows(page).filter({ hasText: "V-EXT_www.example.ch" }).click();
   const drawer = page.locator(".drawer");
   await expect(drawer).toContainText("www.example.ch");
@@ -40,7 +42,8 @@ test("VIP-Detail zeigt DNS-Namen beider Seiten und den Server", async ({ page })
 
 test("Findings: Übersicht, Satz mit Befund, Link auf die Regel", async ({ page }) => {
   await page.goto("/#findings");
-  await expect(page.locator(".fgroup")).toHaveCount(9);
+  // ADR 0029: dazu „Datenqualität“ (fw-05 nur teilweise gelesen); 0.113.0: „BGP-Filter“ (fw-05)
+  await expect(page.locator(".fgroup")).toHaveCount(11);
   // seit 0.72.0: Policy-Route im Verbund „Süd“ je Firewall mit anderem Gateway
   await expect(page.locator(".fgroup", { hasText: "Parallele Firewalls" })).toContainText(
     "Parallele Policy-Route abweichend",
@@ -145,6 +148,43 @@ test("IPv4/IPv6: gleichnamige Objekte getrennt mit eigener Regel-Zahl", async ({
   await expect(page).toHaveURL(/#regeln\?.*object_id=/);
   await expect(rows(page)).toHaveCount(3);
   await expect(page.locator(".filterbar")).toContainText("Objekt H_web01 (IPv6)");
+});
+
+test("NAT / VIPs: Kette VIP der Firewall → Load Balancer → Server, Suche und Export (0.96.0)", async ({ page }) => {
+  await page.goto("/#nat");
+  // externe IP: die VIP der Firewall und der Virtual Service dahinter
+  await search(page).fill("203.0.113.30");
+  const front = page.locator("tr[data-nat='V-EXT_lb.example.ch']");
+  const lb = page.locator("tr[data-nat='vs-shop']");
+  await expect(rows(page)).toHaveCount(2);
+  await expect(front.locator(".nat-chain")).toContainText("→ vs-shop :443 (avi-01)");
+  await expect(front.locator(".nat-dest")).toContainText("10.10.10.5:8443");
+  await expect(front.locator(".nat-via")).toContainText("über vs-shop");
+  await expect(lb.locator(".nat-front")).toContainText("davor 203.0.113.30:443 · V-EXT_lb.example.ch");
+  // Detail: ganze Kette, Sprung zum Virtual Service und zurück zur VIP davor
+  await front.click();
+  const drawer = page.locator(".drawer");
+  const chain = drawer.locator("#nat-chain");
+  await expect(chain).toContainText("203.0.113.30:443");
+  await expect(chain).toContainText("10.10.10.80:443");
+  await expect(chain).toContainText("pool-shop");
+  await expect(chain).toContainText("10.10.10.5:8443");
+  await expect(drawer.locator("#nat-dest")).toContainText("über vs-shop");
+  await chain.locator("button", { hasText: "vs-shop" }).click();
+  await expect(drawer.locator("h2")).toHaveText("vs-shop");
+  await expect(drawer.locator("#nat-fronted")).toContainText("203.0.113.30:443");
+  await drawer.locator("#nat-fronted button", { hasText: "V-EXT_lb.example.ch" }).click();
+  await expect(drawer.locator("h2")).toHaveText("V-EXT_lb.example.ch");
+  await page.locator(".drawer button[aria-label='Schliessen']").first().click();
+  // Server hinter dem Load Balancer findet die Kette
+  await search(page).fill("10.10.10.5");
+  await expect(front).toHaveCount(1);
+  // Export: je Weg eine Zeile externe IP → Ziel-Server
+  const [file] = await Promise.all([page.waitForEvent("download"), page.locator("#nat-export").click()]);
+  expect(file.suggestedFilename()).toBe("nat-vips.csv");
+  const text = readFileSync((await file.path())!, "utf-8");
+  expect(text).toContain("Name;Typ;Quellsystem;VDOM;Extern;Intern;Load Balancer;Pool;Ziel-Server;");
+  expect(text).toMatch(/V-EXT_lb\.example\.ch;[^\n]*203\.0\.113\.30:443;10\.10\.10\.80:443;vs-shop \(avi-01\);pool-shop;10\.10\.10\.5:8443/);
 });
 
 test("Virtual Server: Real Server mit Status und Health-Check", async ({ page }) => {
@@ -451,17 +491,13 @@ test("Weg-Suche und Routing: Weg für eine IP, Backup-Pfade, HA und L3Out", asyn
   await expect(ctx).toContainText("fw-05 · VDOM root");
   await expect(ctx.locator("tbody tr").filter({ hasText: "fw-04" })).toContainText("Firewall"); // nur root
   await expect(ctx).toContainText("BGP-Pfade IPv4 (HTTP 403)"); // nicht lesbar -> unbekannt
-  // Weg-Suche als eigene Ansicht; nur Ziel: je Kontext die wirksame Route
+  // Weg-Suche als eigene Ansicht; nur Ziel: Hinweis (0.113.1, keine Liste aller Routen mehr)
   await page.locator("nav.nav a, nav.nav button").filter({ hasText: "Weg-Suche" }).first().click();
   await expect(page.locator("main.main h1")).toHaveText("Weg-Suche");
   const dst = page.getByPlaceholder("Ziel: IP, Netz oder Name");
   await dst.fill("10.20.0.5");
   await page.click("button:has-text('Weg suchen')");
-  const way = page.locator(".card", { hasText: "Geht vor" }).locator("tbody tr");
-  const root = way.filter({ hasText: "fw-05 · VDOM root" });
-  await expect(root).toContainText("10.20.0.0/24");
-  await expect(root).toContainText("Policy-Route #5");
-  await expect(way.filter({ hasText: "leaf-101" })).toContainText("ECMP ×2");
+  await expect(page.locator("main.main")).toContainText("Quelle oder Startpunkt angeben");
   // mit Quelle: Weg Hop für Hop, ECMP über zwei Provider, Namen aus dem IPAM
   await page.getByPlaceholder("Quelle: IP, Netz oder Name").fill("10.20.0.5");
   await dst.fill("203.0.113.10");
@@ -500,63 +536,67 @@ test("Weg-Suche und Routing: Weg für eine IP, Backup-Pfade, HA und L3Out", asyn
   await expect(page.locator(".card", { hasText: "Border-Leafs" })).toContainText("L3O_inet");
 });
 
-test("Parallele Firewalls: Vorschlag zusammenfassen, Abweichungen als Findings", async ({ page }) => {
-  await page.goto("/#regeln");
-  await search(page).fill("par-");
-  await expect(rows(page)).toHaveCount(9); // noch doppelt
-  const hint = page.locator(".note", { hasText: "fw-06 und fw-07" });
-  await expect(hint).toContainText("Session-Sync (FGSP)");
-  await hint.locator("button", { hasText: "zusammenfassen" }).click();
-  await expect(rows(page)).toHaveCount(6); // gleiche Policies einmal, abweichende beide
-  await expect(rows(page).filter({ hasText: "par-web" })).toContainText("+ fw-07");
-  await expect(rows(page).filter({ hasText: "par-db" }).filter({ hasText: "≠ fw-06: Ziel" })).toHaveCount(1);
-  await expect(rows(page).filter({ hasText: "par-nur-06" })).toContainText("fehlt auf fw-07");
-  await rows(page).filter({ hasText: "par-web" }).click();
-  await expect(page.locator(".drawer")).toContainText("gleich auf:");
-  await page.goto("/#findings");
-  await expect(page.locator(".fgroup", { hasText: "Parallele Firewalls" })).toBeVisible();
-});
+// Folge (bauen aufeinander auf, laufen zusammen im selben Shard): fw-06/fw-07 zusammenfassen,
+// danach den Verbund wieder auflösen
+test.describe.serial("Verbund fw-06/fw-07", () => {
+  test("Parallele Firewalls: Vorschlag zusammenfassen, Abweichungen als Findings", async ({ page }) => {
+    await page.goto("/#regeln");
+    await search(page).fill("par-");
+    await expect(rows(page)).toHaveCount(9); // noch doppelt
+    const hint = page.locator(".note", { hasText: "fw-06 und fw-07" });
+    await expect(hint).toContainText("Session-Sync (FGSP)");
+    await hint.locator("button", { hasText: "zusammenfassen" }).click();
+    await expect(rows(page)).toHaveCount(6); // gleiche Policies einmal, abweichende beide
+    await expect(rows(page).filter({ hasText: "par-web" })).toContainText("+ fw-07");
+    await expect(rows(page).filter({ hasText: "par-db" }).filter({ hasText: "≠ fw-06: Ziel" })).toHaveCount(1);
+    await expect(rows(page).filter({ hasText: "par-nur-06" })).toContainText("fehlt auf fw-07");
+    await rows(page).filter({ hasText: "par-web" }).click();
+    await expect(page.locator(".drawer")).toContainText("gleich auf:");
+    await page.goto("/#findings");
+    await expect(page.locator(".fgroup", { hasText: "Parallele Firewalls" })).toBeVisible();
+  });
 
-test("Weg-Suche: Anbindung aus einem Weg erfassen", async ({ page }) => {
-  const search = async () => {
-    await page.goto("/#wege");
-    await page.locator(".filterbar select").filter({ hasText: "Start: aus der Quelle" }).selectOption({ label: "fw-04" });
-    await page.getByPlaceholder("Ziel: IP, Netz oder Name").fill("10.20.0.5");
-    await page.click("button:has-text('Weg suchen')");
-  };
-  await search();
-  const card = page.locator(".card", { hasText: "Weg 1" });
-  await expect(card).toContainText("Weg endet");
-  await card.locator("button", { hasText: "Als Anbindung erfassen" }).click();
-  await expect(page).toHaveURL(/#routing/); // im Routing, Reiter Anbindungen
-  await expect(page.locator("#ex-hops")).toHaveValue("10.70.0.1");
-  await page.locator("#ex-name").fill("MPLS Kunde A");
-  await page.locator("#ex-kind").selectOption("mpls");
-  await page.click("button:has-text('Speichern')");
-  await expect(page.locator(".card", { hasText: "Manuelle Routen" }).locator("tbody tr")).toContainText("MPLS Kunde A");
-  await search();
-  await expect(page.locator(".card", { hasText: "Weg 1" })).toContainText("weiter über MPLS Kunde A");
-});
+  test("Weg-Suche: Anbindung aus einem Weg erfassen", async ({ page }) => {
+    const search = async () => {
+      await page.goto("/#wege");
+      await page.locator(".filterbar select").filter({ hasText: "Start: aus der Quelle" }).selectOption({ label: "fw-04" });
+      await page.getByPlaceholder("Ziel: IP, Netz oder Name").fill("10.20.0.5");
+      await page.click("button:has-text('Weg suchen')");
+    };
+    await search();
+    const card = page.locator(".card", { hasText: "Weg 1" });
+    await expect(card).toContainText("Weg endet");
+    await card.locator("button", { hasText: "Als Anbindung erfassen" }).click();
+    await expect(page).toHaveURL(/#routing/); // im Routing, Reiter Anbindungen
+    await expect(page.locator("#ex-hops")).toHaveValue("10.70.0.1");
+    await page.locator("#ex-name").fill("MPLS Kunde A");
+    await page.locator("#ex-kind").selectOption("mpls");
+    await page.click("button:has-text('Speichern')");
+    await expect(page.locator(".card", { hasText: "Manuelle Routen" }).locator("tbody tr")).toContainText("MPLS Kunde A");
+    await search();
+    await expect(page.locator(".card", { hasText: "Weg 1" })).toContainText("weiter über MPLS Kunde A");
+  });
 
-test("Parallele Firewalls: Verbund auflösen, Vorschlag abgelehnt und wieder vorschlagen", async ({ page }) => {
-  page.on("dialog", (d) => d.accept());
-  await page.goto("/#regeln");
-  await search(page).fill("par-");
-  await expect(rows(page)).toHaveCount(6); // aus dem Test davor zusammengefasst
-  await rows(page).filter({ hasText: "par-web" }).click();
-  // erst nach der Antwort neu laden – sonst holt die Seite die Vorschläge vor der Ablehnung
-  await Promise.all([
-    page.waitForResponse((r) => r.url().includes("/systems/parallel-reject") && r.ok()),
-    page.locator(".drawer button", { hasText: "Verbund auflösen" }).click(),
-  ]);
-  await page.locator(".drawer button.close").click();
-  await page.reload();
-  await search(page).fill("par-");
-  await expect(rows(page)).toHaveCount(9); // wieder einzeln
-  await expect(page.locator(".note", { hasText: "fw-06 und fw-07" })).toHaveCount(0); // abgelehnt
-  await page.click("button:has-text('1 abgelehnter Vorschlag')");
-  await page.click("button:has-text('wieder vorschlagen')");
-  await expect(page.locator(".note", { hasText: "fw-06 und fw-07" })).toContainText("Ablehnen");
+  test("Parallele Firewalls: Verbund auflösen, Vorschlag abgelehnt und wieder vorschlagen", async ({ page }) => {
+    page.on("dialog", (d) => d.accept());
+    await page.goto("/#regeln");
+    await search(page).fill("par-");
+    await expect(rows(page)).toHaveCount(6); // aus dem Test davor zusammengefasst
+    await rows(page).filter({ hasText: "par-web" }).click();
+    // erst nach der Antwort neu laden – sonst holt die Seite die Vorschläge vor der Ablehnung
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes("/systems/parallel-reject") && r.ok()),
+      page.locator(".drawer button", { hasText: "Verbund auflösen" }).click(),
+    ]);
+    await page.locator(".drawer button.close").click();
+    await page.reload();
+    await search(page).fill("par-");
+    await expect(rows(page)).toHaveCount(9); // wieder einzeln
+    await expect(page.locator(".note", { hasText: "fw-06 und fw-07" })).toHaveCount(0); // abgelehnt
+    await page.click("button:has-text('1 abgelehnter Vorschlag')");
+    await page.click("button:has-text('wieder vorschlagen')");
+    await expect(page.locator(".note", { hasText: "fw-06 und fw-07" })).toContainText("Ablehnen");
+  });
 });
 
 test("Parallele Firewalls: Policy-Routen im Verbund vergleichen, Befund öffnet das Routing (0.72.0)", async ({ page }) => {
@@ -624,136 +664,140 @@ test("Routing: erkannte Anbindung mit allen Routern übernehmen, Wege gleich lan
   await expect(overview.locator("tbody tr", { hasText: "gleich lang" })).toHaveCount(3);
 });
 
-test("Kunden: Vorschlag übernehmen, Selektoren mit Vorschau, löschen", async ({ page }) => {
-  page.on("dialog", (d) => d.accept());
-  await page.goto("/#kunden");
-  // Vorschlag je ACI-Tenant: TE mit seinen EPGs
-  const sug = page.locator("#customer-suggestions tbody tr").filter({ hasText: "Tenant TE" });
-  await sug.locator("button", { hasText: "Übernehmen" }).click();
-  const te = page.locator("tbody tr.clickable").filter({ hasText: "ACI-Tenant TE" });
-  await expect(te).toContainText("TE");
-  await te.click(); // Zugehörigkeit je Art
-  await expect(page.locator("tr.subrow")).toContainText("TE/AP/EG_db");
-  // neuer Kunde über ein Netz, ein Teil davon ausgeschlossen - Vorschau vor dem Speichern
-  await page.click("button:has-text('+ Kunde')");
-  const modal = page.locator(".modal");
-  await modal.locator("#cu-name").fill("Kunde A");
-  await modal.getByLabel("Art").selectOption("prefix");
-  await modal.getByLabel("Wert").fill("10.20.0.0/16");
-  const preview = modal.locator("#customer-preview");
-  await expect(preview.locator("tr", { hasText: "Netze" })).toContainText("10.20.0.0/16");
-  // Zugehörigkeit nach dem Weg (0.58.0): Regeln über das Netz, die das Routing nicht erreicht
-  const off = preview.locator("#customer-preview-offpath");
-  await expect(off).toContainText("nicht auf dem Weg");
-  await expect(off.locator("span[title]", { hasText: "CT_rt" })).toBeVisible(); // mit Begründung
-  await modal.locator("button", { hasText: "+ Selektor" }).click();
-  await modal.getByLabel("Art").nth(1).selectOption("prefix");
-  await modal.getByLabel("Wert").nth(1).fill("10.20.128.0/17");
-  await modal.getByLabel("ausschliessen").nth(1).check();
-  await expect(preview.locator("tr", { hasText: "Netze" })).toContainText("10.20.0.0/17");
-  // breite Maske ohne Querscrollen (0.36.0), der Wert ist ganz lesbar
-  const box = await modal.boundingBox();
-  expect(box!.width).toBeGreaterThan(900);
-  expect(await modal.evaluate((m) => m.scrollWidth <= m.clientWidth)).toBe(true);
-  const value = modal.getByLabel("Wert").nth(1);
-  expect(await value.evaluate((i: HTMLInputElement) => i.scrollWidth <= i.clientWidth)).toBe(true);
-  await modal.locator("button", { hasText: "Speichern" }).click();
-  const a = page.locator("tbody tr.clickable").filter({ hasText: "Kunde A" });
-  await expect(a).toContainText("ohne Netz 10.20.128.0/17");
-  await a.locator("button", { hasText: "Löschen" }).click();
-  await expect(page.locator("tbody tr.clickable").filter({ hasText: "Kunde A" })).toHaveCount(0);
-  await expect(page.locator("#customer-unassigned")).toContainText("Keinem Kunden zugeordnet");
-});
+// Folge (bauen aufeinander auf, laufen zusammen im selben Shard): der Kunde TE aus dem
+// Vorschlag gilt für die Tests danach
+test.describe.serial("Kunde TE", () => {
+  test("Kunden: Vorschlag übernehmen, Selektoren mit Vorschau, löschen", async ({ page }) => {
+    page.on("dialog", (d) => d.accept());
+    await page.goto("/#kunden");
+    // Vorschlag je ACI-Tenant: TE mit seinen EPGs
+    const sug = page.locator("#customer-suggestions tbody tr").filter({ hasText: "Tenant TE" });
+    await sug.locator("button", { hasText: "Übernehmen" }).click();
+    const te = page.locator("tbody tr.clickable").filter({ hasText: "ACI-Tenant TE" });
+    await expect(te).toContainText("TE");
+    await te.click(); // Zugehörigkeit je Art
+    await expect(page.locator("tr.subrow")).toContainText("TE/AP/EG_db");
+    // neuer Kunde über ein Netz, ein Teil davon ausgeschlossen - Vorschau vor dem Speichern
+    await page.click("button:has-text('+ Kunde')");
+    const modal = page.locator(".modal");
+    await modal.locator("#cu-name").fill("Kunde A");
+    await modal.getByLabel("Art").selectOption("prefix");
+    await modal.getByLabel("Wert").fill("10.20.0.0/16");
+    const preview = modal.locator("#customer-preview");
+    await expect(preview.locator("tr", { hasText: "Netze" })).toContainText("10.20.0.0/16");
+    // Zugehörigkeit nach dem Weg (0.58.0): Regeln über das Netz, die das Routing nicht erreicht – seit 0.111.0 zählt
+    // das Routing-Subnetz von EN_rt (Export Route Control) nicht mehr als Netz von CT_rt, die Beispieldaten haben
+    // keine solche Regel mehr (Server: test_customer_path.py)
+    await expect(preview.locator("#customer-preview-offpath")).toHaveCount(0);
+    await modal.locator("button", { hasText: "+ Selektor" }).click();
+    await modal.getByLabel("Art").nth(1).selectOption("prefix");
+    await modal.getByLabel("Wert").nth(1).fill("10.20.128.0/17");
+    await modal.getByLabel("ausschliessen").nth(1).check();
+    await expect(preview.locator("tr", { hasText: "Netze" })).toContainText("10.20.0.0/17");
+    // breite Maske ohne Querscrollen (0.36.0), der Wert ist ganz lesbar
+    const box = await modal.boundingBox();
+    expect(box!.width).toBeGreaterThan(900);
+    expect(await modal.evaluate((m) => m.scrollWidth <= m.clientWidth)).toBe(true);
+    const value = modal.getByLabel("Wert").nth(1);
+    expect(await value.evaluate((i: HTMLInputElement) => i.scrollWidth <= i.clientWidth)).toBe(true);
+    await modal.locator("button", { hasText: "Speichern" }).click();
+    const a = page.locator("tbody tr.clickable").filter({ hasText: "Kunde A" });
+    await expect(a).toContainText("ohne Netz 10.20.128.0/17");
+    await a.locator("button", { hasText: "Löschen" }).click();
+    await expect(page.locator("tbody tr.clickable").filter({ hasText: "Kunde A" })).toHaveCount(0);
+    await expect(page.locator("#customer-unassigned")).toContainText("Keinem Kunden zugeordnet");
+  });
 
-test("Kunden: Zugehörigkeit verlinkt auf die Elemente", async ({ page }) => {
-  await page.goto("/#kunden");
-  await page.locator("tbody tr.clickable").filter({ hasText: "ACI-Tenant TE" }).click();
-  const sub = page.locator("tr.subrow");
-  await sub.locator(".tabbar button", { hasText: "Regeln" }).click();
-  await sub.locator("a").first().click();
-  await expect(page).toHaveURL(/#regeln\?rule=\d+/);
-  await expect(page.locator(".drawer")).toBeVisible();
-});
+  test("Kunden: Zugehörigkeit verlinkt auf die Elemente", async ({ page }) => {
+    await page.goto("/#kunden");
+    await page.locator("tbody tr.clickable").filter({ hasText: "ACI-Tenant TE" }).click();
+    const sub = page.locator("tr.subrow");
+    await sub.locator(".tabbar button", { hasText: "Regeln" }).click();
+    await sub.locator("a").first().click();
+    await expect(page).toHaveURL(/#regeln\?rule=\d+/);
+    await expect(page.locator(".drawer")).toBeVisible();
+  });
 
-test("Routing: Filter in BGP-Nachbarn und Policy-Routen, VRF an den Routen", async ({ page }) => {
-  await page.goto("/#routing");
-  await page.click(".tabbar button:has-text('Routen')");
-  await expect(page.locator("thead", { hasText: "Präfix" })).toContainText("VRF");
-  await page.click(".tabbar button:has-text('BGP-Nachbarn')");
-  const peers = page.locator(".card-body.viewport tbody tr");
-  await expect(peers.first()).toBeVisible();
-  const all = await peers.count();
-  expect(all).toBeGreaterThan(1);
-  await page.getByPlaceholder("Nachbar, Name, AS, Zustand…").fill("isp-a-gw");
-  await expect(peers).toHaveCount(1);
-  await expect(page.locator(".filterbar .count")).toContainText(`1 von ${all}`);
-  await page.click(".tabbar button:has-text('Policy-Routen & SD-WAN')");
-  await page.getByLabel("Art").selectOption("sdwan");
-  await expect(page.locator(".card-body.viewport tbody tr").first()).toContainText("SD-WAN");
-});
+  test("Routing: Filter in BGP-Nachbarn und Policy-Routen, VRF an den Routen", async ({ page }) => {
+    await page.goto("/#routing");
+    await page.click(".tabbar button:has-text('Routen')");
+    await expect(page.locator("thead", { hasText: "Präfix" })).toContainText("VRF");
+    await page.click(".tabbar button:has-text('BGP-Nachbarn')");
+    const peers = page.locator(".card-body.viewport tbody tr");
+    await expect(peers.first()).toBeVisible();
+    const all = await peers.count();
+    expect(all).toBeGreaterThan(1);
+    await page.getByPlaceholder("Nachbar, Name, AS, Zustand…").fill("isp-a-gw");
+    await expect(peers).toHaveCount(1);
+    await expect(page.locator(".filterbar .count")).toContainText(`1 von ${all}`);
+    await page.click(".tabbar button:has-text('Policy-Routen & SD-WAN')");
+    await page.getByLabel("Art").selectOption("sdwan");
+    await expect(page.locator(".card-body.viewport tbody tr").first()).toContainText("SD-WAN");
+  });
 
-test("Kunden-Filter: Umschalter zeigt nur den Ausschnitt des Kunden", async ({ page }) => {
-  await page.goto("/#regeln");
-  await expect(rows(page).first()).toBeVisible();
-  await page.getByLabel("Kunde", { exact: true }).selectOption({ label: "TE" }); // aus dem Test davor
-  await expect(rows(page)).toHaveCount(2); // die Contracts der EPGs von TE
-  await expect(rows(page).filter({ hasText: "CT_rt" })).toHaveCount(1);
-  await page.goto("/#findings"); // bleibt gewählt (je Umgebung gemerkt)
-  await expect(page.getByLabel("Kunde", { exact: true })).toHaveValue(/\d+/);
-  // 0.76.0: auch Routing, Inventar und Verkabelung nur im Ausschnitt, mit Hinweis oben
-  await page.goto("/#routing");
-  await expect(page.locator("#customer-scope")).toContainText("Ausschnitt TE");
-  const ctx = page.locator("#routing-contexts");
-  await expect(ctx).toContainText("1 Kontexte");
-  await ctx.locator(".fold-title").click();
-  await expect(ctx.locator("tbody tr")).toHaveCount(1);
-  await expect(ctx).toContainText("leaf-101 · VRF TE:VRF1");
-  await expect(ctx).not.toContainText("fw-05");
-  await page.goto("/#verkabelung");
-  await expect(page.locator("main.main")).toContainText("leaf-101");
-  await expect(page.locator("main.main")).not.toContainText("fw-05");
-  await page.goto("/#routing");
-  await page.locator("#customer-scope button", { hasText: "alle Kunden" }).click();
-  await expect(page.locator("#customer-scope")).toHaveCount(0);
-  await expect(page.locator("#routing-contexts")).toContainText("9 Kontexte");
-  await page.goto("/#regeln");
-  await expect(rows(page)).not.toHaveCount(2);
-});
+  test("Kunden-Filter: Umschalter zeigt nur den Ausschnitt des Kunden", async ({ page }) => {
+    await page.goto("/#regeln");
+    await expect(rows(page).first()).toBeVisible();
+    await page.getByLabel("Kunde", { exact: true }).selectOption({ label: "TE" }); // aus dem Test davor
+    await expect(rows(page)).toHaveCount(2); // die Contracts der EPGs von TE
+    await expect(rows(page).filter({ hasText: "CT_rt" })).toHaveCount(1);
+    await page.goto("/#findings"); // bleibt gewählt (je Umgebung gemerkt)
+    await expect(page.getByLabel("Kunde", { exact: true })).toHaveValue(/\d+/);
+    // 0.76.0: auch Routing, Inventar und Verkabelung nur im Ausschnitt, mit Hinweis oben
+    await page.goto("/#routing");
+    await expect(page.locator("#customer-scope")).toContainText("Ausschnitt TE");
+    const ctx = page.locator("#routing-contexts");
+    await expect(ctx).toContainText("1 Kontexte");
+    await ctx.locator(".fold-title").click();
+    await expect(ctx.locator("tbody tr")).toHaveCount(1);
+    await expect(ctx).toContainText("leaf-101 · VRF TE:VRF1");
+    await expect(ctx).not.toContainText("fw-05");
+    await page.goto("/#verkabelung");
+    await expect(page.locator("main.main")).toContainText("leaf-101");
+    await expect(page.locator("main.main")).not.toContainText("fw-05");
+    await page.goto("/#routing");
+    await page.locator("#customer-scope button", { hasText: "alle Kunden" }).click();
+    await expect(page.locator("#customer-scope")).toHaveCount(0);
+    await expect(page.locator("#routing-contexts")).toContainText("9 Kontexte");
+    await page.goto("/#regeln");
+    await expect(rows(page)).not.toHaveCount(2);
+  });
 
-test("Kunden-Benutzer: nur die Doku des eigenen Ausschnitts, ohne Betrieb und Verwaltung", async ({ page }) => {
-  // dev-Modus: Kunden-Benutzer von TE vorführen (X-Dev-Customers, serverseitig eingeschränkt)
-  const list = (await (await page.request.get("/api/customers?tenant_id=1")).json()) as { id: number; name: string }[];
-  const te = list.find((c) => c.name === "TE")!;
-  await page.addInitScript((id) => localStorage.setItem("automato_dev_customer", `1:${id}`), te.id);
-  await page.goto("/#uebersicht");
-  await expect(page.locator(".u-role")).toHaveText("Kunde");
-  const nav = page.locator("nav.nav");
-  await expect(nav).toContainText("Regeln & Contracts");
-  for (const hidden of ["Routing", "Weg-Suche", "Abgleich", "Administration", "Kunden", "Läufe"])
-    await expect(nav.getByText(hidden, { exact: true })).toHaveCount(0);
-  await expect(page.getByText("Letzte Läufe")).toHaveCount(0);
-  await expect(page.getByLabel("Kunde", { exact: true })).toHaveCount(0); // nur ein Kunde
-  await page.goto("/#regeln");
-  await expect(rows(page)).toHaveCount(2); // die Contracts der EPGs von TE
-  // ohne Gerätenamen (0.58.0): statt „apic-01“ die neutrale Bezeichnung „ACI“
-  await expect(page.locator("main.main")).not.toContainText("apic-01");
-  await rows(page).filter({ hasText: "CT_rt" }).click();
-  await expect(page.locator(".drawer")).toContainText("CT_rt");
-  await expect(page.locator(".drawer")).toContainText("ACI");
-  await expect(page.locator(".drawer")).not.toContainText("apic-01");
-  await page.goto("/#objekte");
-  await expect(page.locator(".tabbar")).toContainText("Adressobjekte");
-  await expect(page.locator(".tabbar")).not.toContainText("Subnetze");
-  for (const view of ["nat", "findings", "apps"]) {
-    await page.goto(`/#${view}`);
-    await expect(page.locator("main.main h1")).toBeVisible();
-  }
-  await page.goto("/#routing"); // nicht freigegeben -> Übersicht
-  await expect(page.locator("main.main h1")).toHaveText("Übersicht");
-  // seit 0.53.0: Netzwerkdesign mit den eigenen Zonen, ohne Versionen
-  await page.goto("/#design");
-  await expect(page.locator("main.main h1")).toHaveText("Netzwerkdesign");
-  await expect(page.locator(".tabbar")).not.toContainText("Versionen");
+  test("Kunden-Benutzer: nur die Doku des eigenen Ausschnitts, ohne Betrieb und Verwaltung", async ({ page }) => {
+    // dev-Modus: Kunden-Benutzer von TE vorführen (X-Dev-Customers, serverseitig eingeschränkt)
+    const list = (await (await page.request.get("/api/customers?tenant_id=1")).json()) as { id: number; name: string }[];
+    const te = list.find((c) => c.name === "TE")!;
+    await page.addInitScript((id) => localStorage.setItem("automato_dev_customer", `1:${id}`), te.id);
+    await page.goto("/#uebersicht");
+    await expect(page.locator(".u-role")).toHaveText("Kunde");
+    const nav = page.locator("nav.nav");
+    await expect(nav).toContainText("Regeln & Contracts");
+    for (const hidden of ["Routing", "Weg-Suche", "Abgleich", "Administration", "Kunden", "Läufe"])
+      await expect(nav.getByText(hidden, { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Letzte Läufe")).toHaveCount(0);
+    await expect(page.getByLabel("Kunde", { exact: true })).toHaveCount(0); // nur ein Kunde
+    await page.goto("/#regeln");
+    await expect(rows(page)).toHaveCount(2); // die Contracts der EPGs von TE
+    // ohne Gerätenamen (0.58.0): statt „apic-01“ die neutrale Bezeichnung „ACI“
+    await expect(page.locator("main.main")).not.toContainText("apic-01");
+    await rows(page).filter({ hasText: "CT_rt" }).click();
+    await expect(page.locator(".drawer")).toContainText("CT_rt");
+    await expect(page.locator(".drawer")).toContainText("ACI");
+    await expect(page.locator(".drawer")).not.toContainText("apic-01");
+    await page.goto("/#objekte");
+    await expect(page.locator(".tabbar")).toContainText("Adressobjekte");
+    await expect(page.locator(".tabbar")).not.toContainText("Subnetze");
+    for (const view of ["nat", "findings", "apps"]) {
+      await page.goto(`/#${view}`);
+      await expect(page.locator("main.main h1")).toBeVisible();
+    }
+    await page.goto("/#routing"); // nicht freigegeben -> Übersicht
+    await expect(page.locator("main.main h1")).toHaveText("Übersicht");
+    // seit 0.53.0: Netzwerkdesign mit den eigenen Zonen, ohne Versionen
+    await page.goto("/#design");
+    await expect(page.locator("main.main h1")).toHaveText("Netzwerkdesign");
+    await expect(page.locator(".tabbar")).not.toContainText("Versionen");
+  });
 });
 
 test("Weg-Suche: Verbund als ein Hop mit beiden Firewalls", async ({ page }) => {
@@ -782,22 +826,28 @@ test("Weg-Suche: Regeln auf dem Weg je Firewall", async ({ page }) => {
   await expect(first).toContainText("Regeln: gesperrt an fw-05 · VDOM root");
   await expect(first).toContainText("implizit gesperrt");
   await expect(page.locator(".card", { hasText: "Wege im Überblick" }).locator("thead")).toContainText("Regeln");
-  // Startpunkt und Dienst: die Policy der VIP ist möglich (Eingang, Ausgang, Quelle nicht prüfbar)
+  // Startpunkt und Dienst, Ziel ist der Server hinter der VIP (0.134.0): von aussen über die VIP, Quelle aus dem
+  // Internet angenommen – die Policy der VIP erlaubt nur 10.1.0.0/24, also implizit gesperrt
   await page.getByPlaceholder("Quelle: IP, Netz oder Name").fill("");
   await page.locator(".filterbar select").filter({ hasText: "Start: aus der Quelle" }).selectOption({ label: "fw-05 · VDOM root" });
   await dst.fill("10.1.0.10");
   await page.getByPlaceholder("Dienst: tcp/443").fill("tcp/443");
   await page.click("button:has-text('Weg suchen')");
   const card = page.locator(".card[id^='trace-']").first();
-  await expect(card).toContainText("abhängig");
-  await expect(card).toContainText("möglich (Eingang, Ausgang, Quelle)");
+  await expect(page.locator(".trace-via-vip")).toContainText("über VIP VIP_web (203.0.113.1) → 10.1.0.10");
+  await expect(page.locator(".trace-via-vip")).toContainText("Quelle: beliebige Adresse im Internet");
+  await expect(card).toContainText("DNAT VIP_web");
+  await expect(card).toContainText("implizit gesperrt");
   // Ziel ist die VIP: DNAT an fw-05, der Weg geht zur internen IP weiter
   await dst.fill("203.0.113.1");
   await page.click("button:has-text('Weg suchen')");
   await expect(card).toContainText("DNAT VIP_web");
   await expect(card).toContainText("203.0.113.1 → 10.1.0.10");
+  // 0.114.1: Ziel-Server als Liste (Name, IP:Port, Zustand, Objekt) - ein Server nur mit IP nicht doppelt
+  await expect(card.locator(".vip-servers")).toHaveCount(0);
+  // seit der ADR-0019-Ergänzung im Seitenpanel – die Weg-Suche bleibt (neuer Tab: „↗“ bzw. Ctrl-Klick)
   await card.locator("a", { hasText: "Policy 1" }).click();
-  await expect(page).toHaveURL(/#regeln\?rule=\d+/);
+  await expect(page).toHaveURL(/#wege\?dst=203\.0\.113\.1&service=tcp%2F443&start=/);
   await expect(page.locator(".drawer")).toContainText("web");
 });
 
@@ -1405,7 +1455,7 @@ test("Grundschema in der Oberfläche bearbeiten: Namen, Art, Absicht, neue Zone 
   expect(problems).toEqual([]);
 });
 
-test("Kunden-Benutzer in Automato zuordnen: Zonen des Kunden, Anmeldung ohne Rolle sieht nur ihn", async ({ page, browser, problems }) => {
+test("Kunden-Benutzer in Automato zuordnen: Zonen des Kunden, Anmeldung ohne Rolle sieht nur ihn", async ({ page, browser, baseURL, problems }) => {
   const login = `kunde.dmz${test.info().retry}@example.ch`;
   const name = `Kunde DMZ ${test.info().retry}`;
   // eigener Kunde, dem die Zone DMZ gehört (danach zurück)
@@ -1431,7 +1481,7 @@ test("Kunden-Benutzer in Automato zuordnen: Zonen des Kunden, Anmeldung ohne Rol
 
   // derselbe Benutzer meldet sich an (dev: X-Dev-User, ohne Rolle aus Keycloak) - eigener
   // Browser-Kontext, sonst teilen sich beide Seiten den localStorage
-  const ctx = await browser.newContext({ baseURL: "http://localhost:5173" });
+  const ctx = await browser.newContext({ baseURL });
   const user = await ctx.newPage();
   await user.addInitScript((u) => {
     localStorage.setItem("automato_dev_user", u);
@@ -1680,4 +1730,51 @@ test("Endpunkte: Wo hängt … nach Name und IP, MACs je Port, VLAN am ESXi-Upli
   await page.goto("/#findings");
   await expect(page.locator(".fgroup", { hasText: "Verkabelung" })).toContainText("VLAN fehlt am ESXi-Uplink");
   expect(problems).toEqual([]);
+});
+
+test("Endpunkte mit IPv6 (NDP), Link-local getrennt, Wo hängt … nach IPv6 (0.94.0)", async ({ page, problems }) => {
+  await page.goto("/#verkabelung");
+  await page.click(".tabbar button:has-text('Endpunkte')");
+  const row = page.locator("#cabling-endpoints tbody tr[data-mac='a0:b1:c2:d3:e4:f5']");
+  await expect(row).toContainText("10.20.0.15, 2001:db8:20::15");
+  await expect(row.locator(".link-local")).toContainText("link-local fe80::a2b1:c2ff:fed3:e4f5");
+  const locate = page.locator("#cabling-locate");
+  await locate.getByLabel("Wo hängt").fill("2001:DB8:20::15");
+  await locate.locator("button:has-text('Suchen')").click();
+  const hit = locate.locator(".locate-hit[data-mac='a0:b1:c2:d3:e4:f5']");
+  await expect(hit.locator(".chip")).toHaveText("NDP 2001:db8:20::15");
+  await expect(hit.locator(".locate-at")).toContainText("sw-acc-01 Gi1/0/5 · VLAN 20");
+  // weitere Hersteller im Hinweis der Verkabelung
+  await page.goto("/#verkabelung");
+  await expect(page.locator("body")).toContainText("Juniper Junos, Arista EOS, Aruba CX");
+  expect(problems).toEqual([]);
+});
+
+test("Module je Mandant: ausgeschaltet verschwindet die Ansicht, Abhängigkeit zieht mit (0.107.0)", async ({ page }) => {
+  // eigener Mandant: die übrigen Tests (Mandant 1) laufen parallel weiter
+  const name = "Modul-Test";
+  const old = ((await (await page.request.get("/api/tenants")).json()) as { id: number; name: string }[]).filter((t) => t.name === name);
+  for (const t of old) await page.request.delete(`/api/tenants/${t.id}?confirm=${name}`);
+  const created = await page.request.post("/api/tenants", { data: { name } });
+  expect(created.ok()).toBeTruthy();
+  const tid = ((await created.json()) as { id: number }).id;
+  try {
+    await page.goto("/#tenants");
+    await page.locator(".mandant select").selectOption(String(tid));
+    const card = page.locator("#tenant-modules");
+    await expect(card.locator("tr[data-module='kern']")).toContainText("immer an");
+    const doku = card.locator("tr[data-module='doku'] button.toggle");
+    await expect(doku).toHaveClass(/\bon\b/);
+    await expect(page.locator(".nav-item", { hasText: "Applikationen" })).toBeVisible();
+    await doku.click();
+    await expect(doku).not.toHaveClass(/\bon\b/);
+    await expect(page.locator(".nav-item", { hasText: "Applikationen" })).toHaveCount(0);
+    // Gateway aus: der Schreibpfad (braucht das Gateway) ist mit aus
+    await card.locator("tr[data-module='gateway'] button.toggle").click();
+    await expect(card.locator("tr[data-module='schreibpfad']")).toContainText("Abhängigkeit aus");
+    await doku.click();
+    await expect(page.locator(".nav-item", { hasText: "Applikationen" })).toBeVisible();
+  } finally {
+    await page.request.delete(`/api/tenants/${tid}?confirm=${name}`);
+  }
 });

@@ -10,7 +10,7 @@ import { L } from "./i18n";
 
 const PAGE = 50;
 // Meldung auch bei Erfolg zeigen: Zusammenfassung des Laufs (IPAM, NSX ALB seit 0.78.5)
-const SUMMARY_PLATFORMS = new Set(["infoblox", "netbox", "avi"]);
+export const SUMMARY_PLATFORMS = new Set(["infoblox", "netbox", "ad_dns", "avi"]);
 
 function duration(r: Run): string {
   const start = r.started_at ?? r.queued_at;
@@ -26,12 +26,14 @@ export function RunsTable({
   canCancel,
   onCancel,
   detailed = false,
+  selected,
 }: {
   runs: Run[];
   systemName: (id: number | null) => string;
   canCancel: boolean;
   onCancel: (id: string) => void;
   detailed?: boolean;
+  selected?: string; // hervorgehoben (Link aus dem Verlauf des Routings)
 }) {
   return (
     <table>
@@ -59,7 +61,7 @@ export function RunsTable({
         {runs.map((r) => {
           const open = r.status === "queued" || r.status === "running";
           return (
-            <tr key={r.id} title={r.message ?? undefined}>
+            <tr key={r.id} title={r.message ?? undefined} className={r.id === selected ? "selected" : undefined}>
               <td className="mono">#{r.id.slice(0, 8)}</td>
               <td>{systemName(r.source_system_id)}</td>
               {detailed && <td className="faint">{PLATFORM_LABEL[r.platform] ?? r.platform}</td>}
@@ -73,6 +75,17 @@ export function RunsTable({
                     title={L("vom Zeitplan des Quellsystems angelegt", "created by the source system's schedule")}
                   >
                     {L("Zeitplan", "Schedule")}
+                  </span>
+                )}
+                {r.scope === "rules" && (
+                  <span
+                    className="chip info run-rules-only"
+                    title={L(
+                      "nur Regeln, Objekte und NAT gelesen – für eine Applikation; Inventar und Routing bleiben vom letzten vollen Lauf (0.139.0)",
+                      "only rules, objects and NAT read – for one application; inventory and routing stay from the last full run (0.139.0)",
+                    )}
+                  >
+                    {L("nur Regeln", "rules only")}
                   </span>
                 )}
               </td>
@@ -125,9 +138,19 @@ export function RunsTable({
   );
 }
 
-export default function Runs({ me, tenantId, tenantLabel }: { me: Me; tenantId: number | null; tenantLabel: string }) {
+export default function Runs({
+  me,
+  tenantId,
+  tenantLabel,
+  params = {},
+}: {
+  me: Me;
+  tenantId: number | null;
+  tenantLabel: string;
+  params?: Record<string, string>; // aus einem Link: system= bzw. source_system_id (Datenqualität, Verlauf), run (hervorheben)
+}) {
   const [status, setStatus] = useState("");
-  const [systemId, setSystemId] = useState("");
+  const [systemId, setSystemId] = useState(params.system ?? params.source_system_id ?? "");
   const [platform, setPlatform] = useState("");
   const [trigger, setTrigger] = useState("");
   const [offset, setOffset] = useState(0);
@@ -247,6 +270,7 @@ export default function Runs({ me, tenantId, tenantLabel }: { me: Me; tenantId: 
               canCancel={me.isOperator}
               onCancel={(id) => cancelRun(id).then(load, setError)}
               detailed
+              selected={params.run}
             />
           )}
         </div>

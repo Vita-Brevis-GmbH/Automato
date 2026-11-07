@@ -23,7 +23,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_serializer
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -34,7 +34,7 @@ from app.auth.principal import Principal
 from app.config import Settings, get_settings
 from app.db import get_session
 from app.models import Agent, RunStatus, SourceSystem, Tenant
-from app.store import agent_package
+from app.store import agent_package, runs
 from app.store import agents as store
 
 log = logging.getLogger(__name__)
@@ -102,10 +102,37 @@ class Target(BaseModel):
     platform: str
     base_url: str
     verify_tls: bool
-    read_scope: str = ""  # ACI: zu lesende Tenants (kommagetrennt)
+    read_scope: str = ""  # ACI: zu lesende Tenants (kommagetrennt); Switches: Adressen
+    # Switches: festgehaltene SSH-Host-Schluessel je Adresse (ohne sie lernte der Agent sie bei
+    # jedem Lauf neu, ADR 0025 Nr. 3) - nur bei Switches & Router mitgeliefert
+    known_hosts: dict[str, str] | None = None
     token: str | None = None  # FortiGate
-    username: str | None = None  # Cisco ACI (APIC-Login)
+    username: str | None = None  # Cisco ACI (APIC-Login); SNMPv3: Benutzer
     password: str | None = None
+    # Switches & Router (ADR 0033): Zugang ssh | snmp und SNMPv3 authPriv - nur gesetzt, wo
+    # zutreffend (sonst nicht in der Antwort)
+    access: str | None = None
+    auth_protocol: str | None = None
+    auth_password: str | None = None
+    priv_protocol: str | None = None
+    priv_password: str | None = None
+    context: str | None = None
+    # 0.139.0: `rules` = nur Regeln, Objekte und NAT lesen (Lauf fuer eine Applikation)
+    scope: str | None = None
+
+    @model_serializer(mode="wrap")
+    def _only_used(self, handler):
+        """Felder der Switches nur, wo sie gelten - das Ziel anderer Plattformen bleibt gleich."""
+        data = handler(self)
+        for key in _SWITCH_ONLY:
+            if data.get(key) is None:
+                data.pop(key, None)
+        return data
+
+
+# dazu `scope` nur bei Teil-Laeufen (0.139.0)
+_SWITCH_ONLY = ("known_hosts", "access", "auth_protocol", "auth_password", "priv_protocol",
+                "priv_password", "context", "scope")  # fmt: skip
 
 
 class NextRun(BaseModel):
@@ -144,13 +171,13 @@ def _out(a: Agent, systems: list | None = None, current: str | None = None) -> A
         version=a.version,
         auto_update=a.auto_update,
         update_available=(a.version != current) if a.version and current else None,
-        update_note=a.update_note,
+        update_note=runs.show_message(a.update_note),  # gespeichert deutsch (ADR 0028)
         systems=[
             AgentSystem(
                 id=s.id,
                 name=s.name,
                 tenant_id=s.tenant_id,
-                has_credentials=credentials.complete(s.platform.value, s.credentials),
+                has_credentials=credentials.complete(s.platform.value, s.credentials, s.access),
             )
             for s in systems or []
         ],
@@ -351,7 +378,7 @@ def next_run(
     src = session.get(SourceSystem, run.source_system_id) if run.source_system_id else None
     if src is not None:
         try:
-            target = Target(**store.target_for(src, agent.id))
+            target = Target(**store.target_for(src, agent.id), scope=run.scope)
         except credentials.CredentialsUnavailable as exc:
             # Lauf nicht mit falschen/ohne Zugangsdaten starten - sichtbar abbrechen
             run.status = RunStatus.FAILED

@@ -79,6 +79,19 @@ Begründung und Audit):**
   `application.rule_shown` mit Regel-Verweis, Kategorie und Begründung. Kunden-Benutzer sehen
   die ausgeblendeten Zeilen ihrer Regeln, ändern aber nichts (Freigabeliste).
 
+**Ergänzung 0.88.0 (Anwender: Abhängigkeiten wieder einblenden):**
+- **Infrastruktur getrennt:** neues Stammdatum `application.infrastructure` (Migration `0057`,
+  Formular „Infrastruktur (Monitoring, Backup, DNS …)“, Audit `application.updated`). Die
+  Ableitung bleibt wie in 0.60.0; je Eintrag `infrastructure` der anderen Applikation. In der
+  Doku stehen die fachlichen Abhängigkeiten oben, die zu Infrastruktur-Applikationen
+  eingeklappt in einem eigenen Teil – damit beantwortet der Bereich die Frage des Anwenders
+  (Monitoring ist keine fachliche Abhängigkeit), ohne Verbindungen zu verstecken.
+- **Erst auf Klick:** der Bereich ist zugeklappt und lädt beim Aufklappen über
+  `GET /applications/{id}/dependencies` (auch Kunden-Benutzer, nur Applikationen ihres
+  Ausschnitts). Export-Abschnitt `dependencies` für Markdown, Word und Druck
+  (`word_export.SECTIONS`). Das Kennzeichen steuert nur die Anzeige, keine Regel und keinen
+  Befund; der CSV-Import der Stammdaten bleibt bei seinen Feldern.
+
 **Ergänzung 0.73.0 (Anwender: mehr Übersicht in der Applikations-Doku):**
 - **Abhängigkeiten vorerst entfernt:** Die Ableitung aus spezifischen Regeln zeigte z. B. einen
   Monitoring-Contract als Abhängigkeit – technisch eine Verbindung, fachlich keine Aussage über
@@ -108,6 +121,9 @@ Begründung und Audit):**
   Applikation (eingehend), nicht ihre Zugriffe auf andere Systeme bzw. Adressen ohne
   Zonensignal (z. B. „any → Tool“, „Server → Monitoring“); als Treffer bleiben sie.
 - Gleich in der Doku je System, im Export (Markdown, Word) und im Druck.
+- **Weiter in ADR 0034:** mit einer Firewall hinter dem L3Out ist der Contract nur ein
+  Hilfs-Contract an der Firewall-Regel (Spalte „L3Out“), nicht mehr in „Regeln & Contracts“; der
+  Befund bleibt. Die Prüfung je Kategorie gilt noch, wenn der L3Out nicht gelesen ist.
 
 **Ergänzung 0.84.0 (Anwender: „heute steht alles in Server Name“ – VIPs, Load Balancer und der
 Weg zum Server in die Spalten verteilen):**
@@ -121,6 +137,118 @@ Weg zum Server in die Spalten verteilen):**
 - **NAT** als eigene Spalte in den übrigen Kategorien (SNAT der Regel); optionale Spalten ohne
   Wert fallen je Kategorie weg (Ansicht, Markdown, Word, Druck). Die Spezifikation
   `docs/usecases/uc1-applikations-doku-spec.md` beschreibt die Spalten.
+
+**Ergänzung 0.95.0 (Test des Anwenders 2026-10-27: „Detailseite statt zu den Regeln springen“ und
+„Namen von Systemen ausserhalb des Tenants“):**
+- **Klick auf ein Element öffnet sein Detail** wie in „Objekte & Inventar“, statt die Regeln zu
+  filtern und hinunterzuscrollen: eine **EPG** (Karte „EPGs im ACI“ bzw. die EPG im Detail eines
+  Systems) zeigt ihre Lage wie im Regel-Detail – Tenant, AP, BD, VRF, Subnetze mit IPAM,
+  Endpunkte, VMs, Leaf-Ports und VLANs (`epgs.details`, neu `GET /applications/{id}/epgs/{epg_id}`,
+  nur EPGs der Applikation; Kunden-Benutzer nur in ihrem Ausschnitt, Gerätenamen neutral). Im
+  Detail „Regeln dieser EPG zeigen“ (das bisherige Filtern) und „In Objekte & Inventar öffnen“
+  (Portgruppen der EPG, ohne VMs ihre Subnetze im Netzinventar). Ein **Firewall-Objekt** im
+  Detail eines Systems öffnet das Objekt-Detail von „Objekte & Inventar“ in der Doku (mit Knopf
+  dorthin). Systeme öffnen ihr Detail wie seit 0.73.0; die Kennzahlen oben filtern weiter.
+- **Namen der Gegenstellen** (`tenant.appdoc_foreign_names`, Migration `0060`, Standard aus):
+  Der FortiGate-Collector löst Objektnamen zu Adressen auf – in den Kategorien stand bei
+  Gegenstellen ausserhalb der Applikation (anderer Tenant, anderes Netz, extern) deshalb oft nur
+  die IP bzw. das Netz. Mit der Einstellung nennt die Doku nach Kategorien (Ansicht, Markdown,
+  Word, Druck, Doku je System) den Namen dazu: „db01.example.ch (10.30.0.5)“. Der Name kommt in
+  dieser Reihenfolge aus dem IPAM (DNS-Name bzw. Netz mit Name/Beschreibung), der VM, der EPG
+  (Endpunkt bzw. Subnetz, nur eindeutig) oder dem Firewall-Objekt, über das die Regel die
+  Adresse nennt (`store/peer_names.py`). Gegenstellen mit eigenem Namen bleiben, wie sie sind.
+- **Nur der Admin** stellt es ein (Mandant → „Applikations-Doku: Namen der Gegenstellen zeigen“,
+  `PATCH /tenants/{id}`, Audit `tenant.updated` mit dem Feld). Es gilt **nur für Betreuer**:
+  Kunden-Benutzer sehen unabhängig davon weiter nur die Adressen (fail-closed in der API, dazu
+  die neutralen Bezeichnungen `customer_alias`). Reine Anzeige – nichts wird gespeichert,
+  verglichen oder für Befunde, Verbindungen und Abhängigkeiten verwendet.
+
+**Ergänzung 0.101.0 (Anwender 2026-10-28: „bei den unspezifischen Zugriffen sehe ich nur die IPs
+der Source“ und „Regeln, die grosse Bereiche zulassen, aber direkt auf das Zielsystem zeigen,
+müssen in die entsprechende Kategorie – den Kategorien die Zonen anhängen, woher sie kommen, und
+in den Zonen die Source-IP-Adressen hinterlegen“):**
+- **Zonen an den Kategorien:** eine logische Zone (ADR 0024) gehört höchstens einem **Bereich**
+  der Kategorien (`logical_zone.appdoc_area`, Migration `0063`): Internet (Kategorien 1/2),
+  Unternehmensnetzwerk (3/4), VPN (5), Remote Access (6), andere Security Tenants (9) – das sind
+  die Merkmale, die bisher nur im Namen der Firewall-Zone erkannt wurden (`L3O_inet`, `bit`, `vpn`,
+  `sra`, `res`). Die Quell-Adressen einer Zone sind ihre Netze (Selektoren, z. B. Präfixe).
+- **Kategorie nach der Zone der Gegenstelle** (`store/appdoc_zones.py`): für eine Firewall-Regel
+  die Zone der Gegenstelle (Quelle eingehend, Ziel ausgehend) – das längste Zonen-Netz, das ihren
+  Wert ganz enthält, bei einem grossen Bereich (10.64.0.0/10) die Zonen der Netze darin, bei any
+  die Zonen der Anbindung bzw. der Netze hinter dem Interface der Regel; ein Zonen-Netz 0.0.0.0/0
+  nur für öffentliche Adressen. Nennen diese Zonen genau einen Bereich, gilt dessen Kategorie –
+  vor dem Merkmal im Namen der Firewall-Zone; DNAT/VIP und extern bleiben Kategorie 2 bzw. 1.
+  Mehrere Bereiche (z. B. Clients und Remote Access in 10.64.0.0/10) bleiben unspezifisch.
+- **Sichtbar:** Spalte **Zone** (Zonen der Gegenstelle, optional wie NAT/VIP) und im Kopf jeder
+  Kategorie ihre Zonen mit den ersten Netzen – Ansicht, Markdown, Word, Druck, Doku je System.
+  Zuordnen in der Doku („Zonen zuordnen“, Operator, `PUT /zones/appdoc-areas`, Audit
+  `zone.appdoc_areas_set`) bzw. im Zonen-Editor („Kategorie in der Applikations-Doku“); danach
+  ziehen die Befunde der Applikationen nach (`app_refresh.schedule_tenant`). Kunden-Benutzer sehen
+  weder Spalte noch Zonen im Kopf (Netze der Infrastruktur), die Kategorie gilt für sie gleich.
+- **Namen breiter Quellen:** mit „Namen der Gegenstellen“ nennen Netze und Bereiche zuerst das
+  Objekt, wie es in der Regel steht – die Gruppe der Firewall mit ihren Netzen in einer Zeile
+  („G_clients (10.70.0.0/16, 10.71.0.0/16)“, `peer_names.group`); Hosts behalten ihren Namen
+  aus IPAM/VM. Der Global Admin schaltet die Einstellung des Mandanten seit 0.101.0 auch direkt in
+  der Karte „Doku nach Kategorien“ ein bzw. aus (`#app-peer-names`).
+
+**Ergänzung 0.102.0 (Anwender 2026-10-28: „das Zuordnen sollte nicht in der Applikation
+stattfinden, sondern bei den Zonen im Netzwerkdesign – dann auch gleich die Namen der korrekten
+Zonen verwenden“, „nebst Subnetzen auch Ausschlüsse machen“, „DC Management ist hinter einer
+Firewall, welche die User-Zugriffe steuert – eigene Firewall-Regeln und Contracts im ACI“):**
+- **Zuordnen im Netzwerkdesign:** Reiter **Kategorien** (Netzwerkdesign, Operator): je Zone die
+  Kategorie, ihre **Netze** und **Ausschlüsse** („ohne“, aus den Netzen herausgeschnitten) –
+  `PUT /zones/appdoc` ersetzt nur die Selektoren „Netz“ der Zone, die übrigen (ACI, Firewall,
+  IPAM, Anbindung) bleiben; Audit `zone.appdoc_set`; Vorschlag nach dem Namen der Zone (Edge
+  Internet → 1/2, Edge Office → 3/4, Edge VPN → 5, SRA/Remote → 6, RES-… → 9, … Management → 11).
+  Die Applikations-Doku hat keinen eigenen Dialog mehr, nur den Weg dorthin (`#app-zone-areas`).
+- **Titel nach den Zonen** (`appdoc.zone_title`): der Wortlaut der Vorlage mit den Namen der
+  zugeordneten Zonen statt Internet/Unternehmensnetzwerk/L3O_… („2. Zugriff aus Edge Internet“,
+  „5. Zugriff Edge VPN“, „9. Zugriff zu RES-DC“); ohne Zone der Titel der Vorlage. Der Kopf nennt
+  je Zone die Netze wie erfasst mit den Ausschlüssen („10.0.0.0/8 ohne 10.20.0.0/16“).
+- **Kategorie 11 „Zugriff Management“** (Bereich `mgmt`, nur über Zonen): DC Management liegt
+  hinter einer eigenen Firewall – Firewall-Regeln mit der Gegenstelle in der Zone und **Contracts**
+  zu EPGs der Zone (ACI-Selektor bzw. Subnetz in der Zone) stehen dort, beide Richtungen. Die
+  Kategorie erscheint nur mit einer Zone dieser Kategorie bzw. mit Zeilen. Externe EPGs bzw. ein
+  System ausserhalb des Fabrics folgen dem Bereich ihrer Zone wie Firewall-Regeln; ACI-intern (7/8)
+  bleibt sonst unverändert. DC selbst bekommt keinen Bereich (eigene Umgebung).
+- **Später:** aus den Netzen und Ausschlüssen je Zone lässt sich ein BGP-Filter (Prefix-Liste
+  permit/deny) ableiten – nur als Vorschlag/Export, kein Schreibweg auf Geräte (ROADMAP).
+
+**Ergänzung 0.103.0 (Anwender 2026-10-28: „Ich möchte nur Firewall-Regeln sehen, welche Zugriffe
+auf die Systeme offen sind, welche durch zu gross gesetzte Rules möglich sind, und
+Firewall-Regeln, welche konkret den Server beinhalten. Firewall-Regeln, bei denen die Source offen
+ist (z. B. 10.0.0.0/8), damit der Server irgendwo zugreifen kann, sollen bei der Server-Doku nicht
+zeigen“):**
+- **Ausgehend mit breiter Quelle** (`appdoc.OUT_BROAD`, `outbound_broad`): eine Firewall-Regel,
+  die das System nur über ein Netz, einen Bereich bzw. any **in der Quelle** erfasst, ist kein
+  Zugriff dieser Applikation – sie fehlt in den Kategorien, unter „Regeln & Contracts“, in den
+  Treffern, Verbindungen und in der Doku je System (auch nicht unter „nicht möglich“); gezählt in
+  `summary.outbound_broad` („n ausgehende mit breiter Quelle ausgelassen“).
+- **Bleiben:** eingehende Regeln, auch über einen grossen Bereich im Ziel (Zugriffe auf die
+  Systeme, die zu gross gesetzte Regeln öffnen), Regeln, die das System konkret nennen (Host bzw.
+  Gruppe mit dem Host, ausgehend und eingehend), direkt der Applikation zugeordnete Regeln und
+  ACI-Contracts (vzAny/Preferred Group wie bisher).
+
+**Ergänzung 0.104.0 (Anwender 2026-10-28: „die Kategorien-Auswahl noch anpassen oder erweitern
+können, dies bitte im Namenskonzept unterbringen“ und „Konfiguration anstelle Code“):**
+- **Katalog** (`store/appdoc_catalog.py`): Kategorien (Nummer, Titel deutsch/englisch, Titel mit
+  Zonen `{z}`, Spalten, feste Rolle, „nur mit Zone“), **Bereiche** (Auswahl je Zone: Kürzel,
+  Bezeichnung, Kategorie eingehend/ausgehend, Merkmal im Namen der Firewall-Zone, Muster für den
+  Vorschlag, angeboten) und **Optionen** (breite Quelle ausgehend ausblenden, unspezifisch nur
+  eingehend). Die bisherigen Festwerte sind die **Vorgaben im Code** – die Plattform läuft ohne
+  Konfiguration.
+- **Im Namensprofil** des Mandanten (eigenes, sonst „default“, wie die Wörterbücher): Arten
+  `appdoc_category`, `appdoc_area`, `appdoc_option`, gespeichert nur die Abweichungen; Pflege
+  im Namenskonzept (Admin, Audit), zurücksetzen auf die Vorgaben. Kein CSV.
+- **Feste Rollen bleiben:** ACI intern (7 im AP, 8 im Security Tenant, 9 zu anderen Tenants),
+  unspezifisch (10, Rückfall) und Internet für externe Gegenstellen bzw. DNAT – eingebaute
+  Einträge lassen sich anpassen, nicht löschen (Bereiche ausschalten). Eigene Kategorien sind
+  Firewall-Kategorien, erreicht über eigene Bereiche (eine Zone → Bereich → Kategorie);
+  Bereiche nur auf Firewall-Kategorien.
+- Doku, Netzwerkdesign (Auswahl, Vorschlag nach dem Zonennamen serverseitig), Ausblenden je
+  Kategorie und Exporte folgen dem Katalog des Mandanten; die Sichtbarkeit der Zeilen
+  (Kategorie, nur Treffer, nicht möglich, ausgelassen) entscheidet eine Stelle
+  (`store/appdoc_filter.py`).
 
 ## Kontext
 
@@ -199,5 +327,7 @@ gehören zu mehreren Applikationen.
 - Benennt jemand ein AP, eine EPG oder einen Server um, verliert das Mitglied den Bezug und
   erscheint als „nicht mehr gelesen“. Der Vorschlag bietet das umbenannte Objekt wieder an.
 - Regeln direkt zuordnen bzw. ausschliessen und Abhängigkeiten zwischen Applikationen seit
-  0.60.0 (Ergänzung oben; Abhängigkeiten seit 0.73.0 vorerst nicht angezeigt). Noch offen: ein Export nach NetBox (Tag/Custom Field, nur mit
-  eigener Freigabe gemäss ADR 0010).
+  0.60.0 (Ergänzung oben; Abhängigkeiten seit 0.73.0 vorerst nicht angezeigt, seit 0.88.0
+  wieder mit Infrastruktur getrennt). Export nach NetBox seit 0.93.0 als Abschnitt
+  *Applikationen* des NetBox-Syncs (Freigabe 2026-10-27, **ADR 0031**): je Applikation ein Tag
+  `automato-app-…` an den VMs und IP-Adressen ihrer Systeme, ohne Custom Fields.

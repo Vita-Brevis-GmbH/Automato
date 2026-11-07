@@ -10,6 +10,7 @@
 
 import copy
 
+from system_doc import system_doc
 from test_vmware import ACI, FW, WEB, _deliver, _seed
 
 OP = {"X-Dev-Roles": "operator"}
@@ -97,7 +98,7 @@ def test_l3out_contract_nur_wenn_enger_als_die_firewall(client):
     assert [x["name"] for x in f["detail"]["firewall_rules"]] == ["web-inet"]
     assert "es fehlt tcp/8443" in f["message"]
     # Doku je System: gleiche Regel
-    system = client.get("/appdoc/systems/10.20.0.5", params={"tenant_id": tid}).json()
+    system = system_doc(client, "10.20.0.5", tid)
     assert any(k.startswith("CT_inet") for k in _rows(system, 1))
     # Doku der Applikation listet den Befund
     assert any(x["type"] == "app_contract_narrower" for x in doc["findings"])

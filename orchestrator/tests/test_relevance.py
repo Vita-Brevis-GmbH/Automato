@@ -7,6 +7,7 @@ routingtechnisch nicht moeglich. Die Regeln „lan -> dmz“ sind moeglich.
 """
 
 import test_policy_check as pc
+from system_doc import system_doc, system_list
 
 ADMIN = {"X-Dev-Roles": "admin"}
 OP = {"X-Dev-Roles": "operator"}
@@ -14,19 +15,18 @@ OP = {"X-Dev-Roles": "operator"}
 
 def test_regeln_nur_wo_der_verkehr_durchkommt(client):
     tid = pc._seed(client)
-    systems = client.get("/appdoc/systems", params={"tenant_id": tid}).json()
+    systems = system_list(client, tid)
     web = next(s["name"] for s in systems if s["ip"] == "10.30.0.10")
 
-    doc = client.get(f"/appdoc/systems/{web}", params={"tenant_id": tid}).json()
+    doc = system_doc(client, web, tid)
     shown = {(row["_rule"], row["_side"]) for t in doc["tables"] for row in t["rows"]}
     gone = {(x["description"], x["side"]): x for x in doc["impossible"]}
-    assert set(gone) == {
-        ("lan-to-dmz-deny", "src"),  # vom Server aus: sein Verkehr kommt über dmz, nicht lan
-        ("lan-to-inet-users", "dst"),
-        ("lan-to-inet-users", "src"),
-        ("lan-to-dmz-falsch", "dst"),  # DMZ-Netz am Ausgang internet
-    }
-    inet = gone[("lan-to-inet-users", "dst")]
+    # ausgehend mit breiter Quelle (lan-to-dmz-deny, lan-to-inet-users vom Server aus) stehen
+    # seit 0.103.0 gar nicht in der Doku des Servers - auch nicht als „nicht möglich“; die
+    # Freigabe ins Internet (lan-to-inet-users: Ziel all, Ausgang mit Default-Route) seit 0.114.1
+    # ebenso nicht (Anwender: „irrelevant, wenn das ganze Internet zugreifen kann“)
+    assert set(gone) == {("lan-to-dmz-falsch", "dst")}  # DMZ-Netz am Ausgang internet
+    inet = gone[("lan-to-dmz-falsch", "dst")]
     assert inet["text"] == (
         "fw-r leitet 10.30.0.10 über dmz (Zone dmz) – die Regel gilt nur für den Ausgang internet"
     )
@@ -47,7 +47,9 @@ def test_regeln_nur_wo_der_verkehr_durchkommt(client):
     assert all(h["relevance"] != "impossible" for h in out["hits"])
     assert gone["rule_id"] not in {h["rule_id"] for h in out["hits"]}
     assert gone["rule_id"] not in {r["id"] for r in out["rules"]}
-    assert out["summary"]["impossible"] == 2  # lan-to-inet-users, lan-to-dmz-falsch
+    assert out["summary"]["impossible"] == 1  # lan-to-dmz-falsch
+    # lan-to-inet-users (Quelle und Ziel all): als „ausgehend mit breiter Quelle“ gezählt
+    assert out["summary"]["outbound_broad"] >= 1 and out["summary"]["to_internet"] == 0
     assert out["summary"]["rules"] == len({h["rule_id"] for h in out["hits"]})
     exported = {r.get("_rule") for t in out["tables"] for r in t["rows"]}
     assert gone["rule_id"] not in exported
@@ -55,12 +57,12 @@ def test_regeln_nur_wo_der_verkehr_durchkommt(client):
 
 def test_gegenstelle_any_ist_was_hinter_dem_interface_liegt(client):
     """0.25.0: Statt „any“ nennt die Doku, was hinter Interface bzw. Zone der Regel liegt -
-    die Netze dahinter, die Default-Route bzw. eine erfasste Anbindung (dann Kategorie 2
-    „Zugriff aus dem Internet“)."""
+    die Netze dahinter, die Default-Route bzw. eine erfasste Anbindung (Kategorie 2 „Zugriff
+    aus dem Internet“ - seit 0.106.0 schon nach dem Namen der Firewall-Zone)."""
     tid = pc._seed(client)
 
     def rows() -> dict[str, tuple[int, dict]]:
-        doc = client.get("/appdoc/systems/10.30.0.10", params={"tenant_id": tid}).json()
+        doc = system_doc(client, "10.30.0.10", tid)
         return {(r["Description"], r["_side"]): (t["index"], r)
                 for t in doc["tables"] for r in t["rows"]}  # fmt: skip
 
@@ -68,7 +70,8 @@ def test_gegenstelle_any_ist_was_hinter_dem_interface_liegt(client):
     _, deny = found[("lan-to-dmz-deny", "dst")]
     assert deny["Source"] == "all → Netze hinter lan: 10.10.0.0/24"
     idx, inet = found[("inet-to-web", "dst")]
-    assert (idx, inet["Source"]) == (10, "all → extern (Default-Route über internet)")
+    # seit 0.106.0 ohne Zone: Zonentyp nach dem Namen der Firewall-Zone („internet“ → Public)
+    assert (idx, inet["Source"]) == (2, "all → extern (Default-Route über internet)")
 
     # Anbindung Internet an der Zone: die Gegenstelle ist das Internet (Kategorie 2)
     nodes = client.get("/routing/summary", params={"tenant_id": tid}).json()["nodes"]

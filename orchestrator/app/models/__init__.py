@@ -18,12 +18,14 @@ from app.models.audit import AuditLog
 from app.models.base import Base
 from app.models.collector_run import CollectorRun, RunStatus
 from app.models.customer import (
+    CUSTOMER_USER_ORIGINS,
     CUSTOMER_USER_ROLES,
     Customer,
     CustomerMember,
     CustomerSelector,
     CustomerUser,
 )
+from app.models.data_state import DataChange, DataState
 from app.models.device_object import (
     ADDRESS_CATEGORIES,
     GROUP_CATEGORIES,
@@ -31,6 +33,7 @@ from app.models.device_object import (
     DeviceObject,
     ObjectCategory,
 )
+from app.models.doc_snapshot import DocSnapshot
 from app.models.epg import Epg, EpgEndpoint, EpgSubnet
 from app.models.finding import Finding, FindingStatus, FindingType, Severity, SubjectKind
 from app.models.inventory import (
@@ -44,6 +47,7 @@ from app.models.inventory import (
 )
 from app.models.l2 import L2_MODELS, ArpEntry, MacEntry
 from app.models.logical_zone import (
+    DEVICE_SELECTOR_KINDS,
     INTENTS,
     ZONE_KINDS,
     ZONE_SELECTOR_KINDS,
@@ -56,6 +60,7 @@ from app.models.logical_zone import (
 )
 from app.models.naming_profile import DictionaryEntry, NamingProfile
 from app.models.nat_rule import NatRule
+from app.models.net_assignment import NET_ASSIGN_KINDS, NetAssignment
 from app.models.network_object import (
     Family,
     MatchStatus,
@@ -80,12 +85,17 @@ from app.models.rule import (
 from app.models.rule_index import RuleIndex, RuleIpRange, RuleObjectUsage, RulePairDecision
 from app.models.service_object import Proto, ServiceObject
 from app.models.site import SITE_KINDS, Site, SiteLink
-from app.models.source_system import REFERENCE_PLATFORMS, Platform, SourceSystem
+from app.models.source_system import DNS_PLATFORMS, REFERENCE_PLATFORMS, Platform, SourceSystem
 from app.models.source_system import RefRole as ReferenceRole
 from app.models.sync_plan import SyncPlan, SyncStatus
 from app.models.tenant import DnsType, IpamType, Tenant
+from app.models.tenant_check import TenantCheck
+from app.models.tenant_module import TenantModule
 from app.models.topology import (
     TOPOLOGY_MODELS,
+    L3OutFirewall,
+    TopoBgpObject,
+    TopoChange,
     TopoContext,
     TopoExit,
     TopoExitDismissal,
@@ -107,6 +117,7 @@ __all__ = [
     "L2_MODELS",
     "MEMBER_KINDS",
     "REFERENCE_PLATFORMS",
+    "DNS_PLATFORMS",
     "SERVICE_CATEGORIES",
     "TOPOLOGY_MODELS",
     "Agent",
@@ -117,9 +128,12 @@ __all__ = [
     "AuditLog",
     "Base",
     "CollectorRun",
+    "DataChange",
+    "DataState",
     "DeviceObject",
     "DictionaryEntry",
     "DnsType",
+    "DocSnapshot",
     "EndpointKind",
     "Epg",
     "EpgEndpoint",
@@ -136,6 +150,7 @@ __all__ = [
     "InvVlan",
     "InvVrf",
     "IpamType",
+    "L3OutFirewall",
     "MacEntry",
     "MatchStatus",
     "NamingProfile",
@@ -172,6 +187,12 @@ __all__ = [
     "ParallelRejection",
     "SubjectKind",
     "Tenant",
+    "TenantCheck",
+    "NetAssignment",
+    "NET_ASSIGN_KINDS",
+    "TenantModule",
+    "TopoBgpObject",
+    "TopoChange",
     "TopoContext",
     "TopoExit",
     "TopoExitDismissal",
@@ -190,6 +211,7 @@ __all__ = [
     "ZoneSuggestionDismissal",
     "INTENTS",
     "ZONE_KINDS",
+    "DEVICE_SELECTOR_KINDS",
     "ZONE_SELECTOR_KINDS",
     "LogicalZone",
     "LogicalZoneSelector",
@@ -198,5 +220,6 @@ __all__ = [
     "CustomerMember",
     "CustomerSelector",
     "CustomerUser",
+    "CUSTOMER_USER_ORIGINS",
     "CUSTOMER_USER_ROLES",
 ]

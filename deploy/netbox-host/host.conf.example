@@ -1,0 +1,22 @@
+# Einstellungen des NetBox-Hosts (netbox-host.sh) – liegt als /opt/netbox-host/host.conf (0600).
+
+# Domain der Adressen: <kunde>.<DOMAIN>, <kunde>-netbox.<DOMAIN>, start.<DOMAIN>
+# (Wildcard-DNS *.<DOMAIN> auf diese VM; Wildcard-Zertifikat in proxy/pki/wildcard.crt|key)
+DOMAIN=mgmt.example.ch
+
+# Netze, die die Startseiten und NetBox öffnen dürfen (mit Leerzeichen getrennt) – mindestens das
+# Admin-Netz, die Netze der Kunden bzw. das VPN und die Adresse der Automato-VM (NetBox-Sync)
+ALLOW="10.0.10.0/24"
+
+# Kachel „Dokumentation“ auf jeder neuen Startseite (leer = keine)
+AUTOMATO_URL=https://automato.int.example.ch
+
+# Version: netbox-docker-Tag und passendes Image (gleich wie source-of-truth/netbox/setup.sh)
+NETBOX_DOCKER_TAG=5.0.2
+NETBOX_VERSION=v4.6.10-5.0.2
+
+TIME_ZONE=Europe/Zurich
+
+# Sicherung (täglich per cron, verschlüsselt mit age; init legt den Schlüssel an)
+BACKUP_DIR=/var/backups/netbox-host
+BACKUP_KEEP_DAYS=14

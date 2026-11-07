@@ -41,6 +41,7 @@ from app.models import (
     RuleObjectUsage,
     RulePairDecision,
     SourceSystem,
+    Tenant,
 )
 from app.schemas.rules import AciContractOut, RuleNatOut, RuleOut, RulePairOut
 from app.store import epgs as epg_store
@@ -147,8 +148,11 @@ class _Builder:
         self.epgs = epg_store.by_ids(session, epg_ids)
         self.epg_values: dict[int, list[str]] = defaultdict(list)
         if epg_ids:
+            from app.store.aci_relevance import assigns
+
             for s in session.scalars(select(EpgSubnet).where(EpgSubnet.epg_id.in_(epg_ids))):
-                self.epg_values[s.epg_id].append(s.ip)
+                if assigns(s.origin, s.scope):  # nicht Export Route Control (0.111.0)
+                    self.epg_values[s.epg_id].append(s.ip)
             for ep in session.scalars(select(EpgEndpoint).where(EpgEndpoint.epg_id.in_(epg_ids))):
                 self.epg_values[ep.epg_id].append(ep.ip)
         self.ctx = references.context(session, tenant_id)
@@ -200,6 +204,7 @@ class _Builder:
             attrs = lb.attrs or {}
             parts.extend([lb.name, lb.ext_ip, attrs.get("pool"), attrs.get("pool_group")])
             names.add(lb.name.lower())
+            nat_names.add(lb.name.lower())  # 0.96.0: Filter nat= und Regeln in NAT / VIPs
             for ip in nat_store.internal_ips(lb):
                 values.append(ip)
                 add_range("dst", ip, via)
@@ -392,7 +397,9 @@ def rebuild(
         range_rows += ranges
         if info is not None:
             infos.append(info)
-    pairs = rule_pairs.pair(infos, pair_decisions(session, tenant_id, source_system_id))
+    tenant = session.get(Tenant, tenant_id)
+    auto = bool(tenant is not None and tenant.rule_pairs_auto)  # 0.138.0
+    pairs = rule_pairs.pair(infos, pair_decisions(session, tenant_id, source_system_id), auto)
     for row in index_rows:
         p = pairs.get(row["rule_id"])
         row["pair_rule_id"] = p.partner_id if p else None
@@ -406,6 +413,29 @@ def rebuild(
     session.flush()
     parallel.mark(session, tenant_id)  # Zwillinge paralleler Firewalls (Verbund, 0.18.0)
     return len(rules)
+
+
+def apply_pair(session: Session, a_id: int, b_id: int, decision: str) -> None:
+    """Regelindex nach einer Entscheidung ueber das Paar a/b (Sperre des Mandanten beim
+    Aufrufer): sind beide schon als Paar markiert, nur die Markierung aendern (schnell), sonst
+    die Paare des Quellsystems neu bilden."""
+    stmt = select(RuleIndex).where(RuleIndex.rule_id.in_([a_id, b_id]))
+    rows = {i.rule_id: i for i in session.scalars(stmt)}
+    together = all(
+        rows.get(x) is not None and rows[x].pair_rule_id == y
+        for x, y in ((a_id, b_id), (b_id, a_id))
+    )
+    if together:
+        for row in rows.values():
+            if decision == "confirmed":
+                row.pair_match = "confirmed"
+            else:
+                row.pair_rule_id = row.pair_match = row.pair_diff = None
+        session.flush()
+        return
+    rule = session.get(Rule, a_id)
+    if rule is not None:
+        rebuild(session, rule.tenant_id, rule.source_system_id)
 
 
 def pair_decisions(

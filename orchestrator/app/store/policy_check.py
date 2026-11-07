@@ -24,6 +24,7 @@ Contracts.
 """
 
 import ipaddress
+from bisect import bisect_right
 from collections import defaultdict
 from dataclasses import dataclass, field
 
@@ -32,6 +33,7 @@ from sqlalchemy.orm import Session
 
 from app.i18n import L
 from app.models import (
+    DeviceObject,
     InvInterface,
     NatRule,
     NetworkObject,
@@ -44,13 +46,15 @@ from app.models import (
     RuleIpRange,
     RuleObjectRef,
     ServiceObject,
+    TopoPolicyRoute,
     Zone,
 )
+from app.models.device_object import ObjectCategory
 from app.models.rule import EndpointKind, rule_service
 from app.store import nat as nat_store
-from app.store import rule_view
+from app.store import path_service, rule_view
 from app.store.rule_index import value_range
-from app.store.topology import endpoint, is_net, span
+from app.store.topology import endpoint, is_net, is_private, span
 
 FIREWALL_KINDS = ("firewall", "vdom")
 ACI_KINDS = ("vrf",)
@@ -94,10 +98,18 @@ class _Policy:
         default_factory=lambda: defaultdict(list)
     )
     unresolved: dict[str, bool] = field(default_factory=lambda: defaultdict(bool))
+    # Geo-Objekte und Internet Services (FortiGuard) - nur oeffentliche Adressen (0.112.0)
+    public_only: dict[str, bool] = field(default_factory=lambda: defaultdict(bool))
+    # Internet Service statt Adressen je Seite: True = nur FortiGuard-Dienste (oeffentlich),
+    # False = auch eigene (`custom`, koennen private Netze enthalten), fehlt = Adressen
+    isdb: dict[str, bool] = field(default_factory=dict)
     endpoints: dict[str, int] = field(default_factory=lambda: defaultdict(int))
     snat: list[str] | None = None  # None = kein NAT, [] = IP des Ausgangs, sonst IP-Pools
     snat6: list[str] | None = None  # dasselbe fuer IPv6 (nat6/poolname6, 0.47.0)
     names: list[str] = field(default_factory=list)  # Service-Objekte wie auf der Firewall
+    # Sperre auch fuer Verkehr zu einer VIP (0.132.1, FortiOS `match-vip`, Vorgabe aus): ohne
+    # greift eine deny-Policy nicht fuer Verkehr, dessen Ziel eine VIP umschreibt
+    match_vip: bool = False
 
 
 def _names(raw: dict, key: str) -> list[str]:
@@ -112,9 +124,26 @@ class Checker:
         self.tenant_id = tenant_id
         self._policies: dict[tuple[int, str], list[_Policy]] = {}
         self._known: dict[int, set[str]] = {}
+        self._sdwan: dict[int, dict[str, set[str]]] = {}
         self._ifaces: dict[int, dict[str, list[str]]] = {}
         self._pool_cache: dict[tuple[int, str], dict[str, NatRule]] = {}
         self._vip_cache: dict[tuple[int, str], list[NatRule]] = {}
+        # 0.132.1 (Anwender: „Das Berechnen einer Applikation dauert sehr lange mehrere
+        # Stunden“): je Firewall/VDOM und Ein-/Ausgang die Policies, deren Interfaces passen
+        # koennen, mit dem Ergebnis der Interface-Pruefung - statt je Hop alle Policies
+        self._by_ports: dict[tuple, list[tuple[_Policy, bool | None, bool | None]]] = {}
+        self._index: dict[tuple, tuple[_AddrIndex, _AddrIndex]] = {}
+        # Adressklassen je Firewall/VDOM und Seite (0.140.0): Grenzen aller Adressen der Policies
+        self._classes: dict[tuple[int, str, str], dict[int, list[int]]] = {}
+
+    # Caches aus reinen Daten (keine Objekte der Datenbank) - teilbar zwischen Sitzungen
+    SHARED = ("_policies", "_known", "_sdwan", "_ifaces", "_by_ports", "_index", "_classes")
+
+    def share(self, state: dict[str, dict]) -> None:
+        """Caches mit dem Wege-Speicher des Mandanten teilen (0.140.0): die Policies je
+        Firewall/VDOM werden je Datenstand einmal geladen, nicht je Applikation."""
+        for name in self.SHARED:
+            setattr(self, name, state.setdefault(name, getattr(self, name)))
 
     # -- Laden -------------------------------------------------------------------
 
@@ -161,17 +190,27 @@ class Checker:
                 "dst": raw.get("dstaddr-negate") == "enable",
             }
             p.service_negate = raw.get("service-negate") == "enable"
+            for side, mid in (("src", "-src"), ("dst", "")):
+                if any(raw.get(f"internet-service{v}{mid}") == "enable" for v in ("", "6")):
+                    custom = any(raw.get(f"internet-service{v}{mid}-{k}") for v in ("", "6")
+                                 for k in ("custom", "custom-group"))  # fmt: skip
+                    p.isdb[side] = not custom
             p.identity = any(raw.get(k) for k in ("users", "groups", "fsso-groups"))
+            p.match_vip = raw.get("match-vip") == "enable"
             p.schedule = str(raw.get("schedule") or "") or None
             p.snat = rule_view.snat_pools(r, "v4")  # SNAT je Familie (0.47.0)
             p.snat6 = rule_view.snat_pools(r, "v6")
             out[r.id] = p
         if out:
-            self._load_details(where, out)
+            self._load_details(sid, where, out)
         self._policies[key] = list(out.values())
         return self._policies[key]
 
-    def _load_details(self, where: tuple, out: dict[int, _Policy]) -> None:
+    def _load_details(self, sid: int, where: tuple, out: dict[int, _Policy]) -> None:
+        # Geo-Adressobjekte der Firewall (Typ `geography`): nur oeffentliche Adressen (0.112.0)
+        geo = set(self.session.scalars(select(DeviceObject.name).where(
+            DeviceObject.source_system_id == sid,
+            DeviceObject.obj_type == "geography")))  # fmt: skip
         for rid, role, fam, lo, hi, is_any, via in self.session.execute(
             select(
                 RuleIpRange.rule_id,
@@ -186,13 +225,14 @@ class Checker:
             .where(*where, RuleIpRange.role.in_(("src", "dst")))
         ):
             out[rid].ranges[role].append((fam, int(lo, 16), int(hi, 16), is_any, via))
-        for rid, role, kind, inline, value, epg_id in self.session.execute(
+        for rid, role, kind, inline, value, name, epg_id in self.session.execute(
             select(
                 RuleEndpoint.rule_id,
                 RuleEndpoint.role,
                 RuleEndpoint.kind,
                 RuleEndpoint.inline_value,
                 NetworkObject.value,
+                NetworkObject.name,
                 RuleEndpoint.epg_id,
             )
             .join(Rule, Rule.id == RuleEndpoint.rule_id)
@@ -203,7 +243,23 @@ class Checker:
             p.endpoints[side] += 1
             if kind is EndpointKind.ANY or epg_id or value_range(value) or value_range(inline):
                 continue
-            p.unresolved[side] = True  # FQDN, ISDB, Geo, dynamisch: nicht als IP pruefbar
+            if p.isdb.get(side) or name in geo:
+                # Land bzw. Internet Service: trifft keine private Adresse (0.112.0)
+                p.public_only[side] = True
+                continue
+            p.unresolved[side] = True  # FQDN, eigene ISDB, dynamisch: nicht als IP pruefbar
+        # eigener Service mit Protokoll IP und Nummer 0 (z. B. „FT_any“) trifft alle Protokolle
+        # wie ALL (0.133.3, Anwender: Sperre mit „Dienste … FT_any · Service · IP“ war „abhängig
+        # von: Dienst“ statt Sperrliste)
+        every = {
+            name.lower()
+            for name, obj_type, attrs in self.session.execute(
+                select(DeviceObject.name, DeviceObject.obj_type, DeviceObject.attrs).where(
+                    DeviceObject.source_system_id == sid,
+                    DeviceObject.category == ObjectCategory.SERVICE)
+            )
+            if _all_protocols(obj_type, attrs)
+        }  # fmt: skip
         for rid, proto, start, end, name in self.session.execute(
             select(
                 rule_service.c.rule_id,
@@ -216,6 +272,8 @@ class Checker:
             .join(Rule, Rule.id == rule_service.c.rule_id)
             .where(*where)
         ):
+            if proto is Proto.IP and name in every:
+                name = "all"
             out[rid].services.append((proto, start, end, name))
         for rid, name in self.session.execute(
             select(RuleObjectRef.rule_id, RuleObjectRef.name)
@@ -227,7 +285,8 @@ class Checker:
                 out[rid].names.append(name)
 
     def known(self, sid: int) -> set[str]:
-        """Interface- und Zonennamen der Firewall (unbekannte Namen = nicht pruefbar)."""
+        """Interface- und Zonennamen der Firewall (unbekannte Namen = nicht pruefbar) - mit den
+        SD-WAN-Zonen (0.133.4)."""
         if sid not in self._known:
             names: set[str] = set()
             for name, zone in self.session.execute(
@@ -236,8 +295,31 @@ class Checker:
                 )
             ):
                 names |= {n for n in (name, zone) if n}
+            for zones in self.sdwan(sid).values():
+                names |= zones
             self._known[sid] = names
         return self._known[sid]
+
+    def sdwan(self, sid: int) -> dict[str, set[str]]:
+        """SD-WAN-Zonen je Interface (Mitglieder aus `system/sdwan`, 0.133.4, Anwender: alle
+        Policies nur „möglich (Eingang)“): Policies nennen die SD-WAN-Zone (z. B.
+        `virtual-wan-link`), der Weg kommt über ihr Mitglied (z. B. `wan1`) herein."""
+        if sid not in self._sdwan:
+            out: dict[str, set[str]] = defaultdict(set)
+            for attrs in self.session.scalars(
+                select(TopoPolicyRoute.attrs).where(
+                    TopoPolicyRoute.source_system_id == sid, TopoPolicyRoute.kind == "sdwan")
+            ):  # fmt: skip
+                for m in (attrs or {}).get("members") or []:
+                    if isinstance(m, dict) and m.get("zone") and m.get("interface"):
+                        out[str(m["interface"])].add(str(m["zone"]))
+            self._sdwan[sid] = dict(out)
+        return self._sdwan[sid]
+
+    def _with_sdwan(self, sid: int, port: dict | None) -> dict | None:
+        """Ein- bzw. Ausgang mit den SD-WAN-Zonen seines Interfaces (`_ports`)."""
+        zones = self.sdwan(sid).get((port or {}).get("interface") or "")
+        return {**port, "sdwan": sorted(zones)} if port and zones else port
 
     def _pools(self, sid: int, vdom: str) -> dict[str, NatRule]:
         key = (sid, vdom)
@@ -341,28 +423,83 @@ class Checker:
 
     # -- Pruefen -----------------------------------------------------------------
 
+    def _for_ports(self, sid: int, vdom: str, ingress: dict | None,
+                   egress: dict | None) -> list[tuple]:  # fmt: skip
+        """Aktive Policies in Reihenfolge, deren Ein- und Ausgang zum Hop passen koennen, mit
+        dem Ergebnis je Seite (True bzw. None = nicht pruefbar) - je Ein-/Ausgang einmal."""
+        i, e = ingress or {}, egress or {}
+        key = (sid, vdom, i.get("interface"), i.get("zone"), e.get("interface"), e.get("zone"))
+        if key not in self._by_ports:
+            known = self.known(sid)
+            out = []
+            for p in self.policies(sid, vdom):
+                if not p.enabled:
+                    continue
+                in_ok = _ports(p.srcintf, self._with_sdwan(sid, ingress), known)
+                if in_ok is False:
+                    continue
+                out_ok = _ports(p.dstintf, self._with_sdwan(sid, egress), known)
+                if out_ok is not False:
+                    out.append((p, in_ok, out_ok))
+            self._by_ports[key] = out
+        return self._by_ports[key]
+
+    def addr_class(self, sid: int, vdom: str, role: str, ip) -> tuple | None:
+        """Adressklasse einer IP bzw. eines Netzes fuer die Policies einer Firewall/VDOM
+        (0.140.0, ADR 0048): Adressen zwischen denselben Grenzen aller Adressbereiche der Policies
+        auf dieser Seite treffen genau dieselben Objekte - ihr Urteil je Hop ist gleich. Dazu
+        Familie und privat/oeffentlich (Land, Internet Service, `_address`). Ein Netz: Klasse
+        seiner ersten und letzten Adresse (ganz bzw. teilweise enthalten ist damit bestimmt)."""
+        if ip is None:
+            return None
+        key = (sid, vdom, role)
+        bounds = self._classes.get(key)
+        if bounds is None:
+            edges: dict[int, set[int]] = defaultdict(set)
+            for p in self.policies(sid, vdom):
+                for fam, lo, hi, _any, _via in p.ranges.get(role, []):
+                    edges[fam].add(lo)
+                    edges[fam].add(hi + 1)
+            bounds = self._classes[key] = {f: sorted(v) for f, v in edges.items()}
+        lo, hi = span(ip)
+        edges_of = bounds.get(ip.version, [])
+        return (ip.version, bisect_right(edges_of, lo), bisect_right(edges_of, hi),
+                is_private(ip))  # fmt: skip
+
     def check(self, sid: int, vdom: str, ingress: dict | None, egress: dict | None, src, dst,
-              service: tuple[str, int | None] | None, after: int = 0) -> dict:  # fmt: skip
+              service: tuple[str, int | None] | None, after: int = 0,
+              vip: str | None = None) -> dict:  # fmt: skip
         """Urteil je Hop: allow | deny | implicit_deny | depends | unknown, mit der
         entscheidenden Policy und den moeglichen davor; mit `after` bis zu so viele passende
-        Policies dahinter (`after`, greifen nicht mehr - z. B. hinter einer Sperre zuoberst)."""
+        Policies dahinter (`after`, greifen nicht mehr - z. B. hinter einer Sperre zuoberst).
+
+        `vip` (0.132.1, Anwender: „vorher einen Deny Regel …, welche Schadhafte Ziele / Sourcen
+        blockiert, nimmt er diese Regel und schmeisst ein Abhängig dahinter, anstelle der Regel
+        mit dem NAT“): an diesem Hop schreibt die VIP das Ziel um - wie auf der FortiGate greift
+        eine deny-Policy dann nur mit `match-vip enable` bzw. mit der VIP selbst als Ziel."""
         policies = self.policies(sid, vdom)
         if not policies:
             return {"verdict": "unknown", "text": L("keine Policies gelesen", "no policies read"),
                     "rules": []}  # fmt: skip
-        known = self.known(sid)
         shown: list[dict] = []
         later: list[dict] = []
+        skipped: list[dict] = []  # deny ohne match-vip am VIP-Hop (0.132.1)
         decisive = None
         # Bedingungen (Anzeige in `unsure`): Bezeichnung in der Sprache der Anfrage
         words = {k: L(*v) for k, v in _CHECKS.items()}
-        for p in policies:
-            if not p.enabled:
+        candidates = self._for_ports(sid, vdom, ingress, egress)
+        i, e = ingress or {}, egress or {}
+        key = (sid, vdom, i.get("interface"), i.get("zone"), e.get("interface"), e.get("zone"))
+        if key not in self._index:
+            self._index[key] = (_AddrIndex(candidates, "src"), _AddrIndex(candidates, "dst"))
+        by_src, by_dst = self._index[key]
+        # nur Policies, deren Quelle bzw. Ziel die Adresse treffen kann (0.132.1)
+        maybe_src, maybe_dst = by_src.possible(src), by_dst.possible(dst)
+        for p, in_ok, out_ok in candidates:
+            if (maybe_src is not None and p.id not in maybe_src) or (
+                    maybe_dst is not None and p.id not in maybe_dst):  # fmt: skip
                 continue
-            checks = {
-                words["in"]: _ports(p.srcintf, ingress, known),
-                words["out"]: _ports(p.dstintf, egress, known),
-            }
+            checks = {words["in"]: in_ok, words["out"]: out_ok}
             src_ok, src_via, src_part = _address(p, "src", src)
             dst_ok, dst_via, dst_part = _address(p, "dst", dst)
             # Netz (0.39.0): erfasst die Policy nur einen Teil, ist sie nur „moeglich“
@@ -374,6 +511,11 @@ class Checker:
                 None if (p.schedule or "").lower() not in _OPEN else True
             )
             if False in checks.values():
+                continue
+            if vip and not p.allow and not p.match_vip and not _is_vip(dst_via, vip):
+                if len(skipped) < SHOWN:
+                    skipped.append({"rule_id": p.id, "external_id": p.external_id,
+                                    "name": p.name, "action": "deny"})  # fmt: skip
                 continue
             unsure = [k for k, v in checks.items() if v is None]
             entry = {
@@ -390,6 +532,8 @@ class Checker:
                 "decides": not unsure,
                 "snat": p.snat6 if getattr(src, "version", 4) == 6 else p.snat,
             }
+            if not p.allow and _blocklist(p, unsure, words):
+                entry["blocklist"] = True  # Sperrliste (0.132.2): Internet Service bzw. Land
             if decisive is not None:  # dahinter (0.78.4): passt, wird aber nicht erreicht
                 later.append(entry | {"decides": False, "after": True})
                 if len(later) >= after:
@@ -404,6 +548,14 @@ class Checker:
             if not after:
                 break
         result = _verdict(decisive, shown)
+        if skipped:
+            result["vip_skipped"] = skipped
+            names = ", ".join(_label(e) for e in skipped[:3])
+            more = f" +{len(skipped) - 3}" if len(skipped) > 3 else ""
+            result["text"] += L(
+                f" – {names}{more} sperrt Verkehr zur VIP {vip} nicht (match-vip aus)",
+                f" – {names}{more} does not block traffic to the VIP {vip} (match-vip off)",
+            )
         if later:
             result["after"] = later
             # Sperre zuoberst (z. B. „Default Block …“): die erlaubende dahinter nennen
@@ -428,6 +580,79 @@ _CHECKS = {
     "identity": ("Benutzer/Gruppen", "Users/groups"),
     "schedule": ("Zeitplan", "Schedule"),
 }
+
+
+class _AddrIndex:
+    """Adressen einer Seite (Quelle bzw. Ziel) der Policies eines Ein-/Ausgangs nach Bereichen
+    (0.132.1): welche Policies eine Adresse treffen koennen - die uebrigen sicher nicht (ihr
+    `_address` waere False). Negierte, nicht als IP pruefbare (FQDN, ISDB, Land) und Policies
+    ohne Endpunkte dieser Seite bleiben immer drin."""
+
+    SHIFT = {4: 16, 6: 112}  # Faecher je /16
+    MAX_SPAN = 256  # breitere Abfragen (grosse Netze): alle Policies pruefen
+
+    def __init__(self, entries: list, role: str):
+        self.always: set[int] = set()
+        self.wide: dict[int, list[tuple[int, int, int]]] = {4: [], 6: []}
+        self.buckets: dict[int, dict[int, list[tuple[int, int, int]]]] = {
+            4: defaultdict(list), 6: defaultdict(list)}  # fmt: skip
+        for p, *_ in entries:
+            if (p.negate.get(role) or p.unresolved.get(role) or p.public_only.get(role)
+                    or not p.endpoints.get(role)):  # fmt: skip
+                self.always.add(p.id)
+                continue
+            for fam, lo, hi, _any, _via in p.ranges.get(role, []):
+                shift = self.SHIFT.get(fam)
+                if shift is None:
+                    self.always.add(p.id)
+                elif lo >> shift == hi >> shift:
+                    self.buckets[fam][lo >> shift].append((lo, hi, p.id))
+                else:
+                    self.wide[fam].append((lo, hi, p.id))
+
+    def possible(self, ip) -> set[int] | None:
+        """IDs der Policies, die die Adresse treffen koennen; None = alle pruefen."""
+        if ip is None:
+            return None
+        lo, hi = span(ip)
+        fam = ip.version
+        shift = self.SHIFT[fam]
+        first, last = lo >> shift, hi >> shift
+        if last - first > self.MAX_SPAN:
+            return None
+        out = set(self.always)
+        out.update(pid for a, b, pid in self.wide[fam] if a <= hi and lo <= b)
+        buckets = self.buckets[fam]
+        for bucket in range(first, last + 1):
+            out.update(pid for a, b, pid in buckets.get(bucket, ()) if a <= hi and lo <= b)
+        return out
+
+
+def _all_protocols(obj_type: str | None, attrs: dict | None) -> bool:
+    """FortiGate-Service mit Protokoll IP und Protokollnummer 0 (fehlt = 0): alle Protokolle."""
+    attrs = attrs if isinstance(attrs, dict) else {}
+    if str(attrs.get("protocol") or obj_type or "").upper() != "IP":
+        return False
+    try:
+        return int(attrs.get("protocol-number") or 0) == 0
+    except (TypeError, ValueError):
+        return False
+
+
+def _blocklist(p: _Policy, unsure: list[str], words: dict[str, str]) -> bool:
+    """Sperrliste (0.132.2): offen ist nur Quelle bzw. Ziel, und dort steht ein Internet Service
+    von FortiGuard (Botnet-C&C, Malicious …) bzw. ein Land - kein FQDN, keine eigene Liste."""
+    sides = {words["src"]: "src", words["dst"]: "dst"}
+    return bool(unsure) and all(
+        k in sides and p.public_only.get(sides[k]) and not p.unresolved.get(sides[k])
+        and not p.negate.get(sides[k]) for k in unsure
+    )  # fmt: skip
+
+
+def _is_vip(via: str | None, vip: str) -> bool:
+    """Ziel der Policy ist die VIP selbst (Objekt der Regel, ggf. mit der Kette dahinter)."""
+    name = str(via or "").split(" › ")[0].strip().lower()
+    return bool(name) and name == vip.lower()
 
 
 def _family_of(n: NatRule) -> int:
@@ -460,12 +685,18 @@ def _fixed(src, source: str | None, first, last):
 
 def _verdict(decisive: dict | None, shown: list[dict]) -> dict:
     before = [e for e in shown if not e["decides"]]
-    reasons = sorted({u for e in before for u in e["unsure"]})
+    # Sperrliste vor einer erlaubenden Policy (0.132.2, Anwender: „die Regel mit Deny beinhaltet
+    # Botnet-C&C.Server usw. als Source … was aber ja bereits bei sich sperren ist“): sperrt nur
+    # die Adressen ihrer Liste, alles andere erlaubt die Policy dahinter - nicht „abhaengig“
+    lists = [e for e in before if e.get("blocklist")] if (
+        decisive is not None and decisive["action"] == "allow") else []  # fmt: skip
+    open_ = [e for e in before if e not in lists]
+    reasons = sorted({u for e in open_ for u in e["unsure"]})
     listed = ", ".join(reasons)
     why = L(f" – abhängig von: {listed}", f" – depends on: {listed}") if reasons else ""
     if decisive is not None:
         name = _label(decisive)
-        other = [e for e in before if e["action"] != decisive["action"]]
+        other = [e for e in open_ if e["action"] != decisive["action"]]
         if other:
             first = _label(other[0])
             text = L(
@@ -476,7 +707,21 @@ def _verdict(decisive: dict | None, shown: list[dict]) -> dict:
             text = L(f"erlaubt durch {name}", f"allowed by {name}")
         else:
             text = L(f"gesperrt durch {name}", f"blocked by {name}")
-        return {"verdict": decisive["action"], "rules": shown, "text": text}
+        out = {"verdict": decisive["action"], "rules": shown, "text": text}
+        if lists:
+            names = ", ".join(_label(e) for e in lists[:3])
+            more = f" +{len(lists) - 3}" if len(lists) > 3 else ""
+            out["text"] += L(f" – ausser Sperrliste {names}{more} (Internet Service bzw. Land)",
+                             f" – except blocklist {names}{more} (internet service or "
+                             "country)")  # fmt: skip
+            out["blocklists"] = lists
+        return out
+    if before and all(e["action"] == "deny" for e in before):
+        # nur sperrende Policies moeglich (0.132.2): so oder so gesperrt, nicht „abhaengig“
+        first = _label(before[0])
+        text = L(f"gesperrt – {first} bzw. implizit (keine erlaubende Policy)",
+                 f"blocked – {first} or implicitly (no allowing policy)")  # fmt: skip
+        return {"verdict": "implicit_deny", "rules": shown, "text": text}
     if before:
         text = L(f"nur mögliche Policies, sonst implizit gesperrt{why}",
                  f"only possible policies, otherwise implicitly denied{why}")  # fmt: skip
@@ -499,6 +744,7 @@ def _ports(names: list[str], port: dict | None, known: set[str]) -> bool | None:
     if any(n.lower() == "any" for n in names):
         return True
     have = {v for v in ((port or {}).get("interface"), (port or {}).get("zone")) if v}
+    have |= set((port or {}).get("sdwan") or ())  # SD-WAN-Zonen des Interfaces (0.133.4)
     if not have:
         return None
     if have & set(names):
@@ -521,7 +767,9 @@ def _address(p: _Policy, role: str, ip) -> tuple[bool | None, str | None, bool]:
     hits = [r for r in same if r[1] <= lo and hi <= r[2]]
     part = [] if hits else [r for r in same if r[1] <= hi and lo <= r[2]]
     best = min(hits, key=lambda r: r[2] - r[1]) if hits else None
-    unresolved = p.unresolved.get(role)
+    # Land bzw. Internet Service (0.112.0): offen nur fuer oeffentliche Adressen - eine private
+    # Quelle bzw. ein privates Ziel trifft er nicht (Anwender: „abhängig“ trotz offener Regeln)
+    unresolved = p.unresolved.get(role) or (p.public_only.get(role) and not is_private(ip))
     if p.negate.get(role):
         if best is not None:
             return (None, None, False) if unresolved else (False, None, False)
@@ -577,7 +825,16 @@ class Checks:
 
     @classmethod
     def load(cls, session: Session, tenant_id: int, after: int = 0) -> "Checks":
-        return cls(Checker(session, tenant_id), after=after)
+        """Mit dem Wege-Speicher des Mandanten (0.140.0, `path_store`): Policies und Urteile je
+        Hop nur einmal je Datenstand fuer alle Applikationen."""
+        from app.store import path_store
+
+        checker = Checker(session, tenant_id)
+        store = path_store.current(tenant_id)
+        if store is None or after:
+            return cls(checker, after=after)
+        checker.share(store.checker)
+        return cls(checker, cache=store.decisions_for(), after=after)
 
 
 def check_paths(session: Session, tenant_id: int, paths: list[dict], src, dst, service,
@@ -595,7 +852,7 @@ def check_paths(session: Session, tenant_id: int, paths: list[dict], src, dst, s
         verdicts = []
         cur_src, cur_svc = src, service
         lb = None
-        for hop in path["hops"]:
+        for i, hop in enumerate(path["hops"]):
             if lb is not None:  # nach dem Load Balancer (NSX ALB): Quelle und Port zum Server
                 cur_src, cur_svc = _behind_balancer(lb, cur_src, cur_svc)
             lb = hop.get("lb")
@@ -607,31 +864,46 @@ def check_paths(session: Session, tenant_id: int, paths: list[dict], src, dst, s
                 checks.aci = checks.aci or AciChecker(session, tenant_id)
                 sid, vrf = hop["source_system_id"], hop["context"]
                 into = (hop.get("leak") or {}).get("vrf")  # Ziel in geleakter VRF (0.44.0)
-                key = ("aci", sid, vrf, cur_src, hop_dst, cur_svc, into)
+                # von aussen (0.135.0): vor dem VRF-Hop ein anderes Geraet - ohne Quell-IP
+                # zaehlt jede externe EPG der VRF
+                outside = cur_src is None and any(
+                    h.get("source_system_id") != sid for h in path["hops"][:i]
+                )
+                key = ("aci", sid, vrf, cur_src, hop_dst, cur_svc, into, outside)
                 if key not in cache:
-                    cache[key] = checks.aci.check(sid, vrf, cur_src, hop_dst, cur_svc, into)
+                    cache[key] = checks.aci.check(sid, vrf, cur_src, hop_dst, cur_svc, into,
+                                                  outside=outside)  # fmt: skip
                 hop["rules"] = cache[key]
-                verdicts.append((hop["label"], cache[key]["verdict"], kind))
+                if cur_svc != service and cur_svc and cur_svc[1] is not None:
+                    hop["checked_service"] = path_service.text(cur_svc)  # 0.137.0
+                verdicts.append((hop["label"], cache[key]["verdict"], kind, cache[key]["text"]))
                 continue
             cur_svc = _forwarded(cur_svc, hop.get("nat"))
+            if cur_svc != service and cur_svc and cur_svc[1] is not None:
+                # 0.137.0: mit diesem Port geprueft (nach Port-Weiterleitung bzw. Load Balancer)
+                hop["checked_service"] = path_service.text(cur_svc)
             ingress, egress = hop.get("ingress") or {}, hop.get("egress") or {}
             sid, vdom = hop["source_system_id"], hop["context"]
             ports = (ingress.get("interface"), ingress.get("zone"),
                      egress.get("interface"), egress.get("zone"))  # fmt: skip
-            key = (sid, vdom, *ports, cur_src, hop_dst, cur_svc)
+            vip = (hop.get("nat") or {}).get("name")  # VIP an diesem Hop (0.132.1)
+            # je Adressklasse statt je IP (0.140.0, ADR 0048): gleiche Klasse = gleiches Urteil
+            classes = (checker.addr_class(sid, vdom, "src", cur_src),
+                       checker.addr_class(sid, vdom, "dst", hop_dst))  # fmt: skip
+            key = (sid, vdom, *ports, *classes, cur_svc, vip, checks.after)
             if key not in cache:
                 cache[key] = checker.check(sid, vdom, ingress, egress, cur_src, hop_dst, cur_svc,
-                                           checks.after)  # fmt: skip
+                                           checks.after, vip)  # fmt: skip
             result = hop["rules"] = cache[key]
-            verdicts.append((hop["label"], result["verdict"], kind))
-            decisive = next((r for r in result["rules"] if r["decides"]), None)
-            if result["verdict"] == "allow" and decisive:
+            verdicts.append((hop["label"], result["verdict"], kind, result["text"]))
+            passing = _passing(result)
+            if passing is not None:
                 # Quelle danach (0.47.0): VIP mit nat-source-vip, sonst das NAT der Policy
                 snat = None
                 if cur_src is not None:
                     snat = checker._vip_source(sid, vdom, cur_src, egress)
-                if snat is None and decisive.get("snat") is not None:
-                    snat = checker.snat(sid, vdom, decisive["snat"], egress, cur_src)
+                if snat is None and passing.get("snat") is not None:
+                    snat = checker.snat(sid, vdom, passing["snat"], egress, cur_src)
                 if snat is not None:
                     hop["snat"] = snat
                     to = snat.get("to")
@@ -639,45 +911,43 @@ def check_paths(session: Session, tenant_id: int, paths: list[dict], src, dst, s
         path["policy"] = _overall(verdicts)
 
 
+def _passing(result: dict) -> dict | None:
+    """Policy, mit der der Verkehr weitergeht: bei „erlaubt“ die entscheidende; bei „abhaengig“
+    (0.132.2, Anwender: „er zeigt nur den Weg, welches die gesperrte Regel hätte“) die einzige
+    erlaubende - was weitergeht, erlaubt sie, mit ihrem NAT (z. B. SNAT der VIP-Policy)."""
+    if result["verdict"] == "allow":
+        return next((r for r in result["rules"] if r["decides"]), None)
+    if result["verdict"] == "depends":
+        allows = [r for r in result["rules"] if r["action"] == "allow"]
+        return allows[0] if len(allows) == 1 else None
+    return None
+
+
 def _behind_balancer(lb: dict, src, service):
     """Verkehr vom Load Balancer zum Server (ADR 0027): Quelle = Service Engine (SNAT, Adresse
     unbekannt - die VIP steht fuer ihr Netz) bzw. der Client; Port = Port des Servers."""
     if lb.get("snat") != "client":
         src = endpoint(lb["ext"]) if lb.get("ext") else None
-    port = lb.get("server_port")
-    if service and port not in (None, ""):
-        try:
-            service = (service[0], int(port))
-        except (TypeError, ValueError):
-            pass
-    return src, service
+    return src, path_service.behind_lb(service, lb)
 
 
 def _forwarded(service, nat: dict | None):
-    """Port-Weiterleitung einer VIP: externer Port -> interner Port (Bereich mit Abstand)."""
-    if not service or service[1] is None or not nat or not nat.get("ports"):
-        return service
-    ext, mapped = (_port_range(p) for p in nat["ports"])
-    if ext is None or mapped is None or not ext[0] <= service[1] <= ext[1]:
-        return service
-    return (service[0], mapped[0] + service[1] - ext[0])
+    """Port-Weiterleitung einer VIP: externer Port -> interner Port (`path_service`)."""
+    return path_service.forwarded(service, nat)
 
 
-def _port_range(text: str | None) -> tuple[int, int] | None:
-    a, _, b = str(text or "").partition("-")
-    if not a.strip().isdigit():
-        return None
-    lo = int(a)
-    return lo, int(b) if b.strip().isdigit() else lo
+_port_range = path_service.port_range
 
 
-def _overall(verdicts: list[tuple[str, str, str]]) -> dict | None:
+def _overall(verdicts: list[tuple]) -> dict | None:
+    """Urteil eines Wegs aus (Hop, Urteil, Art[, Text]) je Hop. Abhaengig (0.112.0, Anwender:
+    „ich weiss nicht, warum es dort abhängig sagt“): mit dem Grund je Hop."""
     if not verdicts:
         return None
-    for label, v, _kind in verdicts:
+    for label, v, *_rest in verdicts:
         if v in ("deny", "implicit_deny"):
             return {"verdict": "deny", "text": L(f"gesperrt an {label}", f"blocked at {label}")}
-    open_ = [label for label, v, _kind in verdicts if v == "depends"]
+    open_ = [(x[0], x[3] if len(x) > 3 else None) for x in verdicts if x[1] == "depends"]
     at = L("an", "at")
     unread = "; ".join(
         f"{what} {at} {', '.join(labels)}"
@@ -685,17 +955,17 @@ def _overall(verdicts: list[tuple[str, str, str]]) -> dict | None:
             (L("keine Policies gelesen", "no policies read"), FIREWALL_KINDS),
             (L("Contracts nicht prüfbar", "contracts not verifiable"), ACI_KINDS),
         )
-        if (labels := [label for label, v, k in verdicts if v == "unknown" and k in kinds])
+        if (labels := [x[0] for x in verdicts if x[1] == "unknown" and x[2] in kinds])
     )
     if open_:
-        listed = ", ".join(open_)
+        listed = "; ".join(f"{label} ({why})" if why else label for label, why in open_)
         text = L(f"abhängig an {listed}", f"depends at {listed}")
         if unread:
             text += f"; {unread}"
         return {"verdict": "depends", "text": text}
     if unread:
         return {"verdict": "unknown", "text": unread}
-    fw = sum(1 for *_, kind in verdicts if kind in FIREWALL_KINDS)
+    fw = sum(1 for x in verdicts if x[2] in FIREWALL_KINDS)
     vrfs = len(verdicts) - fw
     allowed = L("erlaubt", "allowed")
     if not vrfs:

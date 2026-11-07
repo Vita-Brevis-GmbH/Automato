@@ -106,14 +106,15 @@ def test_eine_zeile_je_verbindung_ueber_aci_und_zwei_firewalls(client):
     assert states["Policy 21 „web-lan“"]["state"] == "decides"
     zu = states["Policy 22 „web-lan-zu“"]
     assert (zu["state"], zu["text"]) == ("other", "vorher entscheidet Policy 21 „web-lan“")
-    alt = states["Policy 31 „web-lan-alt“"]
-    assert (alt["state"], alt["text"]) == (
-        "off_path",
-        "fw-03 liegt nicht auf dem Weg dieser Verbindung",
-    )
-    assert https["mismatch"] == [
-        "Policy 31 „web-lan-alt“: fw-03 liegt nicht auf dem Weg dieser Verbindung"
-    ]
+    # fw-03 hat dieselbe Regel, liegt aber nicht auf dem Weg (0.107.0, Anwender): nicht in der
+    # Verbindung und keine Abweichung, sondern „nie gebraucht“ (Befund)
+    assert "Policy 31 „web-lan-alt“" not in states and https["mismatch"] == []
+    (alt,) = https["unused"]
+    assert (alt["label"], alt["device"], alt["state"]) == (
+        "Policy 31 „web-lan-alt“", "fw-03", "off_path")  # fmt: skip
+    assert {(x["label"], x["service"]) for x in out["unused"]} == {
+        ("Policy 31 „web-lan-alt“", "tcp/443")}  # fmt: skip
+    assert any("Regel nie gebraucht" in n and "fw-03" in n for n in out["notes"])
 
     # fw-01 erlaubt tcp/8080, das ACI hat keinen Contract dafuer: Regel zeigt Zugriff, Weg sperrt
     alt = conns[(WEB, SRV, "tcp/8080")]
@@ -122,8 +123,12 @@ def test_eine_zeile_je_verbindung_ueber_aci_und_zwei_firewalls(client):
     assert alt["mismatch"][0] == (
         "Policy 12 „web-lan-8080“ erlaubt – der Weg ist gesperrt an apic-01 · VRF TE:VRF1"
     )
-    assert out["summary"] == {"total": 2, "allow": 1, "blocked": 1, "open": 0, "mismatch": 2,
-                              "inconsistent": 0, "zone_violations": 0}  # fmt: skip
+    assert out["summary"] == {"total": 2, "allow": 1, "blocked": 1, "open": 0, "mismatch": 1,
+                              "inconsistent": 0, "zone_violations": 0, "asymmetric": 0,
+                              "unused": 1}  # fmt: skip
+    # Rueckweg (0.136.0): zurueck ueber dieselben Firewalls (das ACI zaehlt nicht)
+    assert https["return"]["state"] == "symmetric", https["return"]
+    assert https["return"]["firewalls"] == ["fw-01 · VDOM root", "fw-02"]
     assert https["zones"] is None  # ohne logische Zonen
     # Abweichungen zuerst, gesperrte vor erlaubten
     assert out["connections"][0]["service"] == "tcp/8080"
@@ -155,8 +160,89 @@ def test_durchgehend_gesperrt_ist_kein_befund(client):
         "tcp/443": False,
         "tcp/8080": False,
     }
-    assert out["summary"]["inconsistent"] == 0 and out["summary"]["mismatch"] == 2
+    assert out["summary"]["inconsistent"] == 0 and out["summary"]["mismatch"] == 1
     assert _mismatches(client, tid) == {}
+    # dafuer (0.107.0): die Regel auf fw-03, ueber das der Weg nicht geht, wird nie gebraucht
+    r = client.get("/findings", params={"tenant_id": tid, "type": "app_rule_unused"})
+    (f,) = r.json()
+    assert f["subject_id"] == "web-lan-alt · Applikation Web" and f["severity"] == "info"
+    assert f["detail"]["connections"][0]["path"] == (
+        "apic-01 · VRF TE:VRF1 → fw-01 · VDOM root → fw-02")  # fmt: skip
+    assert "„web-lan-alt“ auf fw-03 wird nie gebraucht" in f["message"]
+    assert "geht nicht über fw-03" in f["message"]
+
+
+def test_breite_regel_abseits_des_wegs_ist_kein_befund(client, monkeypatch):
+    """0.139.3 (Anwender: 3255 von 4153 Findings „Regel nie gebraucht“ - eine Monitoring-Regel mit
+    10.0.0.0/8 bei einem Server, „seine IP steht dort nicht drin“): nennt die Regel das System
+    nicht, sondern nur ein Netz darum, gehoert sie nicht zur Applikation, wenn ihr Geraet nicht auf
+    dem Weg liegt - kein Befund, nur der Grund unter „Regeln ohne Verbindung“. Die konkrete Regel
+    auf fw-03 bleibt „nie gebraucht“."""
+    from app.store import appdoc_path
+
+    # die Doku prueft den Weg je Regel nur begrenzt (MAX_TRACES) - hier gar nicht, wie bei
+    # grossen Applikationen jenseits der Grenze: die breite Regel steht in der Doku
+    monkeypatch.setattr(appdoc_path, "MAX_TRACES", 0)
+    tid = client.post("/tenants", json={"name": "Kunde A"}, headers=tp.ADMIN).json()["id"]
+    fw3 = copy.deepcopy(FW3)
+    # Monitoring im LAN hinter fw-02 auf alles in 10.0.0.0/8 - der Server liegt darin
+    fw3["rules"].append(_fw("32", "monitoring", "10.60.0.9", "10.0.0.0/8", 5666, "any", "any",
+                            (None, None)))  # fmt: skip
+    for name, platform, result in (
+        ("fw-01", "fortigate", FW1),
+        ("fw-02", "fortigate", FW2),
+        ("fw-03", "fortigate", fw3),
+        ("apic-01", "cisco_aci", APIC),
+    ):
+        tp._deliver(client, tid, tp._system(client, tid, name, platform), platform, result)
+    out = _connections(client, tid)
+    assert {x["label"] for x in out["unused"]} == {"Policy 31 „web-lan-alt“"}
+    assert all(c["service"] != "tcp/5666" for c in out["connections"])
+    without = {x["label"]: x["reasons"] for x in out["without"]}
+    assert without["Policy 32 „monitoring“"] == [
+        "Regel über ein Netz (nennt das System nicht): der Weg führt nicht über ihr Gerät – "
+        "gehört nicht zur Applikation, kein Befund"]  # fmt: skip
+    r = client.get("/findings", params={"tenant_id": tid, "type": "app_rule_unused"})
+    assert [f["subject_id"] for f in r.json()] == ["web-lan-alt · Applikation Web"]
+
+
+# Internet → Server (0.107.0, Anwender: „Wege, welche Routing technisch keinen Sinn ergeben“):
+# fw-02 hat ein eigenes WAN und dieselbe Regel wie fw-01; der Server antwortet aber ueber fw-01
+# (Default-Route wan1/wan2) - dort kommt der Verkehr herein, nicht ueber fw-02
+INET, WEB01 = "203.0.113.77", "10.20.0.5"
+
+
+def _inet(ext, name, srcintf, dstintf):
+    rule = _fw(ext, name, INET, WEB01, 443, srcintf[0], dstintf, ("internet", "server"))
+    rule["raw"]["srcintf"] = [{"name": i} for i in srcintf]
+    return rule
+
+
+def test_internet_beginnt_am_eingang_nach_dem_rueckweg(client):
+    tid = client.post("/tenants", json={"name": "Kunde A"}, headers=tp.ADMIN).json()["id"]
+    fw1 = {**tp.FW1, "rules": [_inet("41", "inet-web", ["wan1", "wan2"], "srv")]}
+    fw2 = copy.deepcopy(tp.FW2)
+    fw2["inventory"]["interfaces"].append(tp._if("fw-02", "wan", "192.0.2.130/30", "internet"))
+    fw2["routing"]["routes"].append(
+        tp._r("fw-02", "root", "0.0.0.0/0", [{"ip": "192.0.2.129", "interface": "wan"}])
+    )
+    fw2["rules"] = [_inet("42", "inet-web", ["wan"], "to-fw01")]
+    # fw-02 zuerst: bisher begann der Weg auf dem ersten Geraet mit einer Regel dafuer
+    for name, result in (("fw-02", fw2), ("fw-01", fw1)):
+        tp._deliver(client, tid, tp._system(client, tid, name, "fortigate"), "fortigate", result)
+    body = {"name": "Shop", "members": [{"kind": "host", "ref": WEB01}]}
+    app = client.post(f"/applications?tenant_id={tid}", json=body, headers=OP).json()
+    out = client.get(f"/applications/{app['id']}/connections").json()
+    (conn,) = out["connections"]
+    assert (conn["src"]["ip"], conn["dst"]["ip"]) == (INET, WEB01)
+    assert [h["label"] for h in conn["hops"]] == ["fw-01 · VDOM root"]
+    assert conn["start"] == "fw-01 · VDOM root"  # Eingang wan1 bzw. wan2 (ECMP)
+    assert conn["verdict"] == "allow" and conn["reached"] and conn["mismatch"] == []
+    assert [s["label"] for s in conn["rules"]] == ["Policy 41 „inet-web“"]
+    assert [(x["label"], x["device"]) for x in conn["unused"]] == [
+        ("Policy 42 „inet-web“", "fw-02")]  # fmt: skip
+    r = client.get("/findings", params={"tenant_id": tid, "type": "app_rule_unused"})
+    assert [f["subject_id"] for f in r.json()] == ["inet-web · Applikation Shop"]
 
 
 # Verbund (0.73.0): fw-r leitet 10.88.0.0/16 per ECMP an fw-p1 und fw-p2; fw-r erlaubt den
@@ -205,6 +291,12 @@ def test_wege_uneinheitlich_als_befund(client):
     assert conn["paths"] == 1 and conn["inconsistent"] is True
     assert {v["via"] for v in conn["variants"]} == {"fw-r → fw-p1", "fw-r → fw-p2"}
     assert len(_mismatches(client, tid)) == 1
+    # 0.133.0: der Hop des Verbunds traegt den Verbund - ein Knoten im Netzwerkplan
+    (verbund,) = (h for h in conn["hops"] if h.get("group"))
+    assert verbund["group"] == "Nord" and len(verbund["checks"]) == 2
+    plan = client.get(f"/applications/{aid}/connections").json()["plan"]
+    assert [n["id"] for n in plan["nodes"] if n.get("label", "").startswith("Verbund")] == [
+        "hop:grp:Nord|root"]  # fmt: skip
 
     # fw-p2 angeglichen: einheitlich erlaubt, der Befund faellt weg
     same = tp._par("fw-p2", "10.66.0.3/29", allow=True)
@@ -260,3 +352,125 @@ def test_zonen_in_den_verbindungen(client):
     assert zones["violation"] and out["summary"]["zone_violations"] == 1
     blocked = next(c for c in out["connections"] if c["service"] == "tcp/8080")
     assert not blocked["zones"]["violation"]  # gesperrt wie beabsichtigt
+
+
+def test_unspezifische_regel_nur_von_firewalls_auf_dem_weg(client):
+    """0.113.2 (Anwender zu 0.113): eine unspezifische Regel (System nur ueber ein Netz im Ziel)
+    auf fw-01 und fw-03 - der Weg von der Gegenstelle 10.60.0.5 zum System geht nur ueber fw-01.
+    Die Regel auf fw-03 steht weder in den Kategorien noch oben, sie ist nur gezaehlt."""
+    fw1 = copy.deepcopy(FW1)
+    fw1["rules"].append(_fw("13", "lan-dc", SRV, "10.50.0.0/16", 443, "to-fw02", "to-aci",
+                            ("transit", "aci")))  # fmt: skip
+    fw3 = copy.deepcopy(FW3)
+    fw3["rules"].append(_fw("32", "lan-dc", SRV, "10.50.0.0/16", 443, "any", "any",
+                            (None, None)))  # fmt: skip
+    tid = client.post("/tenants", json={"name": "Kunde A"}, headers=tp.ADMIN).json()["id"]
+    systems = (("fw-01", "fortigate", fw1), ("fw-02", "fortigate", FW2),
+               ("fw-03", "fortigate", fw3), ("apic-01", "cisco_aci", APIC))  # fmt: skip
+    for name, platform, result in systems:
+        tp._deliver(client, tid, tp._system(client, tid, name, platform), platform, result)
+    body = {"name": "Web", "members": [{"kind": "epg", "ref": ar.WEB}]}
+    app = client.post(f"/applications?tenant_id={tid}", json=body, headers=OP).json()
+    doc = client.get(f"/applications/{app['id']}/doc", params={"tenant_id": tid}).json()
+    names = {r["id"]: r["name"] for r in doc["rules"]}
+    lan = {h["rule_id"] for h in doc["hits"] if names.get(h["rule_id"]) == "lan-dc"}
+    assert len(lan) == 1  # nur die Regel auf fw-01 (oben: Regeln & Contracts)
+    rows = [r for t in doc["tables"] for r in t["rows"] if r.get("Description") == "lan-dc"]
+    assert len(rows) == 1 and "fw-01" in str(rows[0]), rows
+    assert "fw-03" not in str(rows)
+    assert doc["summary"]["impossible"] >= 1
+
+
+def test_regel_zu_any_und_externe_epg_0_0_0_0(client, session_factory):
+    """0.127.0 (Anwender: „viele Firewall Regeln nach extern, über L3Os, diese werden aber nicht
+    angezeigt im Netzwerkplan“ und „in der Tabelle der Verbindungen … keine Rules von den L3Os,
+    nur in den Regeln und Contracts“): eine Firewall-Regel mit dem Ziel all ergibt eine
+    Verbindung zu den Netzen hinter ihrem Ausgangs-Interface, ein Contract zur externen EPG mit
+    0.0.0.0/0 (L3Out ohne bekannte Firewall dahinter, sonst Hilfs-Contract) eine Verbindung ueber
+    ihren L3Out; was keine Verbindung ergibt, steht mit Grund in `without`."""
+    fw1 = copy.deepcopy(FW1)
+    fw1["rules"] += [
+        _fw("42", "net-all", WEB, "all", 9443, "to-aci", "to-fw02", ("aci", "transit")),
+        _fw("44", "fqdn", WEB, "www.example.ch", 443, "to-aci", "to-fw02", ("aci", "transit")),
+    ]
+    apic = copy.deepcopy(APIC)
+    inet = f"{TE}/out-L3O_inet/instP-EN_inet"
+    apic["epgs"].append(ar._ext("EN_inet", "L3O_inet", ["0.0.0.0/0"]))
+    apic["rules"].append(
+        {"source_platform": "cisco_aci", "external_id": f"{TE}/brc-CT_inet/SJ_1",
+         "name": "CT_inet", "action": "allow", "sources": [f"epg:{ar.WEB}"],
+         "destinations": [f"epg:{inet}"], "services": ["tcp/80"], "aci_scope": "context",
+         "raw": {"name": "CT_inet", "kind": "contract", "scope": "context"}}
+    )  # fmt: skip
+    tid = client.post("/tenants", json={"name": "Kunde A"}, headers=tp.ADMIN).json()["id"]
+    systems = (("fw-01", "fortigate", fw1), ("fw-02", "fortigate", FW2),
+               ("fw-03", "fortigate", FW3), ("apic-01", "cisco_aci", apic))  # fmt: skip
+    for name, platform, result in systems:
+        tp._deliver(client, tid, tp._system(client, tid, name, platform), platform, result)
+    out = _connections(client, tid)
+    conns = {(c["dst"]["ip"], c["service"]): c for c in out["connections"]}
+    # any: das LAN hinter fw-01 (Interface to-fw02), ueber das ACI und beide Firewalls
+    net = conns[("10.60.0.0/24", "tcp/9443")]
+    assert (net["dst"]["kind"], net["dst"]["label"]) == ("any", "any → 10.60.0.0/24")
+    assert [h["label"] for h in net["hops"]] == [
+        "apic-01 · VRF TE:VRF1", "fw-01 · VDOM root", "fw-02"]  # fmt: skip
+    assert "Policy 42 „net-all“" in {s["label"] for s in net["rules"]}
+    # externe EPG nur mit 0.0.0.0/0: eigene Verbindung mit ihrem L3Out
+    ext = conns[("0.0.0.0/0", "tcp/80")]
+    assert (ext["dst"]["kind"], ext["dst"]["l3out"]) == ("external", "L3O_inet")
+    assert ext["dst"]["label"] == "externe EPG L3O_inet|EN_inet (0.0.0.0/0)"
+    assert "Contract CT_inet" in {s["label"] for s in ext["rules"]}
+    # ohne Verbindung: der FQDN mit Grund; was in einer Verbindung steht, nicht
+    without = {x["label"]: x["reasons"] for x in out["without"]}
+    assert without == {"Policy 44 „fqdn“": [
+        "Gegenstelle nicht als IP prüfbar (FQDN, ISDB, Geo)"]}, without  # fmt: skip
+    # im Netzwerkplan: die Gegenstelle any und der L3Out
+    kinds = {n["kind"] for n in out["plan"]["nodes"]}
+    assert "l3out" in kinds, kinds
+
+    # 0.130.0 (Anwender: „808 Verbindungen – nur die ersten 120 geprüft. Wie kann ich das
+    # umgehen?“): Grenze einstellbar, Verbindungen zu any zuletzt - ueber der Grenze faellt any weg
+    from app.models import Application
+    from app.store import app_paths
+
+    s = session_factory()
+    app = s.query(Application).filter_by(tenant_id=tid).one()
+    total = len(app_paths.build(s, app, zones=False, limit=0)["connections"])
+    cut = app_paths.build(s, app, zones=False, limit=total - 1)
+    s.close()
+    assert not any(c["dst"]["kind"] == "any" for c in cut["connections"])
+    assert any(f"nur die ersten {total - 1} geprüft" in n and "AUTOMATO_APP_TRACES_MAX" in n
+               for n in cut["notes"]), cut["notes"]  # fmt: skip
+    assert "mehr Verbindungen als geprüft werden" in {
+        r for x in cut["without"] for r in x["reasons"]}  # fmt: skip
+
+
+def test_hostroute_im_ziel_netz_und_fehler_je_weg(client, monkeypatch):
+    """0.133.2 (Anwender: „Er bricht bei 391 von 808 Wegen ab … Er bricht immer bei dieser
+    Anzahl ab“): eine Hostroute (/32) im Ziel-Netz einer Regel liess die ganze Berechnung mit
+    `AttributeError` abbrechen - sie ist kein eigener Teil; ein Fehler im Programm bei einem Weg
+    bricht nicht mehr alles ab, der Weg fehlt mit einem Hinweis."""
+    from types import SimpleNamespace
+
+    from app.store import app_paths
+
+    c = SimpleNamespace(dst=SimpleNamespace(kind="object", ip="10.70.0.0/16"))
+    first = {"hops": [{"route": {"inner": [{"prefix": "10.70.1.5/32"}, {"prefix": "10.70.2.0/24"},
+                                           {"prefix": "2001:db8::1/128"}]}}]}  # fmt: skip
+    assert app_paths._net_parts(c, first) == ["10.70.2.0/24"]
+
+    tid = _seed(client)
+    original = app_paths._connection
+
+    def broken(session, tid_, graph, checks, data, rules, x, *args, **kwargs):
+        if x.service and x.service[1] == 8080:
+            raise AttributeError("'IPv4Address' object has no attribute 'prefixlen'")
+        return original(session, tid_, graph, checks, data, rules, x, *args, **kwargs)
+
+    monkeypatch.setattr(app_paths, "_connection", broken)
+    out = _connections(client, tid)
+    services = {c["service"] for c in out["connections"]}
+    assert "tcp/443" in services and "tcp/8080" not in services, services
+    assert any(n.startswith("1 Wege nicht berechnet (Fehler im Programm") and "tcp/8080" in n
+               for n in out["notes"]), out["notes"]  # fmt: skip
+    assert out["timing"]["failed"] == 1

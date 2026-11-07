@@ -104,6 +104,16 @@ ohne Anreicherung.
 - Phase B (Bereinigen auf Firewall/DDI) und Phase C (Regeln schreiben) brauchen eigene
   ADRs und eine ausdrückliche Freigabe; bis dahin bleibt der Schreibweg auf NetBox begrenzt.
 
+## Ergänzung – Verkabelung und Applikationen (ADR 0031)
+
+Zwei weitere Abschnitte des NetBox-Syncs, nur ausdrücklich gewählt (ohne Angabe gelten
+*Netzinventar*, *DDI-Spiegel*, *Virtualisierung*): *Verkabelung* (Switches/Router mit Ports und
+Kabeln `dcim/cables` zwischen beidseitig gemeldeten Ports; Modus/VLANs nur mit vorhandenen VLANs)
+und *Applikationen* (Tag `automato-app-…` je Applikation an VMs und IP-Adressen, fremde Tags
+bleiben). Objekte eines nicht gewählten Abschnitts sind weder veraltet noch werden sie gelöscht –
+bei Geräten nach dem Kommentar „Automato: gelesen aus <Quellsystem>“. Regeln wie oben: nur
+Objekte mit Tag `automato` ändern, von Hand gepflegte höchstens referenzieren (Konflikt).
+
 ## Ergänzung 0.76.1 – externe Adressen ohne IPAM-Befund
 
 Rückmeldung des Anwenders (2026-10-26): externe Subnetze und Host-Adressen gehören nicht in die

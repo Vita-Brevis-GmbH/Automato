@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     # Kunden-Benutzer (ADR 0018 Schritt 3): Attribut mit den Kunden-IDs; die Realm-Rolle
     # `customer` markiert den Benutzer auch ohne Attribut (dann sieht er nichts)
     oidc_customers_claim: str = "customer_ids"
+    # Feinere Rollen (ADR 0018 Ergaenzung): Kunden-Rolle viewer | triage | editor |
+    # customer_admin fuer die Kunden aus dem Claim; fehlt er, gilt die Rolle aus den
+    # Realm-Rollen (operator = triage)
+    oidc_customer_role_claim: str = "customer_role"
     oidc_web_client_id: str = "automato-web"  # public Client fuer das SPA (PKCE)
     # Toleranz fuer Uhrenabweichung Keycloak <-> Orchestrator bei iat/nbf/exp (Sekunden).
     # Ersetzt keine Zeitsynchronisation (NTP), faengt nur kleine Abweichungen ab.
@@ -79,6 +83,10 @@ class Settings(BaseSettings):
     # spaeter eintreffendes Ergebnis wird trotzdem eingespielt.
     run_timeout_minutes: int = 120
     run_queue_timeout_hours: int = 24
+    # Zentral gelesene Laeufe, die so viele Minuten auf den zentralen Worker warten, schickt der
+    # Zeitplan erneut in die Warteschlange (0.109.1: Redis ohne Datentraeger verliert Auftraege
+    # beim Neustart); 0 = nie. Doppeltes Lesen verhindert der Claim beim Abholen des Ziels.
+    run_redispatch_minutes: int = 5
     # NetBox-Sync: Vorschau bzw. Uebernahme ohne Lebenszeichen nach so vielen Minuten beenden
     netbox_sync_timeout_minutes: int = 30
 
@@ -89,11 +97,45 @@ class Settings(BaseSettings):
     retention_sync_days: int = 90
     retention_audit_days: int = 365
     retention_l2_days: int = 30  # MAC-/ARP-Eintraege der Switches (0.63.0)
+    retention_topo_changes_days: int = 180  # Verlauf des Routings (ADR 0030)
 
     # Abweichung Regel <-> Weg der Applikationen (0.59.0): hoechstens so viele Sekunden je
     # Neuberechnung nach einem Lauf; was nicht drankommt, behaelt seine Befunde und ist beim
     # naechsten Mal zuerst dran (0 = ohne Grenze)
     app_findings_seconds: int = 120
+    # Verbindungen je Applikation, deren Weg geprueft wird (0.130.0, Anwender: „808 Verbindungen
+    # – nur die ersten 120 geprüft. Wie kann ich das umgehen?“): Verbindungen, Netzwerkplan und
+    # Stand der Doku (im Hintergrund); die Befunde nach einem Lauf pruefen hoechstens
+    # `app_findings_traces` je Applikation (Zeitgrenze oben). 0 = ohne Grenze
+    app_traces_max: int = 2000
+    # Wege je Mandant im Speicher (0.140.0, `store/path_store.py`, gepackt): darueber fallen die
+    # aeltesten weg und werden bei Bedarf neu gerechnet - eine Grenze fuer den Speicher, nicht fuer
+    # die Pruefung
+    path_store_mb: int = 256
+    app_findings_traces: int = 120
+    # IPAM im Speicher (0.107.0, Anwender: „es braucht enorm lange, dann sind die Namen da“): so
+    # viele Indizes der Referenzquellen (je Quelle und Lauf) bleiben je Prozess geladen statt je
+    # Anfrage neu gelesen (0 = aus); ein neuer IPAM-Lauf ersetzt sie
+    ref_cache: int = 4
+    # Doku je Applikation als Stand (0.108.0, ADR 0037, Anwender: „das Speichern dauert zu
+    # lange“): gespeichert und nur neu gerechnet, wenn sich ihre Eingaben aendern. Dauerte die
+    # letzte Berechnung mindestens `doc_stale_seconds`, zeigt die Seite sofort den letzten Stand
+    # und rechnet im Hintergrund neu; nach Laeufen und Aenderungen werden die Staende der letzten
+    # `doc_warm_days` Tage vorgerechnet (hoechstens `doc_warm_seconds` je Durchgang, 0 = ohne
+    # Grenze). `doc_snapshots=false`: jedes Mal neu rechnen wie bis 0.107.0
+    # 0.133.2 (Anwender: „Ich habe noch immer 83 App, welche nie berechnet wurden“):
+    # `doc_warm_all` rechnet Doku und Verbindungen jeder Applikation im Standard vor (auch nie
+    # geoeffnete, auch nach dem Start), bis nichts mehr aussteht - darum ohne Zeitbudget
+    doc_snapshots: bool = True
+    doc_stale_seconds: float = 1.5
+    doc_warm_days: int = 7
+    doc_warm_seconds: int = 0
+    doc_warm_all: bool = True
+
+    # Datenqualitaet (ADR 0029): Stand eines Quellsystems gilt nach so vielen Tagen ohne
+    # erfolgreichen Lauf als veraltet (Befund `source_stale`, Betriebszustand); mit Zeitplan
+    # mindestens der Abstand seiner Termine plus ein Tag (0 = nie veraltet)
+    stale_days: int = 7
 
     # Getrennte DB-Rollen (0.48.0, R14): die Migration (Eigentuemer der Tabellen) richtet mit
     # `automato db-roles` diese Rolle ohne DDL ein; der Orchestrator verbindet sich dann mit
@@ -159,12 +201,19 @@ def check_security_config(settings: "Settings") -> None:
             f"'{settings.environment}'-Umgebung. Bitte ein echtes Token setzen "
             "(z. B. openssl rand -hex 32)."
         )
-    if settings.environment != "dev" and not settings.allow_unauthenticated_read_api:
+    # ohne Anmeldung (auth_mode dev) nur mit bewusster Freigabe; mit OIDC prueft RBAC jeden
+    # Zugriff (ADR 0007) - seit 0.116.0 startet eine Produktiv-Umgebung damit ohne Freigabe
+    if (
+        settings.environment != "dev"
+        and settings.auth_mode == "dev"
+        and not settings.allow_unauthenticated_read_api
+    ):
         raise RuntimeError(
             "Die oeffentliche Read-API ist ohne AuthN/RBAC in einer "
-            f"'{settings.environment}'-Umgebung nicht freigegeben (ADR 0005). Entweder RBAC "
-            "umsetzen oder bewusst AUTOMATO_ALLOW_UNAUTHENTICATED_READ_API=true setzen "
-            "(nur mit Netzsegmentierung/Reverse-Proxy-Auth davor)."
+            f"'{settings.environment}'-Umgebung nicht freigegeben (ADR 0005). Entweder "
+            "AUTOMATO_AUTH_MODE=oidc (Keycloak, RBAC) setzen oder bewusst "
+            "AUTOMATO_ALLOW_UNAUTHENTICATED_READ_API=true (nur mit Netzsegmentierung/"
+            "Reverse-Proxy-Auth davor)."
         )
 
 

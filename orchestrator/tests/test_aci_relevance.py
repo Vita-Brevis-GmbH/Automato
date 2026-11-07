@@ -11,6 +11,7 @@ EN_any 0.0.0.0/0 und EN_srv 10.20.0.0/24 (L3O_fw), EN_rt 10.20.0.0/16 nur fuer d
 import copy
 
 import test_paths as tp
+from system_doc import system_doc, system_list
 
 OP = {"X-Dev-Roles": "operator"}
 TE = "uni/tn-TE"
@@ -79,9 +80,9 @@ def _seed(client) -> int:
 
 
 def _doc(client, tid, ip) -> tuple[dict[str, dict], dict[str, dict]]:
-    systems = client.get("/appdoc/systems", params={"tenant_id": tid}).json()
+    systems = system_list(client, tid)
     name = next(s["name"] for s in systems if s["ip"] == ip)
-    doc = client.get(f"/appdoc/systems/{name}", params={"tenant_id": tid}).json()
+    doc = system_doc(client, name, tid)
     shown = {r["Description"]: r for t in doc["tables"] for r in t["rows"]}
     return shown, {x["description"]: x for x in doc["impossible"]}
 
@@ -127,7 +128,7 @@ def test_contracts_ueber_die_externe_epg_mit_dem_laengsten_subnetz(client):
 
     # Applikations-Doku: Treffer mit Relevanz, Kennzahlen ohne die unmoeglichen
     body = {"name": "App", "members": [{"kind": "host", "ref": "10.20.0.5"}]}
-    systems = client.get("/appdoc/systems", params={"tenant_id": tid}).json()
+    systems = system_list(client, tid)
     body["members"][0]["ref"] = next(s["name"] for s in systems if s["ip"] == "10.20.0.5")
     app = client.post(f"/applications?tenant_id={tid}", json=body, headers=OP)
     assert app.status_code == 201, app.text
@@ -146,10 +147,17 @@ def test_regel_liste_contracts_fuer_eine_ip(client):
     params = {"tenant_id": tid, "q": "10.20.0.5", "domain": "aci_contract"}
     r = client.get("/rules", params=params)
     rel = {x["name"]: x["relevance"] for x in r.json()}
-    assert set(rel) == {"CT_srv", "CT_rt"}
-    assert rel["CT_srv"] == {"state": "possible", "text": "", "sides": {"src": "possible"}}
-    assert rel["CT_rt"]["state"] == "impossible" and "nur das Routing" in rel["CT_rt"]["text"]
-    assert r.headers["X-Impossible-Count"] == "1"
+    # 0.111.0 (Anwender): Export Route Control (EN_rt 10.20.0.0/16) ist kein Netz der externen
+    # EPG - CT_rt erfasst die IP nicht (bisher gefunden und als „nur Routing“ ausgeschlossen)
+    assert set(rel) == {"CT_srv"}
+    # Firewall fuehrend (ADR 0034): fw-01 steht hinter L3O_fw (Transfernetz) und hat die IP
+    # angeschlossen - mit Begruendung
+    assert rel["CT_srv"] == {
+        "state": "possible",
+        "text": "über L3O_fw: fw-01 · VDOM root routet 10.20.0.0/24 über srv",
+        "sides": {"src": "possible"},
+    }
+    assert r.headers["X-Impossible-Count"] == "0"
     hidden = client.get("/rules", params={**params, "routable": True}).json()
     assert [x["name"] for x in hidden] == ["CT_srv"]
 
@@ -160,8 +168,33 @@ def test_regel_liste_contracts_fuer_eine_ip(client):
     assert wide["sides"] == {"src": "impossible", "dst": "unknown"}
     assert wide["state"] == "unknown" and fabric.headers["X-Impossible-Count"] == "0"
 
-    # Lage der externen EPG: Scope je Subnetz
-    rid = next(x["id"] for x in r.json() if x["name"] == "CT_rt")
+    # Lage der externen EPG: Scope je Subnetz (gefunden ueber den Namen)
+    by_name = client.get("/rules", params={**params, "q": "CT_rt"}).json()
+    rid = next(x["id"] for x in by_name if x["name"] == "CT_rt")
     detail = client.get(f"/rules/{rid}").json()
     (ext,) = (e["epg"] for e in detail["endpoints"] if e["role"] == "src")
     assert [(s["ip"], s["scope"]) for s in ext["subnets"]] == [("10.20.0.0/16", "export-rtctrl")]
+
+
+def test_export_route_control_ist_kein_netz_der_externen_epg(client, session_factory):
+    """0.111.0 (Anwender: „Export Route Control ist ganz was anderes, nur an derselben
+    Stelle“): Subnetze ohne `import-security` zaehlen nirgends als Netz der externen EPG -
+    nicht als Wert des Contracts, nicht als Adresse der Gegenstelle, nicht fuer Zonen."""
+    from app.models import Epg
+    from app.store import aci_relevance, app_paths
+    from sqlalchemy import select
+
+    tid = _seed(client)
+    s = session_factory()
+    epgs = {e.name: e for e in s.scalars(select(Epg).where(Epg.tenant_id == tid))}
+    assert app_paths._subnets(s, epgs["EN_rt"].id) == []
+    assert [str(n) for n in app_paths._subnets(s, epgs["EN_srv"].id)] == ["10.20.0.0/24"]
+    s.close()
+    assert aci_relevance.assigns("ext", "export-rtctrl") is False
+    assert aci_relevance.assigns("ext", "import-security,export-rtctrl") is True
+    assert aci_relevance.assigns("ext", None) is True  # APIC-Standard
+    assert aci_relevance.assigns("bd", "private") is True
+    # Suche nach dem Netz: CT_rt nicht ueber das Routing-Subnetz
+    names = [x["name"] for x in client.get("/rules", params={
+        "tenant_id": tid, "q": "10.20.0.0/16", "domain": "aci_contract"}).json()]  # fmt: skip
+    assert "CT_rt" not in names

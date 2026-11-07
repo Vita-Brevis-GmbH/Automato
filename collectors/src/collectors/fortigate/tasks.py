@@ -17,6 +17,7 @@ from collectors.celery_app import app
 from collectors.common import agent as agent_api
 from collectors.common import diagnose
 from collectors.common.dto import CollectorResult, Target
+from collectors.common.i18n import L, german_only
 from collectors.common.upload import confirmed, submit_result
 from collectors.config import get_settings
 from collectors.fortigate import normalize as norm
@@ -39,20 +40,36 @@ def _credentials(target: Target | None) -> tuple[str, str, bool] | None:
 
 
 def _no_credentials(target: Target | None) -> str:
-    name = f"„{target.name}“" if target is not None and target.name else "das Geraet"
-    return f"keine Zugangsdaten fuer {name} - im Web-UI beim Quellsystem hinterlegen"
+    name = (
+        L(f"„{target.name}“", f"“{target.name}”")
+        if target is not None and target.name
+        else L("das Geraet", "the device")
+    )
+    return L(
+        f"keine Zugangsdaten fuer {name} - im Web-UI beim Quellsystem hinterlegen",
+        f"no credentials for {name} - store them at the source system in the web UI",
+    )
+
+
+def rules_only(target: Target | None) -> bool:
+    """Lauf nur der Regeln (0.139.0): Regeln, Objekte und NAT - Inventar und Routing bleiben."""
+    return target is not None and target.scope == "rules"
 
 
 def gather(target: Target | None = None) -> dict:
     """FortiGate-Rohdaten (IPv4+IPv6, NAT) - echtes Geraet je VDOM (`vdoms`) oder (nur zentral)
-    Beispieldaten als ein VDOM ohne Namen (flach, wie aeltere Clients)."""
+    Beispieldaten als ein VDOM ohne Namen (flach, wie aeltere Clients). Lauf nur der Regeln
+    (0.139.0): ohne Interfaces, Zonen, Routing, HA und System (`rules_only` im Ergebnis)."""
     creds = _credentials(target)
     if creds is not None:
         url, token, verify = creds
-        return FortiGateClient(url, token, verify_tls=verify).gather()
+        client = FortiGateClient(url, token, verify_tls=verify)
+        return client.gather_rules() if rules_only(target) else client.gather()
     if get_settings().agent_token:
         # Agent im Kundennetz: nie Beispieldaten in einen echten Mandanten schreiben
         raise RuntimeError(_no_credentials(target))
+    if rules_only(target):
+        return {"vdoms": [_sample_rules()], "rules_only": True}
     return {
         "policies": _sample("sample_policies.json"),
         "addresses": _sample("sample_addresses.json"),
@@ -69,17 +86,36 @@ def gather(target: Target | None = None) -> dict:
     }
 
 
+def _sample_rules() -> dict:
+    """Beispieldaten nur der Regeln (zentral/Lab) - wie ein VDOM ohne Namen."""
+    return {
+        "policies": _sample("sample_policies.json"),
+        "addresses": _sample("sample_addresses.json"),
+        "addresses6": _sample("sample_addresses6.json"),
+        "groups": _sample("sample_addrgrps.json"),
+        "groups6": _sample("sample_addrgrps6.json"),
+        "services": _sample("sample_services.json"),
+        "service_groups": _sample("sample_service_groups.json"),
+        "vips": _sample("sample_vips.json"),
+        "ippools": _sample("sample_ippools.json"),
+    }
+
+
 def check(target: Target | None = None) -> tuple[bool, str]:
     """Erreichbarkeit/Auth des Zielsystems pruefen (read-only, kein Ingest)."""
     creds = _credentials(target)
     if creds is None:
-        return False, _no_credentials(target) if target else "keine FortiGate-Creds"
+        return False, _no_credentials(target) if target else _no_creds()
     url, token, verify = creds
     try:
         FortiGateClient(url, token, verify_tls=verify).ping()
     except Exception as exc:  # noqa: BLE001 - Diagnose fuer den Operator
         return False, diagnose.device_error(exc, "fortigate", target, local=True)
-    return True, f"erreichbar: {url}"
+    return True, L(f"erreichbar: {url}", f"reachable: {url}")
+
+
+def _no_creds() -> str:
+    return L("keine FortiGate-Creds", "no FortiGate credentials")
 
 
 # Bewusst ungueltig: darf von keiner FortiGate akzeptiert werden (R16)
@@ -94,19 +130,23 @@ def strict_check(target: Target | None = None) -> tuple[bool, str]:
     fehlgeschlagene Anmeldung (Sperre nach admin-lockout-threshold, FortiOS-Standard 3)."""
     creds = _credentials(target)
     if creds is None:
-        return False, _no_credentials(target) if target else "keine FortiGate-Creds"
+        return False, _no_credentials(target) if target else _no_creds()
     url, _token, verify = creds
     try:
         FortiGateClient(url, _INVALID_TOKEN, verify_tls=verify).ping()
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code in (401, 403):
-            return True, "ungueltiges Token wird abgelehnt"
-        return False, f"nicht pruefbar: HTTP {exc.response.status_code}"
+            return True, L("ungueltiges Token wird abgelehnt", "invalid token is rejected")
+        code = exc.response.status_code
+        return False, L(f"nicht pruefbar: HTTP {code}", f"not checkable: HTTP {code}")
     except Exception as exc:  # noqa: BLE001 - Diagnose fuer den Operator
-        return False, f"nicht pruefbar: {type(exc).__name__}: {exc}"
-    return False, (
+        why = f"{type(exc).__name__}: {exc}"
+        return False, L(f"nicht pruefbar: {why}", f"not checkable: {why}")
+    return False, L(
         "FortiGate liefert Daten auch mit UNGUELTIGEM Token (nur Trusted Hosts) - REST-API-"
-        "Admin mit echtem Token-Zwang einrichten (Risiko R16)"
+        "Admin mit echtem Token-Zwang einrichten (Risiko R16)",
+        "FortiGate returns data even with an INVALID token (trusted hosts only) - set up the "
+        "REST API admin with a real token requirement (risk R16)",
     )
 
 
@@ -123,6 +163,8 @@ def _normalize_vdom(d: dict) -> tuple[list, list, list]:
         d.get("service_groups", []),
         d.get("policies6", []),
         d.get("vips6", []),
+        d.get("vipgrps", []),
+        d.get("vipgrps6", []),
     )
     nat_rules = norm.normalize_nat(
         d["vips"], d.get("vips6", []), d.get("ldb_monitors", [])
@@ -137,6 +179,9 @@ def _normalize_vdom(d: dict) -> tuple[list, list, list]:
         d["services"],
         d.get("service_groups", []),
         d.get("vips6", []),
+        d.get("vipgrps", []),
+        d.get("vipgrps6", []),
+        d.get("ippools6", []),
     )
     for item in (*rules, *nat_rules, *objects):
         item.vdom = d.get("vdom")
@@ -145,7 +190,8 @@ def _normalize_vdom(d: dict) -> tuple[list, list, list]:
 
 def _vdom_message(d: dict) -> str | None:
     """VDOMs des Laufs fuer die Lauf-Meldung; nicht lesbare zuerst (Profil pruefen), dazu
-    Routing-Tabellen ohne Leserecht (ADR 0019 Stufe 2)."""
+    Routing-Tabellen ohne Leserecht (ADR 0019 Stufe 2). Deutsch - der Orchestrator speichert
+    die Meldung und uebersetzt beim Abruf (ADR 0028)."""
     read = [str(v.get("vdom") or "Standard") for v in d.get("vdoms") or []]
     skipped = [f"{s['vdom']} ({s['error']})" for s in d.get("skipped") or []]
     parts = []
@@ -167,6 +213,7 @@ def _vdom_message(d: dict) -> str | None:
     return " · ".join(parts) or None
 
 
+@german_only  # Ergebnis und Meldung speichert der Orchestrator - deutsch (ADR 0028)
 def collect_once(
     run_id: str, target: Target | None = None, via_agent: bool = False
 ) -> CollectorResult:
@@ -181,18 +228,26 @@ def collect_once(
             nat_rules += n
             objects += o
             zones += vdom.get("zones") or []
+            zones += norm.sdwan_zones((vdom.get("routing") or {}).get("sdwan"), zones)
         name = target.name if target is not None and target.name else "fortigate"
-        inventory = norm.normalize_inventory(d.get("interfaces"), zones, d.get("system"), name)
-        node = (d.get("system") or {}).get("hostname") or name  # wie das Geraet im Inventar
-        result = CollectorResult(
-            status="completed",
-            rules=rules,
-            nat_rules=nat_rules,
-            objects=objects,
-            inventory=inventory,
-            routing=routing.normalize(d.get("vdoms") or [], d.get("ha"), node, d.get("interfaces")),
-            message=_vdom_message(d),
-        )
+        if d.get("rules_only"):  # 0.139.0: Inventar und Routing bleiben vom letzten vollen Lauf
+            message = " · ".join(p for p in ("nur Regeln", _vdom_message(d)) if p)
+            result = CollectorResult(status="completed", rules=rules, nat_rules=nat_rules,
+                                     objects=objects, message=message)  # fmt: skip
+        else:
+            inventory = norm.normalize_inventory(d.get("interfaces"), zones, d.get("system"), name)
+            node = (d.get("system") or {}).get("hostname") or name  # wie das Geraet im Inventar
+            result = CollectorResult(
+                status="completed",
+                rules=rules,
+                nat_rules=nat_rules,
+                objects=objects,
+                inventory=inventory,
+                routing=routing.normalize(
+                    d.get("vdoms") or [], d.get("ha"), node, d.get("interfaces")
+                ),
+                message=_vdom_message(d),
+            )
     except Exception as exc:  # noqa: BLE001 - Fehler gehen als failed-Result zurueck
         result = CollectorResult(status="failed", message=diagnose.device_error(exc, "fortigate"))
     return confirmed(result, submit_result(run_id, result, via_agent=via_agent))
@@ -201,4 +256,4 @@ def collect_once(
 @app.task(name="collectors.fortigate.collect")
 def collect(run_id: str) -> None:
     # Zentraler Worker: Zugangsdaten des Geraets vom Orchestrator (internes Token)
-    collect_once(run_id, agent_api.run_target(run_id))
+    agent_api.central(run_id, collect_once)

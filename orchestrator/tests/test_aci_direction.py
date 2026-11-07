@@ -20,6 +20,7 @@ import test_aci_check as ac
 import test_aci_relevance as ar
 import test_paths as tp
 import test_zones as tz
+from system_doc import system_doc, system_list
 
 OP = {"X-Dev-Roles": "operator"}
 TE = "uni/tn-TE"
@@ -119,17 +120,19 @@ def test_doku_und_verbindungen_in_beide_richtungen(client):
     # aus dem Internet zum Provider - und zurueck: EPG_web baut ins Internet auf (ip/any)
     assert sorted(hits) == [("CT_world", "in", False), ("CT_world", "out", True)]
     tables = {t["index"]: t["rows"] for t in doc["tables"]}
-    # Kategorien Richtung L3Out (0.78.2): die Firewall ist fuehrend - fw-01 hat keine Regel aus
-    # dem bzw. ins Internet fuer EPG_web, der Contract steht dort nicht separat (Treffer oben)
-    world = [r for i in (1, 2) for r in tables[i] if r["Description"].startswith("CT_world")]
-    assert world == []
+    # Kategorien Richtung L3Out (ADR 0034): hinter L3O_inet steht keine Firewall (Peer ohne
+    # gelesenes Geraet) - der Contract regelt allein und steht da, mit Hinweis
+    world = {i: r for i in (1, 2) for r in tables[i] if r["Description"].startswith("CT_world")}
+    assert set(world) == {1, 2} and world[1]["TCP/UDP"] == "ip/any (Rückrichtung)"
+    assert {r["L3Out"] for r in world.values()} == {"L3O_inet (ohne Firewall)"}
     # innerhalb des Tenants: eine Zeile, beide Richtungen vermerkt
     (open_row,) = (r for t in doc["tables"] for r in t["rows"]
                    if r["Description"].startswith("CT_open"))  # fmt: skip
-    assert open_row["TCP/UDP"].endswith("(↔ beide Richtungen)")
+    # 0.112.0: was auch vom Provider aus geht (nur der Filter ohne Ports)
+    assert open_row["TCP/UDP"].endswith("(↔ auch vom Provider aus: icmp/any)")
     (db_row,) = (r for t in doc["tables"] for r in t["rows"]
                  if r["Description"].startswith("CT_db"))  # fmt: skip
-    assert "beide Richtungen" not in db_row["TCP/UDP"]
+    assert "↔" not in db_row["TCP/UDP"]
 
     # Verbindungen Ende zu Ende: die Rueckrichtung als eigene Verbindung, vom Weg bestaetigt
     out = client.get(f"/applications/{aid}/connections").json()
@@ -232,11 +235,12 @@ def test_doku_je_system_rueckrichtung_wie_applikation(client):
     """0.72.1: die Doku je System fasst Vorwaerts- und Rueckrichtung derselben Kategorie zu
     einer Zeile „beide Richtungen“ zusammen - wie die Applikations-Doku."""
     tid = _seed(client)
-    systems = client.get("/appdoc/systems", params={"tenant_id": tid}).json()
+    systems = system_list(client, tid)
     web = next(s for s in systems if s["ip"] == "10.50.1.10" or "10.50.1.10" in s["name"])
-    doc = client.get(f"/appdoc/systems/{web['name']}", params={"tenant_id": tid}).json()
+    doc = system_doc(client, web["name"], tid)
     rows = [r for t in doc["tables"] for r in t["rows"] if r["Description"].startswith("CT_open")]
-    assert len(rows) == 1 and rows[0]["TCP/UDP"].endswith("(↔ beide Richtungen)")
+    assert len(rows) == 1 and rows[0]["TCP/UDP"].endswith("(↔ auch vom Provider aus: icmp/any)")
     world = [r for t in doc["tables"] for r in t["rows"] if r["Description"].startswith("CT_world")]
-    # Richtung L3Out (0.78.2): ohne Firewall-Regel dorthin steht der Contract nicht da
-    assert world == []
+    # Richtung L3Out (ADR 0034): ohne Firewall hinter L3O_inet steht der Contract da (beide
+    # Richtungen in verschiedenen Kategorien) - wie in der Applikations-Doku
+    assert len(world) == 2 and {r["L3Out"] for r in world} == {"L3O_inet (ohne Firewall)"}

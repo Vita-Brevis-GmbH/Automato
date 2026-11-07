@@ -50,3 +50,8 @@ class CollectorRun(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     rule_count: Mapped[int | None] = mapped_column(nullable=True)
     message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 0.139.0: None = alles lesen; `rules` = nur Regeln, Objekte und NAT (Inventar und Routing
+    # bleiben vom letzten vollen Lauf) - fuer die Applikation `application_id`, die danach als
+    # einzige neu rechnet (ohne Fremdschluessel: geloeschte Applikation = nichts zu rechnen)
+    scope: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    application_id: Mapped[int | None] = mapped_column(nullable=True, index=True)

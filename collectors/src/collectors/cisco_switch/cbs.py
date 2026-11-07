@@ -4,12 +4,14 @@ Die Ausgaben sind Tabellen mit Strichzeile unter dem Kopf; lange Port-Listen bzw
 Folgezeilen weiter (die Vorlagen von ntc-templates fuer `cisco_s300` kennen das nicht). Darum hier
 eine eigene Auswertung: Spalten nach der Strichzeile, jedes Wort in die Spalte, ueber der es steht;
 Zeilen ohne erste Spalte gehoeren zur Zeile davor. Portnamen wie im Rest (`Gi1/0/1`, `Te1/0/1`,
-`Po1`). VLANs der Ports aus `show vlan` (getaggt bzw. ungetaggt je VLAN).
+`Po1`). VLANs der Ports aus `show vlan` (getaggt bzw. ungetaggt je VLAN). Seit 0.94.0 die
+IPv6-Nachbarn aus `show ipv6 neighbors all` (gleiche Tabellenform).
 """
 
 import ipaddress
 import re
 
+from collectors.cisco_switch import nd
 from collectors.common.dto import (
     NetworkInventory,
     NormalizedArp,
@@ -222,6 +224,14 @@ def inventory(
                 vlan = _col(r, "vlan").replace(" ", "")
                 arps.append(NormalizedArp(device=name, ip=ip, mac=mac,
                                           interface=port_name(vlan) if vlan else None))  # fmt: skip
+    rows = []  # IPv6-Nachbarn (0.94.0): Interface, IPv6-Adresse, HW-Adresse, Zustand
+    for table in tables(outputs.get(nd.CBS, "")):
+        for r in table:
+            iface = _col(r, "interface").replace(" ", "")
+            rows.append({"address": _col(r, "ipv6 address", "ipv6", "address"),
+                         "mac": _col(r, "hw address", "mac"), "state": _col(r, "state"),
+                         "interface": port_name(iface) if iface else None})  # fmt: skip
+    arps += nd.entries(name, rows)
     return NetworkInventory(devices=[device], interfaces=interfaces, vlans=vlans,
                             neighbors=neighbors, macs=macs, arps=arps)  # fmt: skip
 

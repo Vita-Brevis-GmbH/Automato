@@ -4,6 +4,7 @@ Regeln, Suche, EPGs und Doku, Befunde und der NetBox-Sync-Abschnitt `virtualizat
 import copy
 
 import pytest
+from system_doc import system_doc
 from tests.test_netbox_sync import _apply, _items, _tagged, fake_netbox
 
 ADMIN = {"X-Dev-Roles": "admin"}
@@ -199,9 +200,9 @@ def test_vm_in_regeln_suche_epg_und_doku(client):
     assert [v["name"] for v in src["epg"]["vms"]] == ["web01-007-ka"]
 
     # Doku je EPG nennt die VMs; Doku je Server bringt die EPG ueber die Portgruppe der VM mit
-    epg_doc = client.get("/appdoc/systems/EG_web01", params={"tenant_id": tid}).json()
+    epg_doc = system_doc(client, "EG_web01", tid)
     assert [v["name"] for v in epg_doc["vms"]] == ["web01-007-ka"]
-    host_doc = client.get("/appdoc/systems/10.20.0.5", params={"tenant_id": tid}).json()
+    host_doc = system_doc(client, "10.20.0.5", tid)
     assert [v["name"] for v in host_doc["vms"]] == ["web01-007-ka"]
     rows = [r for t in host_doc["tables"] for r in t["rows"]]
     aci = [r for r in rows if r["Description"] == "CT_app:SJ"]

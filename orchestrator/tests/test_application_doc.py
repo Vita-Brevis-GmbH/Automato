@@ -8,6 +8,7 @@ import copy
 from app.models import Epg
 from app.store import aci_relevance
 from sqlalchemy import select
+from system_doc import system_doc, system_list
 from test_vmware import ACI, ADMIN, VCENTER, _deliver, _seed, _system
 from test_vmware import DB as DB_DN
 from test_vmware import WEB as WEB_DN
@@ -102,10 +103,10 @@ def test_doku_vms_epgs_regeln_mit_richtung_und_bezug(client):
     # Regeln wie in der Regel-Ansicht (Aktion, Herkunft), je System Richtung und Bezug
     rules = {r["id"]: r for r in doc["rules"]}
     by_name = {r["name"]: r for r in doc["rules"]}
-    assert set(by_name) == {"web-in", "CT_app:SJ", "net-in", "any-out"}
-    assert (
-        by_name["any-out"]["action"] == "deny" and by_name["CT_app:SJ"]["domain"] == "aci_contract"
-    )
+    # any-out (Quelle any, ausgehend): seit 0.103.0 kein Zugriff der Applikation (Anwender) -
+    # nicht in der Doku, nur gezaehlt
+    assert set(by_name) == {"web-in", "CT_app:SJ", "net-in"}
+    assert by_name["CT_app:SJ"]["domain"] == "aci_contract"
     names = {s["key"]: s["name"] for s in doc["systems"]} | {
         e["key"]: e["label"] for e in doc["epgs"]
     }
@@ -118,7 +119,6 @@ def test_doku_vms_epgs_regeln_mit_richtung_und_bezug(client):
         ("CT_app:SJ", "web01-007-ka", "out", "specific"),  # Consumer ueber die EPG der VM
         ("CT_app:SJ", "db01-007-ka", "in", "specific"),
         ("net-in", "db01-007-ka", "in", "subnet"),  # nur ueber 10.20.0.0/16
-        ("any-out", "web01-007-ka", "out", "any"),
         ("web-in", "TE_ka/AP_007/EG_web01", "in", "specific"),  # Host im Subnetz der EPG
         ("net-in", "TE_ka/AP_007/EG_web01", "in", "subnet"),
     } <= hits
@@ -128,10 +128,11 @@ def test_doku_vms_epgs_regeln_mit_richtung_und_bezug(client):
 
     # Kennzahlen: eine Regel zaehlt mit ihrem engsten Bezug
     s = doc["summary"]
-    assert (s["vms"], s["servers"], s["epgs"], s["rules"]) == (2, 0, 3, 4)
-    assert (s["firewall"], s["aci"], s["specific"], s["unspecific"]) == (3, 1, 2, 2)
-    assert s["by_scope"] == {"subnet": 1, "any": 1, "vzany": 0, "pref_group": 0}
-    assert web["rules"] == {"specific": 2, "unspecific": 2}
+    assert (s["vms"], s["servers"], s["epgs"], s["rules"]) == (2, 0, 3, 3)
+    assert (s["firewall"], s["aci"], s["specific"], s["unspecific"]) == (2, 1, 2, 1)
+    assert s["by_scope"] == {"subnet": 1, "any": 0, "vzany": 0, "pref_group": 0}
+    assert s["outbound_broad"] == 1  # any-out
+    assert web["rules"] == {"specific": 2, "unspecific": 1}
 
     # Befunde der Applikation (VM-IP fehlt im IPAM)
     assert any(
@@ -150,7 +151,7 @@ def test_doku_vms_epgs_regeln_mit_richtung_und_bezug(client):
     }
     assert obj[("net-in", "db01-007-ka")] == ("dst", "N_srv16", "10.20.0.0/16")
     assert obj[("web-in", "web01-007-ka")] == ("dst", "H_web01", "10.20.0.5")
-    assert obj[("any-out", "web01-007-ka")] == ("src", "any", "")
+    assert ("any-out", "web01-007-ka") not in obj
     assert obj[("CT_app:SJ", "web01-007-ka")] == ("src", "EPG TE_ka/AP_007/EG_web01", "")
     # Firewall-Objekte je Name mit den Firewalls und Namenspruefung gegen das IPAM
     assert web["objects"] == [
@@ -168,8 +169,8 @@ def test_doku_vms_epgs_regeln_mit_richtung_und_bezug(client):
     everyone = ["db01-007-ka (10.20.1.7)", "web01-007-ka (10.20.0.5)", "TE_ka/AP_007/EG_web01",
                 "TE_ka/AP_007/EPG_db01"]  # fmt: skip
     assert rows["net-in"] == [("N_srv16 (10.20.0.0/16)", everyone)]
-    # Zugriff der Applikation ueber any auf ein anderes Netz (Kategorie 10, ausgehend): seit
-    # 0.78.2 nicht in den Kategorien, als Treffer weiter da
+    # Zugriff der Applikation ueber any auf ein anderes Netz (ausgehend): seit 0.78.2 nicht in
+    # den Kategorien, seit 0.103.0 auch nicht als Treffer
     assert "any-out" not in rows
     # spezifisch: das Objekt mit seinen Systemen, ganzer ACI-Pfad
     assert ("EPG TE_ka/AP_007/EG_web01:\nweb01-007-ka (10.20.0.5)", None) in rows["CT_app:SJ"]
@@ -242,9 +243,9 @@ def test_contracts_anderer_tenants_und_vrfs_nicht_in_der_doku(client):
     assert all(h["epg"] is None for h in doc["hits"] if h["rule_id"] not in {ct})
 
     # Doku je System: der Server 10.20.0.5 (EPG ueber die Portgruppe seiner VM) ebenso
-    systems = client.get("/appdoc/systems", params={"tenant_id": tid}).json()
+    systems = system_list(client, tid)
     name = next(s["name"] for s in systems if s["ip"] == "10.20.0.5")
-    one = client.get(f"/appdoc/systems/{name}", params={"tenant_id": tid}).json()
+    one = system_doc(client, name, tid)
     shown = {r["Description"] for t in one["tables"] for r in t["rows"]}
     assert "CT_app:SJ" in shown and not {"CT_kb:SJ", "CT_kc:SJ"} & shown, shown
 
@@ -371,7 +372,9 @@ def test_doku_server_ohne_vm(client):
     (web,) = doc["systems"]
     assert (web["kind"], web["name"]) == ("vm", "web01-007-ka")
     assert web["member"] == "IP 10.20.0.5 = Server 10.20.0.5 (Server 10.20.0.5)"
-    assert doc["epgs"] == [] and doc["summary"]["vms"] == 1
+    assert doc["summary"]["vms"] == 1
+    # 0.126.1: die EPG der VM zur Einordnung, selbst kein Mitglied
+    assert [(e["label"], e["of_vm"]) for e in doc["epgs"]] == [("TE_ka/AP_007/EG_web01", True)]
     assert client.get(f"/applications/{app['id']}/doc", headers=ADMIN).status_code == 200
 
 

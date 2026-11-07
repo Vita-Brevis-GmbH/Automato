@@ -22,6 +22,7 @@ from collectors.cisco_aci.normalize import filter_objects, normalize_contract
 from collectors.common import agent as agent_api
 from collectors.common import diagnose
 from collectors.common.dto import CollectorResult, NormalizedEpg, Target
+from collectors.common.i18n import L, german_only
 from collectors.common.upload import confirmed, submit_result
 from collectors.config import get_settings
 
@@ -69,17 +70,28 @@ def _credentials(target: Target | None) -> _Apic | None:
 
 
 def _no_credentials(target: Target | None) -> str:
-    name = f"„{target.name}“" if target is not None and target.name else "den APIC"
-    return f"keine Zugangsdaten fuer {name} - im Web-UI beim Quellsystem hinterlegen"
+    name = (
+        L(f"„{target.name}“", f"“{target.name}”")
+        if target is not None and target.name
+        else L("den APIC", "the APIC")
+    )
+    return L(
+        f"keine Zugangsdaten fuer {name} - im Web-UI beim Quellsystem hinterlegen",
+        f"no credentials for {name} - store them at the source system in the web UI",
+    )
 
 
 def gather(target: Target | None = None) -> dict:
     """Tenant-Baum + Fabric-Klassen + Routing der Border-Leafs (ADR 0019) - echter APIC oder
-    (nur zentral) Beispieldaten."""
+    (nur zentral) Beispieldaten. Lauf nur der Regeln (0.139.0, `Target.scope`): nur der
+    Tenant-Baum (Contracts, Filter, EPGs) - Fabric und Routing bleiben vom letzten vollen Lauf."""
     apic = _credentials(target)
+    rules = target is not None and target.scope == "rules"  # 0.139.0: nur die Tenants
     if apic is not None:
         with apic.client() as client:
             export = client.export(apic.tenants)
+            if rules:  # ohne Fabric und Routing der Border-Leafs
+                return {"tenants": export, "rules_only": True}
             contexts = aci_routing.border_contexts(aci_routing.parse_l3outs(export))
             return {
                 "tenants": export,
@@ -89,6 +101,8 @@ def gather(target: Target | None = None) -> dict:
     if get_settings().agent_token:
         # Agent im Kundennetz: nie Beispieldaten in einen echten Mandanten schreiben
         raise RuntimeError(_no_credentials(target))
+    if rules:
+        return {"tenants": fetch_mo_export(), "rules_only": True}
     return {"tenants": fetch_mo_export(), "fabric": fetch_fabric_sample()}
 
 
@@ -96,15 +110,21 @@ def check(target: Target | None = None) -> tuple[bool, str]:
     """Erreichbarkeit/Login am APIC pruefen (read-only, kein Ingest)."""
     apic = _credentials(target)
     if apic is None:
-        return False, _no_credentials(target) if target else "keine APIC-Creds"
+        return False, _no_credentials(target) if target else L(
+            "keine APIC-Creds", "no APIC credentials"
+        )
     try:
         with apic.client() as client:
             count = client.ping()
     except Exception as exc:  # noqa: BLE001 - Diagnose fuer den Operator
         return False, diagnose.device_error(exc, "cisco_aci", target, local=True)
-    return True, f"erreichbar: {apic.url} ({count} Tenants sichtbar)"
+    return True, L(
+        f"erreichbar: {apic.url} ({count} Tenants sichtbar)",
+        f"reachable: {apic.url} ({count} tenants visible)",
+    )
 
 
+@german_only  # Ergebnis und Meldung speichert der Orchestrator - deutsch (ADR 0028)
 def collect_once(
     run_id: str, target: Target | None = None, via_agent: bool = False
 ) -> CollectorResult:
@@ -114,19 +134,23 @@ def collect_once(
         export = data["tenants"]
         rules = [rule for c in parse_mo_export(export) for rule in normalize_contract(c)]
         epgs = [NormalizedEpg(**e) for e in parse_epgs(export)]
-        inventory = parse_inventory(export, data.get("fabric"))
-        inventory.vrf_leaks = parse_leaks(export)  # Route-Leaking zwischen VRFs (0.44.0)
         objects = filter_objects(parse_filters(export))
-        routing = aci_routing.normalize(export, data.get("fabric"), data.get("border"))
-        result = CollectorResult(
-            status="completed",
-            rules=rules,
-            epgs=epgs,
-            inventory=inventory,
-            objects=objects,
-            routing=routing,
-            message=_routing_message(routing),
-        )
+        if data.get("rules_only"):  # 0.139.0: Inventar (Fabric, VRF-Leaks) und Routing bleiben
+            result = CollectorResult(status="completed", rules=rules, epgs=epgs, objects=objects,
+                                     message="nur Regeln")  # fmt: skip
+        else:
+            inventory = parse_inventory(export, data.get("fabric"))
+            inventory.vrf_leaks = parse_leaks(export)  # Route-Leaking zwischen VRFs (0.44.0)
+            routing = aci_routing.normalize(export, data.get("fabric"), data.get("border"))
+            result = CollectorResult(
+                status="completed",
+                rules=rules,
+                epgs=epgs,
+                inventory=inventory,
+                objects=objects,
+                routing=routing,
+                message=_routing_message(routing),
+            )
     except Exception as exc:  # noqa: BLE001 - Fehler sichtbar an die interne API melden
         result = CollectorResult(status="failed", message=diagnose.device_error(exc, "cisco_aci"))
     return confirmed(result, submit_result(run_id, result, via_agent=via_agent))
@@ -145,4 +169,4 @@ def _routing_message(routing) -> str | None:
 @app.task(name="collectors.cisco_aci.collect")
 def collect(run_id: str) -> None:
     # Zentraler Worker: Zugangsdaten des Geraets vom Orchestrator (internes Token)
-    collect_once(run_id, agent_api.run_target(run_id))
+    agent_api.central(run_id, collect_once)

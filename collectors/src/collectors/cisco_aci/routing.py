@@ -3,7 +3,8 @@
 - L3Out (`l3extOut`) mit VRF (`l3extRsEctx`), Border-Leafs (`l3extRsNodeL3OutAtt`: Knoten,
   Router-ID, statische Routen `ipRouteP`/`ipNexthopP`), Interfaces bzw. SVIs
   (`l3extRsPathL3OutAtt`: Pfad, Art, Encap, Adressen inkl. vPC-Seiten `l3extMember`),
-  BGP-Peers (`bgpPeerP` mit `bgpAsP`) und externen EPGs - alles schon im gelesenen Baum.
+  BGP-Peers (`bgpPeerP` mit `bgpAsP`) und externen EPGs - alles schon im gelesenen Baum; dazu
+  Route Control (0.113.0): `enforceRtctrl` und die Subnetze mit `export-`/`import-rtctrl`.
 - Je Border-Leaf und VRF dazu die Routing-Tabelle (`uribv4Route`/`uribv6Route` mit Next-Hops)
   und die BGP-Nachbarn mit Zustand (`bgpPeer`/`bgpPeerEntry`) - nur lesend.
 
@@ -149,6 +150,7 @@ def parse_l3outs(export: Any) -> list[NormalizedL3Out]:
                 dn=attrs.get("dn") or f"uni/tn-{tenant}/out-{name}",
                 vrf=_vrf(tenant, _first(okids, "l3extRsEctx", "tnFvCtxName"), vrfs),
                 ext_epgs=[a.get("name") for a, _ in _of(okids, "l3extInstP") if a.get("name")],
+                route_control=_route_control(attrs, okids),
             )
             for _np, nkids in _of(okids, "l3extLNodeP"):
                 for att, akids in _of(nkids, "l3extRsNodeL3OutAtt"):
@@ -167,6 +169,24 @@ def parse_l3outs(export: Any) -> list[NormalizedL3Out]:
                         l3.peers += _peers(pkids, patt.get("tDn"))
             out.append(l3)
     return out
+
+
+def _route_control(attrs: dict, okids: list[dict]) -> dict[str, Any]:
+    """Route Control eines L3Outs (0.113.0, ADR 0041): `enforce` (export, import) und die
+    Subnetze der externen EPGs mit `export-rtctrl` (angekuendigt) bzw. `import-rtctrl` (erwartet,
+    wirkt nur mit enforce import); `aggregate` = alle Laengen darin."""
+    enforce = [x for x in (attrs.get("enforceRtctrl") or "export").split(",") if x]
+    sides: dict[str, list[dict[str, Any]]] = {"export": [], "import": []}
+    for epg, ikids in _of(okids, "l3extInstP"):
+        for sub, _ in _of(ikids, "l3extSubnet"):
+            ip, scope, agg = sub.get("ip"), sub.get("scope") or "", sub.get("aggregate") or ""
+            for side in sides:
+                if ip and f"{side}-rtctrl" in scope:
+                    entry = {"prefix": ip, "epg": epg.get("name")}
+                    if f"{side}-rtctrl" in agg:
+                        entry["aggregate"] = True
+                    sides[side].append(entry)
+    return {"enforce": enforce, **{k: v for k, v in sides.items() if v}}
 
 
 def border_contexts(l3outs: list[NormalizedL3Out]) -> list[tuple[str, str, str]]:

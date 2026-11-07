@@ -1,9 +1,23 @@
 // Findings (ADR 0004/0010): Übersicht nach Kategorien, je Befund ein Satz "was genau nicht
 // stimmt" + Hinweis, aufklappbar mit allen Angaben und Links auf die betroffenen Regeln.
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { fetchFindings, fetchFindingSummary, fetchSystems, Finding, FindingSummary, patchFinding, System } from "./api";
+import {
+  fetchFindings,
+  fetchFindingSummary,
+  fetchSystems,
+  Finding,
+  FindingSummary,
+  patchFinding,
+  System,
+  triageFindings,
+} from "./api";
 import type { View, ViewParams } from "./App";
-import type { Me } from "./auth";
+import { customerCan, type Me } from "./auth";
+import FindingDialog from "./FindingDialog";
+import { BGP_FINDING_TYPES, BGP_NET_KEYS, BgpFindingNets, BgpWhyList } from "./modules/analyse/BgpWhy";
+import Checks from "./modules/findings/Checks";
+import { NetAssignDialog } from "./modules/wege/NetAssign";
+import type { BgpWhy, BgpZoneChain } from "./api";
 import { FINDING_GROUPS, FINDING_HINT, FINDING_LABEL, findingLabel } from "./refs";
 import { Empty, ErrorBox, fmtTime, Icon, Loading, PageHead, SeverityBadge } from "./ui";
 import { L } from "./i18n";
@@ -76,6 +90,9 @@ const DETAIL_LABEL: Record<string, string | null> = {
   // Wege uneinheitlich (0.73.0, vorher Regel ↔ Weg): Verbindungen stehen im Satz
   application: L("Applikation", "Application"),
   application_id: null,
+  // Unvollständig geprüft (0.140.0): die Kürzungen stehen im Satz
+  checked: L("geprüfte Verbindungen", "connections checked"),
+  cuts: null,
   connections: null,
   count: L("Verbindungen", "Connections"),
   // Parallele Firewalls (0.18.0/0.72.0): Felder und Werte stehen im Satz, Routen als Tabelle
@@ -93,6 +110,35 @@ const DETAIL_LABEL: Record<string, string | null> = {
   seq: null,
   entries: null,
   counts: null,
+  // Datenqualität (ADR 0029): Teilfehler und Kontexte stehen im Satz
+  platform: null,
+  last_success: L("zuletzt erfolgreich", "last successful"),
+  never: null,
+  age_days: L("Alter (Tage)", "Age (days)"),
+  limit_days: L("Grenze (Tage)", "Limit (days)"),
+  schedule: L("Zeitplan", "Schedule"),
+  last_failed: null,
+  last_message: L("letzte Meldung", "last message"),
+  run_id: null,
+  finished_at: L("Lauf beendet", "Run finished"),
+  parts: null,
+  contexts: null,
+  context_count: null,
+  // BGP gegen die Zonen (0.127.0): Begründung und Zonen als Liste darunter
+  why: null,
+  chain: null,
+  // BGP-Filter (0.113.0): Netze stehen als Liste darunter (`entries` als Präfixe)
+  total: L("Anzahl", "Count"),
+  filters: L("Filter", "Filters"),
+  received: L("erhalten", "received"),
+  l3out: "L3Out",
+  aci_tenant: L("ACI-Tenant", "ACI tenant"),
+  // 0.131.0: Felder der BGP-Befunde gegen die Zonen
+  neighbor_zone: L("Zone am Nachbarn", "Zone at the neighbor"),
+  open: L("ohne Filter", "no filter"),
+  public_only: L("nur öffentliche Netze", "public networks only"),
+  not_enforced: L("Import nicht erzwungen", "import not enforced"),
+  l3out_id: null,
 };
 
 // Routing-Befund im Verbund (0.72.0): je Präfix, was auf der führenden bzw. dieser Firewall steht
@@ -118,7 +164,22 @@ type RouteEntry = {
 
 function RouteEntries({ f }: { f: Finding }) {
   const d = (f.detail ?? {}) as Record<string, unknown>;
-  const entries = (Array.isArray(d.entries) ? d.entries : []) as RouteEntry[];
+  const all = Array.isArray(d.entries) ? (d.entries as unknown[]) : [];
+  if (!all.length) return null;
+  // BGP-Filter (0.113.2): Netze als Präfixe - keine Routentabelle (zeigte leere Spalten)
+  if (all.every((e) => typeof e === "string")) {
+    const total = typeof d.total === "number" ? d.total : all.length;
+    return (
+      <div className="kv-list" style={{ marginTop: 6 }}>
+        <span className="faint">{L("Netze: ", "Networks: ")}</span>
+        <span className="mono">{(all as string[]).join(", ")}</span>
+        {total > all.length && (
+          <span className="faint">{L(` … und ${total - all.length} weitere`, ` … and ${total - all.length} more`)}</span>
+        )}
+      </div>
+    );
+  }
+  const entries = all.filter((e) => e && typeof e === "object") as RouteEntry[];
   if (!entries.length) return null;
   const count = typeof d.count === "number" ? d.count : entries.length;
   return (
@@ -167,6 +228,7 @@ const SIDE: Record<string, string> = {
 const fmtValue = (k: string, v: unknown): string => {
   if (k === "missing" && Array.isArray(v)) return v.map((x) => SIDE[x] ?? x).join(", ");
   if (Array.isArray(v)) return v.join(k === "compared" ? " ≠ " : ", ");
+  if (typeof v === "boolean") return v ? L("ja", "yes") : L("nein", "no");
   // Abweichung im Verbund: {Feld: [hier, dort]}
   if (k === "values" && v && typeof v === "object")
     return Object.entries(v as Record<string, unknown>)
@@ -190,8 +252,39 @@ function viewLinks(f: Finding): { label: string; view: View; params: ViewParams 
   if (f.type === "parallel_policy_route_mismatch")
     return [{ label: String(d.label ?? L("Policy-Route", "Policy route")), view: "routing",
               params: { tab: "policy", q: `${String(d.source ?? "")} ${String(d.name ?? d.seq ?? "")}`.trim() } }];
+  // 0.140.0: unvollständig geprüfte Applikation öffnen
+  if (f.type === "app_coverage" && d.application_id != null)
+    return [{ label: L(`Applikation ${String(d.application ?? "")} öffnen`, `Open application ${String(d.application ?? "")}`),
+              view: "apps", params: { app: String(d.application_id) } }];
+  // 0.134.0: VIP ohne Ziel in NAT / VIPs öffnen
+  if (f.type === "vip_target_missing" && d.name)
+    return [{ label: L(`${String(d.name)} in NAT / VIPs`, `${String(d.name)} in NAT / VIPs`), view: "nat", params: { q: String(d.name) } }];
   if (f.type === "parallel_nat_mismatch" && d.name)
     return [{ label: String(d.name), view: "nat", params: { q: String(d.name) } }];
+  // 0.96.0: VIP bzw. IP-Pool (z. B. Name ohne Präfix seines Typs) in NAT / VIPs öffnen
+  if (f.subject_kind === "device_object" && (d.category === "vip" || d.category === "ippool") && d.name)
+    return [{ label: L(`${String(d.name)} in NAT / VIPs`, `${String(d.name)} in NAT / VIPs`), view: "nat",
+              params: { q: String(d.name) } }];
+  // 0.131.0 (Anwender: „per Link zu der Info gelangen“): Soll/Ist des BGP-Nachbarn bzw. die L3Outs
+  if (BGP_FINDING_TYPES.has(f.type) && d.peer)
+    return [{ label: L(`BGP-Nachbar ${String(d.peer)} öffnen`, `Open BGP neighbor ${String(d.peer)}`), view: "routing",
+              params: { tab: "peers", peer: String(d.peer), ...(sid != null ? { system: String(sid) } : {}),
+                        ...(d.context ? { context: String(d.context) } : {}) } }];
+  if (BGP_FINDING_TYPES.has(f.type) && d.l3out)
+    return [{ label: L(`L3Out ${String(d.l3out)} öffnen`, `Open L3Out ${String(d.l3out)}`), view: "routing",
+              params: { tab: "l3out", q: String(d.l3out) } }];
+  // Datenqualität (ADR 0029): Läufe des Quellsystems, nicht lesbarer Routing-Kontext
+  if ((f.type === "source_stale" || f.type === "source_partial") && sid != null) {
+    const out: { label: string; view: View; params: ViewParams }[] = [
+      { label: L(`Läufe von ${f.subject_id}`, `Runs of ${f.subject_id}`), view: "laeufe",
+        params: { system: String(sid) } },
+    ];
+    const ctx = (Array.isArray(d.contexts) ? d.contexts : []) as { context?: string }[];
+    if (ctx[0]?.context)
+      out.push({ label: `Routing ${ctx[0].context}`, view: "routing",
+                 params: { tab: "routes", context: `${sid}|${ctx[0].context}` } });
+    return out;
+  }
   return [];
 }
 
@@ -205,7 +298,7 @@ function ruleLinks(f: Finding): { label: string; params: ViewParams }[] {
     return [{ label: f.subject_id, params: { q: String(d.value ?? f.subject_id) } }];
   }
   if (f.type === "duplicate_value") return names("names").map((n) => ({ label: n, params: { object: n } }));
-  if (["rule_incomplete", "aci_scope_unpaired", "aci_contract_both_sides", "snat_pool_missing", "app_connection_mismatch", "app_contract_narrower"].includes(f.type) && d.rule_id != null)
+  if (["rule_incomplete", "aci_scope_unpaired", "aci_contract_both_sides", "snat_pool_missing", "app_connection_mismatch", "app_contract_narrower", "app_rule_unused"].includes(f.type) && d.rule_id != null)
     return [{ label: String(d.name ?? f.subject_id), params: { rule: String(d.rule_id) } }];
   if (f.subject_kind === "device_object" && f.type !== "unused_object")
     return [{ label: f.subject_id, params: { object: f.subject_id } }];
@@ -228,6 +321,7 @@ export default function Findings({
   tenantLabel,
   initialType = "",
   initialQuery = "",
+  initialTab = "befunde",
   onChanged,
   onGo,
 }: {
@@ -236,6 +330,7 @@ export default function Findings({
   tenantLabel: string;
   initialType?: string; // Vorfilter, z. B. aus der Abgleich-Ansicht
   initialQuery?: string; // Suche aus einem Link (#findings?q=…, z. B. aus der Applikations-Doku)
+  initialTab?: "befunde" | "pruefungen"; // 0.110.0: Reiter Prüfungen (#findings?tab=pruefungen)
   onChanged: () => void;
   onGo?: (v: View, p?: ViewParams) => void; // Links auf die betroffenen Regeln
 }) {
@@ -249,6 +344,18 @@ export default function Findings({
   const [type, setType] = useState(initialType);
   const [q, setQ] = useState(initialQuery);
   const [open, setOpen] = useState<number | null>(null); // aufgeklappter Befund
+  const [adding, setAdding] = useState(false); // Finding von Hand (0.109.0)
+  const [assigning, setAssigning] = useState<string | null>(null); // grosses Netz zuordnen (0.111.0)
+  const [tab, setTab] = useState(initialTab);
+  // Mehrfachauswahl (0.117.0, Anwender: „Multi-Checkbox für das Ignorieren der Findings“)
+  const [picked, setPicked] = useState<Set<number>>(new Set());
+  const [bulkStatus, setBulkStatus] = useState("ignored");
+  const [bulkNote, setBulkNote] = useState("");
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const choose = (t: "befunde" | "pruefungen") => {
+    setTab(t);
+    window.history.replaceState(null, "", t === "befunde" ? "#findings" : "#findings?tab=pruefungen");
+  };
 
   useEffect(() => setType(initialType), [initialType]);
 
@@ -276,6 +383,7 @@ export default function Findings({
   }, [query, tenantId, type, q]);
   useEffect(() => {
     setFindings(null);
+    setPicked(new Set()); // andere Filter: Auswahl neu
     const timer = setTimeout(reload, 250);
     return () => clearTimeout(timer);
   }, [reload]);
@@ -311,15 +419,58 @@ export default function Findings({
 
   // Nach einer Triage kann ein Eintrag den Statusfilter verlassen - bis zum Neuladen ausblenden
   const shown = (findings ?? []).filter((f) => !status || f.status === status);
+  const canTriage = me.isCustomer ? customerCan(me, "findings.triage") : me.isOperator;
+  const allPicked = shown.length > 0 && shown.every((f) => picked.has(f.id));
+  const pick = (id: number, on: boolean) =>
+    setPicked((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  const pickAll = (on: boolean) => setPicked(on ? new Set(shown.map((f) => f.id)) : new Set());
+  const applyBulk = async () => {
+    setError(null);
+    setBulkBusy(true);
+    try {
+      await triageFindings({ ids: [...picked], status: bulkStatus, ...(bulkNote.trim() ? { note: bulkNote.trim() } : {}) });
+      setPicked(new Set());
+      setBulkNote("");
+      await reload();
+      onChanged();
+    } catch (e) {
+      setError(e);
+    } finally {
+      setBulkBusy(false);
+    }
+  };
   const counts = summary?.by_status ?? {};
   const types = [...new Set([...Object.keys(summary?.by_type ?? {}), ...(type ? [type] : [])])].sort((a, b) =>
     findingLabel(a).localeCompare(findingLabel(b)),
   );
   const loaded = findings?.length ?? 0;
 
+  const canAdd = me.isOperator && !me.isCustomer && tenantId !== null;
   return (
     <>
-      <PageHead title="Findings">
+      <PageHead
+        title="Findings"
+        actions={
+          canAdd && tab === "befunde" ? (
+            <button
+              className="btn btn-sm"
+              id="finding-add"
+              onClick={() => setAdding(true)}
+              title={L(
+                "Befund von Hand erfassen (Typ „Von Hand erfasst“): bleibt nach dem Abgleich bestehen, Triage wie jedes Finding",
+                "Capture a finding manually (type “Captured manually”): stays after the reconciliation, triage like any finding",
+              )}
+            >
+              + {L("Finding erfassen", "Capture finding")}
+            </button>
+          ) : undefined
+        }
+      >
         {L(
           <>
             Datenqualität für „{tenantLabel}“: Abgleich der Firewall-/ACI-Daten mit dem IPAM (DDI/NetBox) und der
@@ -333,217 +484,334 @@ export default function Findings({
           </>,
         )}
       </PageHead>
-      {summary && Object.keys(summary.by_type).length > 0 && (
-        <div className="fgroups">
-          {FINDING_GROUPS.map((g) => {
-            const types = g.types.filter((t) => summary.by_type[t]);
-            if (!types.length) return null;
-            const openN = types.reduce((n, t) => n + summary.by_type[t].open, 0);
-            return (
-              <div key={g.key} className="card fgroup">
-                <div className="fgroup-head">
-                  <b>{g.label}</b>
-                  <span className={`chip ${openN ? "warn" : "ok"}`}>{L(<>{openN} offen</>, <>{openN} open</>)}</span>
-                </div>
-                <div className="faint" style={{ fontSize: 12, marginBottom: 4 }}>
-                  {g.help}
-                </div>
-                {types.map((t) => {
-                  const c = summary.by_type[t];
-                  return (
-                    <button
-                      key={t}
-                      className={`fline ${type === t ? "on" : ""}`}
-                      title={L(`${FINDING_HINT[t] ?? t} – Klick filtert`, `${FINDING_HINT[t] ?? t} – click to filter`)}
-                      onClick={() => setType(type === t ? "" : t)}
-                    >
-                      <span>{findingLabel(t)}</span>
-                      <span className="mono">
-                        <b className={c.open ? "warnfg" : "okfg"}>{c.open}</b>
-                        {c.total > c.open && <span className="faint"> / {c.total}</span>}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            );
-          })}
-        </div>
-      )}
-      <div className="filterbar">
-        <div className="seg">
-          {["open", "acknowledged", "resolved", "ignored", ""].map((s) => (
-            <button key={s || "all"} className={status === s ? "on" : ""} onClick={() => setStatus(s)}>
-              {s ? STATUS_LABEL[s] : L("alle", "all")} ({s ? (counts[s] ?? 0) : (summary?.total ?? 0)})
-            </button>
-          ))}
-        </div>
-        <select className="sel" value={type} onChange={(e) => setType(e.target.value)}>
-          <option value="">{L("Typ: alle", "Type: all")}</option>
-          {types.map((t) => (
-            <option key={t} value={t}>
-              {FINDING_LABEL[t] ?? t}
-            </option>
-          ))}
-        </select>
-        <div className="search">
-          <span className="ico">
-            <Icon name="search" />
-          </span>
-          <input placeholder={L("Objekt oder Detail…", "Object or detail…")} value={q} onChange={(e) => setQ(e.target.value)} />
-        </div>
-        <span className="count">
-          {L(
-            <>
-              {total} Treffer{total > loaded ? ` · ${loaded} geladen` : ""}
-            </>,
-            <>
-              {total} match{total === 1 ? "" : "es"}
-              {total > loaded ? ` · ${loaded} loaded` : ""}
-            </>,
-          )}
-        </span>
+      <div className="tabbar">
+        <button className={tab === "befunde" ? "on" : ""} onClick={() => choose("befunde")}>
+          {L("Befunde", "Findings")}
+        </button>
+        <button id="checks-tab" className={tab === "pruefungen" ? "on" : ""} onClick={() => choose("pruefungen")}>
+          {L("Prüfungen", "Checks")}
+        </button>
       </div>
-      <ErrorBox error={error} prefix="Findings" onClose={() => setError(null)} />
-      <div className="card">
-        <div className="card-body scroll">
-          {findings === null ? (
-            <Loading>{L("Lade Findings…", "Loading findings…")}</Loading>
-          ) : shown.length === 0 ? (
-            <Empty
-              title={
-                status === "open" ? L("Keine offenen Findings 🎉", "No open findings 🎉") : L("Keine Einträge", "No entries")
-              }
-            >
-              {status === "open"
-                ? L(
-                    "Alle Endpunkte wurden gegen die Source of Truth aufgelöst oder als extern bestätigt.",
-                    "All endpoints were resolved against the source of truth or acknowledged as external.",
-                  )
-                : L("Für diesen Status gibt es keine Findings.", "There are no findings for this status.")}
-            </Empty>
-          ) : (
-            <table>
-              <thead>
-                <tr>
-                  <th>{L("Schwere", "Severity")}</th>
-                  <th>{L("Typ", "Type")}</th>
-                  <th>{L("Objekt", "Object")}</th>
-                  <th>{L("Befund", "Finding")}</th>
-                  <th>{L("Quelle", "Source")}</th>
-                  <th>{L("Zuletzt gesehen", "Last seen")}</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {shown.map((f) => {
-                  const links = onGo ? ruleLinks(f) : [];
-                  const others = onGo ? viewLinks(f) : [];
-                  const sources = Array.isArray(f.detail?.sources) ? (f.detail!.sources as string[]).join(", ") : null;
-                  return (
-                    <Fragment key={f.id}>
-                      <tr className="clickable" onClick={() => setOpen(open === f.id ? null : f.id)}>
-                        <td>
-                          <SeverityBadge severity={f.severity} />
-                        </td>
-                        <td className="nowrap" title={FINDING_HINT[f.type] ?? f.type}>
-                          {findingLabel(f.type)}
-                        </td>
-                        <td className="mono">{f.subject_id}</td>
-                        <td style={{ maxWidth: 520 }}>
-                          <div>{f.message ?? detailText(f.detail)}</div>
-                          {f.hint && <div className="faint">→ {f.hint}</div>}
-                        </td>
-                        <td className="nowrap">
-                          {systemName(f.source_system_id) ?? sources ?? <span className="faint">–</span>}
-                        </td>
-                        <td className="mono">{fmtTime(f.last_seen)}</td>
-                        <td onClick={(e) => e.stopPropagation()}>
-                          {me.isOperator ? (
-                            <select className="sel" value={f.status} onChange={(e) => triage(f.id, e.target.value)}>
-                              {Object.entries(STATUS_LABEL).map(([k, v]) => (
-                                <option key={k} value={k}>
-                                  {v}
-                                </option>
-                              ))}
-                            </select>
-                          ) : (
-                            <span className="chip">{STATUS_LABEL[f.status] ?? f.status}</span>
-                          )}
-                        </td>
-                      </tr>
-                      {open === f.id && (
-                        <tr className="subrow">
-                          <td colSpan={7}>
-                            <dl className="kv tight">
-                              {Object.entries(f.detail ?? {})
-                                .filter(([k, v]) => DETAIL_LABEL[k] !== null && v !== null && v !== "")
-                                .map(([k, v]) => (
-                                  <Fragment key={k}>
-                                    <dt>{DETAIL_LABEL[k] ?? k}</dt>
-                                    <dd className="mono">{fmtValue(k, v)}</dd>
-                                  </Fragment>
-                                ))}
-                              <dt>{L("erstmals gesehen", "first seen")}</dt>
-                              <dd className="mono">{fmtTime(f.first_seen)}</dd>
-                            </dl>
-                            <RouteEntries f={f} />
-                            {others.length > 0 && (
-                              <div style={{ marginTop: 6 }}>
-                                <span className="faint">{L("Anzeigen: ", "Show: ")}</span>
-                                {others.map((l) => (
-                                  <button
-                                    key={l.label}
-                                    className="chip local linkchip"
-                                    onClick={() => onGo?.(l.view, l.params)}
-                                  >
-                                    {l.label}
-                                  </button>
-                                ))}
-                              </div>
-                            )}
-                            {links.length > 0 && (
-                              <div style={{ marginTop: 6 }}>
-                                <span className="faint">{L("Regeln anzeigen: ", "Show rules: ")}</span>
-                                {links.map((l) => (
-                                  <button
-                                    key={l.label}
-                                    className="chip local linkchip"
-                                    onClick={() => onGo?.("regeln", l.params)}
-                                  >
-                                    {l.label}
-                                  </button>
-                                ))}
-                              </div>
-                            )}
-                          </td>
-                        </tr>
-                      )}
-                    </Fragment>
-                  );
-                })}
-              </tbody>
-            </table>
+      {tab === "pruefungen" ? (
+        <Checks
+          me={me}
+          tenantId={tenantId}
+          onChanged={() => {
+            void reload();
+            onChanged();
+          }}
+          onShowType={(t) => {
+            setType(t);
+            setStatus("");
+            choose("befunde");
+          }}
+        />
+      ) : (
+        <>
+          {summary && Object.keys(summary.by_type).length > 0 && (
+            <div className="fgroups">
+              {FINDING_GROUPS.map((g) => {
+                const types = g.types.filter((t) => summary.by_type[t]);
+                if (!types.length) return null;
+                const openN = types.reduce((n, t) => n + summary.by_type[t].open, 0);
+                return (
+                  <div key={g.key} className="card fgroup">
+                    <div className="fgroup-head">
+                      <b>{g.label}</b>
+                      <span className={`chip ${openN ? "warn" : "ok"}`}>{L(<>{openN} offen</>, <>{openN} open</>)}</span>
+                    </div>
+                    <div className="faint" style={{ fontSize: 12, marginBottom: 4 }}>
+                      {g.help}
+                    </div>
+                    {types.map((t) => {
+                      const c = summary.by_type[t];
+                      return (
+                        <button
+                          key={t}
+                          className={`fline ${type === t ? "on" : ""}`}
+                          title={L(`${FINDING_HINT[t] ?? t} – Klick filtert`, `${FINDING_HINT[t] ?? t} – click to filter`)}
+                          onClick={() => setType(type === t ? "" : t)}
+                        >
+                          <span>{findingLabel(t)}</span>
+                          <span className="mono">
+                            <b className={c.open ? "warnfg" : "okfg"}>{c.open}</b>
+                            {c.total > c.open && <span className="faint"> / {c.total}</span>}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </div>
           )}
-        </div>
-        {findings !== null && total > loaded && (
-          <div className="card-foot">
-            {L(
-              <>
-                {loaded} von {total} geladen – Typ oder Suche eingrenzen oder{" "}
-              </>,
-              <>
-                {loaded} of {total} loaded – narrow down type or search, or{" "}
-              </>,
-            )}
-            <button className="btn btn-ghost btn-sm" onClick={loadMore} disabled={more}>
-              {more
-                ? L("Lade…", "Loading…")
-                : L(`weitere ${Math.min(PAGE, total - loaded)} laden`, `load ${Math.min(PAGE, total - loaded)} more`)}
-            </button>
+          <div className="filterbar">
+            <div className="seg">
+              {["open", "acknowledged", "resolved", "ignored", ""].map((s) => (
+                <button key={s || "all"} className={status === s ? "on" : ""} onClick={() => setStatus(s)}>
+                  {s ? STATUS_LABEL[s] : L("alle", "all")} ({s ? (counts[s] ?? 0) : (summary?.total ?? 0)})
+                </button>
+              ))}
+            </div>
+            <select className="sel" value={type} onChange={(e) => setType(e.target.value)}>
+              <option value="">{L("Typ: alle", "Type: all")}</option>
+              {types.map((t) => (
+                <option key={t} value={t}>
+                  {FINDING_LABEL[t] ?? t}
+                </option>
+              ))}
+            </select>
+            <div className="search">
+              <span className="ico">
+                <Icon name="search" />
+              </span>
+              <input placeholder={L("Objekt oder Detail…", "Object or detail…")} value={q} onChange={(e) => setQ(e.target.value)} />
+            </div>
+            <span className="count">
+              {L(
+                <>
+                  {total} Treffer{total > loaded ? ` · ${loaded} geladen` : ""}
+                </>,
+                <>
+                  {total} match{total === 1 ? "" : "es"}
+                  {total > loaded ? ` · ${loaded} loaded` : ""}
+                </>,
+              )}
+            </span>
           </div>
+          <ErrorBox error={error} prefix="Findings" onClose={() => setError(null)} />
+          {assigning && tenantId !== null && (
+          <NetAssignDialog
+            tenantId={tenantId}
+            prefix={assigning}
+            onClose={() => setAssigning(null)}
+            onSaved={() => setAssigning(null)}
+          />
         )}
-      </div>
+        {adding && tenantId !== null && (
+            <FindingDialog
+              tenantId={tenantId}
+              draft={{}}
+              systems={systems.map((x) => ({ id: x.id, name: x.name }))}
+              onClose={() => setAdding(false)}
+              onSaved={() => {
+                setAdding(false);
+                void reload();
+                onChanged();
+              }}
+            />
+          )}
+          {canTriage && picked.size > 0 && (
+            <div className="card bulkbar" id="findings-bulk">
+              <b>{L(`${picked.size} ausgewählt`, `${picked.size} selected`)}</b>
+              <span className="faint">{L("Status setzen:", "Set status:")}</span>
+              <select className="sel" id="findings-bulk-status" value={bulkStatus} onChange={(e) => setBulkStatus(e.target.value)}>
+                {Object.entries(STATUS_LABEL).map(([k, v]) => (
+                  <option key={k} value={k}>
+                    {v}
+                  </option>
+                ))}
+              </select>
+              <input
+                className="input"
+                id="findings-bulk-note"
+                style={{ flex: 1, minWidth: 160, width: "auto" }}
+                placeholder={L("Notiz (optional, für alle)", "Note (optional, for all)")}
+                value={bulkNote}
+                onChange={(e) => setBulkNote(e.target.value)}
+              />
+              <button className="btn btn-primary btn-sm" id="findings-bulk-apply" disabled={bulkBusy} onClick={applyBulk}>
+                {bulkBusy ? L("Speichere…", "Saving…") : L("Übernehmen", "Apply")}
+              </button>
+              <button className="btn btn-ghost btn-sm" onClick={() => setPicked(new Set())}>
+                {L("Auswahl aufheben", "Clear selection")}
+              </button>
+            </div>
+          )}
+          <div className="card">
+            <div className="card-body scroll">
+              {findings === null ? (
+                <Loading>{L("Lade Findings…", "Loading findings…")}</Loading>
+              ) : shown.length === 0 ? (
+                <Empty
+                  title={
+                    status === "open" ? L("Keine offenen Findings 🎉", "No open findings 🎉") : L("Keine Einträge", "No entries")
+                  }
+                >
+                  {status === "open"
+                    ? L(
+                        "Alle Endpunkte wurden gegen die Source of Truth aufgelöst oder als extern bestätigt.",
+                        "All endpoints were resolved against the source of truth or acknowledged as external.",
+                      )
+                    : L("Für diesen Status gibt es keine Findings.", "There are no findings for this status.")}
+                </Empty>
+              ) : (
+                <table>
+                  <thead>
+                    <tr>
+                      {canTriage && (
+                        <th className="pick">
+                          <input
+                            type="checkbox"
+                            id="findings-pick-all"
+                            checked={allPicked}
+                            title={L("alle auf der Seite wählen", "select all on the page")}
+                            onChange={(e) => pickAll(e.target.checked)}
+                          />
+                        </th>
+                      )}
+                      <th>{L("Schwere", "Severity")}</th>
+                      <th>{L("Typ", "Type")}</th>
+                      <th>{L("Objekt", "Object")}</th>
+                      <th>{L("Befund", "Finding")}</th>
+                      <th>{L("Quelle", "Source")}</th>
+                      <th>{L("Zuletzt gesehen", "Last seen")}</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {shown.map((f) => {
+                      const links = onGo ? ruleLinks(f) : [];
+                      const others = onGo ? viewLinks(f) : [];
+                      const sources = Array.isArray(f.detail?.sources) ? (f.detail!.sources as string[]).join(", ") : null;
+                      return (
+                        <Fragment key={f.id}>
+                          <tr
+                            className={`clickable${picked.has(f.id) ? " picked" : ""}`}
+                            data-finding={f.id}
+                            onClick={() => setOpen(open === f.id ? null : f.id)}
+                          >
+                            {canTriage && (
+                              <td className="pick" onClick={(e) => e.stopPropagation()}>
+                                <input type="checkbox" checked={picked.has(f.id)} onChange={(e) => pick(f.id, e.target.checked)} />
+                              </td>
+                            )}
+                            <td>
+                              <SeverityBadge severity={f.severity} />
+                            </td>
+                            <td className="finding-type" title={FINDING_HINT[f.type] ?? f.type}>
+                              {findingLabel(f.type)}
+                            </td>
+                            <td className="mono finding-subject">{f.subject_id}</td>
+                            <td className="finding-text">
+                              <div>{f.message ?? detailText(f.detail)}</div>
+                              {f.hint && <div className="faint">→ {f.hint}</div>}
+                            </td>
+                            <td className="nowrap">
+                              {systemName(f.source_system_id) ?? sources ?? <span className="faint">–</span>}
+                            </td>
+                            <td className="mono">{fmtTime(f.last_seen)}</td>
+                            <td onClick={(e) => e.stopPropagation()}>
+                              {/* Triage: Operator bzw. Kunden-Benutzer mit der Kunden-Rolle triage (feinere Rollen) */}
+                              {canTriage ? (
+                                <select className="sel" value={f.status} onChange={(e) => triage(f.id, e.target.value)}>
+                                  {Object.entries(STATUS_LABEL).map(([k, v]) => (
+                                    <option key={k} value={k}>
+                                      {v}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <span className="chip">{STATUS_LABEL[f.status] ?? f.status}</span>
+                              )}
+                            </td>
+                          </tr>
+                          {open === f.id && (
+                            <tr className="subrow">
+                              <td colSpan={canTriage ? 8 : 7}>
+                                <dl className="kv tight">
+                                  {Object.entries(f.detail ?? {})
+                                    .filter(([k, v]) => DETAIL_LABEL[k] !== null && v !== null && v !== "")
+                                    .filter(([k]) => !(BGP_FINDING_TYPES.has(f.type) && BGP_NET_KEYS.has(k)))
+                                    .map(([k, v]) => (
+                                      <Fragment key={k}>
+                                        <dt>{DETAIL_LABEL[k] ?? k}</dt>
+                                        <dd className="mono">{fmtValue(k, v)}</dd>
+                                      </Fragment>
+                                    ))}
+                                  <dt>{L("erstmals gesehen", "first seen")}</dt>
+                                  <dd className="mono">{fmtTime(f.first_seen)}</dd>
+                                </dl>
+                                {BGP_FINDING_TYPES.has(f.type) ? (
+                                  <BgpFindingNets type={f.type} detail={f.detail as Record<string, unknown> | null} />
+                                ) : (
+                                  <RouteEntries f={f} />
+                                )}
+                                {(f.type === "bgp_zone_mismatch" || f.type === "bgp_zone_out_mismatch") && (
+                                  <BgpWhyList
+                                    why={(Array.isArray(f.detail?.why) ? f.detail!.why : []) as BgpWhy[]}
+                                    chain={(f.detail?.chain ?? null) as BgpZoneChain | null}
+                                    out={f.type === "bgp_zone_out_mismatch"}
+                                  />
+                                )}
+                              {f.type === "net_wider_than_routes" && canAdd && (
+                                <div style={{ marginTop: 6 }}>
+                                  <button className="btn btn-sm" onClick={() => setAssigning(String(f.detail?.value ?? ""))}>
+                                    {L("Netz zuordnen", "Assign network")}
+                                  </button>{" "}
+                                  <span className="faint">
+                                    {L("gilt ab dem nächsten Abgleich", "applies from the next reconciliation")}
+                                  </span>
+                                </div>
+                              )}
+                                {others.length > 0 && (
+                                  <div style={{ marginTop: 6 }}>
+                                    <span className="faint">{L("Anzeigen: ", "Show: ")}</span>
+                                    {others.map((l) => (
+                                      <button
+                                        key={l.label}
+                                        className="chip local linkchip"
+                                        onClick={() => onGo?.(l.view, l.params)}
+                                      >
+                                        {l.label}
+                                      </button>
+                                    ))}
+                                  </div>
+                                )}
+                                {links.length > 0 && (
+                                  <div style={{ marginTop: 6 }}>
+                                    <span className="faint">{L("Regeln anzeigen: ", "Show rules: ")}</span>
+                                    {links.map((l) => (
+                                      <button
+                                        key={l.label}
+                                        className="chip local linkchip"
+                                        onClick={() => onGo?.("regeln", l.params)}
+                                      >
+                                        {l.label}
+                                      </button>
+                                    ))}
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+            {findings !== null && total > loaded && (
+              <div className="card-foot">
+                {L(
+                  <>
+                    {loaded} von {total} geladen – Typ oder Suche eingrenzen oder{" "}
+                  </>,
+                  <>
+                    {loaded} of {total} loaded – narrow down type or search, or{" "}
+                  </>,
+                )}
+                <button className="btn btn-ghost btn-sm" onClick={loadMore} disabled={more}>
+                  {more
+                    ? L("Lade…", "Loading…")
+                    : L(`weitere ${Math.min(PAGE, total - loaded)} laden`, `load ${Math.min(PAGE, total - loaded)} more`)}
+                </button>
+              </div>
+            )}
+          </div>
+        </>
+      )}
     </>
   );
 }

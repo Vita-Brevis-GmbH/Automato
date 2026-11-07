@@ -103,8 +103,9 @@ def test_laufmeldung_beim_abruf_englisch_gespeicherte_bleibt(monkeypatch):
         assert jobs_api._message(run) == "Result arrived – waiting to be ingested (2 ahead)"
     assert jobs_api._message(run) == "Ergebnis angekommen – wartet aufs Einspielen (2 davor)"
     monkeypatch.setattr(jobs_api.tenant_lock, "state", lambda rid: None)
-    with use("en"):
-        assert jobs_api._message(run) == "abgebrochen von x"  # gespeichert: deutsch
+    with use("en"):  # seit 0.90.0 beim Abruf uebersetzt (test_i18n_runs.py)
+        assert jobs_api._message(run) == "cancelled by x"
+    assert run.message == "abgebrochen von x"  # gespeichert: deutsch
 
 
 def _port(**kw):
@@ -218,7 +219,12 @@ def test_netbox_sync_plan_deutsch_gespeichert_anzeige_englisch(
     assert r.status_code == 202, r.text
     done = client.get(f"/netbox-sync/plans/{plan['id']}", headers=ADMIN_EN).json()
     assert done["status"] == "applied", done
-    assert done["message"] == "Applied – NetBox is being collected again."
+    # 0.115.0: mit Nachkontrolle (ADR 0042) - gespeichert deutsch, angezeigt englisch
+    assert done["message"].startswith("Applied and verified: written = read (")
+    assert done["message"].endswith(" objects) – NetBox is being collected again.")
+    s = session_factory()
+    assert s.get(SyncPlan, plan["id"]).message.startswith("Übernommen und nachkontrolliert")
+    s.close()
     tag = nb.find("extras/tags", slug="automato")
     assert tag["description"] == "Von Automato verwaltet (ADR 0010) - nicht von Hand ändern"
 

@@ -35,7 +35,7 @@ def _app(client) -> tuple[int, int]:
 
 
 def test_kategorien_spalten_und_marker():
-    cols = appdoc.TABLE_COLUMNS[1]
+    cols = appdoc.ALL_COLUMNS  # seit 0.106.0 nach den Zeilen (`table_columns`)
     assert appdoc.table_title(1) == "Internet Zugriff"
     assert appdoc.column_labels(cols) == cols  # Deutsch: Anzeige = Schluessel
     with use("en"):
@@ -45,10 +45,12 @@ def test_kategorien_spalten_und_marker():
         assert labels == [SHOWN.get(c, c) for c in cols]
         assert labels[cols.index(appdoc.SOURCE)] == "Source"
         assert appdoc.reverse_mark() == "(reverse direction)"
-        assert appdoc.both_mark() == "(↔ both directions)"
+        assert appdoc.both_mark() == "(↔ also from the provider)"
+        assert appdoc.both_mark(["icmp/any"]) == "(↔ also from the provider: icmp/any)"
     # die Auswertung erkennt beide Fassungen der Marker
     assert app_paths._named("tcp/any, udp/53 (reverse direction)") == [("tcp", None), ("udp", 53)]
     assert app_paths._named("tcp/any (Rückrichtung)") == [("tcp", None)]
+    assert app_paths._named("tcp/22 (↔ auch vom Provider aus: icmp/any)") == [("tcp", 22)]
     assert appdoc.has_both("tcp/22 (↔ both directions)")
     assert appdoc.has_both("tcp/22 (↔ beide Richtungen)") and not appdoc.has_both("tcp/22")
 
@@ -115,9 +117,12 @@ def test_verbindungen_und_plan_englisch(client):
     states = {s["rule_id"]: s for s in https["rules"]}
     texts = {s["state"]: s["text"] for s in states.values()}
     assert texts["decides"] == "decides on the path"
-    assert texts["off_path"] == "fw-03 is not on the path of this connection"
     assert texts["other"].endswith(" decides earlier")
-    assert "Policy 31 “web-lan-alt”" in {s["label"] for s in states.values()}
+    # nicht auf dem Weg (0.107.0): nicht bei der Verbindung, mit englischem Text in `unused`
+    (alt,) = https["unused"]
+    assert alt["label"] == "Policy 31 “web-lan-alt”"
+    assert alt["text"] == "fw-03 is not on the path of this connection"
+    assert any("rule never needed" in n for n in out["notes"])
     blocked = conns[(tap.WEB, tap.SRV, "tcp/8080")]
     assert blocked["mismatch"][0].startswith("Policy 12 “web-lan-8080” allows – the path is ")
     plan = out["plan"]
@@ -141,7 +146,7 @@ def test_rueckrichtung_englisch(client):
     doc = client.get(f"/applications/{aid}/doc", headers=EN).json()
     (open_row,) = (r for t in doc["tables"] for r in t["rows"]
                    if r["Description"].startswith("CT_open"))  # fmt: skip
-    assert open_row["TCP/UDP"].endswith("(↔ both directions)")
+    assert open_row["TCP/UDP"].endswith("(↔ also from the provider: icmp/any)")
     back = [h for h in doc["hits"] if h["reverse"]]
     assert back and all(h["via"].endswith(" · reverse direction") for h in back)
     assert all(h["services"].endswith("(reverse direction)") for h in back)

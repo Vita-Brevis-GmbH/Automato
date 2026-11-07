@@ -181,8 +181,8 @@ function Connections() {
 const days = (n: number) => (n > 0 ? L(`${n} Tage`, `${n} days`) : L("nie löschen", "never delete"));
 const counts = (c: RetentionCounts) =>
   L(
-    `${c.runs} Läufe · ${c.sync_plans} NetBox-Sync-Vorschauen · ${c.audit} Audit-Einträge · ${c.l2 ?? 0} MAC-/ARP-Einträge`,
-    `${c.runs} runs · ${c.sync_plans} NetBox sync previews · ${c.audit} audit entries · ${c.l2 ?? 0} MAC/ARP entries`,
+    `${c.runs} Läufe · ${c.sync_plans} NetBox-Sync-Vorschauen · ${c.audit} Audit-Einträge · ${c.l2 ?? 0} MAC-/ARP-Einträge · ${c.topo_changes ?? 0} Routing-Änderungen`,
+    `${c.runs} runs · ${c.sync_plans} NetBox sync previews · ${c.audit} audit entries · ${c.l2 ?? 0} MAC/ARP entries · ${c.topo_changes ?? 0} routing changes`,
   );
 
 // Aufbewahrung (0.48.0, R14): beendete Läufe, alte Sync-Vorschauen und Audit-Einträge nach Frist
@@ -209,7 +209,7 @@ function Retention() {
       .catch(setErr)
       .finally(() => setBusy(false));
   };
-  const due = r ? r.due.runs + r.due.sync_plans + r.due.audit + (r.due.l2 ?? 0) : 0;
+  const due = r ? r.due.runs + r.due.sync_plans + r.due.audit + (r.due.l2 ?? 0) + (r.due.topo_changes ?? 0) : 0;
   return (
     <div className="card" id="retention">
       <div className="card-head">
@@ -239,6 +239,8 @@ function Retention() {
             <dd>{days(r.policy.audit_days)}</dd>
             <dt>{L("MAC/ARP der Switches", "MAC/ARP of the switches")}</dt>
             <dd>{days(r.policy.l2_days ?? 30)}</dd>
+            <dt>{L("Verlauf des Routings", "Routing history")}</dt>
+            <dd>{days(r.policy.topo_changes_days ?? 180)}</dd>
             <dt>{L("Fällig", "Due")}</dt>
             <dd>{counts(r.due)}</dd>
             <dt>{L("Zuletzt", "Last")}</dt>
@@ -266,14 +268,15 @@ function Retention() {
                 Es bleiben immer: der aktuelle Stand (Läufe, auf die Regeln, Objekte, NAT, VMs bzw. der Referenzstand zeigen), je
                 Quellsystem der neuste und der neuste erfolgreiche Lauf, offene Läufe und die neuste Vorschau je NetBox.{" "}
                 {r.scheduled ? "Der Zeitplan räumt täglich auf." : "Zeitplan aus – nur von Hand bzw. automato purge."} Fristen
-                in <code>.env</code>: <code>AUTOMATO_RETENTION_RUNS_DAYS</code>, <code>…_SYNC_DAYS</code>, <code>…_AUDIT_DAYS</code>.
+                in <code>.env</code>: <code>AUTOMATO_RETENTION_RUNS_DAYS</code>, <code>…_SYNC_DAYS</code>, <code>…_AUDIT_DAYS</code>,{" "}
+                <code>…_L2_DAYS</code>, <code>…_TOPO_CHANGES_DAYS</code>.
               </>,
               <>
                 Always kept: the current state (runs referenced by rules, objects, NAT, VMs or the reference data), per
                 source system the newest and the newest successful run, open runs and the newest preview per NetBox.{" "}
                 {r.scheduled ? "The schedule cleans up daily." : "Schedule off – only by hand or automato purge."} Retention
                 periods in <code>.env</code>: <code>AUTOMATO_RETENTION_RUNS_DAYS</code>, <code>…_SYNC_DAYS</code>,{" "}
-                <code>…_AUDIT_DAYS</code>.
+                <code>…_AUDIT_DAYS</code>, <code>…_L2_DAYS</code>, <code>…_TOPO_CHANGES_DAYS</code>.
               </>,
             )}
           </div>

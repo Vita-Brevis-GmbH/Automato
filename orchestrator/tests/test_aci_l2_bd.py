@@ -10,6 +10,7 @@ Fabrics bekommt sie, aber in der Kategorie seines L3Outs (Zugriff L3O_vpn), nich
 """
 
 from app.store.topology import aci_vrf
+from system_doc import system_doc, system_list
 from test_vmware import ADMIN, _deliver, _system
 
 OP = {"X-Dev-Roles": "operator"}
@@ -99,9 +100,9 @@ def test_vrf_aus_common_fuer_alte_laeufe():
 
 def test_server_ausserhalb_in_der_kategorie_seines_l3outs(client):
     tid = _seed(client)
-    systems = client.get("/appdoc/systems", params={"tenant_id": tid}).json()
+    systems = system_list(client, tid)
     name = next(s["name"] for s in systems if s["ip"] == "192.0.2.10")
-    doc = client.get(f"/appdoc/systems/{name}", params={"tenant_id": tid}).json()
+    doc = system_doc(client, name, tid)
     idx, row = _rows(doc)["CT_vpn_other"]
     assert idx == 5  # Zugriff L3O_vpn, nicht 8 „innerhalb des Security Tenant“
     assert row["Bezug"] == "externe EPG L3O_vpn|EN_vpn (0.0.0.0/0)"

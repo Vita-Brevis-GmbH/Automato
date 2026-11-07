@@ -16,6 +16,8 @@ import type { Me } from "./auth";
 import { L } from "./i18n";
 import { Empty, ErrorBox, Loading, Modal, Note, PageHead } from "./ui";
 import ZoneSchemaCard from "./ZoneSchema";
+import AppdocCatalogCard from "./AppdocCatalog";
+import AppdocRulesetCard from "./modules/einstellungen/AppdocRuleset";
 
 // Namensprofile & Wörterbücher: pro Kunde pflegbar und erweiterbar ohne Deployment.
 // `kind` ist offen - neue Namenskonventionsvorgaben = neue Wörterbuch-Art. Die Daten
@@ -38,7 +40,8 @@ const OBJECT_CLASSES: Record<string, string> = {
   transfer: L("Transfernetz", "Transfer network"),
   vip: "VIP",
   vip_dnat: "VIP / DNAT",
-  snat_pool: "SNAT IP-Pool",
+  virtual_server: "Virtual Server",
+  snat_pool: L("SNAT IP-Pool", "SNAT IP pool"),
   range: L("Adressbereich", "Address range"),
   service: L("Service / ACI-Filter", "Service / ACI filter"),
 };
@@ -49,8 +52,8 @@ const KINDS: Record<string, KindMeta> = {
     cols: ["Prefix", L("Objekttyp", "Object type")],
     add: "Prefix",
     note: L(
-      "Wird beim Einlesen ausgewertet (längstes Prefix gewinnt). Typ „Service / ACI-Filter“ (FT_) gilt für die Namensprüfung der Services und Filter. Leer = eingebaute Standard-Konvention.",
-      "Evaluated during collection (longest prefix wins). Type “Service / ACI filter” (FT_) applies to the name check of services and filters. Empty = built-in default convention.",
+      "Wird beim Einlesen ausgewertet (längstes Prefix gewinnt). Typ „Service / ACI-Filter“ (FT_) gilt für die Namensprüfung der Services und Filter, „VIP“ bzw. „VIP / DNAT“ (V-EXT_, VIP_) für VIPs, „Virtual Server“ für Virtual Server (ohne Eintrag wie VIPs) und „SNAT IP-Pool“ (IPP_) für IP-Pools – ohne Prefix eines Typs keine Prüfung dieser Namen. Leer = eingebaute Standard-Konvention.",
+      "Evaluated during collection (longest prefix wins). Type “Service / ACI filter” (FT_) applies to the name check of services and filters, “VIP” or “VIP / DNAT” (V-EXT_, VIP_) to VIPs, “Virtual Server” to virtual servers (without an entry like VIPs) and “SNAT IP pool” (IPP_) to IP pools – without a prefix of a type, these names are not checked. Empty = built-in default convention.",
     ),
     values: OBJECT_CLASSES,
   },
@@ -94,7 +97,8 @@ const KINDS: Record<string, KindMeta> = {
 
 // nicht mehr Teil der Namenskonvention (0.36.0): bestehende Einträge bleiben gespeichert, werden
 // aber nicht mehr gezeigt; das Grundschema der Zonen (0.55.0) hat eine eigene Karte
-const HIDDEN_KINDS = ["project_code", "zone_schema", "zone_schema_link", "zone_schema_meta"];
+// bzw. die Kategorien der Applikations-Doku (0.104.0)
+const HIDDEN_KINDS = ["project_code", "zone_schema", "zone_schema_link", "zone_schema_meta", "appdoc_category", "appdoc_area", "appdoc_option", "appdoc_ruleset", "appdoc_ruleset_active"];
 
 const KIND_ORDER = Object.keys(KINDS);
 
@@ -256,6 +260,8 @@ export default function NamingProfiles({ me, tenants }: { me: Me; tenants: Tenan
       ) : (
         <div className="stack">
           <ZoneSchemaCard key={`schema-${profileId}`} profileId={profileId!} editable={me.isAdmin} tenants={tenants} />
+          <AppdocCatalogCard key={`appdoc-${profileId}`} profileId={profileId!} editable={me.isAdmin} />
+          <AppdocRulesetCard key={`ruleset-${profileId}`} profileId={profileId!} editable={me.isAdmin} />
           {kinds.map((k) => (
             <DictCard
               key={`${profileId}-${k}`}

@@ -1,5 +1,5 @@
 # Grundaufbau (Meilenstein M6). Profile:
-#   core       -> postgres, redis, orchestrator, web-ui
+#   core       -> postgres, redis, migrate, orchestrator, web-ui (1.0.0: Produktions-Build)
 #   collectors -> Collector-Worker (FortiGate/ACI, liest Beispieldaten bis M7)
 # Start: docker compose --profile core --profile collectors up --build
 #
@@ -12,12 +12,27 @@
 # laeuft nicht im Compose; Zugang wird ueber AUTOMATO_-Variablen konfiguriert.
 # Wachstumspfad: docker compose -> Kubernetes bei Multi-Worker-Skalierung.
 
+# Härtung der eigenen Dienste (1.0.0, R14): keine neuen Rechte über setuid/Datei-Capabilities,
+# keine Linux-Capabilities (wo nötig einzeln erlaubt), Dateisystem nur lesend - geschrieben wird
+# nur in Volumes und in /tmp (tmpfs). Postgres, Redis und Keycloak bleiben ohne cap_drop: ihre
+# Start-Skripte wechseln als root den Benutzer bzw. übernehmen Schlüssel (VM-/Docker-Härtung,
+# docs/INSTALLATION-PROD.md).
+x-gehaertet: &gehaertet
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  read_only: true
+  tmpfs:
+    - /tmp
+
 services:
   postgres:
     image: postgres:16-alpine
     profiles: ["core"]
     # nach einem Neustart der VM bzw. von Docker wieder hochfahren (0.41.0)
     restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]  # 1.0.0: Start-Skript wechselt ohne setuid
     # mit TLS intern ueber das Netz nur verschluesselt (hostssl), lokal wie bisher
     entrypoint: ["automato-postgres-start"]
     environment:
@@ -40,6 +55,7 @@ services:
     image: redis:7-alpine
     profiles: ["core"]
     restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]  # 1.0.0
     # mit TLS intern nur noch per TLS (kein Klartext-Port)
     entrypoint: ["automato-redis-start"]
     environment:
@@ -64,6 +80,11 @@ services:
       dockerfile: orchestrator/Dockerfile
     profiles: ["core"]
     restart: "no"
+    <<: *gehaertet
+    # tls-init (deploy/aufbau.sh tls-intern) läuft als root und übergibt den Schlüssel des
+    # Orchestrators an dessen Dienstbenutzer (chown)
+    cap_add:
+      - CHOWN
     depends_on:
       postgres:
         condition: service_healthy
@@ -83,6 +104,7 @@ services:
       dockerfile: orchestrator/Dockerfile
     profiles: ["core"]
     restart: unless-stopped
+    <<: *gehaertet  # schreibt nur ins Volume /var/lib/automato und nach /tmp
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -118,6 +140,15 @@ services:
       # orchestrator-data (beim ersten Start erzeugt, mitsichern!); produktiv besser als
       # Secret-Referenz, z. B. openbao:automato/credentials#key (deploy/secrets/README.md).
       AUTOMATO_CREDENTIALS_KEY: ${AUTOMATO_CREDENTIALS_KEY:-}
+      # Produktiv (0.116.0, docs/INSTALLATION-PROD.md): Audit verschluesseln, Secret-Quellen
+      # (file:/openbao:) und die Freigabe der Read-API ohne Anmeldung (nur auth_mode dev)
+      AUTOMATO_AUDIT_ENCRYPTION_KEY: ${AUTOMATO_AUDIT_ENCRYPTION_KEY:-}
+      AUTOMATO_SECRETS_FILE_DIR: ${AUTOMATO_SECRETS_FILE_DIR:-/run/secrets}
+      AUTOMATO_OPENBAO_ADDR: ${AUTOMATO_OPENBAO_ADDR:-}
+      AUTOMATO_OPENBAO_TOKEN: ${AUTOMATO_OPENBAO_TOKEN:-}
+      AUTOMATO_OPENBAO_KV_MOUNT: ${AUTOMATO_OPENBAO_KV_MOUNT:-secret}
+      AUTOMATO_OPENBAO_PATH: ${AUTOMATO_OPENBAO_PATH:-automato}
+      AUTOMATO_ALLOW_UNAUTHENTICATED_READ_API: ${AUTOMATO_ALLOW_UNAUTHENTICATED_READ_API:-false}
       # Zeitgesteuerte Laeufe (Zeitplan am Quellsystem); ein Termin wird auch bei mehreren
       # Orchestrator-Prozessen nur einmal ausgeloest.
       AUTOMATO_SCHEDULER_ENABLED: ${AUTOMATO_SCHEDULER_ENABLED:-true}
@@ -134,6 +165,10 @@ services:
       AUTOMATO_RETENTION_AUDIT_DAYS: ${AUTOMATO_RETENTION_AUDIT_DAYS:-365}
       # Abweichung Regel <-> Weg (0.59.0): Zeitbudget je Neuberechnung nach einem Lauf
       AUTOMATO_APP_FINDINGS_SECONDS: ${AUTOMATO_APP_FINDINGS_SECONDS:-120}
+      AUTOMATO_APP_TRACES_MAX: ${AUTOMATO_APP_TRACES_MAX:-2000}
+      AUTOMATO_APP_FINDINGS_TRACES: ${AUTOMATO_APP_FINDINGS_TRACES:-120}
+      # Wege je Mandant im Speicher (0.140.0, ADR 0048): MB, darueber werden die aeltesten neu gerechnet
+      AUTOMATO_PATH_STORE_MB: ${AUTOMATO_PATH_STORE_MB:-256}
       # Agent-Kanal nur ueber das mTLS-Agent-Gateway (Profil agent-gateway): off | require | bind
       AUTOMATO_INTERNAL_MTLS_MODE: ${AUTOMATO_INTERNAL_MTLS_MODE:-off}
       AUTOMATO_AGENT_GATEWAY_SECRET: ${AUTOMATO_AGENT_GATEWAY_SECRET:-}
@@ -146,8 +181,9 @@ services:
       - ./deploy/tls/pki/orchestrator:/etc/automato/tls:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # produktiv nur lokal (AUTOMATO_API_BIND=127.0.0.1): Zugang ueber Proxy bzw. Agent-Gateway
     ports:
-      - "8000:8000"
+      - "${AUTOMATO_API_BIND:-0.0.0.0}:8000:8000"
     healthcheck:
       test: ["CMD", "python", "-m", "app.serve", "--check"]
       interval: 10s
@@ -160,6 +196,7 @@ services:
       dockerfile: collectors/Dockerfile
     profiles: ["collectors"]
     restart: unless-stopped
+    <<: *gehaertet
     depends_on:
       redis:
         condition: service_healthy
@@ -185,19 +222,32 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
+  # Oberfläche (1.0.0): Produktions-Build - Caddy liefert die statischen Dateien aus und leitet
+  # /api an den Orchestrator weiter (web-ui/frontend/deploy/Caddyfile). Vite-Server nur mit
+  # AUTOMATO_UI_TARGET=dev (.env, z. B. im Labor).
   web-ui:
     build:
       context: web-ui/frontend
+      target: ${AUTOMATO_UI_TARGET:-prod}
     profiles: ["core"]
     restart: unless-stopped
+    <<: *gehaertet
+    # Vite (dev) schreibt seine Konfiguration beim Start neben vite.config.ts - mit
+    # AUTOMATO_UI_TARGET=dev darum auch AUTOMATO_UI_READ_ONLY=false setzen
+    read_only: ${AUTOMATO_UI_READ_ONLY:-true}
+    tmpfs:
+      - /tmp
+      - /data  # Caddy (prod)
+      - /config  # Caddy (prod)
     environment:
       ORCHESTRATOR_URL: http://orchestrator:8000
       # TLS intern (0.49.0): Web-UI per HTTPS, Orchestrator per HTTPS gegen die interne CA
       AUTOMATO_INTERNAL_TLS: ${AUTOMATO_INTERNAL_TLS:-off}
     volumes:
       - ./deploy/tls/pki/web-ui:/etc/automato/tls:ro
+    # produktiv nur lokal (AUTOMATO_UI_DEV_BIND=127.0.0.1): die Oberflaeche nur ueber den Proxy
     ports:
-      - "5173:5173"
+      - "${AUTOMATO_UI_DEV_BIND:-0.0.0.0}:5173:5173"
     depends_on:
       - orchestrator
 
@@ -209,9 +259,14 @@ services:
     image: caddy:2-alpine
     profiles: ["proxy"]
     restart: unless-stopped
+    <<: *gehaertet  # schreibt nur in die Volumes /data und /config
+    cap_add:
+      - NET_BIND_SERVICE  # Port 443
     environment:
       AUTOMATO_UI_HOST: ${AUTOMATO_UI_HOST:-localhost}
       AUTOMATO_UI_TLS: ${AUTOMATO_UI_TLS:-internal}
+      # Oberflaeche nur aus diesen Netzen (0.116.0, R14), z. B. "10.0.10.0/24 10.8.0.0/16"
+      AUTOMATO_UI_ALLOW: ${AUTOMATO_UI_ALLOW:-0.0.0.0/0 ::/0}
       AUTOMATO_INTERNAL_TLS: ${AUTOMATO_INTERNAL_TLS:-off}
     ports:
       - "443:443"
@@ -233,6 +288,11 @@ services:
     image: caddy:2-alpine
     profiles: ["agent-gateway"]
     restart: unless-stopped
+    <<: *gehaertet
+    tmpfs:
+      - /tmp
+      - /data
+      - /config
     environment:
       AUTOMATO_AGENT_GATEWAY_HOST: ${AUTOMATO_AGENT_GATEWAY_HOST:-localhost}
       AUTOMATO_AGENT_GATEWAY_SECRET: ${AUTOMATO_AGENT_GATEWAY_SECRET:-}

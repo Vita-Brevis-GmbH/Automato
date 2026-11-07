@@ -6,7 +6,8 @@ läuft im Orchestrator-Container in Sekunden und trennt die Schritte:
 1. **Name** auflösen (z. B. `host.docker.internal` → Gateway des Docker-Hosts),
 2. **TCP-Verbindung** zum Port (Zeitüberschreitung = Ziel aus bzw. Weg gesperrt, abgelehnt =
    auf dem Port läuft nichts),
-3. bei NetBox **`GET /api/status/`** mit dem Lese-Token (nur lesend, `sot_gateway.readonly`).
+3. bei NetBox **`GET /api/status/`** mit dem Lese-Token (nur lesend, `sot_gateway.readonly`),
+   bei AD-DNS (ADR 0045) je Zone der **Anfang des Zonentransfers** (Freigabe + SOA-Seriennummer).
 
 Jeder Schritt nennt einen Hinweis zur Abhilfe; Tokens erscheinen nie in der Antwort.
 """
@@ -27,7 +28,7 @@ CONNECT_TIMEOUT = 5.0
 
 @dataclass
 class Step:
-    step: str  # dns | tcp | http
+    step: str  # dns | tcp | http | axfr (AD-DNS)
     ok: bool
     detail: str
 
@@ -37,7 +38,8 @@ class Result:
     ok: bool
     steps: list[Step] = field(default_factory=list)
     hint: str | None = None
-    # Art des Fehlers (dns | timeout | refused | error | http) - Merkmal statt Text der Schritte
+    # Art des Fehlers (dns | timeout | refused | error | http | axfr) - Merkmal statt Text der
+    # Schritte
     failure: str | None = None
 
     def out(self) -> dict:
@@ -73,6 +75,8 @@ def check(
     token: str | None = None,
     verify_tls: bool = True,
     transport: httpx.BaseTransport | None = None,
+    zones: list[str] | None = None,
+    transfer=None,
 ) -> Result:
     parts = urlsplit(base_url or "")
     host = parts.hostname
@@ -84,7 +88,7 @@ def check(
                 "No valid address stored on the source system.",
             ),
         )
-    port = parts.port or {"https": 443, "ssh": 22}.get(parts.scheme, 80)
+    port = parts.port or {"https": 443, "ssh": 22, "snmp": 161, "dns": 53}.get(parts.scheme, 80)
     result = Result(True)
 
     try:
@@ -108,6 +112,16 @@ def check(
         )
         return result
     result.steps.append(Step("dns", True, f"{host} → {', '.join(addrs)}"))
+    if parts.scheme == "snmp":  # Switches & Router mit SNMPv3 (ADR 0033): UDP, keine TCP-Probe
+        result.hint = L(
+            f"SNMPv3 läuft über UDP {port} – ohne Anfrage mit dem SNMPv3-Benutzer lässt sich die "
+            "Erreichbarkeit nicht prüfen. Prüfung mit GET auf sysName: Lauf starten bzw. auf der "
+            "Station des Agenten .\\run-agent.ps1 -Check.",
+            f"SNMPv3 runs over UDP {port} – reachability cannot be checked without a request with "
+            "the SNMPv3 user. Check with a GET on sysName: start a run or, on the agent's station, "
+            ".\\run-agent.ps1 -Check.",
+        )
+        return result
 
     kind = None
     for addr in addrs[:2]:
@@ -145,6 +159,8 @@ def check(
         )
         return result
 
+    if platform == "ad_dns":
+        return _zone_transfer(result, base_url, zones or [], transfer)
     if platform != "netbox":
         return result
     client = enforce_read_only(
@@ -189,4 +205,42 @@ def check(
             "NetBox responds with an error – check the logs of the NetBox container.",
         )
     )
+    return result
+
+
+def _zone_transfer(result: Result, base_url: str, zones: list[str], transfer=None) -> Result:
+    """AD-DNS (ADR 0045): je Zone nur den Anfang des Transfers - erlaubt der Server ihn?"""
+    from sot_gateway.adapters.dns_zone import DnsZoneAdapter, ZoneTransferError
+
+    if not zones:
+        result.ok, result.failure = False, "axfr"
+        result.hint = L("Am Quellsystem sind keine Zonen hinterlegt.",
+                        "No zones are stored on the source system.")  # fmt: skip
+        return result
+    kw = {"transfer": transfer} if transfer is not None else {}
+    start = time.monotonic()
+    try:
+        serials = DnsZoneAdapter.from_url(base_url, zones, timeout=CONNECT_TIMEOUT,
+                                          lifetime=4 * CONNECT_TIMEOUT, **kw).ping()  # fmt: skip
+    except ZoneTransferError as exc:
+        result.ok, result.failure = False, "axfr"
+        why = f"{exc.reason} {exc.detail}".strip()
+        result.steps.append(Step("axfr", False, L(f"Zonentransfer {exc.zone}: {why}",
+                                                  f"zone transfer {exc.zone}: {why}")))  # fmt: skip
+        result.hint = L(
+            "Der DNS-Server erlaubt den Zonentransfer nicht: auf dem DNS-Server den "
+            "Zonentransfer für die Adresse von Automato erlauben (AD: DNS-Manager → Zone → "
+            "Eigenschaften → Zonenübertragungen → „Nur an folgende Server“) und prüfen, ob die "
+            "Zone auf diesem Server liegt.",
+            "The DNS server does not allow the zone transfer: allow the zone transfer for the "
+            "address of Automato on the DNS server (AD: DNS Manager → zone → Properties → Zone "
+            "Transfers → “Only to the following servers”) and check that the zone is on this "
+            "server.",
+        )
+        return result
+    shown = ", ".join(f"{z} (SOA {n})" for z, n in serials.items())
+    took = _ms(start)
+    allowed = L(f"Zonentransfer erlaubt: {shown} ({took})",
+                f"zone transfer allowed: {shown} ({took})")  # fmt: skip
+    result.steps.append(Step("axfr", True, allowed))
     return result

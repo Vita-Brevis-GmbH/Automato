@@ -1,11 +1,15 @@
 """Job-Endpunkte: Collector-Laeufe anstossen und ihren Status abfragen."""
 
+from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.auth.deps import require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
+from app.config import get_settings
 from app.db import get_session
 from app.i18n import L
 from app.jobs import celery_app
@@ -30,6 +34,22 @@ def start_collect(
     session: Session = Depends(get_session, scope="function"),
 ):
     tenant_id = tenant_scope(principal, payload.tenant_id)  # Mandanten-Zugriff erzwingen
+    src = session.get(SourceSystem, payload.source_system_id) if payload.source_system_id else None
+    if src is not None and src.platform in REFERENCE_PLATFORMS:
+        # Referenzquelle nur einmal zugleich (0.113.2): der zuerst fertige Lauf wurde der Stand
+        # und verwarf die Teil-Uploads des anderen („Teil-Upload unvollstaendig (0 von …)“)
+        runs.expire_stale(session)
+        open_run = runs.blocking(session, src.id)
+        if open_run is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=L(
+                    f"„{src.name}“ wird schon gelesen: {runs.describe(session, open_run)} – "
+                    "abwarten bzw. den Lauf abbrechen",
+                    f"“{src.name}” is already being read: {runs.describe(session, open_run)} – "
+                    "wait or cancel the run",
+                ),
+            )
     try:
         run = runs.queue_collect(
             session,
@@ -94,10 +114,10 @@ def start_collect_all(
     return CollectAllResponse(queued=sum(1 for i in items if i.run_id), items=items)
 
 
-def _message(run: CollectorRun) -> str | None:
+def _message(run: CollectorRun, session: Session | None = None) -> str | None:
     """Meldung des Laufs; ist sein Ergebnis angekommen, aber noch nicht eingespielt (0.80.1:
     eines nach dem anderen), steht das statt „läuft“ da. Nur Antwort (folgt der Sprache); die
-    gespeicherte Meldung `run.message` bleibt deutsch."""
+    gespeicherte Meldung `run.message` bleibt deutsch und wird beim Abruf uebersetzt (0.90.0)."""
     state = tenant_lock.state(run.id) if run.status in runs.OPEN else None
     if state == "active":
         return L("Ergebnis angekommen – wird eingespielt", "Result arrived – being ingested")
@@ -107,10 +127,13 @@ def _message(run: CollectorRun) -> str | None:
             f"Ergebnis angekommen – wartet aufs Einspielen ({ahead} davor)",
             f"Result arrived – waiting to be ingested ({ahead} ahead)",
         )
-    return run.message
+    shown = runs.show_message(run.message)
+    if shown is None and session is not None:  # 0.109.1: wer einen wartenden Lauf abholen muss
+        shown = runs.waiting_text(session, run)
+    return shown
 
 
-def _run_out(run: CollectorRun) -> CollectorRunOut:
+def _run_out(run: CollectorRun, session: Session | None = None) -> CollectorRunOut:
     return CollectorRunOut(
         id=run.id,
         platform=run.platform,
@@ -118,12 +141,14 @@ def _run_out(run: CollectorRun) -> CollectorRunOut:
         tenant_id=run.tenant_id,
         source_system_id=run.source_system_id,
         rule_count=run.rule_count,
-        message=_message(run),
+        message=_message(run, session),
         execution=run.execution,
         trigger=run.trigger,
         queued_at=run.queued_at,
         started_at=run.started_at,
         finished_at=run.finished_at,
+        scope=run.scope,
+        application_id=run.application_id,
     )
 
 
@@ -173,10 +198,44 @@ def list_runs(
         .offset(offset)
         .limit(limit)
     )
-    return [_run_out(r) for r in session.scalars(query)]
+    return [_run_out(r, session) for r in session.scalars(query)]
 
 
 _STATES = {s.value for s in RunStatus}
+
+
+@router.get("/daily")
+def runs_daily(
+    tenant_id: int | None = None,
+    days: int = Query(14, ge=1, le=90),
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> list[dict]:
+    """Laeufe je Tag (Uebersicht, 0.117.0): erfolgreich, Fehler, offen - die letzten `days`
+    Tage in der Zeitzone des Zeitplans, aelteste zuerst; Tage ohne Lauf mit 0."""
+    conds = [CollectorRun.queued_at >= datetime.now(UTC) - timedelta(days=days + 1)]
+    if tenant_id is not None:
+        tenant_scope(principal, tenant_id)
+        conds.append(CollectorRun.tenant_id == tenant_id)
+    elif not principal.is_admin and principal.tenant_ids is not None:
+        conds.append(CollectorRun.tenant_id.in_(principal.tenant_ids))
+    try:
+        zone = ZoneInfo(get_settings().scheduler_timezone)
+    except (KeyError, ValueError):
+        zone = UTC
+    today = datetime.now(zone).date()
+    out = {(today - timedelta(days=i)).isoformat(): {"ok": 0, "failed": 0, "open": 0}
+           for i in range(days - 1, -1, -1)}  # fmt: skip
+    for at, status in session.execute(select(CollectorRun.queued_at, CollectorRun.status)
+                                      .where(*conds)):  # fmt: skip
+        if at is None:
+            continue
+        day = (at if at.tzinfo else at.replace(tzinfo=UTC)).astimezone(zone).date().isoformat()
+        if day not in out:
+            continue
+        key = {RunStatus.COMPLETED: "ok", RunStatus.FAILED: "failed"}.get(status, "open")
+        out[day][key] += 1
+    return [{"day": d, **c} for d, c in out.items()]
 
 
 @router.get("/{run_id}", response_model=CollectorRunOut)
@@ -189,7 +248,7 @@ def get_run(
     if run is None:
         raise HTTPException(status_code=404, detail="run not found")
     tenant_scope(principal, run.tenant_id)  # Mandanten-Zugriff pruefen
-    return _run_out(run)
+    return _run_out(run, session)
 
 
 @router.post("/{run_id}/cancel", response_model=CollectorRunOut)
@@ -207,4 +266,4 @@ def cancel_run(
     if run.status not in runs.OPEN:
         raise HTTPException(status_code=409, detail="run already finished")
     runs.cancel(session, run, actor=f"user:{principal.subject}")
-    return _run_out(run)
+    return _run_out(run, session)

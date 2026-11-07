@@ -1,5 +1,6 @@
 # TLS-Reverse-Proxy vor der Automato-Web-UI (Profil "proxy" in docker-compose.yml).
 # AUTOMATO_UI_HOST (.env): IP oder Hostname, unter dem die UI erreichbar ist.
+# AUTOMATO_UI_ALLOW (.env, 0.116.0): Netze, aus denen die UI erreichbar ist (Vorgabe alles).
 # AUTOMATO_UI_TLS  (.env): "internal" (Default) = Caddy erzeugt selbst ein Zertifikat
 #   (eigene lokale CA; Dev/Lab, funktioniert auch fuer IP-Adressen) - oder
 #   "<crt> <key>" = Dateien aus /etc/caddy/pki (Fullchain + Key von der eigenen CA).
@@ -28,12 +29,19 @@
 		-Server
 	}
 
+	# Oberflaeche nur aus erlaubten Netzen (0.116.0, R14: Management-Netz/VPN). AUTOMATO_UI_ALLOW
+	# (.env): Netze mit Leerzeichen getrennt; Vorgabe alles. Docker muss die Quell-IP erhalten
+	# (iptables-DNAT, "userland-proxy": false) - sonst sieht Caddy das Docker-Gateway (gesperrt).
+	@blocked not remote_ip {$AUTOMATO_UI_ALLOW}
+	respond @blocked "Zugriff nur aus freigegebenen Netzen" 403
+
 	# Agent-/Ingest-API (/internal) nicht ueber die UI-Adresse ausliefern
 	# (ADR 0008: eigener Zugang, optional mTLS - collectors/EXTERNAL.md).
 	@internal path /api/internal /api/internal/*
 	respond @internal 404
 
-	# Web-UI (Vite); sie leitet /api/* selbst an den Orchestrator weiter. Mit TLS intern
+	# Web-UI (seit 1.0.0 Caddy mit der gebauten Oberfläche, im Labor auch Vite); sie leitet
+	# /api/* selbst an den Orchestrator weiter. Mit TLS intern
 	# (0.49.0, AUTOMATO_INTERNAL_TLS=on) per HTTPS, Zertifikat gegen die interne CA geprueft.
 	reverse_proxy web-ui:5173 {
 		import /etc/caddy/automato-tls/upstream-{$AUTOMATO_INTERNAL_TLS:off}.caddy

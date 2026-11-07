@@ -163,7 +163,16 @@ def fake_netbox(monkeypatch) -> FakeNetBox:
 
     monkeypatch.setattr(api, "make_writer", make_writer)
     fake.seen_tokens = seen_tokens
+    _reader(monkeypatch, fake)
     return fake
+
+
+def _reader(monkeypatch, fake) -> None:
+    """Lesepfad der Nachkontrolle (0.115.0) gegen dieselbe Fake-NetBox - der echte
+    `make_reader` mit dem Nur-Lese-Schutz, nur der Transport ist simuliert."""
+    real = api.make_reader
+    monkeypatch.setattr(api, "make_reader", lambda target: real(
+        target, client=httpx.Client(transport=httpx.MockTransport(fake.handler))))  # fmt: skip
 
 
 def _setup(client, *, write_token="nb-write") -> dict:  # noqa: S107 - Test-Token

@@ -5,6 +5,8 @@ sowie Batch-Lookups fuer Netzwerkobjekte und Zonen, damit die Anreicherung der
 Liste ohne N+1-Queries auskommt.
 """
 
+import ipaddress
+
 from sqlalchemy import and_, delete, exists, func, select
 from sqlalchemy.orm import Session, aliased, selectinload
 
@@ -157,6 +159,15 @@ def summary(session: Session, tenant_id: int | None = None, only=None) -> dict:
         )
     }
     systems = sorted(s for (s,) in session.execute(mine(select(Rule.source_system_id).distinct())))
+    # je Quellsystem (Uebersicht, 0.117.0)
+    by_source = {
+        sid: n
+        for sid, n in session.execute(
+            mine(select(Rule.source_system_id, func.count(Rule.id)))
+            .where(not_twin())
+            .group_by(Rule.source_system_id)
+        )
+    }
     endpoints = session.scalar(
         select(func.count(RuleEndpoint.id)).where(RuleEndpoint.rule_id.in_(select(scoped.c.id)))
     )
@@ -205,6 +216,7 @@ def summary(session: Session, tenant_id: int | None = None, only=None) -> dict:
         "total": sum(by_domain.values()),
         "by_domain": by_domain,
         "source_system_ids": systems,
+        "by_source": [[sid, n] for sid, n in sorted(by_source.items(), key=lambda x: -x[1])],
         "endpoints": endpoints or 0,
         "unmatched": unmatched or 0,
         "by_dst_zone": [(names.get(z, "–") if z else "–", n) for z, n in zone_counts],
@@ -232,3 +244,92 @@ def zone_names(session: Session, ids: set[int]) -> dict[int, str]:
     if not ids:
         return {}
     return {z.id: z.name for z in session.scalars(select(Zone).where(Zone.id.in_(ids)))}
+
+
+def path_search(session: Session, rule: Rule) -> dict:
+    """Weg-Suche fuer eine Regel (0.112.0, Anwender: „Knopf Wegsuche, damit ich einfach nach
+    den Fällen suchen kann“): je Seite die Hosts bzw. Netze der Regel (ohne any) mit ihrem
+    Objekt - der erste ist vorgewaehlt -, die Dienste wie in der Weg-Suche (tcp/443, icmp)."""
+    sides: dict[str, list[dict]] = {"src": [], "dst": []}
+    rows = session.execute(
+        select(RuleIpRange.role, RuleIpRange.family, RuleIpRange.lo, RuleIpRange.hi,
+               RuleIpRange.via)
+        .where(RuleIpRange.rule_id == rule.id, RuleIpRange.is_any.is_(False))
+        .order_by(RuleIpRange.id)
+    )  # fmt: skip
+    for role, family, lo, hi, via in rows:
+        values = sides.get(role)
+        value = _range_value(family, lo, hi)
+        if values is None or value is None or len(values) >= PATH_SEARCH_MAX:
+            continue
+        if all(v["value"] != value for v in values):
+            values.append({"value": value, "name": via if via and via != value else None})
+    services = []
+    for s in sorted(rule.services, key=lambda s: s.canonical_name or ""):
+        text = _service_value(s)
+        if text and text not in services:
+            services.append(text)
+    out = {"rule_id": rule.id, "name": rule.name, "src": sides["src"], "dst": sides["dst"],
+           "services": services[:PATH_SEARCH_MAX], "src_exit": None, "start": None}  # fmt: skip
+    if not sides["src"]:  # Quelle any (bzw. nur Laender, ISDB): Eingang der Regel (0.113.1)
+        out.update(_ingress(session, rule))
+    return out
+
+
+def _ingress(session: Session, rule: Rule) -> dict:
+    """Ohne bestimmte Quelle (Anwender 0.112: „hier jeweils die Quelle mindestens angeben“): die
+    Anbindung am Eingang der Regel (Interface bzw. Zone in der Anbindung, fuer diese Firewall),
+    sonst der Start an der Firewall der Regel (VDOM) - so geht die Weg-Suche bis zum Ziel, auch
+    durch eine VIP (DNAT)."""
+    from app.models import TopoContext, TopoExit  # spaet: Topologie gehoert zur Analyse
+
+    if rule.domain is not RuleDomain.FIREWALL or rule.source_system_id is None:
+        return {}
+    ports = {str(x.get("name")) for x in (rule.raw or {}).get("srcintf") or []
+             if isinstance(x, dict) and x.get("name")}  # fmt: skip
+    if rule.src_zone_id is not None:
+        zone = session.get(Zone, rule.src_zone_id)
+        if zone is not None:
+            ports.add(zone.name)
+    ports.discard("any")
+    sid = rule.source_system_id
+    for e in session.scalars(select(TopoExit).where(TopoExit.tenant_id == rule.tenant_id)
+                             .order_by(TopoExit.name, TopoExit.id)):  # fmt: skip
+        if ports & set(e.interfaces or []) and (not e.source_system_ids
+                                                or sid in e.source_system_ids):  # fmt: skip
+            return {"src_exit": {"ref": f"exit:{e.id}@{sid}", "name": e.name, "kind": e.kind,
+                                 "ports": sorted(ports & set(e.interfaces or []))}}  # fmt: skip
+    contexts = list(session.scalars(
+        select(TopoContext.context).where(TopoContext.source_system_id == sid,
+                                          TopoContext.kind == "vdom").distinct()))  # fmt: skip
+    context = rule.vdom or ("root" if "root" in contexts else contexts[0] if contexts else None)
+    if context is None or context not in contexts:
+        return {}
+    return {"start": f"{sid}|{context}", "ports": sorted(ports)}
+
+
+PATH_SEARCH_MAX = 20  # Werte je Seite zur Auswahl
+
+
+def _range_value(family: int, lo: str, hi: str) -> str | None:
+    """Bereich der Regel als IP bzw. Netz fuer die Weg-Suche (ein Bereich: sein erstes Netz)."""
+    make = ipaddress.IPv6Address if family == 6 else ipaddress.IPv4Address
+    try:
+        first, last = make(int(lo, 16)), make(int(hi, 16))
+    except (TypeError, ValueError):
+        return None
+    if first == last:
+        return str(first)
+    return str(next(ipaddress.summarize_address_range(first, last)))
+
+
+def _service_value(s) -> str | None:
+    """Dienst wie in der Weg-Suche: tcp/443, udp/53, tcp (alle Ports), icmp; alles = None."""
+    proto = getattr(s.proto, "value", s.proto)
+    if proto in ("tcp", "udp"):
+        if s.port_start and (s.port_start > 1 or (s.port_end or 0) < 65535):
+            return f"{proto}/{s.port_start}"
+        return proto
+    if proto in ("icmp", "icmpv6"):
+        return "icmp"
+    return None

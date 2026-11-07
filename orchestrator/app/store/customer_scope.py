@@ -110,6 +110,44 @@ class View:
         return mine
 
 
+class Ownership:
+    """Was ganz den eigenen Kunden gehoert - ohne geteilten Teil (feinere Rollen, ADR 0018
+    Ergaenzung): Grundlage fuer die Pflege eigener Applikationen durch Kunden-Benutzer."""
+
+    def __init__(self, session: Session, tenant_id: int, customer_ids: tuple[int, ...]):
+        own = View(tenant_id, customer_ids, customer_ids)
+        self.customer_ids = customer_ids
+        self.epgs = set(session.scalars(own.ids("epg")))
+        self.objects = set(session.scalars(own.ids("object")))
+        self.rules = set(session.scalars(own.ids("rule")))
+
+    def application(self, app: Application, resolver) -> bool:
+        """Liegt die Applikation ganz im Ausschnitt? Jede EPG ihrer APs bzw. EPGs und jedes
+        Server-Objekt gehoert den eigenen Kunden (nicht nur dem geteilten Teil), ebenso jede
+        direkt zugeordnete bzw. ausgeschlossene Regel; mindestens ein gelesenes AP, EPG bzw.
+        Server traegt sie. Nicht mehr gelesene Mitglieder verweisen auf nichts und zaehlen
+        nicht. `resolver` = `store.applications.Resolver` des Mandanten."""
+        anchored = False
+        for m in app.members:
+            r = resolver.resolve(m.kind, m.ref)
+            if m.kind in ("rule", "norule"):
+                if any(rule.id not in self.rules for rule in r.rules):
+                    return False
+                continue
+            if not r.exists:
+                continue
+            if m.kind in ("ap", "epg"):
+                if not r.epgs or any(e.id not in self.epgs for e in r.epgs):
+                    return False
+            elif m.kind == "host":
+                if not r.hosts or any(h.id not in self.objects for h in r.hosts):
+                    return False
+            else:  # unbekannte Art: fail-closed
+                return False
+            anchored = True
+        return anchored
+
+
 def view(session: Session, tenant_id: int, customer_ids: list[int] | tuple[int, ...]) -> View:
     """Sicht auf die Kunden des Mandanten samt geteiltem Teil (fuer EPGs, Netze, Objekte).
     Kunden anderer Mandanten zaehlen nicht (LookupError, wenn keiner passt)."""

@@ -4,17 +4,31 @@
                                  mit Anzahl Routen und dem, was nicht lesbar war; dazu die
                                  Knoten fuer den Startpunkt der Weg-Suche
 - `GET /routing/routes`          Routen seitenweise (RIB, BGP-Pfade, statische); `ip` = Routen,
-                                 die die IP enthalten, laengstes Praefix zuerst
+                                 die die IP enthalten, laengstes Praefix zuerst; je Route die
+                                 letzte Aenderung aus dem Verlauf (`changed_at`, ADR 0030)
+- `GET /routing/changes`         Verlauf des Routings (ADR 0030): Aenderungen je Lauf an Routen,
+                                 BGP-Nachbarn, HA, Policy-Routen, Kontexten und L3Outs,
+                                 seitenweise, neuste zuerst; nicht fuer Kunden-Benutzer
 - `GET /routing/lookup?ip=`      je Kontext die wirksame Route und vorgehende Policy-Routen
                                  (auch fuer ein Netz: Route, die es ganz enthaelt)
 - `GET /routing/trace?dst=&src=&start=&service=`  Weg Hop fuer Hop von der Quelle bzw. dem
                                  Startpunkt, je FortiGate-Hop die passenden Policies (0.22.0),
                                  je ACI-VRF-Hop die Contracts (0.35.0); Dienst auch als
                                  Service-Objekt bzw. ACI-Filter (`FT_https`); Quelle und Ziel
-                                 auch als Netz (0.39.0)
-- `GET /routing/resolve?q=&type=`  Name bzw. FQDN -> Hosts und Netze (IPAM, Objekte, VMs,
-                                 Inventar) fuer die Weg-Suche, seitenweise (`limit`, `offset`)
-- `GET /routing/peers`, `/ha`, `/policy-routes`, `/l3outs` - Nachbarn mit Namen aus dem IPAM
+                                 auch als Netz (0.39.0) bzw. als Anbindung (`src_exit=`,
+                                 `dst_exit=`, ADR 0019 Ergaenzung)
+- `GET /routing/explain?…&expect=` Warum dieser Weg? (0.109.0): derselbe Weg Hop fuer Hop in
+                                 Saetzen (Routen gewaehlt/verworfen, Next-Hop, Ende mit
+                                 Hinweis), `connection=true` wie bei Verbindungen, `expect`
+                                 = Quellsystem, ueber das der Weg gehen muesste
+- `GET /routing/resolve?q=&type=`  Name bzw. FQDN -> Hosts, Netze und Anbindungen (IPAM,
+                                 Objekte, VMs, Inventar, `topo_exit` bzw. erkannt) fuer die
+                                 Weg-Suche, seitenweise (`limit`, `offset`)
+- `GET /routing/peers`, `/ha`, `/policy-routes`, `/l3outs` - Nachbarn mit Namen aus dem IPAM;
+                                 je L3Out die Firewall dahinter (`behind`, ADR 0034)
+- `GET /routing/l3outs/firewall-choices`  Firewalls (VDOMs) mit ihren Interfaces zur Auswahl
+- `PUT/DELETE /routing/l3outs/firewall`   Firewall hinter einem L3Out von Hand: bestaetigen,
+                                 waehlen, keine bzw. wieder abgeleitet (operator, ADR 0034)
 - `GET/POST/PUT/DELETE /routing/exits` - Anbindungen nach aussen (Internet, MPLS, WAN),
                                  von Hand erfasst (operator), an denen ein Weg endet bzw.
                                  nach manuellen Routen weitergeht (0.18.0); fuer eine oder
@@ -29,25 +43,30 @@ Bezeichnung eines Kontexts: eine FortiGate nur mit `root` heisst wie die Firewal
 """
 
 import ipaddress
-from collections import defaultdict
-from datetime import UTC, datetime
-from typing import Literal
+from collections import Counter, defaultdict
+from datetime import UTC, datetime, timedelta
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import String, and_, cast, false, func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app import audit
 from app.api.customer_filter import customer_view
 from app.audit import reads
 from app.auth.deps import require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
-from app.db import get_session
+from app.db import get_session, get_session_factory
 from app.i18n import L
 from app.models import (
+    CollectorRun,
+    Finding,
+    FindingStatus,
+    FindingType,
     SourceSystem,
     Tenant,
+    TopoChange,
     TopoContext,
     TopoExit,
     TopoHa,
@@ -57,12 +76,22 @@ from app.models import (
     TopoRoute,
 )
 from app.store import (
+    app_paths,
+    app_refresh,
     customer_infra,
+    exit_ends,
     exits,
     l2_topo,
+    l3out_firewall,
+    net_lists,
+    path_explain,
+    path_service,
+    path_vip,
     paths,
     policy_check,
     resolve,
+    return_path,
+    topo_changes,
     topology,
     zone_path,
 )
@@ -100,6 +129,37 @@ def _route_filter(infra: customer_infra.Infra):
         and_(
             _contexts(infra, TopoRoute, SHARED),
             infra.overlap_clause(TopoRoute.family, TopoRoute.lo, TopoRoute.hi),
+        ),
+    )
+
+
+def _change_filter(infra: customer_infra.Infra):
+    """Verlauf im Ausschnitt (ADR 0030), wie die Listen: Routen wie `_route_filter`, Nachbarn,
+    Policy-Routen, Kontexte und L3Outs in seinen Kontexten, HA an seinen Firewalls, Vermerke des
+    ganzen Quellsystems (Ausgangsstand, Obergrenze) bei seinen Firewalls bzw. APICs."""
+    systems = sorted({sid for sid, _ in infra.contexts})
+    nodes = [
+        and_(TopoChange.source_system_id == sid, TopoChange.node == node)
+        for sid, node in infra.nodes
+    ]
+    routes = or_(
+        _contexts(infra, TopoChange, OWN),
+        and_(
+            _contexts(infra, TopoChange, SHARED),
+            infra.overlap_clause(TopoChange.family, TopoChange.lo, TopoChange.hi),
+        ),
+    )
+    return or_(
+        and_(TopoChange.kind == "route", routes),
+        and_(
+            TopoChange.kind.in_(("bgp_peer", "policy_route", "context", "l3out")),
+            _contexts(infra, TopoChange, OWN, SHARED),
+        ),
+        and_(TopoChange.kind == "ha", or_(*nodes) if nodes else false()),
+        and_(
+            TopoChange.kind == "context",
+            TopoChange.context.is_(None),
+            TopoChange.source_system_id.in_(systems) if systems else false(),
         ),
     )
 
@@ -245,6 +305,14 @@ def summary(
         .where(TopoRoute.tenant_id == tid, TopoRoute.attrs["mgmt"].as_boolean().is_(True))
         .limit(1)
     )
+    # Verlauf (ADR 0030): Aenderungen der letzten 7 Tage (ohne Vermerke)
+    recent = select(func.count(TopoChange.id)).where(
+        TopoChange.tenant_id == tid,
+        TopoChange.at >= datetime.now(UTC) - timedelta(days=7),
+        TopoChange.change.in_(topo_changes.CHANGES),
+    )
+    if infra is not None:
+        recent = recent.where(_change_filter(infra))
     return {
         "contexts": rows,
         "nodes": nodes,
@@ -252,6 +320,7 @@ def summary(
         "l3outs": l3,
         "vrfs": sorted(vrfs),
         "mgmt_vrf": mgmt is not None,
+        "changes_7d": session.scalar(recent) or 0,
     }
 
 
@@ -336,13 +405,195 @@ def routes(
     names = _names(session, tid)
     graph = paths.Graph(session, tid)
     ifaces = topology.Interfaces(session, {r.source_system_id for r in page})
+    changed = topo_changes.last_changed(session, page)  # geaendert seit (ADR 0030)
     out = []
     for r in page:
         row = _row(r, names, graph, next_hops=_hops(graph, ifaces, r.source_system_id, r.next_hops))
+        row["changed_at"] = changed.get(r.id)
         if infra is not None:
             row["shared"] = infra.context_mark(r.source_system_id, r.context) == SHARED
         out.append(row)
     return out
+
+
+# -- Verlauf des Routings (ADR 0030) -------------------------------------------------------
+
+
+def _utc(value: datetime | None) -> datetime | None:
+    """Zeitpunkt in UTC (ohne Zeitzone angegeben = UTC) - gespeichert ist UTC."""
+    if value is None:
+        return None
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
+def _change_labels(session: Session, tid: int, names: dict[int, str]) -> dict[tuple, tuple]:
+    """(Quellsystem, Knoten, Kontext) -> (Art, Bezeichnung) der gelesenen Kontexte."""
+    rows = list(
+        session.execute(
+            select(TopoContext.source_system_id, TopoContext.node, TopoContext.context,
+                   TopoContext.kind).where(TopoContext.tenant_id == tid)
+        )
+    )  # fmt: skip
+    vdoms = Counter(sid for sid, _, _, kind in rows if kind == "vdom")
+    return {
+        (sid, node, ctx): paths.context_label(
+            kind, names.get(sid, f"#{sid}"), node, ctx, vdoms[sid] == 1
+        )
+        for sid, node, ctx, kind in rows
+    }
+
+
+def _change_where(c: TopoChange, source: str, labels: dict) -> tuple[str, str]:
+    """Bezeichnung wie im Routing; ein Kontext, der nicht mehr gelesen wird, bzw. ein L3Out mit
+    seiner VRF, HA mit der Firewall, Vermerke mit dem Quellsystem."""
+    if c.node and c.context:
+        return labels.get((c.source_system_id, c.node, c.context), ("", f"{c.node} · {c.context}"))
+    if c.context:
+        return "vrf", f"{source} · VRF {c.context}"
+    if c.node:
+        return "firewall", c.node
+    return "", source
+
+
+@router.get("/changes")
+def changes(
+    response: Response,
+    tenant_id: int | None = None,
+    source_system_id: int | None = None,
+    context: str | None = Query(None, max_length=200, description="VDOM bzw. Tenant:VRF"),
+    kind: str | None = Query(None, pattern="^(route|bgp_peer|ha|policy_route|context|l3out)$"),
+    change: str | None = Query(
+        None,
+        pattern="^(added|removed|changed|baseline|unreadable|truncated|note)$",
+        description="note = alle Vermerke (Ausgangsstand, nicht lesbar, Obergrenze)",
+    ),
+    q: str | None = Query(None, max_length=200, description="Praefix, Next-Hop, Nachbar, Name"),
+    since: datetime | None = None,  # ab diesem Zeitpunkt (ISO 8601, ohne Zeitzone = UTC)
+    until: datetime | None = None,  # vor diesem Zeitpunkt
+    limit: int = Query(200, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    customer_id: int | None = None,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> list[dict]:
+    """Verlauf des Routings seitenweise (Gesamtzahl im Header `X-Total-Count`), neuste zuerst
+    und je Lauf Wichtiges zuerst; je Eintrag die verglichenen Felder vorher/nachher als Text
+    (`fields`) und ein Kurztext (`summary`) in der Sprache der Anfrage. Mit Kunde (0.76.0) nur
+    sein Ausschnitt; Kunden-Benutzer erreichen den Verlauf nicht (Freigabeliste)."""
+    tid = _tenant(session, principal, tenant_id)
+    infra = _infra(session, principal, tid, customer_id)
+    stmt = select(TopoChange).where(TopoChange.tenant_id == tid)
+    if infra is not None:
+        stmt = stmt.where(_change_filter(infra))
+    for column, value in (
+        (TopoChange.source_system_id, source_system_id),
+        (TopoChange.context, context),
+        (TopoChange.kind, kind),
+    ):
+        if value not in (None, ""):
+            stmt = stmt.where(column == value)
+    if change == "note":
+        stmt = stmt.where(TopoChange.change.in_(topo_changes.NOTES))
+    elif change:
+        stmt = stmt.where(TopoChange.change == change)
+    if (start := _utc(since)) is not None:
+        stmt = stmt.where(TopoChange.at >= start)
+    if (end := _utc(until)) is not None:
+        stmt = stmt.where(TopoChange.at < end)
+    for token in (q or "").lower().split():
+        like = f"%{token}%"
+        stmt = stmt.where(
+            or_(
+                func.lower(TopoChange.key).like(like),
+                func.lower(TopoChange.node).like(like),
+                func.lower(TopoChange.context).like(like),
+                func.lower(cast(TopoChange.before, String)).like(like),
+                func.lower(cast(TopoChange.after, String)).like(like),
+            )
+        )
+    total = session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+    response.headers["X-Total-Count"] = str(total)
+    page = list(
+        session.scalars(
+            stmt.order_by(TopoChange.at.desc(), TopoChange.id).offset(offset).limit(limit)
+        )
+    )
+    names = _names(session, tid)
+    labels = _change_labels(session, tid, names)
+    run_ids = {c.collector_run_id for c in page if c.collector_run_id}
+    runs = (
+        set(session.scalars(select(CollectorRun.id).where(CollectorRun.id.in_(run_ids))))
+        if run_ids
+        else set()
+    )
+    out = []
+    for c in page:
+        source = names.get(c.source_system_id, f"#{c.source_system_id}")
+        display, label = _change_where(c, source, labels)
+        fields = topo_changes.fields(c)
+        row = {
+            "id": c.id,
+            "at": topo_changes.aware(c.at),
+            "source_system_id": c.source_system_id,
+            "source": source,
+            "collector_run_id": c.collector_run_id,
+            "run_exists": c.collector_run_id in runs,  # Laeufe haben eine kuerzere Frist
+            "kind": c.kind,
+            "node": c.node,
+            "context": c.context,
+            "display": display,
+            "label": label,
+            "table": c.table,
+            "key": c.key,
+            "prefix": c.prefix,
+            "change": c.change,
+            "before": c.before,
+            "after": c.after,
+            "fields": fields,
+            "summary": topo_changes.summary(c, fields),
+        }
+        if infra is not None:
+            row["shared"] = _change_mark(infra, c) == SHARED
+        out.append(row)
+    return out
+
+
+def _change_mark(infra: customer_infra.Infra, c: TopoChange) -> str | None:
+    """Eigen bzw. geteilt: HA nach der Firewall, Vermerke des ganzen Quellsystems geteilt."""
+    if c.kind == "ha":
+        return infra.nodes.get((c.source_system_id, c.node or ""))
+    if c.context is None:
+        return SHARED
+    return infra.context_mark(c.source_system_id, c.context)
+
+
+@router.get("/changes/summary")
+def changes_summary(
+    tenant_id: int | None = None,
+    days: int = Query(7, ge=1, le=90),
+    customer_id: int | None = None,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Aenderungen des Routings der letzten `days` Tage je Art und Aenderung (Uebersicht,
+    0.117.0) - ohne Vermerke (Ausgangsstand, nicht lesbar, Obergrenze)."""
+    tid = _tenant(session, principal, tenant_id)
+    infra = _infra(session, principal, tid, customer_id)
+    since = datetime.now(UTC) - timedelta(days=days)
+    stmt = select(TopoChange.kind, TopoChange.change, func.count(TopoChange.id)).where(
+        TopoChange.tenant_id == tid,
+        TopoChange.at >= since,
+        TopoChange.change.not_in(topo_changes.NOTES),
+    )
+    if infra is not None:
+        stmt = stmt.where(_change_filter(infra))
+    by_kind: dict[str, dict[str, int]] = defaultdict(dict)
+    for kind, change, n in session.execute(
+        stmt.group_by(TopoChange.kind, TopoChange.change)
+    ):  # fmt: skip
+        by_kind[kind][change] = n
+    total = sum(n for c in by_kind.values() for n in c.values())
+    return {"days": days, "since": since.isoformat(), "total": total, "by_kind": by_kind}
 
 
 @router.get("/lookup")
@@ -380,40 +631,268 @@ def lookup(
     return out
 
 
+EXIT_REF = r"^(exit|router):[^@\s]+(@\d+)?$"
+
+
+def _traced(session: Session, tid: int, dst: str | None, src: str | None, start: str | None,
+            slack: int, service: str | None, src_exit: str | None, dst_exit: str | None,
+            start_port: str | None = None, service_at: str = "client",
+            ) -> tuple[dict, paths.Graph, str | None, str | None, tuple | None]:  # fmt: skip
+    """Weg wie in der Weg-Suche (auch fuer „Warum dieser Weg?“) -> (Ergebnis, Graph, Quelle,
+    Ziel, Dienst). `start_port` (0.113.1): Eingang (Interface bzw. Zone) am Startpunkt - z. B.
+    das der Regel, deren Quelle any ist. `service_at` (0.137.0): wo der Dienst gilt - beim
+    Client (Vorgabe), am Eingang des Load Balancers bzw. am Ziel-Server; gerechnet wird mit
+    dem Port des Clients."""
+    if not dst and not dst_exit:
+        raise HTTPException(status_code=422, detail=L("dst oder dst_exit angeben",
+                                                      "specify dst or dst_exit"))  # fmt: skip
+    if dst:
+        _endpoint(dst, "dst")
+    if src:
+        _endpoint(src, "src")
+    if not src and not start and not src_exit:  # src_exit: Anbindung als Quelle
+        raise HTTPException(status_code=422, detail=L("src oder start angeben",
+                                                      "specify src or start"))  # fmt: skip
+    wanted, note = _service(session, tid, service)
+    graph = paths.Graph(session, tid)
+    ends: dict[str, exit_ends.End] = {}
+    shown: dict[str, dict] = {}
+    entries = None
+    # 0.134.0 (Anwender: „Er will direkt zum Server, auch wenn die zweite Policy den richtigen
+    # Weg wählt“): von aussen ist ein Server hinter einer VIP nur über die VIP erreichbar
+    given = wanted  # Dienst wie eingegeben (0.137.0)
+    vip, assumed = _via_vip(session, tid, graph, dst, src, start, src_exit, dst_exit,
+                            wanted if service_at == "client" else None)  # fmt: skip
+    # Dienst an einer anderen Stelle (0.137.0): rueckwaerts zum Port des Clients
+    wanted, at_note = path_service.client_service(session, tid, dst, wanted, service_at, vip)
+    if vip is not None:
+        dst = vip.ext_ip
+        if not src and not src_exit:  # Start an der Firewall ohne Quelle: aus dem Internet
+            src = exit_ends.internet_address(graph, topology.endpoint(dst).version)
+            assumed = True
+        entries = _vip_entries(graph, vip, start)
+        if entries is not None:
+            start = None
+    if src_exit:
+        end = ends["src"] = _exit_end(graph, src_exit, "src_exit")
+        family = topology.endpoint(dst).version if dst else None
+        src, how = (src, "given") if src else end.address(graph, family)
+        entries = end.entries(graph)
+        start = None  # der Start ergibt sich aus der Anbindung
+        shown["src"] = end.out(graph, src, how)
+    if dst_exit:
+        end = ends["dst"] = _exit_end(graph, dst_exit, "dst_exit")
+        family = topology.endpoint(src).version if src else None
+        dst, how = (dst, "given") if dst else end.address(graph, family)
+        shown["dst"] = end.out(graph, dst, how)
+    chosen = paths.parse_key(start)
+    if entries is None and start_port and chosen in graph.nodes and not src:
+        how = L(f"gewählt, Eingang {start_port} der Regel", f"selected, incoming {start_port} of "
+                "the rule")  # fmt: skip
+        entries = [(chosen, start_port, graph.zone(chosen[0], start_port) or start_port, how)]
+    result = paths.trace(session, tid, dst, src, start, slack, wanted, graph=graph,
+                         entries=entries)  # fmt: skip
+    # Ziel hinter VIP bzw. Load Balancer: Server und ihre EPG (0.117.0)
+    if (target := paths.target_of(graph, result)) is not None:
+        result["target"] = target
+    if vip is not None:
+        result["via_vip"] = vip.out()
+        result["notes"].insert(0, vip.text())
+        if assumed:
+            result["src_assumed"] = {
+                "address": src,
+                "text": L(f"Quelle: beliebige Adresse im Internet ({src})",
+                          f"Source: any address on the internet ({src})"),
+            }  # fmt: skip
+    if note:
+        result["notes"].insert(0, note)
+    if ends:
+        _exit_notes(result, ends, shown)
+    if service and wanted is not None and result["service"] != service.strip().lower():
+        result["service_name"] = service.strip()
+    if given is not None:  # wo der Dienst gilt (0.137.0)
+        result["service_at"] = {"at": service_at, "label": path_service.label(service_at),
+                                "given": path_service.text(given),
+                                "client": path_service.text(wanted), "note": at_note}  # fmt: skip
+        if service_at != "client":
+            result.pop("service_name", None)  # der Name gilt fuer den eingegebenen Dienst
+    return result, graph, src, dst, wanted
+
+
 @router.get("/trace")
 def trace(
-    dst: str,
+    dst: str | None = None,
     src: str | None = None,
     start: str | None = Query(None, description="Startpunkt: <Quellsystem>|<Kontext>"),
     slack: int = Query(1, ge=0, le=3, description="Backup-Wege mit hoechstens so vielen Hops mehr"),
     service: str | None = Query(
         None, max_length=200, description="Dienst, z. B. tcp/443, bzw. Service-Objekt FT_https"
     ),
+    src_exit: str | None = Query(
+        None,
+        max_length=100,
+        pattern=EXIT_REF,
+        description="Anbindung als Quelle: exit:<id> bzw. router:<IP>, optional @<Quellsystem>",
+    ),
+    dst_exit: str | None = Query(
+        None, max_length=100, pattern=EXIT_REF, description="Anbindung als Ziel (wie src_exit)"
+    ),
+    start_port: str | None = Query(
+        None, max_length=100, description="Eingang am Startpunkt (Interface bzw. Zone)"
+    ),
+    service_at: str = Query(
+        "client",
+        pattern="^(client|lb|server)$",
+        description="Wo der Dienst gilt: client (Vorgabe), lb (Eingang Load Balancer), server",
+    ),
     tenant_id: int | None = None,
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
 ) -> dict:
     """Weg zum Ziel Hop fuer Hop - ab der Quelle (dort angeschlossen) bzw. dem Startpunkt;
-    Quelle und Ziel als IP bzw. Netz (das Netz als Ganzes, 0.39.0)."""
+    Quelle und Ziel als IP bzw. Netz (das Netz als Ganzes, 0.39.0) bzw. als Anbindung (ADR 0019
+    Ergaenzung): als Quelle Start an ihren Firewalls mit ihrem Eingang, Adresse aus ihren Netzen
+    (`src` waehlt ein anderes), als Ziel ihre Netze und je Weg, ob er ueber sie hinausgeht."""
     tid = _tenant(session, principal, tenant_id)
-    _endpoint(dst, "dst")
-    if src:
-        _endpoint(src, "src")
-    if not src and not start:
-        raise HTTPException(status_code=422, detail=L("src oder start angeben",
-                                                      "specify src or start"))  # fmt: skip
-    wanted, note = _service(session, tid, service)
-    graph = paths.Graph(session, tid)
-    result = paths.trace(session, tid, dst, src, start, slack, wanted, graph=graph)
-    if note:
-        result["notes"].insert(0, note)
-    if service and wanted is not None and result["service"] != service.strip().lower():
-        result["service_name"] = service.strip()
+    result, graph, src, dst, wanted = _traced(session, tid, dst, src, start, slack, service,
+                                              src_exit, dst_exit, start_port,
+                                              service_at)  # fmt: skip
     # Zonen je Hop, Uebergaenge und Absicht Quell-/Zielzone (0.57.0)
     zone_path.annotate(session, tid, result, src, dst, wanted, result.get("service_name"), graph)
     # L2 zwischen den Hops, Anschluss von Quelle und Ziel (0.64.0)
     l2_topo.annotate(session, tid, result, src, dst)
+    # Rueckweg je Weg (0.134.0): ueber dieselben Firewalls?
+    return_path.annotate(session, tid, graph, result, src, dst)
     return result
+
+
+@router.get("/explain")
+def explain(
+    dst: str | None = None,
+    src: str | None = None,
+    start: str | None = Query(None, description="Startpunkt: <Quellsystem>|<Kontext>"),
+    slack: int = Query(1, ge=0, le=3),
+    service: str | None = Query(None, max_length=200),
+    src_exit: str | None = Query(None, max_length=100, pattern=EXIT_REF),
+    dst_exit: str | None = Query(None, max_length=100, pattern=EXIT_REF),
+    start_port: str | None = Query(None, max_length=100),
+    service_at: str = Query("client", pattern="^(client|lb|server)$"),
+    connection: bool = Query(False, description="Weg wie bei Verbindungen Ende zu Ende"),
+    starts: Annotated[list[str] | None, Query(max_length=20)] = None,
+    expect: int | None = Query(None, description="Erwartet ueber dieses Quellsystem"),
+    tenant_id: int | None = None,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Warum dieser Weg? (0.109.0, `store/path_explain.py`): derselbe Weg wie in der Weg-Suche
+    (bzw. mit `connection=true` wie bei Verbindungen Ende zu Ende: ab der Quelle, sonst ab dem
+    Eingang nach dem Rueckweg, sonst ab dem Geraet der Regel `starts`) Hop fuer Hop in Saetzen -
+    Start, Eingang und Routing-Tabelle, Policy-Routen, alle Routen zum Ziel mit Grund, Next-Hop,
+    Ende mit Hinweis; mit `expect` (Quellsystem), ob und wo der Weg von diesem Geraet abbiegt."""
+    tid = _tenant(session, principal, tenant_id)
+    if expect is not None:
+        target = session.get(SourceSystem, expect)
+        if target is None or target.tenant_id != tid:
+            raise HTTPException(status_code=404, detail="source system not found")
+    if connection:
+        if not dst or not src:
+            raise HTTPException(status_code=422, detail=L("src und dst angeben",
+                                                          "specify src and dst"))  # fmt: skip
+        _endpoint(dst, "dst")
+        _endpoint(src, "src")
+        wanted, _note = _service(session, tid, service)
+        graph = paths.Graph(session, tid)
+        checks = policy_check.Checks.load(session, tid)
+        result, _start = app_paths.connection_trace(session, tid, graph, checks, src, dst,
+                                                    wanted, starts or [])  # fmt: skip
+    else:
+        result, graph, src, dst, _wanted = _traced(session, tid, dst, src, start, slack, service,
+                                                   src_exit, dst_exit, start_port,
+                                                   service_at)  # fmt: skip
+    out = path_explain.explain(session, tid, graph, result, src, dst, expect)
+    out["paths_found"] = len(result.get("paths") or [])
+    return out
+
+
+def _via_vip(session: Session, tid: int, graph: paths.Graph, dst: str | None, src: str | None,
+             start: str | None, src_exit: str | None, dst_exit: str | None, wanted
+             ) -> tuple[path_vip.Published | None, bool]:  # fmt: skip
+    """VIP zum Ziel (0.134.0): ein privates Ziel (Server) von aussen - ohne Quelle (Start an
+    einer Firewall), mit öffentlicher Quelle bzw. ab einer Anbindung - über die VIP, deren Kette
+    beim Server endet. -> (VIP, Quelle angenommen)."""
+    if not dst or dst_exit:
+        return None, False
+    try:
+        target = topology.endpoint(dst)
+    except ValueError:
+        return None, False
+    if topology.is_net(target) or not topology.is_private(target):
+        return None, False
+    if src:
+        try:
+            if topology.is_private(topology.endpoint(src)):
+                return None, False  # von innen: direkt
+        except ValueError:
+            return None, False
+    elif not start and not src_exit:
+        return None, False
+    prefer = paths.parse_key(start)[0] if start and paths.parse_key(start) else None
+    if prefer is None and src_exit and (end := exit_ends.find(graph, src_exit)) is not None:
+        prefer = next((s.key[0] for s in end.sides), None)
+    return path_vip.published(session, tid, dst, wanted, prefer), False
+
+
+def _vip_entries(graph: paths.Graph, vip: path_vip.Published, start: str | None
+                 ) -> list[tuple] | None:  # fmt: skip
+    """Start an der Firewall der VIP mit ihrem Eingang (`extintf`; any: nach der Route zur
+    Quelle) - wenn kein anderer Start gewählt ist bzw. der gewählte diese Firewall ist."""
+    chosen = paths.parse_key(start)
+    nodes = [k for k in graph.nodes if k[0] == vip.source_system_id
+             and (not vip.vdom or k[1] == vip.vdom)]  # fmt: skip
+    if not nodes or (chosen is not None and chosen not in nodes):
+        return None
+    key = chosen or nodes[0]
+    how = L(f"VIP {vip.name}", f"VIP {vip.name}")
+    if vip.extintf:
+        how = L(f"VIP {vip.name}, Eingang {vip.extintf}", f"VIP {vip.name}, incoming {vip.extintf}")
+    zone = graph.zone(key[0], vip.extintf) if vip.extintf else None
+    return (
+        [(key, vip.extintf, zone or vip.extintf, how)] if vip.extintf else [(key, None, None, how)]
+    )
+
+
+def _exit_end(graph: paths.Graph, ref: str, what: str) -> exit_ends.End:
+    end = exit_ends.find(graph, ref)
+    if end is None:
+        detail = L(f"{what}: Anbindung „{ref}“ unbekannt – neu suchen",
+                   f"{what}: exit “{ref}” unknown – search again")  # fmt: skip
+        raise HTTPException(status_code=422, detail=detail)
+    return end
+
+
+def _exit_notes(result: dict, ends: dict[str, exit_ends.End], shown: dict[str, dict]) -> None:
+    """Anbindung als Quelle bzw. Ziel im Ergebnis (`exits`): ohne gelesene Firewall bzw. ohne
+    Weg ueber die Anbindung ein Hinweis; als Ziel je Weg `via_exit`."""
+    result["exits"] = shown
+    src, dst = ends.get("src"), ends.get("dst")
+    if src is not None and not result["start"]:
+        result["notes"].insert(0, L(
+            f"{src.label}: keine gelesene Firewall mit dieser Anbindung – kein Start",
+            f"{src.label}: no firewall read with this exit – no start",
+        ))  # fmt: skip
+    if src is not None and len(result["start"]) > 1:  # je Firewall der Anbindung ein Weg
+        for path in result["paths"]:
+            if path["hops"]:
+                path["exit_start"] = path["hops"][0]["label"]
+    if dst is None:
+        return
+    for path in result["paths"]:
+        path["via_exit"] = dst.reaches(path)
+    if result["paths"] and not any(p["via_exit"] for p in result["paths"]):
+        result["notes"].append(L(
+            f"Kein Weg führt über {dst.label} – das Routing nimmt einen anderen Weg",
+            f"No path leads via {dst.label} – the routing takes another path",
+        ))  # fmt: skip
 
 
 def _service(session: Session, tid: int, text: str | None) -> tuple[tuple | None, str | None]:
@@ -454,7 +933,7 @@ def _service(session: Session, tid: int, text: str | None) -> tuple[tuple | None
 def resolve_name(
     q: str = Query(..., min_length=1, max_length=200, description="Name, FQDN, IP bzw. Netz"),
     tenant_id: int | None = None,
-    only: str | None = Query(None, alias="type", pattern="^(host|net)$"),
+    only: str | None = Query(None, alias="type", pattern="^(host|net|exit)$"),
     limit: int = Query(resolve.LIMIT, ge=1, le=500),
     offset: int = Query(0, ge=0),
     customer_id: int | None = None,
@@ -462,14 +941,22 @@ def resolve_name(
     session: Session = Depends(get_session, scope="function"),
 ) -> dict:
     """Hosts und Netze zu einem Namen bzw. FQDN aus IPAM, Firewall-Objekten, VMs und dem
-    Inventar (Weg-Suche): seitenweise mit Gesamtzahl und Anzahl je Art; mit Kunde (0.76.0)
-    nur in seinen Netzen (geteilte markiert), eine eingegebene IP ohne fremden Namen."""
+    Inventar (Weg-Suche), dazu Anbindungen als Quelle bzw. Ziel (ADR 0019 Ergaenzung):
+    seitenweise mit Gesamtzahl und Anzahl je Art; mit Kunde (0.76.0) nur in seinen Netzen
+    (geteilte markiert), eine eingegebene IP ohne fremden Namen, Anbindungen an seinen
+    Firewalls."""
     tid = _tenant(session, principal, tenant_id)
     infra = _infra(session, principal, tid, customer_id)
     keep = None
     if infra is not None:
 
         def keep(hit: dict) -> bool:
+            if hit.get("type") == "exit":  # wie die Liste der Anbindungen
+                mark = _exit_mark(infra, hit.get("source_system_ids"), hit.get("prefixes"))
+                if mark is None:
+                    return False
+                hit["shared"] = mark == SHARED
+                return True
             mark = infra.net_mark(hit.get("ip"))
             if mark is None:
                 if hit.get("kind") != "ip":
@@ -503,6 +990,7 @@ def peers(
     order = (TopoPeer.source_system_id, TopoPeer.node, TopoPeer.context, TopoPeer.peer_ip)
     names = _names(session, tid)
     graph = paths.Graph(session, tid)
+    found = _peer_findings(session, tid)
     return [
         row
         for p in _list(session, tid, TopoPeer, source_system_id, order)
@@ -514,10 +1002,35 @@ def peers(
                 graph,
                 peer=graph.resolve(p.peer_ip),
                 peer_node=graph.owner_label(p.peer_ip),
+                findings=found.get((p.source_system_id, p.context, p.peer_ip), []),
             ),  # fmt: skip
             infra.context_mark(p.source_system_id, p.context) if infra else None,
         )
     ]
+
+
+# Befunde der Routing-Filter je BGP-Nachbar (0.133.0, Anwender: „sehe ich den BGP Neighbors
+# nicht an, ob sie eine Filter Verletzung haben oder nicht … mit Grünem oder Gelbem Zeichen“)
+PEER_FINDINGS = (FindingType.BGP_EXPECTED_MISSING, FindingType.BGP_OUTSIDE_FILTER,
+                 FindingType.BGP_NO_INBOUND_FILTER, FindingType.BGP_ZONE_MISMATCH,
+                 FindingType.BGP_ZONE_OUT_MISMATCH)  # fmt: skip
+
+
+def _peer_findings(session: Session, tid: int) -> dict[tuple, list[dict]]:
+    """Offene bzw. bestaetigte Befunde je (Quellsystem, Kontext, Nachbar) - wie die Findings."""
+    out: dict[tuple, list[dict]] = defaultdict(list)
+    rows = session.execute(
+        select(Finding.id, Finding.type, Finding.status, Finding.source_system_id, Finding.detail)
+        .where(Finding.tenant_id == tid, Finding.type.in_(PEER_FINDINGS),
+               Finding.status.in_((FindingStatus.OPEN, FindingStatus.ACKNOWLEDGED)))
+        .order_by(Finding.id)
+    )  # fmt: skip
+    for fid, ftype, status, sid, detail in rows:
+        d = detail if isinstance(detail, dict) else {}
+        if d.get("peer"):
+            out[(sid, d.get("context"), d["peer"])].append(
+                {"id": fid, "type": ftype.value, "status": status.value})  # fmt: skip
+    return out
 
 
 @router.get("/ha")
@@ -592,12 +1105,17 @@ def l3outs(
     graph = paths.Graph(session, tid)
     rows = _list(session, tid, TopoL3Out, None, order)
     leafs = paths.device_names(session, {o.source_system_id for o in rows})
+    # Firewall dahinter (ADR 0034): abgeleitet bzw. von Hand
+    behind = {(o.source_system_id, o.dn): o
+              for o in l3out_firewall.Behind(session, tid, graph).l3outs}  # fmt: skip
     out = []
     for o in rows:
         row = _row(o, names)
         sid = o.source_system_id
         if not _in_view(infra, row, infra.context_mark(sid, o.vrf) if infra else None):
             continue
+        found = behind.get((sid, o.dn))
+        row["behind"] = found.out(graph) if found else None
         row["nodes"] = [
             {
                 **n,
@@ -624,6 +1142,146 @@ def l3outs(
     return out
 
 
+# -- Firewall hinter einem L3Out (ADR 0034) -------------------------------------------------
+
+
+class FirewallRef(BaseModel):
+    source_system_id: int
+    vdom: str = Field(min_length=1, max_length=100)  # Kontext wie im Weg (root bei nur root)
+    interface: str | None = Field(default=None, max_length=200)  # Interface zum L3Out
+
+
+class L3OutFirewallIn(BaseModel):
+    tenant_id: int
+    source_system_id: int  # APIC
+    dn: str = Field(min_length=1, max_length=400)  # DN des L3Outs
+    # confirm: die abgeleitete Zuordnung bestaetigen; none: ausdruecklich keine Firewall;
+    # sonst die gewaehlten Firewalls
+    confirm: bool = False
+    none: bool = False
+    firewalls: list[FirewallRef] = Field(default_factory=list, max_length=16)
+
+
+def _l3out(session: Session, principal: Principal, tenant_id: int, aci_id: int, dn: str):
+    tenant_scope(principal, tenant_id)
+    found = l3out_firewall.find(session, tenant_id, aci_id, dn)
+    if found is None:
+        raise HTTPException(status_code=404, detail="l3out not found")
+    return found
+
+
+def _audit_l3out(session: Session, principal: Principal, action: str, o: TopoL3Out,
+                 tenant_id: int, **extra) -> None:  # fmt: skip
+    audit.record(
+        session,
+        actor=f"user:{principal.subject}",
+        action=f"routing.l3out_firewall.{action}",
+        subject=o.dn,
+        detail={
+            "tenant_id": tenant_id,
+            "source_system_id": o.source_system_id,
+            "dn": o.dn,
+            "l3out": o.name,
+            **extra,
+        },  # fmt: skip
+    )
+
+
+def _behind_out(session: Session, tid: int, o: TopoL3Out) -> dict | None:
+    graph = paths.Graph(session, tid)
+    found = l3out_firewall.Behind(session, tid, graph).of(o.source_system_id, o.aci_tenant, o.name)
+    return found.out(graph) if found else None
+
+
+@router.get("/l3outs/firewall-choices")
+def l3out_firewall_choices(
+    tenant_id: int | None = None,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> list[dict]:
+    """Gelesene Firewalls bzw. VDOMs mit ihren Interfaces (ohne Management) - zur Auswahl der
+    Firewall hinter einem L3Out (ADR 0034)."""
+    tid = _tenant(session, principal, tenant_id)
+    return l3out_firewall.choices(session, tid)
+
+
+@router.put("/l3outs/firewall")
+def set_l3out_firewall(
+    body: L3OutFirewallIn,
+    background: BackgroundTasks,
+    principal: Principal = Depends(require_operator),
+    session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
+) -> dict:
+    """Firewall hinter einem L3Out von Hand (Operator, ADR 0034): die abgeleitete bestaetigen,
+    eine bzw. mehrere waehlen (VDOM, Interface zum L3Out) oder ausdruecklich keine. Nur Daten
+    der Plattform; Befunde der Applikationen und Zonen sowie die Kunden ziehen danach nach."""
+    o = _l3out(session, principal, body.tenant_id, body.source_system_id, body.dn)
+    graph = paths.Graph(session, body.tenant_id)
+    behind = l3out_firewall.Behind(session, body.tenant_id, graph)
+    current = behind.of(o.source_system_id, o.aci_tenant, o.name)
+    derived = current.derived if current else []
+    if body.confirm:
+        if not derived:
+            detail = L("keine abgeleitete Firewall zum Bestätigen",
+                       "no derived firewall to confirm")  # fmt: skip
+            raise HTTPException(status_code=422, detail=detail)
+        chosen, origin = list(derived), l3out_firewall.CONFIRMED
+    elif body.none:
+        chosen, origin = [], l3out_firewall.NONE
+    else:
+        if not body.firewalls:
+            detail = L("Firewall wählen, bestätigen oder „keine“",
+                       "choose or confirm a firewall, or “none”")  # fmt: skip
+            raise HTTPException(status_code=422, detail=detail)
+        choices = {(c["source_system_id"], c["vdom"]): c
+                   for c in l3out_firewall.choices(session, body.tenant_id, graph)}  # fmt: skip
+        chosen = []
+        for f in body.firewalls:
+            c = choices.get((f.source_system_id, f.vdom))
+            if c is None:
+                detail = L(f"keine gelesene Firewall {f.source_system_id}|{f.vdom}",
+                           f"no firewall read {f.source_system_id}|{f.vdom}")  # fmt: skip
+                raise HTTPException(status_code=422, detail=detail)
+            iface = (f.interface or "").strip() or None
+            known = {i["name"]: i for i in c["interfaces"]}
+            if iface is not None and iface not in known:
+                detail = L(f"Interface {iface} gibt es auf {c['label']} nicht",
+                           f"interface {iface} does not exist on {c['label']}")  # fmt: skip
+                raise HTTPException(status_code=422, detail=detail)
+            zone = known[iface]["zone"] if iface else None
+            ref = l3out_firewall.FwRef(f.source_system_id, f.vdom, iface, zone)
+            if not any(ref.same(x) for x in chosen):
+                chosen.append(ref)
+        same = len(chosen) == len(derived) and all(any(c.same(d) for d in derived) for c in chosen)
+        origin = l3out_firewall.CONFIRMED if same else l3out_firewall.MANUAL
+    l3out_firewall.assign(session, body.tenant_id, o, chosen, origin, f"user:{principal.subject}")
+    _audit_l3out(session, principal, "set", o, body.tenant_id, origin=origin,
+                 firewalls=[{"source_system_id": f.source_system_id, "vdom": f.context,
+                             "interface": f.interface} for f in chosen])  # fmt: skip
+    app_refresh.schedule_tenant(background, factory, body.tenant_id)
+    return {"dn": o.dn, "behind": _behind_out(session, body.tenant_id, o)}
+
+
+@router.delete("/l3outs/firewall")
+def remove_l3out_firewall(
+    background: BackgroundTasks,
+    tenant_id: int,
+    source_system_id: int,
+    dn: str = Query(..., min_length=1, max_length=400),
+    principal: Principal = Depends(require_operator),
+    session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
+) -> dict:
+    """Zuordnung von Hand entfernen (Operator): es gilt wieder die Ableitung."""
+    o = _l3out(session, principal, tenant_id, source_system_id, dn)
+    removed = l3out_firewall.clear(session, o.source_system_id, o.dn)
+    if removed:
+        _audit_l3out(session, principal, "removed", o, tenant_id)
+        app_refresh.schedule_tenant(background, factory, tenant_id)
+    return {"dn": o.dn, "removed": removed, "behind": _behind_out(session, tenant_id, o)}
+
+
 # -- Anbindungen nach aussen (0.18.0, von Hand erfasst) ------------------------------------
 
 EXIT_KINDS = ("internet", "mpls", "wan", "partner", "other")
@@ -641,7 +1299,8 @@ class ExitIn(BaseModel):
     source_system_ids: list[int] = []  # nur fuer diese Firewalls (leer = jede)
     interfaces: list[str] = []  # Interfaces bzw. Zonen
     next_hops: list[str] = []  # IPs der Gegenstelle
-    prefixes: list[str] = []  # Netze dahinter (leer = alles, was dorthin geroutet wird)
+    # Netze dahinter (leer = alles, was dorthin geroutet wird); grosse Listen seit 0.111.0
+    prefixes: list[str] = Field(default_factory=list, max_length=net_lists.MAX_PREFIXES)
     routes: list[ExitRoute] = []  # manuell: Praefix -> weiter beim gelesenen Knoten
     description: str | None = Field(default=None, max_length=2000)
 
@@ -779,6 +1438,33 @@ def exit_suggestions(
             r["shared"] = True  # Router der Umgebung, nicht des Kunden allein
             out.append(r)
     return out
+
+
+class PrefixText(BaseModel):
+    text: str = Field(max_length=500_000)
+
+
+@router.post("/exits/prefixes")
+def check_prefixes(body: PrefixText, principal: Principal = Depends(require_viewer)) -> dict:
+    """Netzliste pruefen (0.111.0): eingefuegter Text -> gueltige, ungueltige, doppelte und
+    zusammengefasste Netze. Speichert nichts."""
+    return net_lists.parse(body.text)
+
+
+@router.get("/exits/learned")
+def learned_prefixes(
+    tenant_id: int | None = None,
+    source_system_ids: Annotated[list[int] | None, Query()] = None,
+    next_hops: Annotated[list[str] | None, Query()] = None,
+    interfaces: Annotated[list[str] | None, Query()] = None,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Netze, die die Geraete ueber Next-Hops bzw. Interfaces einer Anbindung erhalten
+    (0.111.0): Vorschlag fuer „Netze dahinter“ aus dem gelesenen Routing."""
+    tid = _tenant(session, principal, tenant_id)
+    return net_lists.learned(session, tid, source_system_ids or [], next_hops or [],
+                             interfaces or [])  # fmt: skip
 
 
 class DismissIn(BaseModel):

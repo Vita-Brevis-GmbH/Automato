@@ -14,12 +14,14 @@ Seit 0.69.0 lassen sich Regeln in den Kategorien der Doku ausblenden (`Applicati
 je Regel (stabiler Verweis wie bei der direkten Zuordnung) und Kategorie bzw. in allen
 Kategorien, immer mit Begruendung, wer und wann.
 Kuerzel/Verantwortliche/Kritikalitaet, externer/interner Name und Verwendungszweck
-(Dev/Test/Prod, 0.14.0) sind Stammdaten ohne Funktionsrelevanz.
+(Dev/Test/Prod, 0.14.0) sind Stammdaten ohne Funktionsrelevanz. `infrastructure` (0.88.0)
+kennzeichnet Monitoring, Backup, DNS u. a.: Abhaengigkeiten zu ihnen stehen getrennt von den
+fachlichen.
 """
 
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, false
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -46,6 +48,8 @@ class Application(Base):
     criticality: Mapped[str | None] = mapped_column(String(16), nullable=True)
     site_id: Mapped[int | None] = mapped_column(ForeignKey("site.id"), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Infrastruktur (Monitoring, Backup, DNS …) statt fachlicher Applikation, 0.88.0
+    infrastructure: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )

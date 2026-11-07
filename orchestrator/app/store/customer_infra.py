@@ -9,8 +9,11 @@ eigenes plus geteiltes, das geteilte markiert):
 - **Kontexte** (VDOM bzw. ACI-VRF `Tenant:VRF`): die VDOMs seiner Firewall-Selektoren und seiner
   Regeln, die VRFs seiner EPGs. *Eigen*, wenn kein anderer Kunde dort Regeln bzw. EPGs hat und
   der Kontext nicht nur ueber den geteilten Teil (z. B. Tenant `common`) dazukommt; sonst
-  *geteilt*. In einem geteilten Kontext zeigt das Routing nur Routen, die ein Netz des Kunden
-  enthalten oder darin liegen (auch die Default-Route) - keine Routen anderer Kunden.
+  *geteilt*. Router bzw. L3-Switches (ADR 0032, Art `l3`) sind immer *geteilt* - im Ausschnitt,
+  wenn sie ein Netz des Kunden routen (Route ausser der Default-Route, die eines seiner Netze
+  enthaelt oder darin liegt). In einem geteilten Kontext zeigt das Routing nur Routen, die ein
+  Netz des Kunden enthalten oder darin liegen (auch die Default-Route) - keine Routen anderer
+  Kunden.
 - **Netze**: seine (eigen) bzw. die des geteilten Teils (geteilt), `customer_member` kind `net`.
 - **EPGs** als `Tenant/AP/EPG` (Schreibweise im Inventar), **VLANs** (der EPGs, der Netze des
   Kunden, der Portgruppen seiner VMs), **Ports** (mit seinen EPGs, in seinen VDOMs, mit IPs in
@@ -39,6 +42,7 @@ from app.models import (
     Rule,
     RuleDomain,
     TopoContext,
+    TopoRoute,
     Vm,
     VmNic,
 )
@@ -245,7 +249,32 @@ class Infra:
                 dedicated.add(key)
             if self._others("epg", e.id):
                 foreign.add(key)
+        used |= self._routers()
         return {k: OWN if k in dedicated and k not in foreign else SHARED for k in used}
+
+    def _routers(self) -> set[tuple[int, str]]:
+        """Router-Kontexte (ADR 0032), die ein Netz des Kunden routen - immer geteilt."""
+        routers = set(
+            self.session.execute(
+                select(TopoContext.source_system_id, TopoContext.context).where(
+                    TopoContext.tenant_id == self.tenant_id, TopoContext.kind == "l3"
+                )
+            ).tuples()
+        )
+        if not routers or not self.nets:
+            return set()
+        hits = self.session.execute(
+            select(TopoRoute.source_system_id, TopoRoute.context)
+            .where(
+                TopoRoute.tenant_id == self.tenant_id,
+                TopoRoute.table == "rib",
+                TopoRoute.prefix_len > 0,
+                TopoRoute.source_system_id.in_({sid for sid, _ in routers}),
+                self.overlap_clause(TopoRoute.family, TopoRoute.lo, TopoRoute.hi),
+            )
+            .distinct()
+        ).tuples()
+        return {k for k in hits if k in routers}
 
     def context_mark(self, source_system_id: int, context: str | None) -> str | None:
         return self.contexts.get((source_system_id, context or "root"))

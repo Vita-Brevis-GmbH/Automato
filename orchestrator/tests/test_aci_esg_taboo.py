@@ -1,5 +1,6 @@
 """ACI: ESG mit Selektoren, Taboo-Contract (deny) und Preferred Group im Store/API."""
 
+from system_doc import system_list
 from test_reference_sources import TOKEN, _system, _tenant
 
 WEB = "uni/tn-TE_a/ap-AP_1/epg-EG_web"
@@ -75,5 +76,5 @@ def test_esg_taboo_preferred_group(client):
     assert esg["selectors"] == ["Tag zone=pci", "IP ip=='10.9.0.0/24'"] and esg["pref_group"]
     assert esg["subnets"][0]["origin"] == "esg" and esg["vrf"] == "VRF_a"
     # ESGs sind keine Systeme der Applikations-Doku (gruppieren nur EPGs/Endpunkte)
-    systems = client.get("/appdoc/systems", params={"tenant_id": tid}).json()
+    systems = system_list(client, tid)
     assert [s["name"] for s in systems] == ["EG_web"]

@@ -1,34 +1,49 @@
-"""Referenzquellen-Collector: Infoblox DDI und NetBox komplett lesen (read-only, ADR 0010).
+"""Referenzquellen-Collector: Infoblox DDI, NetBox und DNS-Server komplett lesen (read-only,
+ADR 0010, ADR 0045).
 
 Adresse und Zugangsdaten kommen vom Quellsystem (Orchestrator, ADR 0009): Infoblox mit
-Benutzer/Passwort, NetBox mit dem Lese-Token. Die Eintraege gehen in Teilen an
+Benutzer/Passwort, NetBox mit dem Lese-Token, AD-DNS ohne Zugangsdaten per Zonentransfer der
+Zonen im Lesebereich. Die Eintraege gehen in Teilen an
 `/internal/collector-runs/{id}/references`, danach das Ergebnis mit der Gesamtzahl. Die
 Lese-Clients sind per `enforce_read_only` auf GET beschraenkt; Beispieldaten gibt es hier
 nicht - ohne Zugangsdaten schlaegt der Lauf mit klarer Meldung fehl.
 """
 
-from sot_gateway.adapters import InfobloxAdapter, NetBoxAdapter
+from sot_gateway.adapters import DnsZoneAdapter, InfobloxAdapter, NetBoxAdapter
 
 from collectors.celery_app import app
 from collectors.common import agent as agent_api
 from collectors.common import diagnose
 from collectors.common.dto import CollectorResult, ReferenceBatch, Target
+from collectors.common.i18n import L, german_only
 from collectors.common.upload import confirmed, submit_references, submit_result
 
 CHUNK = 2000
-PLATFORMS = ("infoblox", "netbox")
+PLATFORMS = ("infoblox", "netbox", "ad_dns")
 
 
 def _no_credentials(target: Target | None) -> str:
-    name = f"„{target.name}“" if target is not None and target.name else "die Referenzquelle"
-    return f"keine Zugangsdaten fuer {name} - im Web-UI beim Quellsystem hinterlegen"
+    name = _label(target)
+    return L(
+        f"keine Zugangsdaten fuer {name} - im Web-UI beim Quellsystem hinterlegen",
+        f"no credentials for {name} - store them at the source system in the web UI",
+    )
 
 
 def _adapter(platform: str, target: Target | None):
     if target is None or not target.base_url:
+        name = _label(target)
         raise RuntimeError(
-            f"keine Adresse fuer {_label(target)} - im Web-UI beim Quellsystem hinterlegen"
+            L(
+                f"keine Adresse fuer {name} - im Web-UI beim Quellsystem hinterlegen",
+                f"no address for {name} - store it at the source system in the web UI",
+            )
         )
+    if platform == "ad_dns":  # Zonentransfer, ohne Zugangsdaten (ADR 0045)
+        zones = [z for z in (target.read_scope or "").replace(",", " ").split() if z]
+        if not zones:
+            raise RuntimeError(_no_zones(target))
+        return DnsZoneAdapter.from_url(target.base_url, zones)
     if platform == "infoblox":
         if not (target.username and target.password):
             raise RuntimeError(_no_credentials(target))
@@ -36,17 +51,33 @@ def _adapter(platform: str, target: Target | None):
             target.base_url, target.username, target.password, verify_tls=target.verify_tls
         )
     if not target.token:
+        name = _label(target)
         raise RuntimeError(
-            f"kein Lese-Token fuer {_label(target)} - im Web-UI beim Quellsystem unter"
-            " 'API-Token (lesen)' hinterlegen (das Schreib-Token wird nie zum Lesen verwendet)"
+            L(
+                f"kein Lese-Token fuer {name} - im Web-UI beim Quellsystem unter 'API-Token "
+                "(lesen)' hinterlegen (das Schreib-Token wird nie zum Lesen verwendet)",
+                f"no read token for {name} - store it at the source system in the web UI under "
+                "'API token (read)' (the write token is never used for reading)",
+            )
         )
     return NetBoxAdapter(target.base_url, target.token, verify_tls=target.verify_tls)
 
 
+def _no_zones(target: Target | None) -> str:
+    name = _label(target)
+    return L(
+        f"keine Zonen fuer {name} - im Web-UI beim Quellsystem unter 'Zonen' hinterlegen",
+        f"no zones for {name} - store them at the source system in the web UI under 'Zones'",
+    )
+
+
 def _label(target: Target | None) -> str:
-    return f"„{target.name}“" if target is not None and target.name else "die Referenzquelle"
+    if target is not None and target.name:
+        return L(f"„{target.name}“", f"“{target.name}”")
+    return L("die Referenzquelle", "the reference source")
 
 
+@german_only  # Ergebnis und Meldung speichert der Orchestrator - deutsch (ADR 0028)
 def collect_references(
     platform: str, run_id: str, target: Target | None = None, via_agent: bool = False
 ) -> CollectorResult:
@@ -79,8 +110,17 @@ def check(platform: str, target: Target | None = None) -> tuple[bool, str]:
         version = adapter.ping()
     except Exception as exc:  # noqa: BLE001 - Diagnose fuer den Operator
         return False, diagnose.device_error(exc, platform, target, local=True)
+    if platform == "ad_dns":  # je Zone die SOA-Seriennummer
+        n = len(version)
+        return True, L(
+            f"erreichbar: {target.base_url} (Zonentransfer erlaubt fuer {n} Zone(n))",
+            f"reachable: {target.base_url} (zone transfer allowed for {n} zone(s))",
+        )
     product = "NetBox" if platform == "netbox" else "WAPI"
-    return True, f"erreichbar: {target.base_url} ({product} {version})"
+    return True, L(
+        f"erreichbar: {target.base_url} ({product} {version})",
+        f"reachable: {target.base_url} ({product} {version})",
+    )
 
 
 def collect_infoblox(run_id: str, target: Target | None = None, via_agent: bool = False):
@@ -89,6 +129,10 @@ def collect_infoblox(run_id: str, target: Target | None = None, via_agent: bool 
 
 def collect_netbox(run_id: str, target: Target | None = None, via_agent: bool = False):
     return collect_references("netbox", run_id, target, via_agent)
+
+
+def collect_ad_dns(run_id: str, target: Target | None = None, via_agent: bool = False):
+    return collect_references("ad_dns", run_id, target, via_agent)
 
 
 def check_infoblox(target: Target | None = None) -> tuple[bool, str]:
@@ -101,9 +145,18 @@ def check_netbox(target: Target | None = None) -> tuple[bool, str]:
 
 @app.task(name="collectors.infoblox.collect")
 def collect_infoblox_task(run_id: str) -> None:
-    collect_infoblox(run_id, agent_api.run_target(run_id))
+    agent_api.central(run_id, collect_infoblox)
 
 
 @app.task(name="collectors.netbox.collect")
 def collect_netbox_task(run_id: str) -> None:
-    collect_netbox(run_id, agent_api.run_target(run_id))
+    agent_api.central(run_id, collect_netbox)
+
+
+def check_ad_dns(target: Target | None = None) -> tuple[bool, str]:
+    return check("ad_dns", target)
+
+
+@app.task(name="collectors.ad_dns.collect")
+def collect_ad_dns_task(run_id: str) -> None:
+    agent_api.central(run_id, collect_ad_dns)

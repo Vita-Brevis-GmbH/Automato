@@ -28,6 +28,11 @@ Ableitung der Kategorie je Regel/Contract:
 | 8 | Zugriff innerhalb des Security Tenant | **ACI intern** | EPG↔EPG im **selben `TE_`**, anderes AP |
 | 9 | Zugriff zu anderen Security Tenants | Firewall | Gegenstelle anderer `TE_` (inkl. `L3O_res` → Ressourcen) |
 | 10 | Unspezifische Zugriffe auf die Applikation | Firewall | globale Regel, grosser IP-Range, nicht app-spezifisch |
+| 11 | Zugriff Management (seit 0.102.0) | Firewall + ACI | Gegenstelle in einer Zone mit Kategorie DC Management (hinter eigener Firewall) – Firewall-Regeln und Contracts; nur mit einer solchen Zone |
+
+Seit 0.101.0/0.102.0 entscheidet zuerst die **Zone der Gegenstelle** (Netzwerkdesign →
+Kategorien, ADR 0012 Ergänzungen): ihr Bereich gibt die Kategorie, auch für grosse Quell-Bereiche;
+die Titel nennen dann die Zonen („Zugriff aus Edge Internet“).
 
 **Model 2 (FortiGate + NetBox):** Tabellen 1–6, 9, 10 werden befüllt; die ACI-internen
 Tabellen 7/8 bleiben leer und erscheinen erst mit **Model 1** (ACI).

@@ -4,23 +4,30 @@
 // System/VM, EPG, Richtung (aus Sicht des Systems), Art und Bezug. Das Regel-Detail erklärt,
 // warum die Regel für die Applikation gilt; Links in Regeln, Objekte und Findings. Seit 0.73.0
 // (Anwender: Übersicht) Bereiche zuklappbar, Systeme kompakt mit Detail auf Klick, Export und
-// Druck mit wählbaren Abschnitten; Abhängigkeiten zu anderen Applikationen vorerst entfernt.
+// Druck mit wählbaren Abschnitten; Abhängigkeiten zu anderen Applikationen seit 0.88.0 wieder
+// (auf Klick geladen, Infrastruktur wie Monitoring/Backup getrennt von den fachlichen). Seit 0.95.0
+// (Anwender: „Detailseite statt zu den Regeln springen“) öffnet ein Klick auf eine EPG bzw. ein
+// Firewall-Objekt ein Detail wie in „Objekte & Inventar“, die Regeln zeigt ein Knopf darin.
 import { ReactNode, useEffect, useMemo, useState } from "react";
 import {
   AppDocEpg,
   AppDocFinding,
   AppDocHit,
   AppDocSystem2,
-  AppConnections,
+  AppDependencies,
+  AppDependency,
   ApplicationDoc,
   assignAppRule,
   DocScope,
   DocTable,
+  EpgLocation,
   exportApplication,
-  fetchAppConnections,
+  fetchAppDependencies,
   fetchAppDoc,
+  fetchAppEpg,
   fetchSystems,
   hideAppRules,
+  patchTenant,
   Purpose,
   removeAppMember,
   showAppRule,
@@ -28,16 +35,23 @@ import {
   System,
 } from "./api";
 import type { View, ViewParams } from "./App";
-import ConnectionsCard, { connectionsMarkdown } from "./AppConnections";
-import { DocRow, DocTableView, tablesMarkdown } from "./AppDoc";
+import ConnectionsCard from "./AppConnections";
+import { useModule } from "./moduleState";
+import { DocRow, DocTableView } from "./DocTable";
 import type { Me } from "./auth";
+import { EpgCard } from "./EpgCard";
 import { Fold, FoldTitle, readStored, useFolds, writeJson } from "./fold";
+import { ObjectDrawer } from "./Objects";
 import { findingLabel, serviceNames, useVdomShown } from "./refs";
 import RuleDetailDrawer from "./RuleDetail";
 import { NameCell } from "./RulesTable";
 import { siteLabel } from "./sites";
+import { SnapshotBar } from "./SnapshotBar";
 import { ActionBadge, Dash, download, Drawer, Empty, ErrorBox, Expandable, ExportLangSelect, Icon, Loading, Modal } from "./ui";
 import { L } from "./i18n";
+import { RuleWegeLink } from "./modules/wege/RuleWegeLink";
+import RulesetCompare from "./modules/doku/RulesetCompare";
+import { ReadRulesDialog } from "./modules/doku/ReadRulesDialog";
 
 type Go = (v: View, p?: ViewParams) => void;
 
@@ -166,10 +180,46 @@ const DOC_SECTIONS: [string, string, string][] = [
     L("als draw.io-Datei – nur Word + draw.io (ZIP)", "as draw.io file – only Word + draw.io (ZIP)"),
   ],
   ["rules", L("Regeln & Contracts", "Rules & contracts"), ""],
+  [
+    "dependencies",
+    L("Abhängigkeiten", "Dependencies"),
+    L("zu anderen Applikationen, Infrastruktur getrennt", "on other applications, infrastructure separately"),
+  ],
   ["findings", "Findings", ""],
   ["categories", L("Doku nach Kategorien", "Documentation by category"), L("die 10 Kategorien nach UC1", "the 10 categories according to UC1")],
   ["hidden", L("Ausgeblendete Regeln", "Hidden rules"), L("mit Begründung", "with reason")],
 ];
+// Regelwerk (0.118.0): je Bedingung die gezählten, nicht gezeigten Regeln; ältere Stände nur mit den drei Zahlen
+type Omitted = { key: string; title: string; count: number };
+function omitted(s: ApplicationDoc["summary"]): Omitted[] {
+  if (s.filtered) return s.filtered;
+  const legacy: Omitted[] = [
+    { key: "impossible", title: L("routingtechnisch unmöglich", "impossible by routing"), count: s.impossible ?? 0 },
+    { key: "out_broad", title: L("ausgehend mit breiter Quelle", "outbound with a broad source"), count: s.outbound_broad ?? 0 },
+    { key: "to_internet", title: L("Freigaben ins Internet", "internet access rules"), count: s.to_internet ?? 0 },
+  ];
+  return legacy.filter((x) => x.count > 0);
+}
+const OMIT_ID: Record<string, string> = { out_broad: "app-outbound-broad", to_internet: "app-to-internet" };
+const OMIT_TIP: Record<string, string> = {
+  impossible: L(
+    "Regeln, die die Systeme nach dem Routing ihrer Firewall nicht sehen können (Ein-/Ausgang passt nicht) – sie gehören nicht zur Applikation",
+    "Rules the systems cannot see according to the routing of their firewall (incoming/outgoing interface does not match) – they do not belong to the application",
+  ),
+  off_path: L(
+    "Unspezifische Regeln einer Firewall, über die der Weg zur Gegenstelle nicht führt (0.113.2)",
+    "Unspecific rules of a firewall the path to the counterpart does not pass (0.113.2)",
+  ),
+  out_broad: L(
+    "Ausgehende Firewall-Regeln, die die Systeme nur über eine breite Quelle erfassen (z. B. 10.0.0.0/8 bzw. any) – kein Zugriff dieser Applikation. Direkt zugeordnete Regeln bleiben.",
+    "Outbound firewall rules that only cover the systems via a broad source (e.g. 10.0.0.0/8 or any) – no access of this application. Rules assigned directly remain.",
+  ),
+  to_internet: L(
+    "Freigaben ins Internet (Ziel „all“, Ausgang Internet bzw. Default-Route), die die Systeme nur über „all“ erfassen – kein Zugriff auf diese Applikation. Direkt zugeordnete Regeln bleiben.",
+    "Internet access rules (destination “all”, outgoing interface internet or default route) that only cover the systems via “all” – no access to this application. Rules assigned directly remain.",
+  ),
+};
+
 const INFRA = new Set(["connections", "plan"]); // nicht für Kunden-Benutzer
 const EXPORT_KEY = "automato_app_export"; // gewählte Abschnitte (Browser)
 const FOLD_KEY = "automato_app_folds"; // zugeklappte Bereiche (Browser)
@@ -196,15 +246,24 @@ export default function ApplicationDocView({
   const [systems, setSystems] = useState<System[]>([]);
   const [f, setF] = useState<Filters>(NO_FILTER);
   const [rule, setRule] = useState<number | null>(null);
+  // Regelwerke vergleichen (0.120.0): offen; während das Regel-Detail offen ist, ausgeblendet (Ergebnis bleibt)
+  const [comparing, setComparing] = useState<"" | "open" | "hidden">("");
   const [showEmpty, setShowEmpty] = useState(false);
   const [printing, setPrinting] = useState<Set<string> | null>(null); // Druck: gewählte Abschnitte offen
   const [exportOpen, setExportOpen] = useState(false);
+  const [readOpen, setReadOpen] = useState(false); // 0.139.0: Regeln neu einlesen
   const [systemKey, setSystemKey] = useState<string | null>(null); // Detail eines Systems (0.73.0)
-  const [conns, setConns] = useState<AppConnections | null>(null); // für den Export (0.59.0)
+  const [epgKey, setEpgKey] = useState<string | null>(null); // Detail einer EPG (0.95.0)
+  const [objectId, setObjectId] = useState<number | null>(null); // Firewall-Objekt (0.95.0)
   const [tick, setTick] = useState(0); // Regel zugeordnet bzw. ausgeschlossen (0.60.0)
   const [busy, setBusy] = useState<unknown>(null);
   const [hiding, setHiding] = useState<{ table: DocTable; row: DocRow } | null>(null); // 0.69.0
+  // Namen der Gegenstellen (0.107.0, Anwender: „es braucht enorm lange, dann sind die Namen da“): der Schalter zeigt
+  // sofort den gewünschten Stand, bis die Doku mit bzw. ohne Namen geladen ist
+  const [namesPending, setNamesPending] = useState<boolean | null>(null);
   const vdomShown = useVdomShown();
+  const wegeOn = useModule("wege"); // Module je Mandant (0.107.0)
+  const findingsOn = useModule("findings");
   const { fold, setAll } = useFolds(FOLD_KEY, printing);
   useEffect(() => {
     if (!printing) return;
@@ -223,6 +282,11 @@ export default function ApplicationDocView({
       .then(setDoc)
       .catch(setErr);
   }, [id, reload, tick]);
+  // Stand fertig bzw. neu berechnen (0.108.0): ohne „Erzeuge Doku…“, der alte bleibt bis dahin sichtbar
+  const refreshDoc = (force: boolean) =>
+    fetchAppDoc(id, force)
+      .then(setDoc)
+      .catch(setBusy);
   useEffect(() => {
     fetchSystems()
       .then(setSystems)
@@ -241,15 +305,22 @@ export default function ApplicationDocView({
     doc?.epgs.forEach((e) => m.set(e.key, e));
     return m;
   }, [doc]);
+  useEffect(() => {
+    if (doc && namesPending !== null && Boolean(doc.peer_names) === namesPending) setNamesPending(null);
+  }, [doc, namesPending]);
 
   if (err) return <ErrorBox error={err} prefix={L("Doku laden", "Load documentation")} />;
   if (!doc) return <Loading>{L("Erzeuge Doku…", "Generating documentation…")}</Loading>;
   const a = doc.application;
+  // pflegen: Operator bzw. Kunden-Benutzer mit der Kunden-Rolle editor, wenn die Applikation ganz
+  // bei seinem Kunden liegt (Server: `editable`, feinere Rollen ADR 0018)
+  const maintain = me.isOperator || !!a.editable;
   const s = doc.summary;
   const sourceName = (sid: number) => systems.find((x) => x.id === sid)?.name ?? `#${sid}`;
   // Firewall mit VDOM, wenn sie mehrere hat (0.43.2) – wie in Regeln & Contracts
   const ruleSource = (r: Rule) => sourceName(r.source_system_id) + (vdomShown(r.source_system_id, r.vdom) ? ` · VDOM ${r.vdom}` : "");
-  const titles = new Map(doc.tables.map((t) => [t.index, t.title]));
+  // Kategorien je Kennung: angezeigte Nummer (0.126.0: fortlaufend in der Reihenfolge) und Titel
+  const titles: CatNames = new Map(doc.tables.map((t) => [t.index, { number: t.number ?? t.index, title: t.title }]));
   const epgLabel = f.epg ? names.get(f.epg) : null;
 
   // Treffer nach den Filtern; EPG = die EPG selbst oder Systeme in ihr – ACI-Contracts eines
@@ -303,9 +374,9 @@ export default function ApplicationDocView({
       const { blob, filename } = await exportApplication(id, want.has("plan") ? "zip" : "docx", sections);
       download(filename, blob);
     } else {
-      let c = me.isCustomer || !want.has("connections") ? null : conns;
-      if (c == null && !me.isCustomer && want.has("connections")) c = await fetchAppConnections(id).catch(() => null);
-      download(`${a.name}.md`, docMarkdown(doc, sourceName, c, want));
+      // 0.104.0: Markdown vom Server aus demselben Aufbau wie Word (bisher hier gebaut)
+      const { blob, filename } = await exportApplication(id, "md", sections);
+      download(filename, blob);
     }
     setExportOpen(false);
   };
@@ -314,11 +385,12 @@ export default function ApplicationDocView({
   // im Druck nur mit „Ausgeblendete Regeln“: nur Kategorien mit ausgeblendeten Regeln
   const onlyHidden = !!printing && !printing.has("categories");
   const tables = doc.tables.filter((t) => (t.hidden?.length ?? 0) > 0 || (!onlyHidden && (showEmpty || t.rows.length > 0)));
-  const foldKeys = ["systems", "epgs", "connections", "rules", "findings", "categories", ...doc.tables.map((t) => `cat:${t.index}`)];
+  const foldKeys = ["systems", "epgs", "connections", "dependencies", "rules", "findings", "categories", ...doc.tables.map((t) => `cat:${t.index}`)];
   const categories = fold("categories", false);
-  // Ausblenden je Kategorie (0.69.0): nur Operator, Kunden-Benutzer sehen die Liste ohne Knöpfe
+  // Ausblenden je Kategorie (0.69.0): nur Operator, Kunden-Benutzer sehen die Liste ohne Knöpfe –
+  // ausser als Editor ihrer Applikation (feinere Rollen)
   const hideControls = {
-    canEdit: me.isOperator && !me.isCustomer,
+    canEdit: (me.isOperator && !me.isCustomer) || !!a.editable,
     onHide: (table: DocTable) => (row: DocRow) => setHiding({ table, row }),
     onShow: async (hides: { id: number }[]) => {
       setBusy(null);
@@ -342,13 +414,26 @@ export default function ApplicationDocView({
         <button
           className="btn btn-ghost btn-sm"
           onClick={onManage}
-          title={L("Mitglieder (APs, EPGs, Server) ansehen und pflegen", "View and maintain members (APs, EPGs, servers)")}
+          title={L("Mitglieder (APs, EPGs, Server, VMs) ansehen und pflegen", "View and maintain members (APs, EPGs, servers, VMs)")}
         >
           {L("Mitglieder", "Members")}
         </button>
-        {me.isOperator && (
-          <button className="btn btn-ghost btn-sm" onClick={onEdit}>
+        {maintain && (
+          <button className="btn btn-ghost btn-sm" id="app-doc-edit" onClick={onEdit}>
             {L("Bearbeiten", "Edit")}
+          </button>
+        )}
+        {me.isOperator && !me.isCustomer && (
+          <button
+            className="btn btn-ghost btn-sm"
+            id="app-read-rules"
+            onClick={() => setReadOpen(true)}
+            title={L(
+              "Nur die Regeln der Firewalls und des ACI dieser Applikation neu einlesen und nur sie neu berechnen – nach Änderungen am Gerät",
+              "Re-read only the rules of this application's firewalls and ACI and recompute only it – after changes on the device",
+            )}
+          >
+            ⟳ {L("Regeln neu einlesen", "Re-read rules")}
           </button>
         )}
         <button
@@ -380,6 +465,7 @@ export default function ApplicationDocView({
         </button>
       </div>
 
+      <SnapshotBar snapshot={doc.snapshot} appId={id} kind="doc" onReload={refreshDoc} />
       <div className="card app-head">
         <div className="card-body pad">
           <h1 className="app-title">{a.name}</h1>
@@ -399,6 +485,11 @@ export default function ApplicationDocView({
           )}
           <div className="chips" style={{ marginTop: 8 }}>
             {a.purpose && <PurposeChip value={a.purpose} />}
+            {a.infrastructure && (
+              <span className="chip info" id="app-infra-chip" title={L("Monitoring, Backup, DNS …", "Monitoring, backup, DNS …")}>
+                {L("Infrastruktur", "Infrastructure")}
+              </span>
+            )}
             {a.code && (
               <span className="chip local">
                 {L("Kürzel", "Code")} {a.code}
@@ -483,22 +574,28 @@ export default function ApplicationDocView({
         <SystemsCard items={doc.systems} fold={fold("systems")} onOpen={setSystemKey} />
       </div>
       <div className={off("epgs").trim()}>
-        <EpgsCard
-          items={doc.epgs}
-          fold={fold("epgs")}
-          onPick={(key) => {
-            setF({ ...NO_FILTER, epg: key });
-            scrollToRules();
-          }}
-        />
+        <EpgsCard items={doc.epgs} fold={fold("epgs")} onPick={setEpgKey} />
       </div>
 
-      {/* Verbindungen Ende zu Ende (0.45.0) – zeigt die Infrastruktur, nicht für Kunden-Benutzer */}
-      {!me.isCustomer && (
+      {/* Verbindungen Ende zu Ende (0.45.0) – zeigt die Infrastruktur, nicht für Kunden-Benutzer; Modul Wegsucher (0.107.0) */}
+      {!me.isCustomer && wegeOn && (
         <div className={off("connections").trim()}>
-          <ConnectionsCard appId={id} reload={reload + tick} onRule={setRule} onGo={onGo} onData={setConns} fold={fold("connections")} />
+          <ConnectionsCard
+            appId={id}
+            reload={reload + tick}
+            onRule={setRule}
+            onGo={onGo}
+            fold={fold("connections")}
+            tenantId={a.tenant_id}
+            canCapture={me.isOperator && !me.isCustomer}
+          />
         </div>
       )}
+
+      {/* Abhängigkeiten (0.60.0, seit 0.88.0 wieder): zu, erst beim Aufklappen geladen */}
+      <div className={off("dependencies").trim()}>
+        <DependenciesCard appId={id} reload={reload + tick} fold={fold("dependencies", false)} onGo={onGo} onRule={setRule} />
+      </div>
 
       <div className={`card${off("rules")}`} id="app-rules" style={{ marginTop: 14 }}>
         <div className="card-head">
@@ -510,7 +607,7 @@ export default function ApplicationDocView({
           {(doc.rule_members ?? []).length > 0 && (
             <RuleMembers
               members={doc.rule_members ?? []}
-              canEdit={me.isOperator}
+              canEdit={maintain}
               onOpen={setRule}
               onRemove={(mid) =>
                 removeAppMember(id, mid)
@@ -520,16 +617,49 @@ export default function ApplicationDocView({
             />
           )}
           <div className="spacer" />
-          {s.impossible ? (
+          {omitted(s).map((f) => (
+            <span key={f.key} className="faint" id={OMIT_ID[f.key] ?? `app-filter-${f.key}`} style={{ fontSize: 12 }} title={OMIT_TIP[f.key] ?? f.title}>
+              {L(`${f.count} ausgelassen: ${f.title}`, `${f.count} omitted: ${f.title}`)}
+            </span>
+          ))}
+          {(s.path_unchecked ?? 0) > 0 && (
             <span
-              className="faint"
-              style={{ fontSize: 12 }}
+              className="chip warn"
+              id="app-path-unchecked"
               title={L(
-                "Regeln, die die Systeme nach dem Routing ihrer Firewall nicht sehen können (Ein-/Ausgang passt nicht) – sie gehören nicht zur Applikation",
-                "Rules the systems cannot see according to the routing of their firewall (incoming/outgoing interface does not match) – they do not belong to the application",
+                "Für diese Regeln hat eine Grenze den Weg nicht (ganz) geprüft – sie stehen in der Doku, auch wenn ihre Firewall vielleicht nicht auf dem Weg liegt",
+                "A limit did not (fully) check the path of these rules – they stay in the documentation even if their firewall may not be on the path",
               )}
             >
-              {L(`${s.impossible} routingtechnisch unmögliche ausgelassen`, `${s.impossible} impossible by routing omitted`)}
+              {L(`${s.path_unchecked} Regeln: Weg nicht geprüft`, `${s.path_unchecked} rules: path not checked`)}
+            </span>
+          )}
+          {s.ruleset && (
+            <a className="faint" id="app-ruleset" href="#dict" style={{ fontSize: 12 }} title={s.ruleset.description || L("Regelwerk der Applikations-Doku (Namensprofile)", "Ruleset of the application documentation (naming profiles)")}>
+              {L(`Regelwerk: ${s.ruleset.title}`, `Ruleset: ${s.ruleset.title}`)}
+            </a>
+          )}
+          {s.ruleset && !me.isCustomer && (
+            <button
+              className="btn btn-ghost btn-sm no-print"
+              id="app-ruleset-compare"
+              title={L("Doku mit einem anderen Regelwerk vergleichen – rechnet erst auf Knopfdruck", "Compare the documentation with another ruleset – computes only on click")}
+              onClick={() => setComparing("open")}
+            >
+              {L("Vergleichen", "Compare")}
+            </button>
+          )}
+          {s.helpers ? (
+            <span
+              className="faint"
+              id="app-helpers"
+              style={{ fontSize: 12 }}
+              title={(doc.helpers ?? []).map((h) => `${h.name} (${h.l3outs.join(", ")})`).join("\n")}
+            >
+              {L(
+                ` · ${s.helpers} Hilfs-Contracts über L3Outs – an den Firewall-Regeln vermerkt`,
+                ` · ${s.helpers} helper contracts via L3Outs – noted on the firewall rules`,
+              )}
             </span>
           ) : null}
           {filtered && (
@@ -691,9 +821,11 @@ export default function ApplicationDocView({
         )}
       </div>
 
-      <div className={off("findings").trim()}>
-        <FindingsCard doc={doc} onRule={setRule} onGo={onGo} fold={fold("findings")} />
-      </div>
+      {findingsOn && (
+        <div className={off("findings").trim()}>
+          <FindingsCard doc={doc} onRule={setRule} onGo={onGo} fold={fold("findings")} />
+        </div>
+      )}
 
       {/* Kategorien (UC1): im Druck auch nur mit „Ausgeblendete Regeln“ – dann ohne die Zeilen */}
       <div
@@ -715,6 +847,45 @@ export default function ApplicationDocView({
               {L("10 Kategorien nach UC1 – für Export und Druck", "10 categories according to UC1 – for export and print")}
             </span>
             <div className="spacer" />
+            {categories.open && me.isAdmin && !me.isCustomer && (
+              <button
+                className={`toggle no-print ${(namesPending ?? doc.peer_names) ? "on" : ""}`}
+                id="app-peer-names"
+                aria-busy={namesPending !== null}
+                disabled={namesPending !== null}
+                title={L(
+                  "Gegenstellen, von denen die Regel nur Adressen kennt, mit Namen zeigen (Gruppe wie in der Regel, IPAM, VM, EPG) – Einstellung des Mandanten, nur Betreuer",
+                  "Show peers the rule only knows by address with names (group as in the rule, IPAM, VM, EPG) – tenant setting, staff only",
+                )}
+                onClick={() => {
+                  const want = !doc.peer_names;
+                  setNamesPending(want);
+                  patchTenant(a.tenant_id, { appdoc_foreign_names: want })
+                    .then(() => setTick((t) => t + 1))
+                    .catch((e) => {
+                      setNamesPending(null);
+                      setBusy(e);
+                    });
+                }}
+              >
+                {L("Namen der Gegenstellen", "Names of peers")}
+                {namesPending !== null && <span className="faint">{L(" – lädt…", " – loading…")}</span>}
+              </button>
+            )}
+            {categories.open && !me.isCustomer && onGo && (
+              // 0.102.0 (Anwender): zugeordnet wird bei den Zonen im Netzwerkdesign
+              <button
+                className="btn btn-ghost btn-sm no-print"
+                id="app-zone-areas"
+                title={L(
+                  "Zonentyp, Netze mit Ausschlüssen und Geräte je Zone – in Netzwerkdesign → Kategorien",
+                  "Zone type, networks with exclusions and devices per zone – in Network design → Categories",
+                )}
+                onClick={() => onGo("design", { tab: "appdoc" })}
+              >
+                {L("Zonen der Kategorien ↗", "Zones of the categories ↗")}
+              </button>
+            )}
             {categories.open && (
               <button className={`toggle no-print ${showEmpty ? "on" : ""}`} onClick={() => setShowEmpty((v) => !v)}>
                 {L("leere Kategorien zeigen", "show empty categories")}
@@ -722,6 +893,17 @@ export default function ApplicationDocView({
             )}
           </div>
         </div>
+        {categories.open && !me.isCustomer && doc.catalog_profile !== undefined && (
+          // 0.130.0 (Anwender: „Die Reihenfolge … wird nicht in der Reihenfolge des Namensprofils angezeigt“)
+          <div className="faint no-print" id="app-catalog-profile" style={{ fontSize: 12, marginTop: 6 }}>
+            {doc.catalog_profile
+              ? L(
+                  `Titel und Reihenfolge der Kategorien aus dem Namensprofil „${doc.catalog_profile.customer} / ${doc.catalog_profile.name}“ dieses Mandanten`,
+                  `Titles and order of the categories from the naming profile “${doc.catalog_profile.customer} / ${doc.catalog_profile.name}” of this tenant`,
+                )
+              : L("Titel und Reihenfolge der Kategorien: Vorgaben (kein Namensprofil)", "Titles and order of the categories: defaults (no naming profile)")}
+          </div>
+        )}
         {(categories.open || printing?.has("hidden")) && (
           <div className="stack" style={{ marginTop: 10 }}>
             {tables.length === 0 ? (
@@ -749,6 +931,7 @@ export default function ApplicationDocView({
       {exportOpen && (
         <ExportDialog customer={me.isCustomer} onClose={() => setExportOpen(false)} onRun={runExport} />
       )}
+      {readOpen && <ReadRulesDialog appId={id} onClose={() => setReadOpen(false)} onDone={() => void refreshDoc(false)} />}
       {systemKey && (
         <SystemDrawer
           x={doc.systems.find((x) => x.key === systemKey)}
@@ -760,6 +943,49 @@ export default function ApplicationDocView({
             setF({ ...NO_FILTER, system: key });
             scrollToRules();
           }}
+          epgKey={(label) => doc.epgs.find((e) => e.label === label)?.key}
+          onEpg={(key) => {
+            setSystemKey(null);
+            setEpgKey(key);
+          }}
+          onObject={(oid) => {
+            setSystemKey(null);
+            setObjectId(oid);
+          }}
+        />
+      )}
+      {epgKey && (
+        <EpgDrawer
+          appId={id}
+          e={doc.epgs.find((e) => e.key === epgKey)}
+          customer={me.isCustomer}
+          onGo={onGo}
+          onClose={() => setEpgKey(null)}
+          onRules={(key) => {
+            setEpgKey(null);
+            setF({ ...NO_FILTER, epg: key });
+            scrollToRules();
+          }}
+        />
+      )}
+      {objectId != null && (
+        <ObjectDrawer
+          id={objectId}
+          onClose={() => setObjectId(null)}
+          onGo={onGo}
+          extra={
+            onGo && (
+              <div className="chips" style={{ marginBottom: 10 }}>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  id="app-object-open"
+                  onClick={() => onGo("objekte", { object_id: String(objectId) })}
+                >
+                  {L("In Objekte & Inventar öffnen", "Open in Objects & inventory")}
+                </button>
+              </div>
+            )
+          }
         />
       )}
 
@@ -777,18 +1003,34 @@ export default function ApplicationDocView({
         />
       )}
 
+      {comparing && (
+        <div style={comparing === "hidden" ? { display: "none" } : undefined}>
+          <RulesetCompare
+            appId={id}
+            onClose={() => setComparing("")}
+            onRule={(rid) => {
+              setComparing("hidden");
+              setRule(rid);
+            }}
+          />
+        </div>
+      )}
+
       {rule != null && (
         <RuleDetailDrawer
           ruleId={rule}
           systemName={sourceName}
-          onClose={() => setRule(null)}
+          onClose={() => {
+            setRule(null);
+            if (comparing === "hidden") setComparing("open");
+          }}
           onGo={onGo}
           onRule={setRule}
           focus={selected ? ruleFocus(selected, doc.hits) : undefined}
           intro={
             selected ? (
               <>
-                {me.isOperator && (
+                {maintain && (
                   <RuleMemberActions
                     appId={id}
                     ruleId={selected.id}
@@ -808,7 +1050,7 @@ export default function ApplicationDocView({
                 onGo={onGo}
               />
               </>
-            ) : rule != null && me.isOperator ? (
+            ) : rule != null && maintain ? (
               <RuleMemberActions appId={id} ruleId={rule} hits={[]} members={doc.rule_members ?? []} onDone={() => setTick((n) => n + 1)} onError={setBusy} />
             ) : null
           }
@@ -828,6 +1070,20 @@ interface SideGroup {
   systems: string[];
   hits: AppDocHit[];
 }
+// Kategorien je Kennung mit der angezeigten Nummer (0.126.0) und dem Titel
+type CatNames = Map<number, { number: number; title: string }>;
+function catLabel(titles: CatNames, index: number): string {
+  const c = titles.get(index);
+  return c ? `${c.number}. ${c.title}` : String(index);
+}
+
+// Kategorien, in denen die Zugriffe nach der Auswahl spezifisch/unspezifisch nicht stehen (0.125.0) - nur, wo kein
+// anderer Treffer derselben Kategorie gezeigt wird
+function hiddenIn(hits: AppDocHit[]): number[] {
+  const shown = new Set(hits.filter((h) => !h.category_hidden).map((h) => h.table));
+  return [...new Set(hits.filter((h) => h.category_hidden && !shown.has(h.table)).map((h) => h.table))];
+}
+
 function sideGroups(hits: AppDocHit[], side: string, names: Map<string, string>): SideGroup[] {
   const out = new Map<string, SideGroup>();
   for (const h of hits.filter((x) => x.side === side)) {
@@ -915,16 +1171,19 @@ function RuleRow({
   r: Rule;
   hits: AppDocHit[];
   names: Map<string, string>;
-  titles: Map<number, string>;
+  titles: CatNames;
   source: string;
   findings: number;
   onOpen: () => void;
   onGo?: Go;
 }) {
   const directions = [...new Set(hits.map((h) => h.direction))];
-  const tables = [...new Set(hits.map((h) => h.table))].filter((t) => t > 0).sort((x, y) => x - y);
+  // 0.130.0: in der Reihenfolge des Namensprofils (angezeigte Nummer), nicht nach der Kennung
+  const tables = [...new Set(hits.map((h) => h.table))].filter((t) => t > 0).sort((x, y) => (titles.get(x)?.number ?? x) - (titles.get(y)?.number ?? y));
   const aci = r.domain === "aci_contract";
   const impossible = hits.filter((h) => h.relevance === "impossible");
+  const notes = [...new Set(hits.map((h) => h.l3out_note ?? "").filter(Boolean))];
+  const helpers = [...new Set(hits.flatMap((h) => (h.helpers ?? []).map((x) => `${x.names.join(", ")} (${x.l3out})`)))];
   return (
     <tr className="clickable" onClick={onOpen}>
       <td className="mono">{r.id}</td>
@@ -963,11 +1222,24 @@ function RuleRow({
             </span>
           </div>
         )}
+        {/* ADR 0034: Contract zur externen EPG ohne Firewall dahinter bzw. Hilfs-Contracts der Firewall-Regel */}
+        {notes.length > 0 && (
+          <div>
+            <span className="chip warn" title={notes.join("\n")}>
+              {L("ohne Firewall", "no firewall")}
+            </span>
+          </div>
+        )}
+        {helpers.length > 0 && (
+          <div className="faint" style={{ fontSize: 12 }}>
+            {L("Hilfs-Contract", "Helper contract")}: {helpers.join(", ")}
+          </div>
+        )}
       </td>
       <td className="nowrap">
         {tables.map((t) => (
-          <span key={t} className="chip na" title={`${t}. ${titles.get(t)}`}>
-            {t}
+          <span key={t} className="chip na" title={catLabel(titles, t)}>
+            {titles.get(t)?.number ?? t}
           </span>
         ))}
       </td>
@@ -979,6 +1251,9 @@ function RuleRow({
         ) : (
           <span className="chip ok">✓</span>
         )}
+        <span className="no-print">
+          <RuleWegeLink ruleId={r.id} compact />
+        </span>
       </td>
     </tr>
   );
@@ -1023,7 +1298,7 @@ function WhyBlock({
   r: Rule;
   hits: AppDocHit[];
   byKey: Map<string, AppDocSystem2 | AppDocEpg>;
-  titles: Map<number, string>;
+  titles: CatNames;
   source: string;
   findings: ApplicationDoc["findings"];
   onGo?: Go;
@@ -1058,7 +1333,7 @@ function WhyBlock({
         {(["dst", "src"] as const).flatMap((side) => {
           const role = side === "dst" ? (aci ? "Provider" : L("Ziel", "Destination")) : aci ? "Consumer" : L("Quelle", "Source");
           return sideGroups(hits, side, new Map()).map((g) => {
-            const tables = [...new Set(g.hits.map((h) => h.table))];
+            const tables = [...new Set(g.hits.map((h) => h.table))].sort((x, y) => (titles.get(x)?.number ?? x) - (titles.get(y)?.number ?? y));
             const counterparts = [...new Set(g.hits.flatMap((h) => h.counterpart.split(", ")).filter(Boolean))];
             return (
               <li key={`${side}-${g.object}-${g.value}`}>
@@ -1075,8 +1350,14 @@ function WhyBlock({
                   </span>
                 )}
                 <div className="faint">
-                  {L("Kategorie", "Category")} {tables.map((t) => `${t}. ${titles.get(t)}`).join(", ")}
+                  {L("Kategorie", "Category")} {tables.map((t) => catLabel(titles, t)).join(", ")}
                 </div>
+                {hiddenIn(g.hits).length > 0 && (
+                  <div className="faint category-hidden">
+                    {L("Nicht gezeigt in Kategorie", "Not shown in category")} {hiddenIn(g.hits).map((t) => catLabel(titles, t)).join(", ")}
+                    {L(" – die Kategorie zeigt diese Zugriffe nicht (spezifisch/unspezifisch im Namensprofil)", " – the category does not show these accesses (specific/unspecific in the naming profile)")}
+                  </div>
+                )}
                 {[...new Set(g.hits.filter((h) => h.relevance === "impossible").map((h) => h.relevance_text))].map((t) => (
                   <div key={t}>
                     <span className="chip crit">{L("routingtechnisch nicht möglich", "not possible by routing")}</span>{" "}
@@ -1218,12 +1499,18 @@ function SystemDrawer({
   onGo,
   onClose,
   onRules,
+  epgKey,
+  onEpg,
+  onObject,
 }: {
   x: AppDocSystem2 | undefined;
   sourceName: (id: number) => string;
   onGo?: Go;
   onClose: () => void;
   onRules: (key: string) => void;
+  epgKey: (label: string) => string | undefined; // EPG der Applikation (Detail, 0.95.0)
+  onEpg: (key: string) => void;
+  onObject: (id: number) => void; // Firewall-Objekt im Detail (0.95.0)
 }) {
   if (!x) return null;
   const [tone, state] = POWER[x.power_state ?? ""] ?? ["na", x.power_state ?? ""];
@@ -1268,7 +1555,27 @@ function SystemDrawer({
           {row("IPs", x.ips.length ? <span className="mono">{x.ips.join(", ")}</span> : <Dash />)}
           {row("DNS", x.dns.length ? <span className="mono">{x.dns.join(", ")}</span> : <Dash />)}
           {x.servers.length > 0 && row("Server (IPAM)", <span className="mono">{x.servers.join(", ")}</span>)}
-          {row("EPG", x.epgs.length ? x.epgs.map((e) => <div key={e} className="mono">{e}</div>) : <Dash />)}
+          {row(
+            "EPG",
+            x.epgs.length ? (
+              x.epgs.map((e) => {
+                const key = epgKey(e);
+                return (
+                  <div key={e} className="mono">
+                    {key ? (
+                      <button className="linkbtn mono app-system-epg" title={L("Detail der EPG", "Detail of the EPG")} onClick={() => onEpg(key)}>
+                        {e}
+                      </button>
+                    ) : (
+                      e
+                    )}
+                  </div>
+                );
+              })
+            ) : (
+              <Dash />
+            ),
+          )}
           {row(
             L("Portgruppe", "Port group"),
             x.nics?.some((n) => n.portgroup) ? (
@@ -1327,10 +1634,10 @@ function SystemDrawer({
                   )}
                   <div
                     className="chips"
-                    title={L("auf diesen Firewalls erfasst – Klick öffnet das Objekt", "defined on these firewalls – click opens the object")}
+                    title={L("auf diesen Firewalls erfasst – Klick zeigt das Objekt", "defined on these firewalls – click shows the object")}
                   >
                     {o.where.map((w) => (
-                      <button key={w.id} className="chip linkchip" onClick={() => onGo?.("objekte", { object_id: String(w.id) })}>
+                      <button key={w.id} className="chip linkchip" onClick={() => onObject(w.id)}>
                         {sourceName(w.source_system_id)}
                         {w.vdom && w.vdom !== "root" ? ` · VDOM ${w.vdom}` : ""}
                       </button>
@@ -1372,8 +1679,8 @@ function EpgsCard({ items, fold, onPick }: { items: AppDocEpg[]; fold: Fold; onP
         </span>
         <span className="faint" style={{ fontSize: 12 }}>
           {L(
-            "ganzer Pfad Tenant/AP/EPG – Klick zeigt die Regeln der EPG und ihrer Systeme",
-            "full path tenant/AP/EPG – click shows the rules of the EPG and its systems",
+            "ganzer Pfad Tenant/AP/EPG – Klick zeigt das Detail der EPG",
+            "full path tenant/AP/EPG – click shows the detail of the EPG",
           )}
         </span>
       </div>
@@ -1403,8 +1710,8 @@ function EpgsCard({ items, fold, onPick }: { items: AppDocEpg[]; fold: Fold; onP
               {items.map((e) => (
                 <tr
                   key={e.key}
-                  className="clickable"
-                  title={L("Regeln dieser EPG zeigen", "Show rules of this EPG")}
+                  className="clickable app-epg"
+                  title={L("Detail der EPG", "Detail of the EPG")}
                   onClick={() => onPick(e.key)}
                 >
                   <td>
@@ -1426,7 +1733,19 @@ function EpgsCard({ items, fold, onPick }: { items: AppDocEpg[]; fold: Fold; onP
                   <td className="mono">{e.subnets.length ? e.subnets.map((x) => <div key={x}>{x}</div>) : <Dash />}</td>
                   <td className="num">{e.vm_count}</td>
                   <td className="num">{e.endpoint_count}</td>
-                  <td className="faint">{e.member}</td>
+                  <td
+                    className={`faint${e.of_vm ? " epg-of-vm" : ""}`}
+                    title={
+                      e.of_vm
+                        ? L(
+                            "Nicht Mitglied: die EPG, in der eine VM der Applikation steht – ohne ihre übrigen VMs und Regeln",
+                            "Not a member: the EPG an application VM sits in – without its other VMs and rules",
+                          )
+                        : undefined
+                    }
+                  >
+                    {e.member}
+                  </td>
                   <td className="nowrap">
                     <span className="chip ok" title={L("spezifische Regeln", "specific rules")}>
                       {e.rules.specific}
@@ -1446,6 +1765,90 @@ function EpgsCard({ items, fold, onPick }: { items: AppDocEpg[]; fold: Fold; onP
       </div>
       )}
     </div>
+  );
+}
+
+// Detail einer EPG (0.95.0, Anwender: „Detailseite vom Element gemäss Objekte und Inventar statt zu
+// den Regeln springen“): die Lage wie im Regel-Detail (`EpgCard`: Tenant, AP, BD, VRF, Subnetze mit
+// IPAM, Endpunkte, VMs, Leaf-Ports) und die Angaben der Doku; die Regeln zeigt ein Knopf
+function EpgDrawer({
+  appId,
+  e,
+  customer,
+  onGo,
+  onClose,
+  onRules,
+}: {
+  appId: number;
+  e: AppDocEpg | undefined;
+  customer: boolean;
+  onGo?: Go;
+  onClose: () => void;
+  onRules: (key: string) => void;
+}) {
+  const [loc, setLoc] = useState<EpgLocation | null>(null);
+  const [err, setErr] = useState<unknown>(null);
+  const epgId = e?.id;
+  useEffect(() => {
+    if (epgId == null) return;
+    setLoc(null);
+    setErr(null);
+    fetchAppEpg(appId, epgId).then(setLoc).catch(setErr);
+  }, [appId, epgId]);
+  if (!e) return null;
+  // Objekte & Inventar: die Portgruppen der EPG (mit ihren VMs), ohne VMs ihre Subnetze im
+  // Netzinventar (Kunden-Benutzer haben kein Netzinventar)
+  const inventory = e.vm_count > 0 || customer ? { tab: "portgroups", q: e.label } : { tab: "subnets", q: e.name };
+  return (
+    <Drawer title={e.label} sub={L("EPG der Applikation", "EPG of the application")} onClose={onClose}>
+      <div id="app-epg-detail">
+        <div className="chips" style={{ marginBottom: 10 }}>
+          <span className="chip local">EPG</span>
+          {e.pref_group && (
+            <span className="chip info" title={L("Mitglied der Preferred Group seiner VRF", "Member of the Preferred Group of its VRF")}>
+              Preferred Group
+            </span>
+          )}
+          <span className="chip ok" title={L("spezifische Regeln", "specific rules")}>
+            {L(`${e.rules.specific} spezifisch`, `${e.rules.specific} specific`)}
+          </span>
+          <span
+            className={`chip ${e.rules.unspecific ? "warn" : "na"}`}
+            title={L("unspezifische Regeln (Subnetz, any, vzAny)", "unspecific rules (subnet, any, vzAny)")}
+          >
+            {L(`${e.rules.unspecific} unspezifisch`, `${e.rules.unspecific} unspecific`)}
+          </span>
+        </div>
+        <dl className="kv">
+          <dt>{L("gehört dazu über", "belongs via")}</dt>
+          <dd>{e.member}</dd>
+          <dt>VMs</dt>
+          <dd>{e.vm_count}</dd>
+        </dl>
+        <div className="chips" style={{ margin: "10px 0" }}>
+          <button className="btn btn-sm" id="app-epg-rules" onClick={() => onRules(e.key)}>
+            {L("Regeln dieser EPG zeigen", "Show rules of this EPG")}
+          </button>
+          {onGo && (
+            <button
+              className="btn btn-ghost btn-sm"
+              id="app-epg-objects"
+              title={
+                inventory.tab === "portgroups"
+                  ? L("Portgruppen der EPG mit ihren VMs", "Port groups of the EPG with their VMs")
+                  : L("Subnetze der EPG im Netzinventar", "Subnets of the EPG in the network inventory")
+              }
+              onClick={() => onGo("objekte", inventory)}
+            >
+              {L("In Objekte & Inventar öffnen", "Open in Objects & inventory")}
+            </button>
+          )}
+        </div>
+        <ErrorBox error={err} prefix={L("EPG laden", "Load EPG")} />
+        {!loc && !err && <Loading />}
+        {loc && <EpgCard epg={loc} />}
+      </div>
+    </Drawer>
   );
 }
 
@@ -1707,104 +2110,148 @@ function RuleMembers({
   );
 }
 
-const md = (v: string) => v.replace(/\|/g, "\\|").replace(/\n/g, " ");
-
-// Doku als Markdown (0.73.0: nur die gewählten Abschnitte, ohne Abhängigkeiten)
-function docMarkdown(doc: ApplicationDoc, sourceName: (id: number) => string, conns: AppConnections | null, want: Set<string>): string {
-  const a = doc.application;
-  const s = doc.summary;
-  const lines = [L(`# Applikation ${a.name}`, `# Application ${a.name}`), ""];
-  const meta = [
-    a.external_name && L(`Extern: ${a.external_name}`, `External: ${a.external_name}`),
-    a.internal_name && L(`Intern: ${a.internal_name}`, `Internal: ${a.internal_name}`),
-    a.purpose && L(`Zweck: ${PURPOSE[a.purpose][1]}`, `Purpose: ${PURPOSE[a.purpose][1]}`),
-    a.code && L(`Kürzel: ${a.code}`, `Code: ${a.code}`),
-    doc.tenant_code && L(`GG: ${doc.tenant_code}`, `GC: ${doc.tenant_code}`),
-    a.criticality &&
-      L(`Kritikalität: ${CRIT_LABEL[a.criticality] ?? a.criticality}`, `Criticality: ${CRIT_LABEL[a.criticality] ?? a.criticality}`),
-    a.owner && L(`Verantwortlich: ${a.owner}`, `Owner: ${a.owner}`),
-    a.site && L(`Standort: ${siteLabel(a.site)}`, `Site: ${siteLabel(a.site)}`),
-  ].filter(Boolean);
-  if (meta.length) lines.push(meta.join(" · "), "");
-  if (a.description) lines.push(a.description, "");
-  if (want.has("overview")) {
-    lines.push(
-      L(
-        `**Übersicht:** ${s.vms} VMs${s.servers ? ` + ${s.servers} Server` : ""} · ${s.epgs} EPGs · ${s.rules} Regeln (${s.specific} spezifisch, ${s.unspecific} unspezifisch) · ${s.findings} Findings`,
-        `**Overview:** ${s.vms} VMs${s.servers ? ` + ${s.servers} servers` : ""} · ${s.epgs} EPGs · ${s.rules} rules (${s.specific} specific, ${s.unspecific} unspecific) · ${s.findings} findings`,
-      ),
-      "",
-    );
-  }
-  if (want.has("systems")) {
-    lines.push(
-      L("## Systeme", "## Systems"),
-      "",
-      L("| System | IPs | EPG | Portgruppe | Regeln spez./unspez. |", "| System | IPs | EPG | Port group | Rules spec./unspec. |"),
-      "| --- | --- | --- | --- | --- |",
-    );
-    for (const x of doc.systems) {
-      lines.push(
-        `| ${x.kind === "vm" ? "VM" : "Server"} ${md(x.name)} | ${md(x.ips.join(", "))} | ${md(x.epgs.join(", "))} | ${md(x.portgroups.join(", "))} | ${x.rules.specific} / ${x.rules.unspecific} |`,
-      );
-    }
-    lines.push("");
-  }
-  if (want.has("epgs") && doc.epgs.length) {
-    lines.push(
-      L("## EPGs im ACI", "## EPGs in the ACI"),
-      "",
-      L("| EPG | BD | VRF | Subnetze | VMs |", "| EPG | BD | VRF | Subnets | VMs |"),
-      "| --- | --- | --- | --- | --- |",
-    );
-    for (const e of doc.epgs) {
-      lines.push(`| ${md(e.label)} | ${md(e.bd ?? "")} | ${md(e.vrf ?? "")} | ${md(e.subnets.join(", "))} | ${e.vm_count} |`);
-    }
-    lines.push("");
-  }
-  const names = new Map<string, string>([...doc.systems.map((x) => [x.key, x.name] as [string, string]), ...doc.epgs.map((e) => [e.key, e.label] as [string, string])]);
-  if (want.has("rules")) {
-    lines.push(
-      L("## Regeln & Contracts", "## Rules & contracts"),
-      "",
-      L(
-        "| Regel | Aktion | Herkunft | Richtung | System | Bezug |",
-        "| Rule | Action | Origin | Direction | System | Reference |",
-      ),
-      "| --- | --- | --- | --- | --- | --- |",
-    );
-    for (const r of doc.rules) {
-      // routingtechnisch unmögliche Treffer gehören nicht in die Doku (0.24.0)
-      const hits = doc.hits.filter((h) => h.rule_id === r.id && h.relevance !== "impossible");
-      if (!hits.length) continue;
-      // unspezifisch (any, Netz): nur die Regel – statt aller Systeme ihre Anzahl (0.37.0)
-      const all = [...new Set(hits.map((h) => names.get(h.system) ?? h.system))];
-      const scope = best(hits);
-      const sys =
-        scope === "assigned"
-          ? L("direkt zugeordnet", "assigned directly")
-          : scope === "specific"
-            ? all.join(", ")
-            : L(`${all.length} System${all.length === 1 ? "" : "e"}`, `${all.length} system${all.length === 1 ? "" : "s"}`);
-      const dir = [...new Set(hits.map((h) => DIRECTION[h.direction]?.[0].replace(/^\S+ /, "") ?? h.direction))].join(", ");
-      const via = [...new Set(hits.map((h) => h.via))].join(", ");
-      lines.push(
-        `| ${md(r.aci?.contract ?? r.name)} | ${r.action} | ${r.domain === "aci_contract" ? "ACI" : "Firewall"} ${md(sourceName(r.source_system_id))} | ${dir} | ${md(sys)} | ${SCOPE[best(hits)][1]}: ${md(via)} |`,
-      );
-    }
-    lines.push("");
-  }
-  if (conns && want.has("connections")) lines.push(...connectionsMarkdown(conns));
-  if (want.has("findings")) {
-    lines.push("## Findings", "");
-    if (!doc.findings.length) lines.push(L("Keine offenen Befunde.", "No open findings."), "");
-    else {
-      lines.push(L("| Befund | Meldung | Hinweis |", "| Finding | Message | Note |"), "| --- | --- | --- |");
-      for (const x of doc.findings) lines.push(`| ${md(findingLabel(x.type))} | ${md(x.message)} | ${md(x.hint ?? "")} |`);
-      lines.push("");
-    }
-  }
-  return lines.concat(tablesMarkdown(doc.tables, want.has("categories"), want.has("hidden"))).join("\n");
+// Abhängigkeiten zu anderen Applikationen (0.60.0, seit 0.88.0 wieder in der Doku): abgeleitet
+// aus Regeln, die ein System gezielt mit einem System einer anderen Applikation verbinden. Erst
+// beim Aufklappen geladen (teuer); Infrastruktur (Monitoring, Backup, DNS …) eingeklappt getrennt.
+function DependenciesCard({
+  appId,
+  reload,
+  fold,
+  onGo,
+  onRule,
+}: {
+  appId: number;
+  reload: number;
+  fold: Fold;
+  onGo?: Go;
+  onRule: (id: number) => void;
+}) {
+  const [data, setData] = useState<AppDependencies | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
+  const loadKey = `${appId}:${reload}`;
+  useEffect(() => {
+    if (!fold.open || loadedFor === loadKey) return;
+    let current = true;
+    setLoadedFor(loadKey);
+    setData(null);
+    setError(null);
+    let done = false;
+    fetchAppDependencies(appId)
+      .then((d) => {
+        done = true;
+        if (!current) return;
+        setData(d);
+      })
+      .catch((e) => {
+        done = true;
+        if (current) setError(e);
+      });
+    return () => {
+      current = false;
+      if (!done) setLoadedFor(null); // abgebrochen: beim nächsten Öffnen neu laden
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appId, reload, fold.open]);
+  const part = (items: AppDependency[], infra: boolean) => items.filter((d) => !!d.infrastructure === infra);
+  const column = (title: string, hint: string, items: AppDependency[], id: string) => (
+    <div style={{ flex: "1 1 320px" }} id={id}>
+      <h3 style={{ margin: "0 0 6px" }} title={hint}>
+        {title} <span className="faint mono">{items.length}</span>
+      </h3>
+      {items.length === 0 ? (
+        <span className="faint">{L("keine", "none")}</span>
+      ) : (
+        <table className="compact">
+          <tbody>
+            {items.map((d) => (
+              <tr key={d.application_id}>
+                <td>
+                  <button className="linkbtn objlink" onClick={() => onGo?.("apps", { app: String(d.application_id) })}>
+                    {d.name}
+                  </button>
+                </td>
+                <td>
+                  {d.rules.map((r) => (
+                    <div key={`${r.rule_id}:${r.reverse ? 1 : 0}`}>
+                      <button className="linkbtn objlink mono" onClick={() => onRule(r.rule_id)} title={L(`über ${r.via}`, `via ${r.via}`)}>
+                        {r.name}
+                      </button>{" "}
+                      <span className="faint mono">{r.services.join(", ")}</span>
+                    </div>
+                  ))}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+  const pair = (infra: boolean, prefix: string) => (
+    <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
+      {column(L("nutzt", "uses"), L("diese Applikation ist Quelle bzw. Consumer", "this application is source or consumer"), part(data?.uses ?? [], infra), `${prefix}-uses`)}
+      {column(
+        L("wird genutzt von", "used by"),
+        L("diese Applikation ist Ziel bzw. Provider", "this application is destination or provider"),
+        part(data?.used_by ?? [], infra),
+        `${prefix}-used-by`,
+      )}
+    </div>
+  );
+  const infraCount = data ? part(data.uses, true).length + part(data.used_by, true).length : 0;
+  const count = data ? data.uses.length + data.used_by.length - infraCount : null;
+  return (
+    <div className="card" id="app-dependencies" style={{ marginTop: 14 }}>
+      <div className="card-head">
+        <FoldTitle fold={fold}>{L("Abhängigkeiten", "Dependencies")}</FoldTitle>
+        {count != null && (
+          <span className="mono faint" style={{ fontSize: 12 }}>
+            {count}
+            {infraCount ? L(` + ${infraCount} Infrastruktur`, ` + ${infraCount} infrastructure`) : ""}
+          </span>
+        )}
+        <span className="faint" style={{ fontSize: 12 }}>
+          {L(
+            "aus Regeln, die ein System dieser Applikation gezielt mit einem System einer anderen verbinden (EPG, Host, Netz in deren EPG-Subnetz – nicht any)",
+            "from rules that specifically connect a system of this application with a system of another one (EPG, host, network in its EPG subnet – not any)",
+          )}
+        </span>
+      </div>
+      {fold.open && (
+        <div className="card-body pad">
+          {error ? (
+            <ErrorBox error={error} prefix={L("Abhängigkeiten laden", "Load dependencies")} />
+          ) : !data ? (
+            <Loading>{L("Ermittle Abhängigkeiten…", "Determining dependencies…")}</Loading>
+          ) : (
+            <>
+              {data.infrastructure && (
+                <div className="hint faint" style={{ marginBottom: 8 }}>
+                  {L(
+                    "Diese Applikation ist als Infrastruktur gekennzeichnet – „wird genutzt von“ zeigt, wer sie braucht.",
+                    "This application is marked as infrastructure – “used by” shows who needs it.",
+                  )}
+                </div>
+              )}
+              {pair(false, "app-deps")}
+              {infraCount > 0 && (
+                <details id="app-deps-infra" style={{ marginTop: 14 }}>
+                  <summary className="faint">
+                    {L(
+                      `Infrastruktur (${infraCount}) – Monitoring, Backup, DNS u. a., keine fachlichen Abhängigkeiten`,
+                      `Infrastructure (${infraCount}) – monitoring, backup, DNS etc., no business dependencies`,
+                    )}
+                  </summary>
+                  <div style={{ marginTop: 8 }}>{pair(true, "app-deps-infra")}</div>
+                </details>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // Export und Druck mit wählbaren Abschnitten (0.73.0); die Auswahl bleibt im Browser
@@ -1987,7 +2434,7 @@ function HideDialog({
         </div>
         <label className="check">
           <input type="radio" name="hide-scope" checked={!all} onChange={() => setAll(false)} />{" "}
-          {L("nur in Kategorie", "only in category")} {table.index}. {table.title}
+          {L("nur in Kategorie", "only in category")} {table.number ?? table.index}. {table.title}
         </label>
         <label className="check" style={{ display: "block", marginTop: 4 }}>
           <input type="radio" name="hide-scope" id="hide-all" checked={all} onChange={() => setAll(true)} />{" "}

@@ -2,7 +2,8 @@
 
 Mitglieder sind Text-Verweise (siehe `app.models.application`). Aufgeloest wird gegen den
 aktuellen Stand: ein Application Profile (`<ACI-Tenant>/<AP>`) umfasst alle seine EPGs, eine
-EPG steht per DN, ein Server per Name des Host-Objekts. Was nicht mehr gelesen wird, bleibt
+EPG steht per DN, ein Server per Name des Host-Objekts, eine VM (seit 0.124.0) per Name aus dem
+vCenter (alle gelesenen VMs dieses Namens, ohne Vorlagen). Was nicht mehr gelesen wird, bleibt
 als Mitglied stehen und wird als „nicht gefunden" gezeigt.
 
 Vorschlaege (ADR 0004 E4, ~90 % automatisch): die 3-stellige Projektnummer aus `AP_<nr>`
@@ -14,13 +15,14 @@ schon eine Applikation mit diesem Kuerzel, ergaenzt der Vorschlag deren Mitglied
 
 import ipaddress
 import re
+import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import cached_property
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app import naming
 from app.i18n import L, german
@@ -51,11 +53,16 @@ from app.models import (
 )
 from app.store import (
     appdoc,
+    appdoc_filter,
+    appdoc_ruleset,
+    appdoc_zones,
     customer_scope,
     finding_text,
     parallel,
+    peer_names,
     references,
     rule_index,
+    rule_pairs,
     sites,
     virtual,
 )
@@ -105,11 +112,13 @@ class Resolved:
     epgs: list[Epg] = field(default_factory=list)
     hosts: list[NetworkObject] = field(default_factory=list)
     rules: list[Rule] = field(default_factory=list)
+    vms: list[Vm] = field(default_factory=list)  # Mitglied VM (0.124.0)
 
 
 # Regeln direkt zuordnen bzw. ausschliessen (0.60.0): Verweis `<Quellsystem>|<VDOM>|<ID>` -
 # Regeln werden je Lauf ersetzt, Quellsystem, VDOM und Policy-ID bzw. DN des Contracts bleiben
 RULE_KINDS = ("rule", "norule")
+_CHUNK = 500  # Werte je IN-Abfrage beim Vorladen
 
 
 def rule_ref(rule: Rule) -> str:
@@ -143,6 +152,77 @@ class Resolver:
             if e.ap:
                 self.by_ap[ap_ref(e.aci_tenant, e.ap)].append(e)
         self._hosts: dict[str, NetworkObject | None] = {}
+        self._rules: dict[str, Rule | None] = {}
+        self._vms: dict[str, list[Vm]] = {}
+
+    def prefetch(self, members) -> None:
+        """Server, Regeln und VMs vieler Mitglieder (`(kind, ref)`) gebuendelt laden statt je
+        Mitglied eine Abfrage (0.124.0, Anwender: „Das Laden der Applikationen extrem
+        langsam“ - die Liste fragte je Mitglied einzeln, Regeln sogar doppelt)."""
+        hosts, rules, vms = set(), set(), set()
+        for kind, ref in members:
+            if kind == "host" and ref not in self._hosts:
+                hosts.add(ref)
+            elif kind in RULE_KINDS and ref not in self._rules:
+                rules.add(ref)
+            elif kind == "vm" and ref not in self._vms:
+                vms.add(ref)
+        names = sorted(hosts)
+        for i in range(0, len(names), _CHUNK):
+            for obj in self.session.scalars(
+                select(NetworkObject)
+                .where(
+                    NetworkObject.tenant_id == self.tenant_id,
+                    NetworkObject.object_class == ObjectClass.HOST,
+                    NetworkObject.name.in_(names[i : i + _CHUNK]),
+                )
+                .order_by(NetworkObject.id)
+            ):
+                self._hosts.setdefault(obj.name, obj)
+        self._hosts.update((n, None) for n in hosts if n not in self._hosts)
+        self._prefetch_rules(rules)
+        self._prefetch_vms(vms)
+
+    def _prefetch_rules(self, refs: set[str]) -> None:
+        wanted: dict[int, set[str]] = defaultdict(set)  # Quellsystem -> Policy-IDs
+        for ref in refs:
+            sid, _, rest = ref.partition("|")
+            ext = rest.partition("|")[2]
+            if sid.isdigit() and ext:
+                wanted[int(sid)].add(ext)
+        found: dict[str, Rule] = {}
+        for sid, exts in wanted.items():
+            ids = sorted(exts)
+            for i in range(0, len(ids), _CHUNK):
+                for rule in self.session.scalars(
+                    select(Rule).where(
+                        Rule.tenant_id == self.tenant_id,
+                        Rule.source_system_id == sid,
+                        Rule.external_id.in_(ids[i : i + _CHUNK]),
+                    )
+                ):
+                    key = rule_ref(rule)
+                    if key not in found or rule.id > found[key].id:  # die neuste
+                        found[key] = rule
+        for ref in refs:
+            self._rules[ref] = found.get(ref)
+
+    def _prefetch_vms(self, names: set[str]) -> None:
+        ordered = sorted(names)
+        found: dict[str, list[Vm]] = defaultdict(list)
+        for i in range(0, len(ordered), _CHUNK):
+            for vm in self.session.scalars(
+                select(Vm)
+                .where(
+                    Vm.tenant_id == self.tenant_id,
+                    Vm.template.is_(False),
+                    Vm.name.in_(ordered[i : i + _CHUNK]),
+                )
+                .order_by(Vm.id)
+            ):
+                found[vm.name].append(vm)
+        for name in names:
+            self._vms[name] = found.get(name, [])
 
     def host(self, name: str) -> NetworkObject | None:
         if name not in self._hosts:
@@ -154,6 +234,12 @@ class Resolver:
                 )
             ).first()
         return self._hosts[name]
+
+    def vms(self, name: str) -> list[Vm]:
+        """Gelesene VMs dieses Namens (alle vCenter des Mandanten, ohne Vorlagen)."""
+        if name not in self._vms:
+            self._prefetch_vms({name})
+        return self._vms[name]
 
     def resolve(self, kind: str, ref: str) -> Resolved:
         if kind == "ap":
@@ -169,6 +255,9 @@ class Resolver:
         if kind == "host":
             obj = self.host(ref)
             return Resolved(label=ref, exists=obj is not None, hosts=[obj] if obj else [])
+        if kind == "vm":
+            vms = self.vms(ref)
+            return Resolved(label=ref, exists=bool(vms), vms=list(vms))
         if kind in RULE_KINDS:
             rule = self.rule(ref)
             if rule is None:
@@ -185,6 +274,12 @@ class Resolver:
 
     def rule(self, ref: str) -> Rule | None:
         """Aktuelle Regel zu `<Quellsystem>|<VDOM>|<ID>` (die neuste, falls mehrere)."""
+        if ref in self._rules:
+            return self._rules[ref]
+        self._rules[ref] = self._rule(ref)
+        return self._rules[ref]
+
+    def _rule(self, ref: str) -> Rule | None:
         sid, _, rest = ref.partition("|")
         vdom, _, ext = rest.partition("|")
         if not sid.isdigit() or not ext:
@@ -217,13 +312,18 @@ def _assignments(session: Session, tenant_id: int) -> dict[tuple[str, str], list
 
 
 def candidates(
-    session: Session, tenant_id: int, resolver: Resolver | None = None
+    session: Session,
+    tenant_id: int,
+    resolver: Resolver | None = None,
+    kinds: tuple[str, ...] | None = None,
 ) -> list[Candidate]:
-    """Alles, was Mitglied werden kann: APs, EPGs und Server des Mandanten."""
+    """Alles, was Mitglied werden kann: APs, EPGs, Server und VMs (0.124.0) des Mandanten;
+    `kinds` = nur diese Arten (schneller, z. B. die Auswahl einer Art im Dialog)."""
     res = resolver or Resolver(session, tenant_id)
     assigned = _assignments(session, tenant_id)
     out: list[Candidate] = []
-    for ref, epgs in sorted(res.by_ap.items()):
+    want = set(kinds) if kinds else {"ap", "epg", "host", "vm"}
+    for ref, epgs in sorted(res.by_ap.items()) if "ap" in want else ():
         ap = epgs[0].ap
         out.append(
             Candidate(
@@ -234,7 +334,7 @@ def candidates(
                 project=project_number("ap", ap),
             )
         )
-    for e in res.epgs:
+    for e in res.epgs if "epg" in want else ():
         out.append(
             Candidate(
                 kind="epg",
@@ -251,7 +351,7 @@ def candidates(
             NetworkObject.object_class == ObjectClass.HOST,
         )
         .order_by(NetworkObject.name)
-    )
+    ) if "host" in want else ()  # fmt: skip
     for name, value in hosts:
         out.append(
             Candidate(
@@ -262,8 +362,39 @@ def candidates(
                 project=project_number("host", name),
             )
         )
+    if "vm" in want:
+        out += _vm_candidates(session, tenant_id)
     for c in out:
         c.applications = sorted(assigned.get((c.kind, c.ref), []))
+    return out
+
+
+def _vm_candidates(session: Session, tenant_id: int) -> list[Candidate]:
+    """VMs aus dem vCenter je Name (gleicher Name in mehreren vCentern = ein Kandidat) mit
+    IPs und Cluster als Hinweis; ohne Vorlagen."""
+    ips: dict[int, list[str]] = defaultdict(list)
+    for vid, ip in session.execute(
+        select(VmIp.vm_id, VmIp.ip).where(VmIp.tenant_id == tenant_id).order_by(VmIp.id)
+    ):
+        ips[vid].append(ip)
+    by_name: dict[str, list[tuple[int, str | None]]] = defaultdict(list)
+    for vid, name, cluster in session.execute(
+        select(Vm.id, Vm.name, Vm.cluster)
+        .where(Vm.tenant_id == tenant_id, Vm.template.is_(False))
+        .order_by(Vm.name, Vm.id)
+    ):
+        by_name[name].append((vid, cluster))
+    out = []
+    for name, vms in by_name.items():
+        addrs = list(dict.fromkeys(ip for vid, _c in vms for ip in ips.get(vid, [])))
+        clusters = sorted({c for _v, c in vms if c})
+        detail = ", ".join(addrs[:3]) + (" …" if len(addrs) > 3 else "")
+        if clusters:
+            detail += (" · " if detail else "") + ", ".join(clusters)
+        if len(vms) > 1:
+            detail += (" · " if detail else "") + f"{len(vms)} VMs"
+        out.append(Candidate(kind="vm", ref=name, label=name, detail=detail or None,
+                             project=project_number("host", name)))  # fmt: skip
     return out
 
 
@@ -289,7 +420,7 @@ def suggestions(session: Session, tenant_id: int) -> list[dict]:
     Server ohne Tenant gehoeren zur Gruppe ihrer Nummer, wenn es genau eine gibt, sonst eine
     eigene Gruppe. Schluessel `key` = `<Tenant>|<Nummer>` bzw. die Nummer."""
     groups: dict[tuple[str | None, str], list[Candidate]] = defaultdict(list)
-    for c in candidates(session, tenant_id):
+    for c in candidates(session, tenant_id, kinds=("ap", "host")):
         if c.kind in ("ap", "host") and c.project and not c.applications:
             groups[(_tenant_of(c), c.project)].append(c)
     if not groups:
@@ -340,7 +471,9 @@ def get(session: Session, application_id: int) -> Application | None:
 
 
 def list_applications(session: Session, tenant_id: int | None) -> list[Application]:
-    stmt = select(Application).order_by(Application.name)
+    """Applikationen samt Mitgliedern (eine Abfrage statt je Applikation, 0.124.0)."""
+    stmt = select(Application).options(selectinload(Application.members))
+    stmt = stmt.order_by(Application.name)
     if tenant_id is not None:
         stmt = stmt.where(Application.tenant_id == tenant_id)
     return list(session.scalars(stmt))
@@ -432,16 +565,38 @@ def accept_suggestion(
 def resolved_members(session: Session, app: Application, resolver: Resolver | None = None):
     res = resolver or Resolver(session, app.tenant_id)
     out = []
+    res.prefetch((m.kind, m.ref) for m in app.members)
     for m in app.members:
         r = res.resolve(m.kind, m.ref)
         systems = [h.name for h in r.hosts] + [inventory_label(e) for e in r.epgs]
+        systems += [v.name for v in r.vms]  # je VM (gleicher Name in mehreren vCentern)
         out.append((m, r, systems))
     return out
 
 
 def system_count(session: Session, app: Application, resolver: Resolver | None = None) -> int:
+    res = resolver or Resolver(session, app.tenant_id)
+    hosts, epgs = _systems(session, app, res)
+    return len(hosts) + len(epgs) + len(direct_vms(app, res))
+
+
+def counts(session: Session, app: Application, resolver: Resolver,
+           counter: "VmCounter") -> tuple[int, int]:  # fmt: skip
+    """(Systeme, VMs) einer Applikation fuer die Liste - Mitglieder einmal aufgeloest."""
     hosts, epgs = _systems(session, app, resolver)
-    return len(hosts) + len(epgs)
+    direct = direct_vms(app, resolver)
+    return len(hosts) + len(epgs) + len(direct), counter.count(app, resolver, (hosts, epgs))
+
+
+def direct_vms(app: Application, resolver: Resolver) -> dict[int, tuple[Vm, str]]:
+    """VMs, die als Mitglied „VM“ dazugehoeren (0.124.0), mit dem Mitglied als Grund."""
+    out: dict[int, tuple[Vm, str]] = {}
+    for m in app.members:
+        if m.kind != "vm":
+            continue
+        for vm in resolver.resolve(m.kind, m.ref).vms:
+            out.setdefault(vm.id, (vm, f"{kind_label(m.kind)} {m.ref}"))
+    return out
 
 
 class VmCounter:
@@ -474,10 +629,11 @@ class VmCounter:
             by_ip[ip].add(vid)
         return by_epg, by_ip
 
-    def count(self, app: Application, resolver: Resolver | None = None) -> int:
-        hosts, epgs = _systems(self.session, app, resolver)
+    def count(self, app: Application, resolver: Resolver | None = None, systems=None) -> int:
+        res = resolver or Resolver(self.session, app.tenant_id)
+        hosts, epgs = systems or _systems(self.session, app, res)
         by_epg, by_ip = self._index
-        vms: set[int] = set()
+        vms: set[int] = set(direct_vms(app, res))
         for e in epgs:
             vms |= by_epg.get(e.id, set())
         for h in hosts:
@@ -485,18 +641,71 @@ class VmCounter:
         return len(vms)
 
 
+def systems_by_application(
+    session: Session, tenant_id: int, apps: list[Application]
+) -> dict[int, tuple[set[str], set[str]]]:
+    """VM-Namen und IP-Adressen der Systeme je Applikation (NetBox-Sync, ADR 0031) - wie die
+    Doku (`build_doc`): VMs an den Portgruppen ihrer EPGs und hinter ihren Servern (gleiche
+    IP), dazu Server ohne VM; IPs = Adressen dieser VMs (NICs) und Server. Ohne Vorlagen."""
+    res = Resolver(session, tenant_id)
+    groups = virtual.PortgroupIndex.load(session, tenant_id)
+    names: dict[int, str] = {}
+    vm_ips: dict[int, set[str]] = defaultdict(set)
+    by_epg: dict[int, set[int]] = defaultdict(set)
+    for vid, name, sid, nic in session.execute(
+        select(Vm.id, Vm.name, Vm.source_system_id, VmNic)
+        .join(VmNic, VmNic.vm_id == Vm.id)
+        .where(Vm.tenant_id == tenant_id, Vm.template.is_(False))
+    ):
+        names[vid] = name
+        vm_ips[vid] |= set(nic.ips or [])
+        pg = groups.of(sid, nic)
+        if pg is not None and pg.epg_id is not None:
+            by_epg[pg.epg_id].add(vid)
+    by_ip: dict[str, set[int]] = defaultdict(set)
+    for ip, vid in session.execute(
+        select(VmIp.ip, Vm.id)
+        .join(Vm, Vm.id == VmIp.vm_id)
+        .where(VmIp.tenant_id == tenant_id, Vm.template.is_(False))
+    ):
+        by_ip[ip].add(vid)
+    out: dict[int, tuple[set[str], set[str]]] = {}
+    res.prefetch((m.kind, m.ref) for app in apps for m in app.members)
+    for app in apps:
+        hosts, epgs = _systems(session, app, res)
+        direct = direct_vms(app, res)
+        names.update((vid, vm.name) for vid, (vm, _w) in direct.items())
+        vms: set[int] = set(direct)
+        for e in epgs:
+            vms |= by_epg.get(e.id, set())
+        ips = {ip for h in hosts if (ip := _ip(h.value))}
+        for ip in ips:
+            vms |= by_ip.get(ip, set())
+        for vid in vms:
+            ips |= vm_ips.get(vid, set())
+        out[app.id] = ({names[v] for v in vms if v in names}, ips)
+    return out
+
+
+def app_systems(session: Session, app: Application, resolver: Resolver | None = None):
+    """Server (Host-Objekte) und EPGs der Applikation aus ihren Mitgliedern."""
+    return _systems(session, app, resolver)
+
+
 def _systems(session: Session, app: Application, resolver: Resolver | None = None):
     res = resolver or Resolver(session, app.tenant_id)
     hosts: dict[int, NetworkObject] = {}
     epgs: dict[int, Epg] = {}
     for m in app.members:
+        if m.kind in RULE_KINDS or m.kind == "vm":  # tragen keine Server/EPGs bei
+            continue
         r = res.resolve(m.kind, m.ref)
         hosts.update((h.id, h) for h in r.hosts)
         epgs.update((e.id, e) for e in r.epgs)
     return list(hosts.values()), list(epgs.values())
 
 
-KIND_LABEL = {"ap": "AP", "epg": "EPG", "host": "Server", "rule": "Regel",
+KIND_LABEL = {"ap": "AP", "epg": "EPG", "host": "Server", "vm": "VM", "rule": "Regel",
               "norule": "ohne Regel"}  # fmt: skip
 _KIND_LABEL_EN = {"rule": "Rule", "norule": "excluded rule"}  # Anzeige Englisch (ADR 0028)
 
@@ -516,6 +725,7 @@ def _origins(session: Session, app: Application, res: Resolver):
     """Server und EPGs der Applikation mit dem Mitglied, ueber das sie dazugehoeren."""
     hosts: dict[int, tuple[NetworkObject, str]] = {}
     epgs: dict[int, tuple[Epg, str]] = {}
+    res.prefetch((m.kind, m.ref) for m in app.members)
     for m in app.members:
         r = res.resolve(m.kind, m.ref)
         why = f"{kind_label(m.kind)} {r.label}"
@@ -531,15 +741,24 @@ def _ip(value: str | None) -> str | None:
 
 
 def _app_vms(
-    session: Session, tenant_id: int, epgs: dict, hosts: dict, groups: virtual.PortgroupIndex
+    session: Session,
+    tenant_id: int,
+    epgs: dict,
+    hosts: dict,
+    groups: virtual.PortgroupIndex,
+    direct: dict[int, tuple[Vm, str]] | None = None,
 ) -> dict[int, dict]:
-    """VMs der Applikation: an den Portgruppen ihrer EPGs und hinter ihren Servern (gleiche IP),
-    je VM mit den Gruenden (Portgruppe -> EPG bzw. IP = Server). Die Portgruppe einer NIC ueber
-    Name, Switch und VLAN (`virtual.PortgroupIndex`, Dev-Befund 0.43.0)."""
+    """VMs der Applikation: an den Portgruppen ihrer EPGs, hinter ihren Servern (gleiche IP) und
+    als Mitglied „VM“ (`direct`, 0.124.0), je VM mit den Gruenden (Portgruppe -> EPG, IP = Server
+    bzw. Mitglied). Die Portgruppe einer NIC ueber Name, Switch und VLAN
+    (`virtual.PortgroupIndex`, Dev-Befund 0.43.0)."""
     out: dict[int, dict] = {}
 
     def entry(vm: Vm) -> dict:
         return out.setdefault(vm.id, {"vm": vm, "epg_ids": set(), "hosts": {}, "why": []})
+
+    for vm, why in (direct or {}).values():
+        entry(vm)["why"].append(why)
 
     names = {pg.name for pg in groups.groups if pg.epg_id in epgs}
     if names:
@@ -639,7 +858,10 @@ def _hosts_with_ips(session: Session, tenant_id: int, ips: list[str]) -> list[Ne
     )
 
 
-def build_doc(session: Session, app: Application, rule_ids: set[int] | None = None) -> dict:
+def build_doc(session: Session, app: Application, rule_ids: set[int] | None = None,
+              names: bool = False, *, data: appdoc.TenantData | None = None,
+              ruleset: appdoc_ruleset.Profile | None = None,
+              trace: bool = False) -> dict:  # fmt: skip
     """Applikations-Doku (Dev-Befund 0.14.0): die Doku steht im Mittelpunkt.
 
     - `systems`: alle VMs der Applikation (Portgruppen ihrer EPGs, VMs hinter ihren Servern)
@@ -652,17 +874,25 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
     - `rules`: die Regeln wie in der Regel-Ansicht (Aktion, Quelle, Ziel, Dienste, NAT);
     - `summary`: Kennzahlen (VMs, Systeme, EPGs, Regeln spezifisch/unspezifisch);
     - `findings`: offene Befunde zu Regeln, Servern, VMs, Portgruppen und Subnetzen;
-    - `tables`: die 10 Kategorien fuer Export und Druck (gleiche Zeilen einmal).
+    - `tables`: die 10 Kategorien fuer Export und Druck (gleiche Zeilen einmal); mit `names`
+      (Einstellung des Mandanten, nur Betreuer - 0.95.0) Gegenstellen nur mit Adresse samt Namen
+      (`peer_names`).
+
+    Vergleich der Regelwerke (0.120.0, `compare_rulesets`): `ruleset` statt des aktiven, `data`
+    geteilt zwischen zwei Durchgaengen (Wege, Relevanz einmal), `trace` = je Regel die
+    entscheidende Bedingung (`decisions`).
     """
     tid = app.tenant_id
     restricted = rule_ids is not None  # Kunden-Benutzer: nur ihre Regeln (ADR 0018)
     res = Resolver(session, tid)
     hosts, epgs = _origins(session, app, res)
-    data = appdoc.TenantData(session, tid)
+    data = data or appdoc.TenantData(session, tid)
+    if ruleset is not None:
+        data.ruleset = ruleset  # statt des aktiven Profils (Vergleich)
     ctx = references.context(session, tid)
     site_index = sites.SiteIndex(session, tid)
     portgroups = virtual.PortgroupIndex.load(session, tid)
-    vms = _app_vms(session, tid, epgs, hosts, portgroups)
+    vms = _app_vms(session, tid, epgs, hosts, portgroups, direct_vms(app, res))
 
     # VRFs der Applikation: fuer Systeme ohne Portgruppe zaehlen gleiche IPs in anderen
     # ACI-Tenants/VRFs nicht (Dev-Befund 0.42.2, appdoc.fabric_epgs)
@@ -678,6 +908,9 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
     systems: list[dict] = []
     rows: list[tuple[str, int, dict]] = []  # (System-Schluessel, Tabelle, Zeile)
     covered_hosts: set[int] = set()
+    # EPGs der VMs, die nicht Mitglied sind (0.126.1, Anwender 2026-11-03): als „EPG der VM“ in
+    # der Doku und im Netzwerkplan - ohne ihre uebrigen VMs und Regeln (EPG -> Namen der VMs)
+    context: dict[int, list[str]] = defaultdict(list)
     for vm_id, e in sorted(vms.items(), key=lambda kv: kv[1]["vm"].name):
         vm: Vm = e["vm"]
         ips = list(dict.fromkeys(ip for n in vm.nics for ip in n.ips or []))
@@ -711,6 +944,14 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
                 }
             )
         key = f"vm:{vm_id}"
+        found: set[int] = set()  # EPGs der VM im ACI (Portgruppe, sonst gelernter Endpunkt)
+        for idx, row in appdoc.vm_rows(
+            session, data, vm.name, ips, list(servers.values()), nic_epgs, prefer, mapped, found
+        ):
+            rows.append((key, idx, row))
+        shown = {i for i in (nic_epgs or found) if i in data.epgs_by_id}
+        for i in sorted(shown - set(epgs)):
+            context[i].append(vm.name)
         systems.append(
             {
                 "key": key,
@@ -719,9 +960,7 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
                 "ips": ips,
                 "dns": dns(ips),
                 "servers": sorted(h.name for h in servers.values()),
-                "epgs": sorted(
-                    inventory_label(data.epgs_by_id[i]) for i in nic_epgs if i in data.epgs_by_id
-                ),
+                "epgs": sorted(inventory_label(data.epgs_by_id[i]) for i in shown),
                 "portgroups": nets,
                 "nics": nics,
                 "hints": list(dict.fromkeys(hints)),
@@ -734,10 +973,6 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
                 "member": "; ".join(dict.fromkeys(e["why"])),
             }
         )
-        for idx, row in appdoc.vm_rows(
-            session, data, vm.name, ips, list(servers.values()), nic_epgs, prefer, mapped
-        ):
-            rows.append((key, idx, row))
     for hid, (h, why) in sorted(hosts.items(), key=lambda kv: kv[1][0].name):
         if hid in covered_hosts:
             continue  # steht als VM da
@@ -781,11 +1016,20 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
     for e in vms.values():
         for i in e["epg_ids"]:
             vm_count[i] += 1
+    for i, names in context.items():
+        vm_count[i] = len(names)
+    shown_epgs = {eid: (epg, why, False) for eid, (epg, why) in epgs.items()} | {
+        i: (data.epgs_by_id[i], L(f"EPG der VM {', '.join(names)}",
+                                  f"EPG of the VM {', '.join(names)}"), True)
+        for i, names in context.items()
+    }  # fmt: skip
     epg_out: list[dict] = []
-    for eid, (epg, why) in sorted(epgs.items(), key=lambda kv: inventory_label(kv[1][0])):
+    for eid, (epg, why, of_vm) in sorted(shown_epgs.items(),
+                                         key=lambda kv: inventory_label(kv[1][0])):  # fmt: skip
         key = f"epg:{eid}"
-        doc = appdoc.epg_doc(session, epg, data, full=True)
-        rows += [(key, t["index"], r) for t in doc["tables"] for r in t["rows"]]
+        if not of_vm:  # EPG der VM: nur zur Einordnung, ohne die Regeln der ganzen EPG
+            doc = appdoc.epg_doc(session, epg, data, full=True)
+            rows += [(key, t["index"], r) for t in doc["tables"] for r in t["rows"]]
         subnets = list(
             session.scalars(
                 select(EpgSubnet.ip).where(EpgSubnet.epg_id == eid).order_by(EpgSubnet.ip)
@@ -810,6 +1054,7 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
                 "vm_count": vm_count.get(eid, 0),
                 "endpoint_count": endpoints or 0,
                 "member": why,
+                "of_vm": of_vm,  # 0.126.1: EPG der VM, nicht Mitglied
             }
         )
 
@@ -817,20 +1062,56 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
         rows = [r for r in rows if r[2].get(appdoc.RULE) in rule_ids]
     # Regeln direkt zugeordnet bzw. ausgeschlossen (0.60.0)
     assigned, excluded = _rule_members(app, res, rule_ids)
-    rows = [r for r in rows if r[2].get(appdoc.RULE) not in excluded]
     # parallele Firewalls (0.18.0): gleiche Policies nur einmal - die der fuehrenden Firewall
     twins = parallel.twin_ids(session, {row.get(appdoc.RULE) for _, _, row in rows})
     rows = [r for r in rows if r[2].get(appdoc.RULE) not in twins]
-    hits, tables = _hits_and_tables(rows, _pairs(session, {r[2].get(appdoc.RULE) for r in rows}))
-    narrower = _narrower(rows, systems, epg_out)  # 0.78.2: Contracts enger als die Firewall
-    # Routingtechnisch unmoegliche Treffer gehoeren nicht in die Applikations-Doku (Dev-Befund
-    # 0.33.0, z. B. intern -> Internet ueber any im Ziel: die Antwort braucht keine Regel, ein
-    # Zugriff von dort braeuchte eine eigene) - nicht einblendbar, nur gezaehlt
-    possible = [h for h in hits if h["relevance"] != "impossible"]
-    impossible = {h["rule_id"] for h in hits} - {h["rule_id"] for h in possible}
-    possible += [_assigned_hit(rid, m) for rid, m in assigned.items() if rid not in excluded]
+    # innerhalb der Applikation (0.105.0, ADR 0035): Zugriffe, deren Gegenstellen alle Systeme
+    # bzw. EPGs der Applikation sind, stehen in der Kategorie mit der Rolle `aci_ap` (Server intern)
+    mine = {ip for x in systems for ip in x["ips"]} | {e["dn"] for e in epg_out if e["dn"]}
+    inside = data.catalog.role("aci_ap")
+    rows = [(k, inside if _inside(row, mine) else idx, row) for k, idx, row in rows]
+    # Regelwerk des Mandanten (0.118.0, ADR 0043): je Zeile die Wirkung der ersten Regel, die
+    # trifft - z. B. routingtechnisch unmoeglich bzw. ausgehend mit breiter Quelle nicht gezeigt,
+    # nur gezaehlt (0.33.0, 0.103.0), ausgeschlossene Regeln (0.60.0) nicht gezeigt
+    ruleset = data.ruleset
+    counted = appdoc_ruleset.Counted(ruleset)
+    kept_rows = []
+    decided: dict[int, list[tuple[str, str | None]]] = defaultdict(list)
+    for item in rows:
+        row = item[2]
+        row[appdoc.DECIDED], row[appdoc.DECIDED_BY] = appdoc_filter.decide(
+            row, ruleset, assigned, excluded
+        )
+        # Auswahl der Kategorie (0.125.0, ADR 0046): nur spezifische bzw. unspezifische Quellen
+        # bzw. Ziele - die uebrigen Zeilen nur als Treffer unter „Regeln & Contracts“
+        if row[appdoc.DECIDED] in appdoc_ruleset.SHOWN and not appdoc_filter.by_category(
+            row, data.catalog.get(item[1]), assigned
+        ):
+            row[appdoc.DECIDED] = appdoc_ruleset.HIT
+            row[appdoc.DECIDED_BY] = appdoc_filter.CATEGORY_SCOPE
+        if trace and row.get(appdoc.RULE) is not None:
+            decided[row[appdoc.RULE]].append((row[appdoc.DECIDED], row[appdoc.DECIDED_BY]))
+        if row[appdoc.DECIDED] in appdoc_ruleset.KEPT:
+            kept_rows.append(item)
+        elif row[appdoc.DECIDED] == appdoc_ruleset.COUNTED:
+            counted.add(row.get(appdoc.RULE), row[appdoc.DECIDED_BY])
+    rows = kept_rows
+    filtered = counted.by_condition({r[2].get(appdoc.RULE) for r in rows})
+    broad = filtered.get("out_broad", set())
+    internet = filtered.get("to_internet", set())
+    impossible = set().union(*(filtered.get(k, set()) for k in appdoc_ruleset.PATH))
+    if names and not restricted:  # Namen der Gegenstellen (0.95.0) - nie fuer Kunden-Benutzer
+        peer_names.apply(session, tid, [row for _, _, row in rows])
+    hits, tables = _hits_and_tables(rows, _pairs(session, {r[2].get(appdoc.RULE) for r in rows}),
+                                    data.catalog)  # fmt: skip
+    narrower = _narrower(rows, systems, epg_out, data.catalog)  # 0.78.2: enger als die Firewall
+    possible = hits + [_assigned_hit(rid, m) for rid, m in assigned.items() if rid not in excluded]
     hits = possible
-    rule_ids = {h["rule_id"] for h in hits}
+    # L3Outs (ADR 0034): Contracts zu externen EPGs mit Firewall dahinter sind Hilfs-Contracts -
+    # an der Firewall-Regel vermerkt, nicht als eigene Regel (Treffer bleiben, `helper`)
+    helper_ids = _helper_ids(hits)
+    helpers = _helpers_out(hits, helper_ids, systems, epg_out, rows)
+    rule_ids = {h["rule_id"] for h in hits} - helper_ids
     ordered = (
         list(
             session.scalars(
@@ -843,11 +1124,13 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
     rules = rule_index.outs(session, rule_index.load_rules(session, ordered))
     best: dict[int, str] = {}
     for h in possible:
+        if h["rule_id"] in helper_ids:
+            continue
         cur = best.get(h["rule_id"])
         if cur is None or _SCOPE_RANK.get(h["scope"], 9) < _SCOPE_RANK.get(cur, 9):
             best[h["rule_id"]] = h["scope"]
     for item in systems + epg_out:
-        mine = {h["rule_id"] for h in possible if h["system"] == item["key"]}
+        mine = {h["rule_id"] for h in possible if h["system"] == item["key"]} - helper_ids
         spec = {
             h["rule_id"]
             for h in possible
@@ -861,11 +1144,14 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
     rule_epgs: dict[int, set[str]] = defaultdict(set)
     for h in possible:
         rule_epgs[h["rule_id"]] |= set(epgs_of.get(h["system"], []))
-    findings = _app_findings(session, tid, systems, epg_out, set(ordered), rule_epgs,
-                             restricted=restricted, app_id=app.id)  # fmt: skip
+    findings = _app_findings(session, tid, systems, epg_out, set(ordered) | helper_ids,
+                             rule_epgs, restricted=restricted, app_id=app.id)  # fmt: skip
     hidden, hides = _apply_hides(session, app, tables, restricted)  # 0.69.0
+    # Zonen je Kategorie (0.101.0): im Kopf die Zonen mit ihren Netzen; Kunden-Benutzer ohne
+    # Zonen und ohne Spalte „Zone“ (Netze der Infrastruktur)
+    zone_heads(data, tables, restricted)
     tenant = session.get(Tenant, tid)
-    return {
+    out = {
         "tenant_code": tenant.code if tenant else None,
         "summary": {
             "vms": sum(1 for x in systems if x["kind"] == "vm"),
@@ -875,6 +1161,23 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
             "firewall": sum(1 for r in rules if r.domain == RuleDomain.FIREWALL.value),
             "aci": sum(1 for r in rules if r.domain == RuleDomain.ACI_CONTRACT.value),
             "impossible": len(impossible),
+            "outbound_broad": len(broad),  # 0.103.0: ausgehend mit breiter Quelle, nicht da
+            "to_internet": len(internet),  # 0.114.1: Freigabe ins Internet (nur über all)
+            # Regelwerk (0.118.0): das aktive Profil und je Bedingung die gezaehlten Regeln
+            "ruleset": {
+                "key": ruleset.key,
+                "title": appdoc_ruleset.title(ruleset),
+                "description": appdoc_ruleset.description(ruleset),
+            },
+            "filtered": [
+                {
+                    "key": r.key,
+                    "title": appdoc_ruleset.BY_KEY[r.key].out()["title"],
+                    "count": len(filtered[r.key]),
+                }
+                for r in ruleset.rules
+                if filtered.get(r.key)
+            ],
             "specific": sum(1 for v in best.values() if v in ("specific", "assigned")),
             "assigned": sum(1 for v in best.values() if v == "assigned"),
             "excluded": len(excluded),
@@ -882,6 +1185,9 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
             "unspecific": sum(by_scope.values()),
             "by_scope": by_scope,
             "findings": len(findings),
+            "helpers": len(helpers),  # Hilfs-Contracts ueber L3Outs (ADR 0034)
+            # 0.140.0: Regeln, deren Weg eine Grenze nicht pruefen liess - sie bleiben stehen
+            "path_unchecked": len(data.on_path.unchecked) if "on_path" in vars(data) else 0,
         },
         "systems": systems,
         "epgs": epg_out,
@@ -889,14 +1195,116 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
         "rules": rules,
         "findings": findings,
         "tables": tables,
+        # 0.130.0 (Anwender: „Die Reihenfolge … wird nicht in der Reihenfolge des Namensprofils
+        # angezeigt“): aus welchem Namensprofil Titel und Reihenfolge der Kategorien kommen
+        "catalog_profile": _catalog_profile(session, data.catalog.profile_id),
         "narrower": narrower,
+        # Hilfs-Contracts ueber L3Outs mit den Firewall-Regeln, an denen sie stehen (ADR 0034)
+        "helpers": helpers,
         # zugeordnete bzw. ausgeschlossene Regeln mit dem Mitglied (zum Rueckgaengigmachen)
         "rule_members": [
             {"member_id": m.id, "kind": m.kind, "label": label, "rule_id": rid}
             for rid, (m, label) in (assigned | excluded).items()
         ],
         "hides": hides,
+        # Eingaben der Befunde (0.108.0): aus dem gespeicherten Stand aktuell nachgerechnet
+        "finding_inputs": {
+            "rule_ids": sorted(set(ordered) | helper_ids),
+            "rule_epgs": [[rid, sorted(v)] for rid, v in sorted(rule_epgs.items())],
+        },
     }
+    if trace:  # Vergleich der Regelwerke: je Regel, was entschied
+        out["decisions"] = {rid: _decision(ds, ruleset) for rid, ds in decided.items()}
+    return out
+
+
+def _decision(ds: list[tuple[str, str | None]], profile: appdoc_ruleset.Profile) -> dict:
+    """Was fuer eine Regel entschied (0.120.0): in der Kategorie, sobald eine Zeile dort steht;
+    sonst die erste bleibende Wirkung (nur Treffer, Vermerk), sonst die erste Bedingung des
+    Profils, die sie weglaesst."""
+    for group in (appdoc_ruleset.SHOWN, appdoc_ruleset.KEPT):
+        hit = [d for d in ds if d[0] in group]
+        if hit:
+            effect, key = min(hit, key=lambda d: profile.position(d[1] or ""))
+            return {"effect": effect, "key": key}
+    effect, key = min(ds, key=lambda d: profile.position(d[1] or ""))
+    return {"effect": effect, "key": key}
+
+
+def compare_rulesets(session: Session, app: Application, other: appdoc_ruleset.Profile) -> dict:
+    """Doku mit dem aktiven und mit einem anderen Regelwerk (0.120.0, Anwender: „nur mit Klicken
+    auf einen Button, damit nicht zu viele Ressourcen verbraucht werden“): welche Regeln unter
+    „Regeln & Contracts“ bzw. in den Kategorien dazukommen oder wegfallen, je mit der Bedingung,
+    die entscheidet, und die gezaehlten Regeln beider. Zwei Durchgaenge mit geteilten Daten
+    (Wege und Relevanz einmal); nichts gespeichert, nur lesend."""
+    started = time.monotonic()
+    data = appdoc.TenantData(session, app.tenant_id)
+    current = data.ruleset
+    a = build_doc(session, app, data=data, ruleset=current, trace=True)
+    b = build_doc(session, app, data=data, ruleset=other, trace=True)
+    stmt = select(SourceSystem.id, SourceSystem.name).where(SourceSystem.tenant_id == app.tenant_id)
+    sources = dict(session.execute(stmt).all())
+    infos = {r.id: r for d in (a, b) for r in d["rules"]}
+
+    def rules(doc: dict) -> set[int]:
+        return {r.id for r in doc["rules"]}
+
+    def shown(doc: dict) -> set[int]:
+        return {rid for t in doc["tables"] for row in t["rows"] for rid in row.get("_rules", [])}
+
+    def items(ids: set[int], why: dict) -> list[dict]:
+        out = []
+        for rid in ids:
+            r, d = infos.get(rid), why.get(rid) or {}
+            key = d.get("key")
+            source = sources.get(r.source_system_id, "") if r is not None else ""
+            out.append({
+                "rule_id": rid, "name": r.name if r is not None else f"#{rid}",
+                "domain": r.domain if r is not None else "",
+                "source": f"{source} / {r.vdom}" if r is not None and r.vdom else source,
+                "key": key or "", "effect": d.get("effect") or "",
+                "why": appdoc_ruleset.BY_KEY[key].out()["title"] if key in appdoc_ruleset.BY_KEY
+                else appdoc_filter.category_scope_title()
+                if key == appdoc_filter.CATEGORY_SCOPE else "",
+                "effect_label": appdoc_ruleset.effect_label(d["effect"]) if d.get("effect")
+                else "",
+            })  # fmt: skip
+        return sorted(out, key=lambda x: (x["source"], x["name"].lower()))
+
+    def side(profile: appdoc_ruleset.Profile, doc: dict) -> dict:
+        return {"key": profile.key, "title": appdoc_ruleset.title(profile),
+                "rules": len(rules(doc)), "shown": len(shown(doc)),
+                "filtered": doc["summary"]["filtered"]}  # fmt: skip
+
+    da, db = a["decisions"], b["decisions"]
+    return {
+        "current": side(current, a),
+        "other": side(other, b),
+        # „Regeln & Contracts“: dazu (Grund: was im aktiven entschied) bzw. weg (im anderen)
+        "rules": {"added": items(rules(b) - rules(a), da),
+                  "removed": items(rules(a) - rules(b), db)},
+        "categories": {"added": items(shown(b) - shown(a), da),
+                       "removed": items(shown(a) - shown(b), db)},
+        "seconds": round(time.monotonic() - started, 1),
+    }  # fmt: skip
+
+
+def doc_findings(session: Session, app: Application, doc: dict, restricted: bool) -> list[dict]:
+    """Befunde der Doku aktuell (0.108.0, ADR 0037): der Stand der Doku bleibt, die Befunde
+    (Triage, neue Laeufe der Befunde) kommen bei jedem Aufruf aus der Datenbank."""
+    inputs = doc.get("finding_inputs") or {}
+    rule_epgs = {int(rid): set(epgs) for rid, epgs in inputs.get("rule_epgs") or []}
+    return _app_findings(session, app.tenant_id, doc["systems"], doc["epgs"],
+                         set(inputs.get("rule_ids") or []), rule_epgs, restricted=restricted,
+                         app_id=app.id)  # fmt: skip
+
+
+def zone_heads(data: appdoc.TenantData, tables: list[dict], restricted: bool) -> None:
+    """Zonen je Kategorie (0.101.0) in den Kopf der Tabellen; Kunden-Benutzer ohne Zonen."""
+    if restricted:
+        appdoc_zones.strip(tables, appdoc.ZONE_COL)
+        return
+    appdoc_zones.heads(data.zone_map, tables)
 
 
 def hide_out(h: ApplicationRuleHide) -> dict:
@@ -1001,18 +1409,53 @@ def _pairs(session: Session, rule_ids: set) -> dict[int, int]:
             RuleIndex.rule_id, RuleIndex.pair_rule_id, RuleIndex.pair_match, RuleIndex.row
         ).where(RuleIndex.rule_id.in_(ids), RuleIndex.pair_rule_id.is_not(None))
     ):
-        if match in ("same", "confirmed") and partner in rule_ids:
+        if match in rule_pairs.PAIRED and partner in rule_ids:
             v4 = rid if (row or {}).get("family") == "v4" else partner
             out[rid] = v4
     return out
 
 
-def _narrower(rows: list[tuple[str, int, dict]], systems: list[dict],
-              epgs: list[dict]) -> list[dict]:  # fmt: skip
+def _helper_ids(hits: list[dict]) -> set[int]:
+    """Contracts, deren Treffer alle Hilfs-Contracts sind (ADR 0034)."""
+    by_rule: dict[int, list[bool]] = defaultdict(list)
+    for h in hits:
+        by_rule[h["rule_id"]].append(bool(h.get("helper")))
+    return {rid for rid, flags in by_rule.items() if flags and all(flags)}
+
+
+def _helpers_out(hits: list[dict], ids: set[int], systems: list[dict], epgs: list[dict],
+                 rows: list[tuple[str, int, dict]]) -> list[dict]:  # fmt: skip
+    """Hilfs-Contracts der Applikation: je Contract die L3Outs, die Firewall-Regeln, an denen er
+    steht, und die Systeme (ADR 0034)."""
+    names = {x["key"]: x["name"] for x in systems} | {e["key"]: e["label"] for e in epgs}
+    labels = {r.get(appdoc.RULE): r.get(appdoc.DESCRIPTION) for _k, _i, r in rows}
+    out: dict[int, dict] = {}
+    for h in hits:
+        if h["rule_id"] not in ids:
+            continue
+        entry = out.setdefault(h["rule_id"], {"rule_id": h["rule_id"],
+                                              "name": labels.get(h["rule_id"]) or "",
+                                              "l3outs": [], "firewall_rules": [],
+                                              "systems": []})  # fmt: skip
+        if h.get("l3out") and h["l3out"] not in entry["l3outs"]:
+            entry["l3outs"].append(h["l3out"])
+        for rid in h.get("helper_for") or []:
+            if rid not in entry["firewall_rules"]:
+                entry["firewall_rules"].append(rid)
+        system = names.get(h["system"], h["system"])
+        if system not in entry["systems"]:
+            entry["systems"].append(system)
+    return sorted(out.values(), key=lambda x: x["name"].lower())
+
+
+def _narrower(rows: list[tuple[str, int, dict]], systems: list[dict], epgs: list[dict],
+              catalog=None) -> list[dict]:  # fmt: skip
     """L3Out-Contracts, die weniger oeffnen als die Firewall-Regeln (0.78.2, `appdoc.NARROW`):
     je Contract die Systeme mit Kategorie, Richtung, fehlenden Diensten und Firewall-Regeln."""
     names = {x["key"]: x["name"] for x in systems} | {e["key"]: e["label"] for e in epgs}
-    titles = {i: appdoc.table_title(i) for i, _t, _ in appdoc.TABLES}
+    catalog = catalog or appdoc.DEFAULT_CATALOG
+    titles = {c.index: catalog.title(c.index) for c in catalog.ordered()}
+    numbers = catalog.numbers()
     out: dict[int, dict] = {}
     for key, idx, row in rows:
         if not row.get(appdoc.NARROW) or row.get(appdoc.REL) == "impossible":
@@ -1029,7 +1472,7 @@ def _narrower(rows: list[tuple[str, int, dict]], systems: list[dict],
         for x in row.get(appdoc.FW_RULES) or []:
             if x not in entry["firewall_rules"]:
                 entry["firewall_rules"].append(x)
-        cat = f"{idx} {titles.get(idx, '')}".strip()
+        cat = f"{numbers.get(idx, idx)} {titles.get(idx, '')}".strip()
         if row.get(appdoc.DIRECTION) == "out":
             cat += L(" (ausgehend)", " (outbound)")
         if cat not in entry["categories"]:
@@ -1037,10 +1480,16 @@ def _narrower(rows: list[tuple[str, int, dict]], systems: list[dict],
     return list(out.values())
 
 
+def _inside(row: dict, mine: set[str]) -> bool:
+    """Gegenstellen der Zeile alle in der Applikation (Adressen bzw. DNs)?"""
+    refs = row.get(appdoc.CP_REFS) or []
+    return bool(refs) and all(r in mine for r in refs)
+
+
 def _hits_and_tables(
-    rows: list[tuple[str, int, dict]], pairs: dict[int, int] | None = None
-) -> tuple[list[dict], list[dict]]:
-    """Treffer je (Regel, System, Seite) und die 10 Kategorien-Tabellen.
+    rows: list[tuple[str, int, dict]], pairs: dict[int, int] | None = None, catalog=None,
+) -> tuple[list[dict], list[dict]]:  # fmt: skip
+    """Treffer je (Regel, System, Seite) und die Kategorien-Tabellen (Katalog des Mandanten).
 
     In den Tabellen steht eine Regel je Seite und Objekt der Regel nur einmal: erfasst ein Netz
     bzw. any mehrere Systeme, nennt die Seite der Applikation (`appdoc.APP`, je nach Richtung in
@@ -1052,29 +1501,37 @@ def _hits_and_tables(
     Objekte (Server, Gruppe) nennen ihre Systeme weiter direkt. Ein IPv4/IPv6-Paar (`pairs`)
     steht als eine Zeile da, beide Regeln in `_rules`."""
     pairs = pairs or {}
-    tables = {t[0]: {**_table_meta(t), "rows": []} for t in appdoc.TABLES}
+    catalog = catalog or appdoc.DEFAULT_CATALOG
+    tables = {c.index: {**_table_meta(c, catalog), "rows": []} for c in catalog.ordered()}
     groups: dict[tuple, dict] = {}
     seen_hits: set[tuple] = set()
     hits: list[dict] = []
     for key, idx, row in rows:
         rid = row.get(appdoc.RULE)
-        # 0.78.2: Contracts Richtung L3Out ohne Einschraenkung und Zugriffe auf andere Systeme
-        # in Kategorie 10 stehen nicht in den Kategorien - Treffer bleiben
-        if not row.get(appdoc.CAT_HIDDEN):
-            gkey = (idx, pairs.get(rid, rid), row.get(appdoc.SIDE), row.get(appdoc.OBJECT))
+        # nur Zeilen der Kategorien nach dem Regelwerk (`appdoc_filter.decide`, 0.118.0; ohne
+        # Entscheid: in der Kategorie) - z. B. Hilfs-Contracts, Contracts nicht enger als die
+        # Firewall und unspezifisch ausgehende nur als Treffer
+        decided = row.get(appdoc.DECIDED, appdoc_ruleset.TABLE)
+        if decided in appdoc_ruleset.SHOWN:
+            appdoc_filter.mark(row)
+            gkey = (idx, pairs.get(rid, rid), row.get(appdoc.SIDE), row.get(appdoc.OBJECT),
+                    row.get(appdoc.CP_SCOPE))  # fmt: skip
             if rid is None:
                 gkey = (idx, None, len(groups))
             group = groups.setdefault(gkey, {"row": row, "systems": [], "rules": {}})
             if rid is not None:
                 group["rules"].setdefault(rid, row.get(appdoc.DESCRIPTION) or "")
             if row.get(appdoc.REVERSE) and group["row"] is not row:
-                group["both"] = True  # ACI (0.69.1): Rueckrichtung in derselben Kategorie
+                # ACI (0.69.1): Rueckrichtung in derselben Kategorie - mit ihren Diensten
+                group["both"] = row[appdoc.REVERSE]
             name = row.get(appdoc.APP)
             if name and name not in group["systems"]:
                 group["systems"].append(name)
         if rid is None:
             continue
-        hit = (rid, key, row.get(appdoc.DIRECTION), row.get(appdoc.VIA))
+        # je Kategorie ein Treffer (0.125.0: Gegenstellen je Zone aufgeteilt)
+        hit = (rid, key, row.get(appdoc.DIRECTION), row.get(appdoc.VIA), idx,
+               row.get(appdoc.CP_SCOPE))  # fmt: skip
         if hit in seen_hits:
             continue
         seen_hits.add(hit)
@@ -1102,16 +1559,35 @@ def _hits_and_tables(
                 "relevance_text": row.get(appdoc.REL_TEXT) or "",
                 # ACI ist zustandslos (0.69.1): Treffer der Rueckrichtung (Provider -> Consumer)
                 "reverse": bool(row.get(appdoc.REVERSE)),
+                # L3Outs (ADR 0034): ueber welchen L3Out der Zugriff kommt; Contract zu externen
+                # EPGs mit Firewall dahinter = Hilfs-Contract (keine eigene Regel der Doku), an
+                # der Firewall-Regel seine Hilfs-Contracts; Hinweis ohne Firewall dahinter
+                "l3out": row.get(appdoc.L3OUT_IN),
+                # Wirkung `note` (Regelwerk): nur als Vermerk an der Firewall-Regel
+                "helper": bool(row.get(appdoc.HELPER)) and decided == appdoc_ruleset.NOTE,
+                "helper_for": list((row.get(appdoc.HELPER) or {}).get("for") or []),
+                "helpers": [
+                    {
+                        "l3out": x["l3out"],
+                        "rule_ids": [c["rule_id"] for c in x["contracts"]],
+                        "names": [c["name"] for c in x["contracts"]],
+                        "missing": x["missing"],
+                    }
+                    for x in row.get(appdoc.HELPERS) or []
+                ],  # fmt: skip
+                "l3out_note": row.get(appdoc.L3OUT_NOTE) or "",
+                # nicht in der Kategorie nach ihrer Auswahl spezifisch/unspezifisch (0.125.0)
+                "category_hidden": row.get(appdoc.DECIDED_BY) == appdoc_filter.CATEGORY_SCOPE,
             }
         )
     seen_rows: dict[tuple, dict] = {}
     for (idx, *_), group in groups.items():
         row = dict(group["row"])
-        row.pop(appdoc.PARTIES, None)  # nur fuer die Treffer
+        for key in appdoc.INTERNAL:  # nur fuer die Treffer
+            row.pop(key, None)
         if group.get("both") and not row.get(appdoc.REVERSE):
-            row[appdoc.SERVICE] = f"{row.get(appdoc.SERVICE) or ''} {appdoc.both_mark()}".strip()
-        if row.get(appdoc.REL) == "impossible":
-            continue  # Export/Druck: nur, was das Routing zulaesst
+            mark = appdoc.both_mark(group["both"] if isinstance(group["both"], list) else None)
+            row[appdoc.SERVICE] = f"{row.get(appdoc.SERVICE) or ''} {mark}".strip()
         row["_rules"] = list(group["rules"])
         names = list(dict.fromkeys(n for n in group["rules"].values() if n))
         if len(group["rules"]) > 1:  # IPv4/IPv6-Paar
@@ -1131,7 +1607,7 @@ def _hits_and_tables(
             else:  # Gruppe bzw. Netz mit mehreren Systemen: das Objekt, darunter die Systeme
                 row[appdoc.APP] = appdoc.lines([f"{label}:", *inside]) if inside else label
         appdoc.place(row)
-        visible = (idx, tuple(row.get(c) for c in appdoc.TABLE_COLUMNS[idx]))
+        visible = (idx, tuple(row.get(c) for c in appdoc.ALL_COLUMNS))
         if visible in seen_rows:  # gleiche Zeile (z. B. VM und ihre EPG): Systeme zusammen
             first = seen_rows[visible]
             if "_systems" in row:
@@ -1141,9 +1617,10 @@ def _hits_and_tables(
         seen_rows[visible] = row
         tables[idx]["rows"].append(row)
     for t in tables.values():  # leere optionale Spalten (NAT, VIP, Load Balancer …) aus
-        t["columns"] = appdoc.visible_columns(t["index"], t["rows"])
+        t["rows"] = appdoc.by_l3out(t["rows"])  # unspezifische nach L3Out (ADR 0034)
+        t["columns"] = appdoc.visible_columns(t["rows"])
         t["labels"] = appdoc.column_labels(t["columns"])  # Anzeige (0.87.0, ADR 0028)
-    return hits, [tables[i] for i, _, _ in appdoc.TABLES]
+    return hits, [tables[c.index] for c in catalog.ordered()]
 
 
 def _app_findings(
@@ -1185,9 +1662,10 @@ def _app_findings(
         .order_by(Finding.type, Finding.subject_id)
     ):
         detail = f.detail if isinstance(f.detail, dict) else {}
-        if (f.type in (FindingType.APP_CONNECTION_MISMATCH, FindingType.APP_CONTRACT_NARROWER)
+        if (f.type in (FindingType.APP_CONNECTION_MISMATCH, FindingType.APP_CONTRACT_NARROWER,
+                       FindingType.APP_RULE_UNUSED, FindingType.APP_COVERAGE)
                 and detail.get("application_id") != app_id):  # fmt: skip
-            continue  # Befund einer anderen Applikation (0.59.0, 0.78.2)
+            continue  # Befund einer anderen Applikation (0.59.0, 0.78.2, 0.107.0)
         rule_id = detail.get("rule_id") if f.subject_kind == SubjectKind.RULE else None
         if (f.subject_kind, f.subject_id) not in wanted and rule_id not in rule_ids:
             continue
@@ -1217,14 +1695,24 @@ def _app_findings(
     return out
 
 
-def _table_meta(t: tuple[int, str, str]) -> dict:
-    index, _title, enforcement = t
+def _catalog_profile(session: Session, profile_id: int | None) -> dict | None:
+    """Namensprofil der Kategorien (0.130.0): das des Mandanten, sonst „default“ - ID, Kunde und
+    Name; ohne Profil None (Vorgaben)."""
+    from app.models import NamingProfile
+
+    p = session.get(NamingProfile, profile_id) if profile_id is not None else None
+    return {"id": p.id, "customer": p.customer, "name": p.name} if p is not None else None
+
+
+def _table_meta(c, catalog) -> dict:
+    columns = appdoc.table_columns()
     return {
-        "index": index,
-        "title": appdoc.table_title(index),
-        "enforcement": enforcement,
-        "columns": appdoc.TABLE_COLUMNS[index],
-        "labels": appdoc.column_labels(appdoc.TABLE_COLUMNS[index]),
+        "index": c.index,
+        "number": catalog.number(c.index),  # fortlaufend in der Reihenfolge (0.126.0)
+        "title": catalog.title(c.index),
+        "enforcement": c.enforcement,
+        "columns": columns,
+        "labels": appdoc.column_labels(columns),
     }
 
 
@@ -1262,7 +1750,7 @@ def footprint(session: Session, app: Application, res: Resolver,
     hosts, epgs = _origins(session, app, res)
     out = Footprint(epgs=set(epgs))
     out.ips |= {ip for h, _w in hosts.values() if (ip := _ip(h.value))}
-    for e in _app_vms(session, app.tenant_id, epgs, hosts, groups).values():
+    for e in _app_vms(session, app.tenant_id, epgs, hosts, groups, direct_vms(app, res)).values():
         out.ips |= {ip for n in e["vm"].nics for ip in n.ips or []}
     if epgs:
         stmt = select(EpgSubnet.ip).where(
@@ -1276,13 +1764,22 @@ def footprint(session: Session, app: Application, res: Resolver,
     return out
 
 
+def rule_objects(rules: list) -> list:
+    """Regeln der Doku als `RuleOut` - auch aus dem gespeicherten Stand (JSON, 0.108.0)."""
+    from app.schemas.rules import RuleOut  # spaet: Schemas nutzen den Store nicht
+
+    return [r if isinstance(r, RuleOut) else RuleOut.model_validate(r) for r in rules]
+
+
 def dependencies(session: Session, app: Application, doc: dict,
                  visible: set[int] | None = None) -> dict:  # fmt: skip
     """Abhaengigkeiten der Applikation (0.60.0): Regeln, die ein System von ihr spezifisch mit
     einem System einer anderen Applikation verbinden (EPG, Host bzw. Netz in deren EPG-Subnetz -
     nicht any, nicht groessere Netze). Eigene Seite Quelle bzw. Consumer -> sie **nutzt** die
     andere; Ziel bzw. Provider -> sie **wird genutzt**. `visible` = sichtbare Applikationen
-    (Kunden-Benutzer). -> {uses, used_by} je Applikation mit den Regeln."""
+    (Kunden-Benutzer). -> {uses, used_by} je Applikation mit den Regeln; seit 0.88.0 je
+    Eintrag `infrastructure` (Monitoring, Backup, DNS u. a. - in der Doku getrennt von den
+    fachlichen)."""
     from app.models import RuleEndpoint, RuleIpRange
 
     tid = app.tenant_id
@@ -1317,9 +1814,10 @@ def dependencies(session: Session, app: Application, doc: dict,
     ):  # fmt: skip
         if not is_any:
             ranges_of[(rid, role)].append((fam, int(lo, 16), int(hi, 16), via))
-    rules = {r.id: r for r in doc["rules"]}
+    rules = {r.id: r for r in rule_objects(doc["rules"])}
     found: dict[str, dict[int, dict]] = {"uses": {}, "used_by": {}}
     names = {a.id: a.name for a in others}
+    infra = {a.id for a in others if a.infrastructure}
     for rid, mine in sides.items():
         r = rules.get(rid)
         if r is None or getattr(r, "action", "allow") != "allow":
@@ -1336,8 +1834,9 @@ def dependencies(session: Session, app: Application, doc: dict,
                 kinds = ["uses", "used_by"] if side == "src" else ["used_by", "uses"]
                 for kind in kinds[: 2 if rid in both else 1]:
                     entry = found[kind].setdefault(
-                        aid, {"application_id": aid, "name": names[aid], "rules": {}}
-                    )
+                        aid, {"application_id": aid, "name": names[aid],
+                              "infrastructure": aid in infra, "rules": {}}
+                    )  # fmt: skip
                     entry["rules"].setdefault(rid, {
                         "rule_id": rid, "name": r.aci.contract if r.aci else r.name,
                         "domain": r.domain, "via": via, "services": list(r.service_names),

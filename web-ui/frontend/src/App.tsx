@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import {
   AuthConfig,
   Customer,
@@ -7,6 +7,7 @@ import {
   fetchFindingSummary,
   fetchHealth,
   fetchNat,
+  fetchModules,
   fetchRuleSummary,
   fetchServerMe,
   fetchTenants,
@@ -16,89 +17,17 @@ import {
   setCustomerFilter,
   setCustomerUser,
   Tenant,
+  ModuleInfo,
 } from "./api";
-import Agents from "./Agents";
-import AppDoc from "./AppDoc";
-import Customers from "./Customers";
 import * as auth from "./auth";
-import Cabling from "./Cabling";
-import Design from "./Design";
-import Findings from "./Findings";
-import NamingProfiles from "./NamingProfiles";
-import NatTable from "./Nat";
-import NetBoxSync from "./NetBoxSync";
-import Objects from "./Objects";
-import Overview from "./Overview";
-import Reconcile from "./Reconcile";
-import Paths from "./Paths";
-import Routing from "./Routing";
-import RulesTable from "./RulesTable";
-import Runs from "./Runs";
-import System from "./System";
-import Tenants from "./Tenants";
 import { L, lang, setLang } from "./i18n";
-import { ErrorBox, Icon, Note } from "./ui";
-import Users from "./Users";
+import { hiddenViews, MODULES_CHANGED, ModulesContext } from "./moduleState";
+import { Stats, View, ViewEntry, ViewParams, ViewProps, VIEWS } from "./modules";
+import { ErrorBox, Icon, Loading, Note } from "./ui";
 
-export type View =
-  | "uebersicht"
-  | "laeufe"
-  | "regeln"
-  | "objekte"
-  | "nat"
-  | "routing"
-  | "verkabelung"
-  | "wege"
-  | "apps"
-  | "findings"
-  | "abgleich"
-  | "design"
-  | "users"
-  | "tenants"
-  | "kunden"
-  | "dict"
-  | "agents"
-  | "netbox"
-  | "system";
-
-interface NavEntry {
-  key: View;
-  label: string;
-  icon: string;
-  section: "doc" | "admin";
-  adminOnly?: boolean;
-  customer?: boolean; // auch für Kunden-Benutzer (ADR 0018; serverseitig eingeschränkt)
-}
-
-const NAV: NavEntry[] = [
-  { key: "uebersicht", label: L("Übersicht", "Overview"), icon: "overview", section: "doc", customer: true },
-  { key: "regeln", label: L("Regeln & Contracts", "Rules & contracts"), icon: "rules", section: "doc", customer: true },
-  { key: "objekte", label: L("Objekte & Inventar", "Objects & inventory"), icon: "objects", section: "doc", customer: true },
-  { key: "nat", label: "NAT / VIPs", icon: "nat", section: "doc", customer: true },
-  { key: "wege", label: L("Weg-Suche", "Path search"), icon: "path", section: "doc" },
-  { key: "routing", label: "Routing", icon: "route", section: "doc" },
-  { key: "verkabelung", label: L("Verkabelung", "Cabling"), icon: "cable", section: "doc" },
-  { key: "apps", label: L("Applikationen", "Applications"), icon: "apps", section: "doc", customer: true },
-  { key: "findings", label: "Findings", icon: "findings", section: "doc", customer: true },
-  { key: "abgleich", label: L("Abgleich", "Reconciliation"), icon: "reconcile", section: "doc" },
-  { key: "design", label: L("Netzwerkdesign", "Network design"), icon: "design", section: "doc", customer: true },
-  { key: "users", label: L("Benutzer & Rollen", "Users & roles"), icon: "users", section: "admin" },
-  { key: "tenants", label: L("Mandanten & Standorte", "Tenants & sites"), icon: "tenants", section: "admin" },
-  { key: "kunden", label: L("Kunden", "Customers"), icon: "customers", section: "admin" },
-  { key: "dict", label: L("Namensprofile", "Naming profiles"), icon: "dict", section: "admin" },
-  { key: "agents", label: L("Collector-Agenten", "Collector agents"), icon: "agents", section: "admin", adminOnly: true },
-  { key: "laeufe", label: L("Läufe", "Runs"), icon: "play", section: "admin" },
-  { key: "netbox", label: "NetBox-Sync", icon: "upload", section: "admin", adminOnly: true },
-  { key: "system", label: "System", icon: "server", section: "admin", adminOnly: true },
-];
-
-// Daten der Übersicht + Zähler in der Navigation (je Mandant geladen).
-export interface Stats {
-  rules: RuleSummary | null; // Kennzahlen aller Regeln (Firewall + ACI)
-  nat: number | null; // Anzahl VIPs/SNAT-Pools
-  findings: FindingSummary | null; // Zähler (offen/gesamt/je Typ)
-  error: unknown;
-}
+// Ansichten je Modul (0.110.0, ADR 0039): Navigation und Anzeige aus dem Verzeichnis `src/modules`; jede Ansicht lädt erst
+// beim Öffnen (0.109.1), das erste Paket der Oberfläche bleibt klein
+export type { Stats, View, ViewParams } from "./modules";
 
 const EMPTY_FINDINGS: FindingSummary = { total: 0, open: 0, by_status: {}, by_type: {} };
 
@@ -117,7 +46,7 @@ type Boot =
   | { state: "error"; error: unknown; oidc: boolean }
   | { state: "ready"; cfg: AuthConfig; me: auth.Me };
 
-const VIEW_KEYS = NAV.map((n) => n.key) as string[];
+const VIEW_KEYS = VIEWS.map((n) => n.key) as string[];
 
 function viewFromHash(): View {
   const h = window.location.hash.replace(/^#\/?/, "").split("?")[0];
@@ -125,7 +54,6 @@ function viewFromHash(): View {
 }
 
 // Parameter hinter der Ansicht (#regeln?object=H_web01) - Verlinkung zwischen den Ansichten
-export type ViewParams = Record<string, string>;
 function paramsFromHash(): ViewParams {
   const query = window.location.hash.split("?")[1] ?? "";
   return Object.fromEntries(new URLSearchParams(query).entries());
@@ -303,6 +231,9 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
   const [theme, setTheme] = useState<string | null>(() => stored("automato_theme"));
   const [menuOpen, setMenuOpen] = useState(false);
   const [findingType, setFindingType] = useState(""); // Vorfilter aus der Abgleich-Ansicht
+  // Module je Mandant (0.107.0, ADR 0036): ausgeschaltete blendet die Navigation aus
+  const [mods, setMods] = useState<ModuleInfo[] | null>(null);
+  const [modsVersion, setModsVersion] = useState(0);
 
   const setTenantId = useCallback((id: number | null) => {
     setTenantIdRaw(id);
@@ -399,10 +330,28 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
   const noTenant = !me.isAdmin && tenants !== null && tenants.length === 0;
   const tenantReady = tenants !== null && (me.isAdmin || tenantId !== null);
 
+  useEffect(() => {
+    if (!tenantReady) return;
+    let live = true;
+    fetchModules(tenantId)
+      .then((m) => live && setMods(m))
+      .catch(() => live && setMods(null));
+    return () => {
+      live = false;
+    };
+  }, [tenantId, tenantReady, modsVersion]);
+  useEffect(() => {
+    const changed = () => setModsVersion((v) => v + 1);
+    window.addEventListener(MODULES_CHANGED, changed);
+    return () => window.removeEventListener(MODULES_CHANGED, changed);
+  }, []);
+
   const loadStats = useCallback(() => {
     if (!tenantReady) return;
     setStats({ rules: null, nat: null, findings: null, error: null });
-    Promise.all([fetchRuleSummary(tenantId), fetchNat({ tenantId, limit: 1 }), fetchFindingSummary(tenantId)])
+    // Findings aus (0.107.0): der Server antwortet 403 – dann ohne Zähler
+    const findings = fetchFindingSummary(tenantId).catch(() => EMPTY_FINDINGS);
+    Promise.all([fetchRuleSummary(tenantId), fetchNat({ tenantId, limit: 1 }), findings])
       .then(([rules, nat, findings]) => setStats({ rules, nat: nat.total, findings, error: null }))
       .catch((e) => setStats({ rules: EMPTY_RULES, nat: 0, findings: EMPTY_FINDINGS, error: e }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -421,17 +370,46 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
     findings: { n: openFindings, warn: (openFindings ?? 0) > 0 },
   };
 
-  // Kunden-Benutzer sehen nur die freigegebenen Doku-Ansichten
-  const shown = (n: NavEntry) => (!n.adminOnly || me.isAdmin) && (!me.isCustomer || !!n.customer);
-  const entry = NAV.find((n) => n.key === view);
+  // Kunden-Benutzer sehen nur die freigegebenen Doku-Ansichten (feinere Rollen: dazu, was ihre
+  // Capabilities erlauben); Betreuer nicht die Seiten nur für Kunden-Benutzer
+  const hidden = hiddenViews(mods);
+  const shown = (n: ViewEntry) =>
+    !hidden.has(n.key) &&
+    (!n.adminOnly || me.isAdmin) &&
+    (me.isCustomer ? !!n.customer && (!n.cap || auth.customerCan(me, n.cap)) : !n.customerOnly);
+  const entry = VIEWS.find((n) => n.key === view);
   const current: View = entry && shown(entry) ? view : "uebersicht";
-  // Applikationen: Kunden-Benutzer pflegen nichts (Triage eigener Findings bleibt)
+  // Applikationen: Kunden-Benutzer pflegen nichts als Operator – mit der Kunden-Rolle editor nur
+  // die Applikationen, die der Server als `editable` meldet (feinere Rollen)
   const docMe = me.isCustomer ? { ...me, isOperator: false } : me;
-  const docView = NAV.find((n) => n.key === current)?.section === "doc";
+  const currentEntry = VIEWS.find((n) => n.key === current)!;
+  const docView = currentEntry.section === "doc";
   const https = window.location.protocol === "https:";
+  const viewProps: ViewProps = {
+    cfg,
+    me,
+    docMe,
+    tenantId,
+    tenantLabel,
+    tenants: tenants ?? [],
+    tenantsList: tenants,
+    params,
+    paramsKey: JSON.stringify(params),
+    stats,
+    findingType,
+    go,
+    reloadStats: loadStats,
+    reloadTenants: loadTenants,
+    selectTenant: setTenantId,
+    customersChanged: () => setCustomersVersion((v) => v + 1),
+    openFindings: (t) => {
+      go("findings");
+      setFindingType(t);
+    },
+  };
 
   const renderNav = (section: "doc" | "admin") =>
-    NAV.filter((n) => n.section === section && shown(n)).map((n) => {
+    VIEWS.filter((n) => n.section === section && shown(n)).map((n) => {
       const b = badges[n.key];
       return (
         <button
@@ -520,7 +498,9 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
       <nav className="nav">
         <div className="nav-sec">{L("Dokumentation", "Documentation")}</div>
         {renderNav("doc")}
-        {!me.isCustomer && <div className="nav-sec">{L("Administration", "Administration")}</div>}
+        {VIEWS.some((n) => n.section === "admin" && shown(n)) && (
+          <div className="nav-sec">{L("Administration", "Administration")}</div>
+        )}
         {renderNav("admin")}
         <div className="nav-foot">
           <span className={`dot ${health?.status === "ok" ? "g" : "r"}`} />
@@ -530,6 +510,7 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
         </div>
       </nav>
 
+      <ModulesContext.Provider value={mods}>
       <main className="main" key={`${tenantId ?? "alle"}-${customerId ?? "alle"}`}>
         {tenantsErr ? <ErrorBox error={tenantsErr} prefix={L("Mandanten laden", "Loading tenants")} /> : null}
         {customerId != null && !me.isCustomer && docView && (
@@ -581,130 +562,14 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
             )}
           </Note>
         ) : (
-          <>
-            {current === "uebersicht" && (
-              <Overview
-                me={me}
-                tenantId={tenantId}
-                tenantLabel={tenantLabel}
-                tenants={tenants ?? []}
-                stats={stats}
-                onGo={go}
-                onReload={loadStats}
-              />
-            )}
-            {current === "laeufe" && <Runs me={me} tenantId={tenantId} tenantLabel={tenantLabel} />}
-            {current === "regeln" && tenantReady && (
-              <RulesTable
-                key={JSON.stringify(params)}
-                tenantId={tenantId}
-                tenantLabel={tenantLabel}
-                params={params}
-                onGo={go}
-                isAdmin={me.isAdmin}
-                customer={me.isCustomer}
-                canAssign={me.isOperator && !me.isCustomer}
-              />
-            )}
-            {current === "objekte" && tenantReady && (
-              <Objects
-                key={JSON.stringify(params)}
-                tenantId={tenantId}
-                tenantLabel={tenantLabel}
-                params={params}
-                onGo={go}
-                customer={me.isCustomer}
-              />
-            )}
-            {current === "nat" && tenantReady && (
-              <NatTable
-                key={JSON.stringify(params)}
-                tenantId={tenantId}
-                tenantLabel={tenantLabel}
-                params={params}
-                onGo={go}
-              />
-            )}
-            {current === "apps" && tenantReady && (
-              <AppDoc me={docMe} tenantId={tenantId} params={params} onGo={go} />
-            )}
-            {current === "findings" && tenantReady && (
-              <Findings
-                key={JSON.stringify(params)}
-                me={me}
-                tenantId={tenantId}
-                tenantLabel={tenantLabel}
-                initialType={findingType || params.type || ""}
-                initialQuery={params.q ?? ""}
-                onChanged={loadStats}
-                onGo={go}
-              />
-            )}
-            {current === "abgleich" && tenantReady && (
-              <Reconcile
-                me={me}
-                tenantId={tenantId}
-                tenantLabel={tenantLabel}
-                onChanged={loadStats}
-                onOpenFindings={(t) => {
-                  go("findings");
-                  setFindingType(t);
-                }}
-              />
-            )}
-            {current === "wege" && (
-              <Paths
-                key={JSON.stringify(params)}
-                tenantId={tenantId}
-                tenantLabel={tenantLabel}
-                canEdit={me.isAdmin || me.isOperator}
-                params={params}
-              />
-            )}
-            {current === "routing" && (
-              <Routing
-                key={JSON.stringify(params)}
-                tenantId={tenantId}
-                tenantLabel={tenantLabel}
-                canEdit={me.isAdmin || me.isOperator}
-                params={params}
-              />
-            )}
-            {current === "verkabelung" && <Cabling tenantId={tenantId} tenantLabel={tenantLabel} />}
-            {current === "design" && (
-              <Design
-                tenantId={tenantId}
-                tenantLabel={tenantLabel}
-                canEdit={!me.isCustomer && (me.isAdmin || me.isOperator)}
-                isAdmin={me.isAdmin}
-                isCustomer={me.isCustomer}
-              />
-            )}
-            {current === "users" && <Users cfg={cfg} me={me} tenants={tenants ?? []} />}
-            {current === "tenants" && (
-              <Tenants
-                me={me}
-                tenants={tenants}
-                tenantId={tenantId}
-                onSelectTenant={setTenantId}
-                onTenantsChanged={loadTenants}
-              />
-            )}
-            {current === "kunden" && (
-              <Customers
-                tenantId={tenantId}
-                canEdit={me.isAdmin || me.isOperator}
-                isAdmin={me.isAdmin}
-                onChanged={() => setCustomersVersion((v) => v + 1)}
-              />
-            )}
-            {current === "dict" && <NamingProfiles me={me} tenants={tenants ?? []} />}
-            {current === "agents" && <Agents tenants={tenants ?? []} tenantId={tenantId} onGo={go} />}
-            {current === "netbox" && <NetBoxSync tenantId={tenantId} tenantLabel={tenantLabel} onGo={go} />}
-            {current === "system" && <System />}
-          </>
+          // je Ansicht ein eigener Ladebereich: die alte verschwindet sofort, statt versteckt
+          // stehen zu bleiben, bis die neue geladen ist
+          <Suspense key={current} fallback={<Loading />}>
+            {(!currentEntry.needsTenant || tenantReady) && currentEntry.render(viewProps)}
+          </Suspense>
         )}
       </main>
+      </ModulesContext.Provider>
     </div>
   );
 }

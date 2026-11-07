@@ -1,0 +1,7 @@
+# Orchestrator per HTTP im Compose-Netz. Verbindungen werden wiederverwendet und nach 30 s ohne
+# Anfrage geschlossen - der Orchestrator hält sie 75 s offen (0.139.2: sonst „socket hang up“).
+reverse_proxy {$ORCHESTRATOR_URL:http://orchestrator:8000} {
+	transport http {
+		keepalive 30s
+	}
+}

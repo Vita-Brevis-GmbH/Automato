@@ -29,6 +29,7 @@ import type { Me } from "./auth";
 import { L } from "./i18n";
 import { PLATFORM_LABEL, REF_ROLE_LABEL, REFERENCE_PLATFORMS } from "./refs";
 import { ScheduleField, scheduleLabel } from "./Schedule";
+import TenantModules from "./TenantModules";
 import { SITE_KIND_GROUP, SITE_KIND_LABEL, SiteChip, SiteOptions } from "./sites";
 import { CredentialInput, Empty, ErrorBox, fmtTime, Icon, Loading, Modal, Note, PageHead, SecretInput } from "./ui";
 
@@ -134,6 +135,22 @@ export default function Tenants({
                 </span>
                 <span className="s-right">
                   {t.audit_reads && <span className="chip info">{L("Lese-Audit", "Read audit")}</span>}
+                  {t.rule_pairs_auto && (
+                    <span className="chip info" title={L("Ähnliche IPv4/IPv6-Paare automatisch bestätigt", "Similar IPv4/IPv6 pairs confirmed automatically")}>
+                      {L("Paare automatisch", "Pairs automatic")}
+                    </span>
+                  )}
+                  {t.appdoc_foreign_names && (
+                    <span
+                      className="chip info"
+                      title={L(
+                        "Applikations-Doku: Gegenstellen mit Namen (nur Betreuer)",
+                        "Application documentation: peers with names (staff only)",
+                      )}
+                    >
+                      {L("Namen in der Doku", "Names in docs")}
+                    </span>
+                  )}
                   {t.id === tenantId && <span className="chip ok">{L("gewählt", "selected")}</span>}
                 </span>
               </button>
@@ -163,6 +180,7 @@ export default function Tenants({
           <SourceSystems key={`${selected.id}-${systemsVersion}`} me={me} tenant={selected} />
         </div>
       )}
+      {selected && <TenantModules key={`modules-${selected.id}`} me={me} tenant={selected} />}
       {!selected && tenants && tenants.length > 0 && (
         <div style={{ marginTop: 16 }}>
           <Note>
@@ -279,6 +297,10 @@ function TenantSettings({
   const [code, setCode] = useState(tenant.code ?? "");
   const [profileId, setProfileId] = useState<number | null>(tenant.naming_profile_id);
   const [auditReads, setAuditReads] = useState(tenant.audit_reads);
+  // 0.95.0: Namen der Gegenstellen in der Applikations-Doku (nur Betreuer, setzt der Admin)
+  const [foreignNames, setForeignNames] = useState(!!tenant.appdoc_foreign_names);
+  // 0.138.0: ähnliche IPv4/IPv6-Paare automatisch bestätigen
+  const [pairsAuto, setPairsAuto] = useState(!!tenant.rule_pairs_auto);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<unknown>(null);
   const [saved, setSaved] = useState(false);
@@ -286,7 +308,9 @@ function TenantSettings({
   const dirty =
     (code.trim() || null) !== tenant.code ||
     profileId !== tenant.naming_profile_id ||
-    auditReads !== tenant.audit_reads;
+    auditReads !== tenant.audit_reads ||
+    foreignNames !== !!tenant.appdoc_foreign_names ||
+    pairsAuto !== !!tenant.rule_pairs_auto;
 
   const save = async () => {
     setBusy(true);
@@ -297,6 +321,8 @@ function TenantSettings({
         code: code.trim() || null,
         naming_profile_id: profileId,
         audit_reads: auditReads,
+        appdoc_foreign_names: foreignNames,
+        rule_pairs_auto: pairsAuto,
       });
       await onSaved();
       setSaved(true);
@@ -364,6 +390,46 @@ function TenantSettings({
               "Record read access of this tenant in the audit log",
             )}
           </label>
+        </div>
+        <div className="field" id="ts-pairs-auto">
+          <label className="check">
+            <input type="checkbox" checked={pairsAuto} disabled={ro} onChange={(e) => setPairsAuto(e.target.checked)} />
+            {L("IPv4/IPv6-Paare automatisch bestätigen", "Confirm IPv4/IPv6 pairs automatically")}
+          </label>
+          <div className="hint">
+            {L(
+              "Ähnliche Paare (Vorschläge) gelten ohne Bestätigung als Paar – gekennzeichnet „automatisch“, in der Applikations-Doku eine Zeile. Stimmt eines nicht: in der Regel „Kein Paar“ – das trennt es dauerhaft, auch nach neuen Läufen.",
+              "Similar pairs (suggestions) count as a pair without confirmation – marked “automatic”, one row in the application documentation. If one is wrong: “No pair” on the rule – this separates it permanently, also after new runs.",
+            )}
+          </div>
+        </div>
+        <div className="field" id="ts-foreign-names">
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={foreignNames}
+              disabled={ro}
+              onChange={(e) => setForeignNames(e.target.checked)}
+            />
+            {L(
+              "Applikations-Doku: Namen der Gegenstellen zeigen",
+              "Application documentation: show the names of peers",
+            )}
+          </label>
+          <div className="hint">
+            {L(
+              <>
+                Kennt eine Firewall-Regel von einer Gegenstelle (z. B. einem System ausserhalb des Tenants) nur die
+                Adresse, nennt die Doku nach Kategorien – auch Markdown und Word – den Namen dazu: aus dem IPAM, der VM,
+                der EPG bzw. dem Firewall-Objekt. Nur für Betreuer; Kunden-Benutzer sehen weiter nur die Adressen.
+              </>,
+              <>
+                If a firewall rule only knows the address of a peer (e.g. a system outside the tenant), the
+                documentation by category – also Markdown and Word – adds its name: from the IPAM, the VM, the EPG or
+                the firewall object. Only for staff; customer users keep seeing only the addresses.
+              </>,
+            )}
+          </div>
         </div>
         <div className="field">
           <span className="label">{L("Benutzer-Zuordnung", "User assignment")}</span>
@@ -1036,6 +1102,20 @@ function SourceSystems({ me, tenant }: { me: Me; tenant: Tenant }) {
   );
 }
 
+// SNMPv3 (ADR 0033): nur authPriv – Auth HMAC-SHA bzw. SHA-2, Priv AES (Werte wie im Orchestrator)
+const SNMP_AUTH: [string, string][] = [
+  ["sha", "SHA-1"],
+  ["sha224", "SHA-224"],
+  ["sha256", "SHA-256"],
+  ["sha384", "SHA-384"],
+  ["sha512", "SHA-512"],
+];
+const SNMP_PRIV: [string, string][] = [
+  ["aes128", "AES-128"],
+  ["aes192", "AES-192"],
+  ["aes256", "AES-256"],
+];
+
 // Gerät anlegen/bearbeiten: Adresse, verwaltender Agent, read-only API-Token (nur schreibbar).
 function SystemDialog({
   tenant,
@@ -1085,10 +1165,22 @@ function SystemDialog({
   const isVmware = platform === "vmware";
   const isSwitch = platform === "cisco_switch";
   const isAvi = platform === "avi";
+  const isAdDns = platform === "ad_dns"; // Zonentransfer, ohne Zugangsdaten (ADR 0045)
   const isRef = REFERENCE_PLATFORMS.includes(platform);
   const userPass = isAci || isInfoblox || isVmware || isSwitch || isAvi;
   // Switches (0.62.0): Host-Schlüssel vergessen (beim nächsten Lauf neu lernen)
   const [forget, setForget] = useState<string[]>([]);
+  // Switches & Router (ADR 0033): Zugang SSH bzw. SNMPv3 (nur lesend, authPriv); Wechsel verwirft
+  // die hinterlegten Zugangsdaten
+  const [access, setAccess] = useState<"ssh" | "snmp">(system?.access === "snmp" ? "snmp" : "ssh");
+  const [authProtocol, setAuthProtocol] = useState(system?.snmp?.auth_protocol ?? "sha256");
+  const [privProtocol, setPrivProtocol] = useState(system?.snmp?.priv_protocol ?? "aes128");
+  const [authPassword, setAuthPassword] = useState("");
+  const [privPassword, setPrivPassword] = useState("");
+  const [snmpContext, setSnmpContext] = useState("");
+  const isSnmp = isSwitch && access === "snmp";
+  const accessChanged = system !== null && isSwitch && (system.access ?? "ssh") !== access;
+  const keptCreds = hasCreds && !accessChanged;
 
   useEffect(() => {
     fetchSites(tenant.id)
@@ -1113,16 +1205,26 @@ function SystemDialog({
       base_url: baseUrl.trim(),
       agent_id: agentId,
       verify_tls: verifyTls,
-      ...(isAci || isSwitch || isAvi ? { read_scope: readScope.trim() } : {}),
-      ...(isRef && refRole ? { ref_role: refRole } : {}),
+      ...(isAci || isSwitch || isAvi || isAdDns ? { read_scope: readScope.trim() } : {}),
+      ...(isSwitch ? { access } : {}),
+      ...(isRef && refRole && !isAdDns ? { ref_role: refRole } : {}),
       ...(isRef ? {} : { site_id: siteId }),
       schedule: schedule.trim(),
     };
     // Nur geänderte Felder senden; leer gelassen = unverändert, "" = entfernen
     const creds: SystemCredentials = {};
-    if (clearCreds) {
+    if (clearCreds && isSnmp) {
+      Object.assign(creds, { username: "", auth_password: "", priv_password: "", context: "" });
+    } else if (clearCreds) {
       if (userPass) Object.assign(creds, { username: "", password: "" });
       else creds.token = "";
+    } else if (isSnmp) {
+      // SNMPv3 (ADR 0033): leer gelassen = unverändert; Protokolle immer (ohne Passwörter wirkungslos)
+      if (username.trim()) creds.username = username.trim();
+      if (authPassword) creds.auth_password = authPassword;
+      if (privPassword) creds.priv_password = privPassword;
+      if (snmpContext.trim()) creds.context = snmpContext.trim();
+      Object.assign(creds, { auth_protocol: authProtocol, priv_protocol: privProtocol });
     } else if (userPass) {
       if (username.trim()) creds.username = username.trim();
       if (password) creds.password = password;
@@ -1138,7 +1240,7 @@ function SystemDialog({
         await createSystem({ tenant_id: tenant.id, platform, ...common, ...creds });
       } else {
         const group = platform === "fortigate" ? { parallel_group: parallelGroup.trim() } : {};
-        const keys = isSwitch && forget.length ? { forget_host_keys: forget } : {};
+        const keys = isSwitch && !isSnmp && forget.length ? { forget_host_keys: forget } : {};
         await patchSystem(system.id, { ...common, enabled, ...group, ...keys, ...creds });
       }
       await onSaved();
@@ -1195,15 +1297,32 @@ function SystemDialog({
             <option value="vmware">VMware vCenter</option>
             <option value="cisco_switch">
               {L(
-                "Switches & Router (SSH: Cisco Catalyst/Nexus, Juniper)",
-                "Switches & routers (SSH: Cisco Catalyst/Nexus, Juniper)",
+                "Switches & Router (SSH bzw. SNMPv3: Cisco Catalyst/Nexus, Juniper, Arista, Aruba CX)",
+                "Switches & routers (SSH or SNMPv3: Cisco Catalyst/Nexus, Juniper, Arista, Aruba CX)",
               )}
             </option>
             <option value="avi">VMware NSX ALB (Avi, Load Balancer)</option>
             <option value="infoblox">{L("Infoblox DDI (Referenzquelle)", "Infoblox DDI (reference source)")}</option>
             <option value="netbox">{L("NetBox (Referenzquelle)", "NetBox (reference source)")}</option>
+            <option value="ad_dns">
+              {L("AD-DNS (Zonentransfer, DNS-Namen als Referenz)", "AD DNS (zone transfer, DNS names as reference)")}
+            </option>
           </select>
-          {isRef && (
+          {isAdDns ? (
+            <div className="hint">
+              {L(
+                <>
+                  Liest die Zonen des DNS-Servers per Zonentransfer und ergänzt jede IP um ihre DNS-Namen (A/AAAA, CNAME,
+                  PTR) – in Objekten, Weg-Suche, Doku und im Vergleich mit dem führenden IPAM. Nur lesend, ohne Konto.
+                </>,
+                <>
+                  Reads the zones of the DNS server via zone transfer and adds the DNS names (A/AAAA, CNAME, PTR) to each
+                  IP – in objects, path search, documentation and in the comparison with the primary IPAM. Read-only,
+                  without an account.
+                </>,
+              )}
+            </div>
+          ) : isRef && (
             <div className="hint">
               {L(
                 <>
@@ -1218,7 +1337,19 @@ function SystemDialog({
             </div>
           )}
         </div>
-        {isRef && (
+        {isAdDns && (
+          <div className="field">
+            <label>{L("Rolle", "Role")}</label>
+            <div className="hint" id="ss-role-dns">
+              {REF_ROLE_LABEL.enrichment}{" "}
+              {L(
+                "– immer: ein DNS-Server kennt keine Netze, Ranges oder VLANs und ist darum nie führend.",
+                "– always: a DNS server knows no networks, ranges or VLANs and is therefore never primary.",
+              )}
+            </div>
+          </div>
+        )}
+        {isRef && !isAdDns && (
           <div className="field">
             <label htmlFor="ss-role">{L("Rolle", "Role")}</label>
             <select id="ss-role" className="sel input" value={refRole} onChange={(e) => setRefRole(e.target.value)}>
@@ -1244,15 +1375,99 @@ function SystemDialog({
         )}
         {isSwitch && (
           <div className="field">
+            <label htmlFor="ss-access">{L("Zugang", "Access")}</label>
+            <select
+              id="ss-access"
+              className="sel input"
+              value={access}
+              onChange={(e) => setAccess(e.target.value === "snmp" ? "snmp" : "ssh")}
+            >
+              <option value="ssh">{L("SSH – feste show-Befehle", "SSH – fixed show commands")}</option>
+              <option value="snmp">
+                {L("SNMPv3 – nur lesend (GET/GETBULK, authPriv)", "SNMPv3 – read-only (GET/GETBULK, authPriv)")}
+              </option>
+            </select>
+            <div className="hint">
+              {L(
+                "SNMPv3, wo kein SSH-Konto erlaubt ist: dieselben Daten (Ports, VLANs, Nachbarn, MAC-Tabelle, ARP) aus Standard-MIBs.",
+                "SNMPv3 where no SSH account is allowed: the same data (ports, VLANs, neighbors, MAC table, ARP) from standard MIBs.",
+              )}
+            </div>
+            {accessChanged && hasCreds && (
+              <Note warn>
+                {L(
+                  "Beim Wechsel des Zugangs werden die hinterlegten Zugangsdaten verworfen – unten die Zugangsdaten für den neuen Zugang eingeben.",
+                  "Changing the access discards the stored credentials – enter the credentials for the new access below.",
+                )}
+              </Note>
+            )}
+          </div>
+        )}
+        {isSwitch && (
+          <div className="field">
             <label htmlFor="ss-switches">{L("Switches und Router", "Switches and routers")}</label>
             <textarea
               id="ss-switches"
               className="input mono"
               rows={5}
               value={readScope}
-              placeholder={"10.0.0.11\nsw-acc-02.kunde.lan\n10.0.0.2:2222"}
+              placeholder={isSnmp ? "10.0.0.11\nsw-acc-02.kunde.lan\n10.0.0.2:1161" : "10.0.0.11\nsw-acc-02.kunde.lan\n10.0.0.2:2222"}
               onChange={(e) => setReadScope(e.target.value)}
             />
+            {isSnmp && (
+              <div className="hint" id="ss-snmp-mibs">
+                {L(
+                  <>
+                    Eine Adresse je Zeile (bzw. kommagetrennt), optional mit Port (Standard UDP 161). Alle Geräte teilen den
+                    SNMPv3-Benutzer unten; der Agent liest sie parallel und meldet, welche nicht antworteten. Gelesen werden
+                    nur Standard-MIBs:
+                  </>,
+                  <>
+                    One address per line (or comma-separated), optionally with port (default UDP 161). All devices share
+                    the SNMPv3 user below; the agent reads them in parallel and reports which did not answer. Only standard
+                    MIBs are read:
+                  </>,
+                )}
+                <ul className="ss-products">
+                  <li>
+                    {L(
+                      "SNMPv2-MIB (Name, Beschreibung, Hersteller), ENTITY-MIB (Modell, Seriennummer)",
+                      "SNMPv2-MIB (name, description, vendor), ENTITY-MIB (model, serial number)",
+                    )}
+                  </li>
+                  <li>
+                    {L(
+                      "IF-MIB (Ports, Status, Speed, Beschreibung), EtherLike-MIB (Duplex), IEEE8023-LAG-MIB (Port-Channel)",
+                      "IF-MIB (ports, status, speed, description), EtherLike-MIB (duplex), IEEE8023-LAG-MIB (port channel)",
+                    )}
+                  </li>
+                  <li>
+                    {L(
+                      "Q-BRIDGE-MIB bzw. IEEE8021-Q-BRIDGE-MIB (VLANs je Port), BRIDGE-MIB (MAC-Tabelle)",
+                      "Q-BRIDGE-MIB or IEEE8021-Q-BRIDGE-MIB (VLANs per port), BRIDGE-MIB (MAC table)",
+                    )}
+                  </li>
+                  <li>
+                    {L(
+                      "IP-MIB (ARP und IPv6-Nachbarn), LLDP-MIB und CISCO-CDP-MIB (Nachbarn)",
+                      "IP-MIB (ARP and IPv6 neighbors), LLDP-MIB and CISCO-CDP-MIB (neighbors)",
+                    )}
+                  </li>
+                </ul>
+                {L(
+                  <>
+                    Fehlt eine Tabelle (bzw. liegt sie nicht in der View des Benutzers), steht ein Hinweis im Lauf. Cisco IOS
+                    führt die VLANs je Port nur in eigenen MIBs – dort ist SSH genauer. Nicht gelesen: Spanning Tree, vPC,
+                    Routing.
+                  </>,
+                  <>
+                    If a table is missing (or not in the user's view), the run shows a note. Cisco IOS keeps the VLANs per
+                    port only in its own MIBs – SSH is more precise there. Not read: spanning tree, vPC, routing.
+                  </>,
+                )}
+              </div>
+            )}
+            {!isSnmp && (
             <div className="hint">
               {L(
                 <>
@@ -1281,11 +1496,29 @@ function SystemDialog({
                     "Juniper MX (router), EX/QFX – Junos, structured output (JSON)",
                   )}
                 </li>
+                <li>{L("Arista 7000er-Serie – EOS, strukturierte Ausgabe (JSON)", "Arista 7000 series – EOS, structured output (JSON)")}</li>
+                <li>
+                  {L(
+                    "HPE Aruba CX 6000/8000 – AOS-CX (nicht ArubaOS-Switch/ProCurve)",
+                    "HPE Aruba CX 6000/8000 – AOS-CX (not ArubaOS-Switch/ProCurve)",
+                  )}
+                </li>
               </ul>
+              {L(
+                <>
+                  Gelesen werden je Gerät Ports, VLANs, Nachbarn (CDP/LLDP), MAC-Tabelle, ARP und die IPv6-Nachbarn (NDP); fehlt ein
+                  Befehl auf älterer Software, bleibt der Teil leer.
+                </>,
+                <>
+                  Read per device: ports, VLANs, neighbors (CDP/LLDP), MAC table, ARP and the IPv6 neighbors (NDP); if a command
+                  is missing on older software, that part stays empty.
+                </>,
+              )}
             </div>
+            )}
           </div>
         )}
-        {system !== null && isSwitch && (system.host_keys ?? []).length > 0 && (
+        {system !== null && isSwitch && !isSnmp && (system.host_keys ?? []).length > 0 && (
           <div className="field" id="ss-hostkeys">
             <label>{L("SSH-Host-Schlüssel (beim ersten Lauf festgehalten)", "SSH host keys (pinned on the first run)")}</label>
             <table className="compact">
@@ -1324,14 +1557,16 @@ function SystemDialog({
         )}
         {!isSwitch && (
         <div className="field">
-          <label htmlFor="ss-url">{L("Adresse", "Address")}</label>
+          <label htmlFor="ss-url">{isAdDns ? L("DNS-Server", "DNS server") : L("Adresse", "Address")}</label>
           <input
             id="ss-url"
             className="input mono"
             value={baseUrl}
             maxLength={500}
             placeholder={
-              isAci
+              isAdDns
+                ? "dc01.kunde.lan"
+                : isAci
                 ? "https://apic-01.kunde.lan"
                 : isVmware
                   ? "https://vcenter.kunde.lan"
@@ -1346,10 +1581,15 @@ function SystemDialog({
             onChange={(e) => setBaseUrl(e.target.value)}
           />
           <div className="hint">
-            {L(
-              "So, wie der Agent das Gerät erreicht (vom Agent-Rechner aus gesehen).",
-              "As the agent reaches the device (seen from the agent host).",
-            )}
+            {isAdDns
+              ? L(
+                  "Name oder IP eines DNS-Servers mit den Zonen (z. B. ein Domain Controller), optional mit :Port – der Zonentransfer läuft über TCP 53.",
+                  "Name or IP of a DNS server holding the zones (e.g. a domain controller), optionally with :port – the zone transfer uses TCP 53.",
+                )
+              : L(
+                  "So, wie der Agent das Gerät erreicht (vom Agent-Rechner aus gesehen).",
+                  "As the agent reaches the device (seen from the agent host).",
+                )}
           </div>
         </div>
         )}
@@ -1464,7 +1704,35 @@ function SystemDialog({
             </Note>
           )}
         </div>
-        {isInfoblox ? (
+        {isAdDns ? (
+          <div className="field">
+            <label htmlFor="ss-zones">{L("Zonen", "Zones")}</label>
+            <textarea
+              id="ss-zones"
+              className="input mono"
+              rows={4}
+              value={readScope}
+              placeholder={"kunde.lan\n10.in-addr.arpa\n20.172.in-addr.arpa"}
+              onChange={(e) => setReadScope(e.target.value)}
+            />
+            <div className="hint">
+              {L(
+                <>
+                  Je Zeile eine Zone – Forward-Zonen (Namen → IP) und Reverse-Zonen (<code>…in-addr.arpa</code>, IP → Name).
+                  Keine Zugangsdaten: auf dem DNS-Server je Zone den Zonentransfer nur für die Adresse von Automato bzw. des
+                  Agenten erlauben (AD: DNS-Manager → Zone → Eigenschaften → Zonenübertragungen → „Nur an folgende
+                  Server“). Dienst-Einträge des AD (<code>_msdcs</code>, <code>_tcp</code> …) werden übergangen.
+                </>,
+                <>
+                  One zone per line – forward zones (names → IP) and reverse zones (<code>…in-addr.arpa</code>, IP →
+                  name). No credentials: on the DNS server allow the zone transfer per zone only for the address of
+                  Automato or the agent (AD: DNS Manager → zone → Properties → Zone Transfers → “Only to the following
+                  servers”). Service records of the AD (<code>_msdcs</code>, <code>_tcp</code> …) are skipped.
+                </>,
+              )}
+            </div>
+          </div>
+        ) : isInfoblox ? (
           <>
             <div className="field">
               <label htmlFor="ss-user">{L("Infoblox-Benutzer (read-only)", "Infoblox user (read-only)")}</label>
@@ -1587,6 +1855,101 @@ function SystemDialog({
               </div>
             </div>
           </>
+        ) : isSnmp ? (
+          <div id="ss-snmp">
+            <div className="field">
+              <label htmlFor="ss-snmp-user">{L("SNMPv3-Benutzer (nur Lese-View)", "SNMPv3 user (read view only)")}</label>
+              <CredentialInput
+                id="ss-snmp-user"
+                value={username}
+                maxLength={200}
+                disabled={clearCreds}
+                placeholder={keptCreds ? kept : L("z. B. ro-automato", "e.g. ro-automato")}
+                onChange={setUsername}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="ss-snmp-auth">{L("Auth-Protokoll", "Auth protocol")}</label>
+              <select
+                id="ss-snmp-auth"
+                className="sel input"
+                value={authProtocol}
+                disabled={clearCreds}
+                onChange={(e) => setAuthProtocol(e.target.value)}
+              >
+                {SNMP_AUTH.map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor="ss-snmp-authpass">{L("Auth-Passwort", "Auth password")}</label>
+              <SecretInput
+                id="ss-snmp-authpass"
+                value={authPassword}
+                disabled={clearCreds}
+                onChange={setAuthPassword}
+                placeholder={keptCreds ? kept : L("mindestens 8 Zeichen", "at least 8 characters")}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="ss-snmp-priv">{L("Priv-Protokoll (Verschlüsselung)", "Priv protocol (encryption)")}</label>
+              <select
+                id="ss-snmp-priv"
+                className="sel input"
+                value={privProtocol}
+                disabled={clearCreds}
+                onChange={(e) => setPrivProtocol(e.target.value)}
+              >
+                {SNMP_PRIV.map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor="ss-snmp-privpass">{L("Priv-Passwort", "Priv password")}</label>
+              <SecretInput
+                id="ss-snmp-privpass"
+                value={privPassword}
+                disabled={clearCreds}
+                onChange={setPrivPassword}
+                placeholder={keptCreds ? kept : L("mindestens 8 Zeichen", "at least 8 characters")}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="ss-snmp-context">{L("Context (optional)", "Context (optional)")}</label>
+              <CredentialInput
+                id="ss-snmp-context"
+                value={snmpContext}
+                maxLength={200}
+                disabled={clearCreds}
+                placeholder={
+                  keptCreds && system?.snmp?.has_context ? kept : L("leer = Standard-Context", "empty = default context")
+                }
+                onChange={setSnmpContext}
+              />
+              <div className="hint">
+                {L(
+                  <>
+                    Nur SNMPv3 mit <b>authPriv</b> (Authentisierung und Verschlüsselung) – kein SNMPv1/v2c, keine Community.
+                    Der Benutzer gehört auf dem Gerät in eine Gruppe nur mit Lese-View (keine Write-View). Automato sendet
+                    nur GET/GETBULK auf eine feste Liste von Tabellen; Schreiben (SET) gibt es im Collector nicht. Wird
+                    verschlüsselt gespeichert und nie wieder angezeigt.
+                  </>,
+                  <>
+                    Only SNMPv3 with <b>authPriv</b> (authentication and encryption) – no SNMPv1/v2c, no community. On the
+                    device the user belongs to a group with a read view only (no write view). Automato only sends
+                    GET/GETBULK on a fixed list of tables; writing (SET) does not exist in the collector. Stored encrypted
+                    and never shown again.
+                  </>,
+                )}
+              </div>
+            </div>
+          </div>
         ) : isSwitch ? (
           <>
             <div className="field">
@@ -1596,7 +1959,7 @@ function SystemDialog({
                 value={username}
                 maxLength={200}
                 disabled={clearCreds}
-                placeholder={hasCreds ? kept : L("z. B. ro-automato", "e.g. ro-automato")}
+                placeholder={keptCreds ? kept : L("z. B. ro-automato", "e.g. ro-automato")}
                 onChange={setUsername}
               />
             </div>
@@ -1607,23 +1970,26 @@ function SystemDialog({
                 value={password}
                 disabled={clearCreds}
                 onChange={setPassword}
-                placeholder={hasCreds ? kept : L("Passwort des SSH-Benutzers", "Password of the SSH user")}
+                placeholder={keptCreds ? kept : L("Passwort des SSH-Benutzers", "Password of the SSH user")}
               />
               <div className="hint">
                 {L(
                   <>
                     Konto nur mit Leserechten (IOS/IOS-XE privilege 1 bzw. eine View mit den show-Befehlen, NX-OS-Rolle{" "}
-                    <code>network-operator</code>, Junos-Klasse <code>read-only</code>, Catalyst 1200/1300 Stufe 1). Automato
-                    führt nur feste <code>show</code>-Befehle aus (je Befehl ein SSH-Aufruf, kein Konfigurationsmodus); nur der
-                    Catalyst 1200/1300 wird über eine Sitzung gelesen, in der ausschliesslich dieselben Befehle und das
-                    Abschalten des Seitenumbruchs für die Sitzung gesendet werden. Wird verschlüsselt gespeichert.
+                    <code>network-operator</code>, Junos-Klasse <code>read-only</code>, Catalyst 1200/1300 Stufe 1, Arista-Rolle{" "}
+                    <code>network-operator</code>, AOS-CX-Gruppe <code>operators</code>). Automato
+                    führt nur feste <code>show</code>-Befehle aus (je Befehl ein SSH-Aufruf, kein Konfigurationsmodus); nur Geräte
+                    ohne Exec (Catalyst 1200/1300, je nach Version Aruba CX) werden über eine Sitzung gelesen, in der
+                    ausschliesslich dieselben Befehle und das Abschalten des Seitenumbruchs für die Sitzung gesendet werden. Wird
+                    verschlüsselt gespeichert.
                   </>,
                   <>
                     Account with read-only permissions only (IOS/IOS-XE privilege 1 or a view with the show commands,
                     NX-OS role <code>network-operator</code>, Junos class <code>read-only</code>, Catalyst 1200/1300
-                    level 1). Automato only runs fixed <code>show</code> commands (one SSH call per command, no
-                    configuration mode); only the Catalyst 1200/1300 is read via a session in which only the same
-                    commands and disabling paging for the session are sent. Stored encrypted.
+                    level 1, Arista role <code>network-operator</code>, AOS-CX group <code>operators</code>). Automato
+                    only runs fixed <code>show</code> commands (one SSH call per command, no configuration mode); only
+                    devices without exec (Catalyst 1200/1300, depending on the version Aruba CX) are read via a session
+                    in which only the same commands and disabling paging for the session are sent. Stored encrypted.
                   </>,
                 )}
               </div>
@@ -1761,7 +2127,7 @@ function SystemDialog({
             </div>
           </div>
         )}
-        {(hasCreds || hasWrite) && (
+        {(hasCreds || hasWrite) && !isAdDns && (
           <div className="field">
             <label className="check">
               <input type="checkbox" checked={clearCreds} onChange={(e) => setClearCreds(e.target.checked)} />
@@ -1771,6 +2137,7 @@ function SystemDialog({
             </label>
           </div>
         )}
+        {!isAdDns && (
         <div className="field">
           <label className="check">
             <input type="checkbox" checked={verifyTls} onChange={(e) => setVerifyTls(e.target.checked)} />
@@ -1780,6 +2147,7 @@ function SystemDialog({
             )}
           </label>
         </div>
+        )}
         {system && (
           <div className="field">
             <label className="check">
@@ -1828,6 +2196,16 @@ function SystemTable({
             </td>
             <td>
               <span className="chip">{PLATFORM_LABEL[s.platform] ?? s.platform}</span>
+              {s.platform === "cisco_switch" && s.access === "snmp" && (
+                <div style={{ marginTop: 3 }}>
+                  <span
+                    className="chip info"
+                    title={L("Gelesen über SNMPv3 (authPriv, nur GET/GETBULK)", "Read via SNMPv3 (authPriv, GET/GETBULK only)")}
+                  >
+                    SNMPv3
+                  </span>
+                </div>
+              )}
               {s.ref_role && (
                 <div style={{ marginTop: 3 }}>
                   <span className={`chip ${s.ref_role === "primary" ? "local" : "info"}`}>
@@ -1860,7 +2238,11 @@ function SystemTable({
               )}
             </td>
             <td className="nowrap">
-              {s.has_credentials ? (
+              {s.platform === "ad_dns" ? (
+                <span className="chip na" title={L("Zonentransfer ohne Konto", "Zone transfer without an account")}>
+                  {L("keine nötig", "none needed")}
+                </span>
+              ) : s.has_credentials ? (
                 <span className="chip ok">
                   <Icon name="lock" size={12} /> {L("hinterlegt", "stored")}
                 </span>

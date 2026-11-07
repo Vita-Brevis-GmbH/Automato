@@ -1,12 +1,17 @@
 """SSH-Client fuer Switches und Router, rein lesend (ADR 0025): Cisco IOS/IOS-XE (z. B. Catalyst
 9200L, 3650, 4500, 9300), NX-OS (Nexus 9000), Cisco Business-CLI (Catalyst 1200/1300) und
-Juniper Junos (MX, EX, QFX; seit 0.68.0).
+Juniper Junos (MX, EX, QFX; seit 0.68.0), Arista EOS und HPE Aruba CX (AOS-CX; seit 0.94.0).
 
 Je Befehl ein SSH-Exec-Aufruf (wie `ssh switch "show version"`): keine interaktive Shell, kein
 Terminal (damit kein Umbruch nach Seiten und kein `terminal length`), kein Konfigurationsmodus.
 Erlaubt sind nur die festen `show`-Befehle aus `COMMANDS`; jeder andere Befehl bricht vor dem
 Senden ab (`ReadOnlyViolation`). Das Konto braucht nur Leserechte (IOS privilege 1 bzw. eine
-View, NX-OS-Rolle `network-operator`, Junos-Klasse `read-only`, Catalyst 1300 Stufe 1).
+View, NX-OS-Rolle `network-operator`, Junos-Klasse `read-only`, Catalyst 1300 Stufe 1, Arista-
+Rolle `network-operator`, AOS-CX-Gruppe `operators`). Seit 0.94.0 je Plattform auch die
+IPv6-Nachbarn (NDP); fehlt der Befehl (alte Software), bleibt der Teil ohne Hinweis leer.
+Seit ADR 0032 auch das Routing der Router und L3-Switches (`routing.COMMANDS`, nur `show`): RIB,
+BGP-Nachbarn und -Pfade - mit laengerer Wartezeit; eine zu grosse Text-Ausgabe (Internet-Fullfeed)
+wird bei `MAX_OUTPUT` abgeschnitten und gekuerzt ausgewertet (`cut`) statt verworfen.
 
 Geraete ohne Exec (Catalyst 1200/1300 und andere mit Business-CLI) liest seit 0.68.0 eine
 **begrenzte Sitzung** (`_Shell`): Terminal mit Prompt, Anmeldung in der Sitzung („User Name:“),
@@ -28,6 +33,9 @@ import time
 import paramiko
 from sot_gateway.readonly import ReadOnlyViolation
 
+from collectors.cisco_switch import routing
+from collectors.common.i18n import L
+
 # Feste Befehle je Plattform - nur lesend; `show version` erkennt die Plattform
 COMMANDS: dict[str, tuple[str, ...]] = {
     "ios": (
@@ -42,6 +50,7 @@ COMMANDS: dict[str, tuple[str, ...]] = {
         "show mac address-table",  # 0.63.0: Endpunkte je Port
         "show ip arp",
         "show spanning-tree",  # 0.65.0: blockierte Ports je VLAN
+        "show ipv6 neighbors",  # 0.94.0: IPv6-Nachbarn (NDP) wie ARP
     ),
     "nxos": (
         "show version",
@@ -56,6 +65,7 @@ COMMANDS: dict[str, tuple[str, ...]] = {
         "show mac address-table",  # 0.63.0
         "show ip arp detail vrf all",
         "show spanning-tree",  # 0.65.0
+        "show ipv6 neighbor vrf all",  # 0.94.0 (ohne ntc-Vorlage, eigene Auswertung)
     ),
     # 0.68.0: Cisco Business-CLI (Catalyst 1200/1300, CBS): Tabellen, eigene Auswertung
     "cbs": (
@@ -69,6 +79,7 @@ COMMANDS: dict[str, tuple[str, ...]] = {
         "show lldp neighbors",
         "show mac address-table",
         "show arp",
+        "show ipv6 neighbors all",  # 0.94.0
     ),
     # 0.68.0: Juniper Junos (MX, EX, QFX) - strukturiert als JSON, `no-more` ohne Seiten
     "junos": (
@@ -80,15 +91,44 @@ COMMANDS: dict[str, tuple[str, ...]] = {
         "show arp no-resolve | display json | no-more",
         "show ethernet-switching table | display json | no-more",
         "show bridge mac-table | display json | no-more",
+        "show ipv6 neighbors | display json | no-more",  # 0.94.0
+    ),
+    # 0.94.0: Arista EOS - `show version` als Text erkennt die Plattform, sonst JSON (`| json`)
+    "eos": (
+        "show version",
+        "show version | json",
+        "show hostname | json",
+        "show interfaces status | json",
+        "show interfaces description | json",
+        "show interfaces switchport | json",
+        "show vlan | json",
+        "show port-channel | json",
+        "show lldp neighbors detail | json",
+        "show mac address-table | json",
+        "show ip arp vrf all | json",
+        "show ipv6 neighbors vrf all | json",
+    ),
+    # 0.94.0: HPE Aruba CX (AOS-CX) - ntc-Vorlagen `aruba_aoscx`, IPv6-Nachbarn selbst
+    "aoscx": (
+        "show version",
+        "show system",
+        "show interface",
+        "show vlan",
+        "show lldp neighbor-info detail",
+        "show mac-address-table",
+        "show arp all-vrfs",
+        "show ipv6 neighbors all-vrfs",
     ),
 }
-ALLOWED = frozenset(c for cmds in COMMANDS.values() for c in cmds)
+ALLOWED = frozenset(c for cmds in COMMANDS.values() for c in cmds) | routing.ALL
 # nur in der begrenzten Sitzung: Seitenumbruch fuer diese Sitzung aus (keine Konfiguration)
 SESSION: dict[str, str] = {"cbs": "terminal datadump", "ios": "terminal length 0",
-                           "nxos": "terminal length 0"}  # fmt: skip
+                           "nxos": "terminal length 0", "eos": "terminal length 0",
+                           "aoscx": "no page"}  # fmt: skip
 MAX_OUTPUT = 32 * 1024 * 1024  # je Befehl
 COMMAND_TIMEOUT = 120.0  # Sekunden je Befehl
 PROBE_TIMEOUT = 20.0  # erster Exec-Aufruf: antwortet er nicht, die begrenzte Sitzung versuchen
+ROUTING_TIMEOUT = 300.0  # Routing-Befehle (ADR 0032): grosse Tabellen brauchen laenger
 
 
 class HostKeyChanged(Exception):
@@ -97,6 +137,11 @@ class HostKeyChanged(Exception):
 
 class SessionLoginFailed(Exception):
     """Die Anmeldung in der Sitzung („User Name:“/„Password:“) wurde abgelehnt."""
+
+
+class UnsupportedDevice(Exception):
+    """Geraet, das Automato nicht liest (0.94.0: ArubaOS-Switch/ProCurve verlangt in der Sitzung
+    einen Tastendruck und steuert den Bildschirm - abgebrochen, bevor etwas gesendet wird)."""
 
 
 def fingerprint(key_line: str) -> str:
@@ -144,6 +189,7 @@ class SwitchClient:
         self.timeout = timeout
         self._ssh: paramiko.SSHClient | None = None
         self._shell: _Shell | None = None  # begrenzte Sitzung statt Exec (Catalyst 1300)
+        self.cut: set[str] = set()  # Routing-Ausgaben, die bei MAX_OUTPUT abgeschnitten wurden
 
     @property
     def mode(self) -> str:
@@ -169,10 +215,16 @@ class SwitchClient:
             )  # fmt: skip
         except paramiko.BadHostKeyException as exc:
             ssh.close()
+            stored = fingerprint(self.host_key)
+            shown = fingerprint(f"{exc.key.get_name()} {exc.key.get_base64()}")
             raise HostKeyChanged(
-                f"{self.entry}: Host-Schluessel hat sich geaendert ({fingerprint(self.host_key)} "
-                f"gespeichert, {fingerprint(f'{exc.key.get_name()} {exc.key.get_base64()}')} "
-                "vorgewiesen) - Geraet pruefen und im Web-UI den Schluessel neu lernen lassen"
+                L(
+                    f"{self.entry}: Host-Schluessel hat sich geaendert ({stored} gespeichert, "
+                    f"{shown} vorgewiesen) - Geraet pruefen und im Web-UI den Schluessel neu "
+                    "lernen lassen",
+                    f"{self.entry}: host key has changed ({stored} stored, {shown} presented) - "
+                    "check the device and let the web UI learn the key again",
+                )
             ) from None
         except Exception:
             ssh.close()
@@ -220,9 +272,11 @@ class SwitchClient:
         """Erlaubten `show`-Befehl ausfuehren und die Ausgabe zurueckgeben. Manche Switches
         beenden die Sitzung nach einem Exec-Aufruf - dann neu verbinden (gleicher Schluessel)."""
         if command not in ALLOWED:
-            raise ReadOnlyViolation(f"nur lesend: Befehl „{command}“ blockiert")
+            raise ReadOnlyViolation(_blocked(command))
         if self._shell is not None:
             return self._shell.run(command)
+        if command in routing.ALL:
+            timeout = max(timeout, ROUTING_TIMEOUT)
         for attempt in (1, 2):
             transport = self._ssh.get_transport() if self._ssh is not None else None
             if transport is None or not transport.is_active():
@@ -246,7 +300,12 @@ class SwitchClient:
             deadline = time.monotonic() + timeout
             while True:
                 if time.monotonic() > deadline:
-                    raise TimeoutError(f"„{command}“: keine vollstaendige Antwort")
+                    raise TimeoutError(
+                        L(
+                            f"„{command}“: keine vollstaendige Antwort",
+                            f"“{command}”: no complete response",
+                        )
+                    )
                 try:
                     data = chan.recv(65536)
                 except TimeoutError:  # socket.timeout
@@ -255,7 +314,13 @@ class SwitchClient:
                     break
                 size += len(data)
                 if size > MAX_OUTPUT:
-                    raise RuntimeError(f"„{command}“: Ausgabe zu gross")
+                    if command in routing.PARTIAL:  # Text: bis hier auswerten (ADR 0032)
+                        self.cut.add(command)
+                        text = b"".join(out).decode("utf-8", errors="replace")
+                        return text[: text.rfind("\n") + 1]
+                    raise RuntimeError(
+                        L(f"„{command}“: Ausgabe zu gross", f"“{command}”: output too large")
+                    )
                 out.append(data)
             while chan.recv_stderr_ready():
                 chan.recv_stderr(65536)
@@ -264,12 +329,17 @@ class SwitchClient:
             chan.close()
 
 
+def _blocked(command: str) -> str:
+    return L(f"nur lesend: Befehl „{command}“ blockiert", f"read-only: command “{command}” blocked")
+
+
 # -- begrenzte Sitzung (0.68.0) -------------------------------------------------------------
 
 LOGIN = re.compile(r"(?:User\s*Name|Username|login)\s*:\s*$", re.I | re.M)
 PASSWORD = re.compile(r"Password\s*:\s*$", re.I)
 MORE = re.compile(r"(--\s*More\s*--|More:\s*<space>.*?$)", re.I | re.M)
 PROMPT = re.compile(r"(?:^|\n)([^\s#>()]{1,80})([#>])\s*$")
+ANY_KEY = re.compile(r"Press any key to continue", re.I)  # ArubaOS-Switch/ProCurve (0.94.0)
 _NOISE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|[\x00-\x08\x0b\x0c\x0e-\x1f]")
 
 
@@ -297,7 +367,7 @@ class _Shell:
     def run(self, command: str, session: bool = False) -> str:
         allowed = command in SESSION.values() if session else command in ALLOWED
         if not allowed or "\n" in command or "\r" in command:
-            raise ReadOnlyViolation(f"nur lesend: Befehl „{command}“ blockiert")
+            raise ReadOnlyViolation(_blocked(command))
         self.chan.send(command + "\n")
         text = self._read()
         lines = text.split("\n")
@@ -314,19 +384,26 @@ class _Shell:
         deadline = time.monotonic() + COMMAND_TIMEOUT
         while True:
             if time.monotonic() > deadline:
-                raise TimeoutError("Sitzung: kein Prompt")
+                raise TimeoutError(L("Sitzung: kein Prompt", "session: no prompt"))
             try:
                 data = self.chan.recv(65536)
             except TimeoutError:  # socket.timeout
                 data = None
             if data == b"":
-                raise EOFError("Sitzung beendet")
+                raise EOFError(L("Sitzung beendet", "session ended"))
             if data:
                 size += len(data)
                 if size > MAX_OUTPUT:
-                    raise RuntimeError("Ausgabe zu gross")
+                    raise RuntimeError(L("Ausgabe zu gross", "output too large"))
                 buf += _NOISE.sub("", data.decode("utf-8", errors="replace").replace("\r", ""))
             tail = buf[-200:]
+            if login and ANY_KEY.search(tail):
+                raise UnsupportedDevice(L(
+                    "ArubaOS-Switch/ProCurve wird nicht gelesen (kein Exec, Sitzung nur mit "
+                    "Tastendruck und Bildschirmsteuerung) - unterstuetzt ist Aruba CX (AOS-CX)",
+                    "ArubaOS-Switch/ProCurve is not read (no exec, session only with key press "
+                    "and screen control) - supported is Aruba CX (AOS-CX)",
+                ))  # fmt: skip
             if MORE.search(tail):
                 buf = MORE.sub("", buf)
                 self.chan.send(" ")

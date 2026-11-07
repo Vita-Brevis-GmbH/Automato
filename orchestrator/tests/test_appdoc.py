@@ -14,85 +14,32 @@ from app.models import (
     RuleDomain,
     RuleEndpoint,
     RuleIndex,
-    Site,
     SourceSystem,
     Tenant,
 )
 from app.models.tenant import DnsType
 from app.store import appdoc
+from system_doc import system_doc, system_list
 
 
 def test_categorize_pure():
-    # ausgehend ins Internet (externe Gegenstelle)
-    assert (
-        appdoc.categorize(
-            direction="out", counterpart_zone=None, counterpart_external=True, is_dnat_target=False
-        )
-        == 1
-    )
-    # eingehend via DNAT/VIP
-    assert (
-        appdoc.categorize(
-            direction="in", counterpart_zone=None, counterpart_external=False, is_dnat_target=True
-        )
-        == 2
-    )
-    # L3O-Zonen
-    assert (
-        appdoc.categorize(
-            direction="in",
-            counterpart_zone="L3O_bit",
-            counterpart_external=False,
-            is_dnat_target=False,
-        )
-        == 3
-    )
-    assert (
-        appdoc.categorize(
-            direction="out",
-            counterpart_zone="L3O_bit",
-            counterpart_external=False,
-            is_dnat_target=False,
-        )
-        == 4
-    )
-    assert (
-        appdoc.categorize(
-            direction="out",
-            counterpart_zone="L3O_vpn",
-            counterpart_external=False,
-            is_dnat_target=False,
-        )
-        == 5
-    )
-    assert (
-        appdoc.categorize(
-            direction="in",
-            counterpart_zone="L3O_sra",
-            counterpart_external=False,
-            is_dnat_target=False,
-        )
-        == 6
-    )
-    assert (
-        appdoc.categorize(
-            direction="out",
-            counterpart_zone="L3O_res",
-            counterpart_external=False,
-            is_dnat_target=False,
-        )
-        == 9
-    )
-    # Fallback: unspezifisch
-    assert (
-        appdoc.categorize(
-            direction="out",
-            counterpart_zone="trust",
-            counterpart_external=False,
-            is_dnat_target=False,
-        )
-        == 10
-    )
+    """Vorgaben (0.106.0): Richtung Zonentyp → Zonentyp; ohne Zone der Typ nach dem Namen der
+    Firewall-Zone bzw. des L3Outs (Muster des Grundschemas, hier der Vorlage)."""
+    from app.store import appdoc_catalog, zone_schema
+
+    cat = appdoc_catalog.default()
+    assert cat.by_flow("DC", "Public") == 1  # ausgehend ins Internet
+    assert cat.by_flow("Edge Internet", "DC") == 2  # eingehend aus dem Internet
+    assert cat.by_flow("Office Access", "DC") == 4 and cat.by_flow("DC", "Core") == 3
+    assert cat.by_flow("Edge VPN", "DC") == 5 and cat.by_flow("DC", "Edge VPN") == 6
+    assert cat.by_flow("DC", "DC") == 9
+    assert cat.by_flow("Edge Management", "DC") == 11
+    assert cat.by_flow("Core", "Public") is None and cat.by_flow(None, "DC") is None
+    schema = zone_schema.default_schema()
+    assert schema.match("L3O_inet").name == "Edge Internet"
+    assert schema.match("L3O_vpn").name == "Edge VPN"
+    assert schema.match("internet").name == "Public"
+    assert schema.match("trust") is None
 
 
 def _seed(session):
@@ -247,58 +194,12 @@ def test_build_doc_unbekanntes_system_none(session_factory):
 def test_list_systems_und_api(session_factory, client):
     seed = session_factory()
     _seed(seed)
-    rows = client.get("/appdoc/systems").json()
+    rows = system_list(client, None)
     names = {r["name"] for r in rows}
     assert "H_app01.kunde.ch" in names and "H_db01.kunde.ch" in names
-    doc = client.get("/appdoc/systems/H_app01.kunde.ch").json()
+    doc = system_doc(client, "H_app01.kunde.ch", None)
     assert doc["system"] == "H_app01.kunde.ch"
-    assert len(doc["tables"]) == 10
-
-
-def test_site_verortung_und_tenant_code(session_factory, client):
-    seed = session_factory()
-    tid = _seed(seed)
-    t = seed.get(Tenant, tid)
-    t.code = "ssgch"
-    site = Site(tenant_id=tid, code="000", name="RZ01 Hauptstandort")
-    seed.add(site)
-    seed.commit()
-    sid = site.id
-
-    # viewer darf nicht verorten
-    viewer = {"X-Dev-Roles": "viewer", "X-Dev-Tenants": str(tid)}
-    r = client.patch(
-        f"/appdoc/systems/H_app01.kunde.ch/site?tenant_id={tid}",
-        json={"site_id": sid},
-        headers=viewer,
-    )
-    assert r.status_code == 403
-
-    # operator verortet -> Doc zeigt tenant_code + site
-    op = {"X-Dev-Roles": "operator", "X-Dev-Tenants": str(tid)}
-    r = client.patch(
-        f"/appdoc/systems/H_app01.kunde.ch/site?tenant_id={tid}",
-        json={"site_id": sid},
-        headers=op,
-    )
-    assert r.status_code == 200
-    body = r.json()
-    assert body["tenant_code"] == "ssgch"
-    assert body["site"]["code"] == "000" and body["site"]["name"] == "RZ01 Hauptstandort"
-
-    # auch im GET sichtbar
-    doc = client.get(f"/appdoc/systems/H_app01.kunde.ch?tenant_id={tid}").json()
-    assert doc["site"]["id"] == sid
-
-
-def test_categorize_aci_pure():
-    from app.store.appdoc import categorize_aci
-
-    assert categorize_aci("application-profile", False, True) == 7
-    assert categorize_aci("context", True, True) == 7  # gleiches AP
-    assert categorize_aci("context", False, True) == 8  # anderes AP, gleicher Tenant
-    assert categorize_aci("global", False, True) == 9
-    assert categorize_aci(None, False, False) == 9  # anderer Tenant
+    assert len(doc["tables"]) == 11  # seit 0.106.0 alle Kategorien des Katalogs
 
 
 def _seed_aci(session):
@@ -356,10 +257,10 @@ def test_epg_als_system_tabellen_789(session_factory, client):
     seed = session_factory()
     tid = _seed_aci(seed)
 
-    rows = client.get(f"/appdoc/systems?tenant_id={tid}").json()
+    rows = system_list(client, tid)
     assert any(r["name"] == "EG_a" and r["kind"] == "epg" for r in rows)
 
-    doc = client.get(f"/appdoc/systems/EG_a?tenant_id={tid}").json()
+    doc = system_doc(client, "EG_a", tid)
 
     def rows_of(i):
         return next(t["rows"] for t in doc["tables"] if t["index"] == i)
