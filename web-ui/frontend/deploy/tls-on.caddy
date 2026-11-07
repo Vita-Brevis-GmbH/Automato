@@ -1,0 +1,2 @@
+# TLS intern (0.49.0, ADR 0023): Zertifikat der Web-UI aus der internen CA
+tls /etc/automato/tls/server.crt /etc/automato/tls/server.key

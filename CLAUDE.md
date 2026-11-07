@@ -46,7 +46,7 @@ und wird erweitert. Details: `README.md`, `ARCHITECTURE.md`, `docs/adr/`.
 
 - **Abnahme:** Der Anwender testet jede freigegebene Version sofort. Eine Version gilt als
   abgenommen, sobald seine nächste Rückmeldung keinen Einwand dazu enthält – in `ROADMAP.md`
-  („Abgenommen“) nachführen. Abgenommen bis **0.139.3** (2026-11-06).
+  („Abgenommen“) nachführen. Abgenommen bis **0.141.2** (2026-11-07).
 - **Klärung vor dem Bauen:** ändert sich Bedienung oder Bedeutung und ist der Wunsch mehrdeutig,
   zuerst 3–5 Zeilen Vorschlag mit einer Rückfrage, dann bauen.
 - **Sammeln:** Anpassungen einer Rückmeldungsrunde in **einer** Version (Patch = Korrektur,
@@ -92,11 +92,16 @@ und wird erweitert. Details: `README.md`, `ARCHITECTURE.md`, `docs/adr/`.
 - **Keine stillen Grenzen** (ADR 0048): eine Grenze, die Wege, Gegenstellen oder Dienste nicht
   prüft, wird gezählt (`app_paths._Cuts` → Befund `app_coverage`) bzw. in der Doku ausgewiesen –
   nie still kürzen.
+- **Container gehärtet** (seit 1.0.0, `docker-compose.yml`): eigene Dienste mit `<<: *gehaertet`
+  (`no-new-privileges`, `cap_drop: ALL`, Dateisystem nur lesend) – geschrieben wird nur in
+  Volumes und `tmpfs`; eine nötige Capability einzeln mit `cap_add` und Begründung. Die
+  Oberfläche läuft im Betrieb als gebaute Dateien hinter Caddy (`web-ui/frontend/deploy/`).
 - Entscheide als ADR in `docs/adr/`, Risiken in `docs/RISKS.md`, Bedienung in `docs/BETRIEB.md`.
 
 ## Aktueller Stand
 
-0.141.2 – Einzelheiten je Bereich in `docs/STAND.md`, Produktiv-Installation in
-`docs/INSTALLATION-PROD.md`, NetBox je Kunde in `docs/INSTALLATION-NETBOX-HOST.md`. Offene Punkte und nächste Arbeiten in `ROADMAP.md` („Roadmap nach
-Versionen“): Version 1 bis zur Produktivschaltung DC = **1.0.0** (R14), Version 2 = neuer Name und
-Cockpit (eigenes Projekt), Version 3 = Automatisierung.
+1.0.0 – **Version 1 abgeschlossen** (Produktivschaltung DC, R14). Einzelheiten je Bereich in
+`docs/STAND.md`, Produktiv-Installation in `docs/INSTALLATION-PROD.md`, NetBox je Kunde in
+`docs/INSTALLATION-NETBOX-HOST.md`. Bekannte Einschränkungen von 1.0.0 und nächste Arbeiten in
+`ROADMAP.md` („Roadmap nach Versionen“): Version 2 = neuer Name und Cockpit (eigenes Projekt),
+Version 3 = Automatisierung; Korrekturen an Version 1 als 1.0.x.

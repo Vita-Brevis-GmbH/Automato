@@ -2326,6 +2326,20 @@ an (`deploy/agent-gateway`, Port 8443).
   `AUTOMATO_API_BIND=127.0.0.1` bzw. `AUTOMATO_UI_DEV_BIND=127.0.0.1` nur lokal; von aussen dann
   nur Proxy (443) und Agent-Gateway (8443). Docker veröffentlicht an ufw vorbei – Einschränkung
   in der Kette `DOCKER-USER` (Installationsanleitung, Schritt 4.3).
+- **Oberfläche als Produktions-Build** (1.0.0, R14): Der Dienst `web-ui` liefert die gebaute
+  Oberfläche als statische Dateien aus (Caddy, `web-ui/frontend/deploy/Caddyfile`) und leitet
+  `/api` an den Orchestrator weiter – kein Vite-Entwicklungsserver mehr im Betrieb (keine
+  Entwickler-Hinweise in der Browser-Konsole, kleinere Dateien, Startseite nie im Cache, Dateien
+  mit Fingerabdruck ein Jahr). Ein Update baut die Oberfläche neu (`docker compose … up -d
+  --build`). Im Labor optional der Vite-Server: `AUTOMATO_UI_TARGET=dev` und
+  `AUTOMATO_UI_READ_ONLY=false` in `.env`. Fehler der Weiterleitung im Log der Web-UI:
+  `docker compose logs --since 30m web-ui 2>&1 | grep '"level":"error"'`.
+- **Container gehärtet** (1.0.0, R14): Orchestrator, Migration, Collector, Web-UI, Proxy und
+  Agent-Gateway laufen ohne Linux-Capabilities (`cap_drop: ALL`; nur der Proxy darf Port 443
+  binden, die Migration für `tls-intern` Dateien übergeben), ohne neue Rechte
+  (`no-new-privileges`) und mit nur lesendem Dateisystem – geschrieben wird nur in Volumes und
+  `/tmp`. Postgres und Redis laufen mit `no-new-privileges`, Keycloak unverändert. Meldet ein
+  Dienst „Read-only file system“, schreibt er an eine neue Stelle – Meldung an die Entwicklung.
 - Agent-Tokens werden nur gehasht gespeichert und einmalig angezeigt. Produktiv sprechen
   Agenten nur über das **mTLS-Agent-Gateway** (`deploy/agent-gateway`, Modus `bind`:
   Zertifikat und Token gehören zum selben Agenten); Port 8000 nicht in Agent-Netze freigeben.
@@ -2379,7 +2393,8 @@ an (`deploy/agent-gateway`, Port 8443).
 - **„Keine Antwort vom Server – Verbindung abgebrochen“** (bis 0.139.1: „Failed to fetch“) bzw.
   **HTTP 500 ohne Text** (z. B. „Läufe laden“) — die Anfrage kam nicht bis zum Orchestrator
   oder brach unterwegs ab; im Log des Orchestrators steht dann nichts. Nachsehen im Log der
-  Web-UI: `docker compose logs --since 30m web-ui 2>&1 | grep -A6 "proxy error"`.
+  Web-UI: `docker compose logs --since 30m web-ui 2>&1 | grep '"level":"error"'` (seit 1.0.0
+  Caddy; mit dem Vite-Server im Labor `grep -A6 "proxy error"`).
   „socket hang up“ mit TLS intern war bis 0.139.1 der Wettlauf beim Wiederverwenden der
   Verbindungen (seit 0.139.2 behoben: der Orchestrator hält unbenutzte Verbindungen 75 s offen,
   der Proxy schliesst sie nach 30 s). Andere Meldungen dort (z. B. `ECONNREFUSED`) heissen: der

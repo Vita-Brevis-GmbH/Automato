@@ -7,6 +7,32 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 1.0.0 – 2026-11-07
+
+**Version 1 abgeschlossen** (Anwender 2026-11-07: „Es funktioniert bisher alles wie gewünscht …
+Bitte den Stand fertigstellen, … damit wir die Version 1 fertig haben.“). Abgenommen bis 0.141.2.
+
+- **Oberfläche als Produktions-Build:** Das Image der Web-UI baut die Oberfläche (`npm run build`)
+  und liefert sie mit Caddy aus – kein Entwicklungsserver mehr im Betrieb. `/api` geht wie bisher
+  an den Orchestrator (mit TLS intern gegen die eigene CA), `/healthz` als Lebenszeichen, Dateien
+  mit Fingerabdruck lange im Cache, die Startseite immer frisch (nach einem Update kein
+  Neuladen nötig). Der Vite-Server bleibt fürs Labor: `AUTOMATO_UI_TARGET=dev` und
+  `AUTOMATO_UI_READ_ONLY=false` in der `.env`.
+- **Container gehärtet:** migrate, Orchestrator, Collector, Web-UI, Proxy und Agent-Gateway laufen
+  mit `no-new-privileges`, ohne Linux-Capabilities (`cap_drop: ALL`; nur `tls-init` darf
+  Besitzer setzen, der Proxy Port 443 öffnen) und mit Dateisystem nur lesend – geschrieben wird
+  nur in die Volumes und `/tmp`. Postgres und Redis mit `no-new-privileges`.
+- **Test:** Die CI startet das Image der Oberfläche so wie im Betrieb (nur lesend, ohne
+  Capabilities) und prüft `/healthz` und die Startseite.
+- **Roadmap Version 1 geschlossen:** alle Punkte erledigt; bewusst offene Punkte als „Bekannte
+  Einschränkungen von 1.0.0“ (Juniper MX ungetestet, ACI Shared L3Out/vzAny als Consumer, NSX ALB
+  Service Engines/Content Switching/GSLB, VPN, Betrieb von Postgres/Redis/Keycloak, ein Realm) mit
+  Übertrag nach Version 2. Risiko-Review (R14) und Abnahme-Liste der Produktiv-Installation
+  nachgeführt.
+
+**Nach dem Update** auf der Prod-VM: `docker compose … up -d --build` baut die Oberfläche neu;
+die Container-Prüfung steht in `docs/INSTALLATION-PROD.md` (Abnahme-Liste, „Container (1.0.0)“).
+
 ## 0.141.2 – 2026-11-06
 
 Befund des Anwenders 2026-11-06: Klick auf die Firewall-Regel in den Findings – „/api/rules/…

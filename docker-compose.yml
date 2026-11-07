@@ -1,5 +1,5 @@
 # Grundaufbau (Meilenstein M6). Profile:
-#   core       -> postgres, redis, orchestrator, web-ui
+#   core       -> postgres, redis, migrate, orchestrator, web-ui (1.0.0: Produktions-Build)
 #   collectors -> Collector-Worker (FortiGate/ACI, liest Beispieldaten bis M7)
 # Start: docker compose --profile core --profile collectors up --build
 #
@@ -12,12 +12,27 @@
 # laeuft nicht im Compose; Zugang wird ueber AUTOMATO_-Variablen konfiguriert.
 # Wachstumspfad: docker compose -> Kubernetes bei Multi-Worker-Skalierung.
 
+# Härtung der eigenen Dienste (1.0.0, R14): keine neuen Rechte über setuid/Datei-Capabilities,
+# keine Linux-Capabilities (wo nötig einzeln erlaubt), Dateisystem nur lesend - geschrieben wird
+# nur in Volumes und in /tmp (tmpfs). Postgres, Redis und Keycloak bleiben ohne cap_drop: ihre
+# Start-Skripte wechseln als root den Benutzer bzw. übernehmen Schlüssel (VM-/Docker-Härtung,
+# docs/INSTALLATION-PROD.md).
+x-gehaertet: &gehaertet
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  read_only: true
+  tmpfs:
+    - /tmp
+
 services:
   postgres:
     image: postgres:16-alpine
     profiles: ["core"]
     # nach einem Neustart der VM bzw. von Docker wieder hochfahren (0.41.0)
     restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]  # 1.0.0: Start-Skript wechselt ohne setuid
     # mit TLS intern ueber das Netz nur verschluesselt (hostssl), lokal wie bisher
     entrypoint: ["automato-postgres-start"]
     environment:
@@ -40,6 +55,7 @@ services:
     image: redis:7-alpine
     profiles: ["core"]
     restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]  # 1.0.0
     # mit TLS intern nur noch per TLS (kein Klartext-Port)
     entrypoint: ["automato-redis-start"]
     environment:
@@ -64,6 +80,11 @@ services:
       dockerfile: orchestrator/Dockerfile
     profiles: ["core"]
     restart: "no"
+    <<: *gehaertet
+    # tls-init (deploy/aufbau.sh tls-intern) läuft als root und übergibt den Schlüssel des
+    # Orchestrators an dessen Dienstbenutzer (chown)
+    cap_add:
+      - CHOWN
     depends_on:
       postgres:
         condition: service_healthy
@@ -83,6 +104,7 @@ services:
       dockerfile: orchestrator/Dockerfile
     profiles: ["core"]
     restart: unless-stopped
+    <<: *gehaertet  # schreibt nur ins Volume /var/lib/automato und nach /tmp
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -174,6 +196,7 @@ services:
       dockerfile: collectors/Dockerfile
     profiles: ["collectors"]
     restart: unless-stopped
+    <<: *gehaertet
     depends_on:
       redis:
         condition: service_healthy
@@ -199,11 +222,23 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
+  # Oberfläche (1.0.0): Produktions-Build - Caddy liefert die statischen Dateien aus und leitet
+  # /api an den Orchestrator weiter (web-ui/frontend/deploy/Caddyfile). Vite-Server nur mit
+  # AUTOMATO_UI_TARGET=dev (.env, z. B. im Labor).
   web-ui:
     build:
       context: web-ui/frontend
+      target: ${AUTOMATO_UI_TARGET:-prod}
     profiles: ["core"]
     restart: unless-stopped
+    <<: *gehaertet
+    # Vite (dev) schreibt seine Konfiguration beim Start neben vite.config.ts - mit
+    # AUTOMATO_UI_TARGET=dev darum auch AUTOMATO_UI_READ_ONLY=false setzen
+    read_only: ${AUTOMATO_UI_READ_ONLY:-true}
+    tmpfs:
+      - /tmp
+      - /data  # Caddy (prod)
+      - /config  # Caddy (prod)
     environment:
       ORCHESTRATOR_URL: http://orchestrator:8000
       # TLS intern (0.49.0): Web-UI per HTTPS, Orchestrator per HTTPS gegen die interne CA
@@ -224,6 +259,9 @@ services:
     image: caddy:2-alpine
     profiles: ["proxy"]
     restart: unless-stopped
+    <<: *gehaertet  # schreibt nur in die Volumes /data und /config
+    cap_add:
+      - NET_BIND_SERVICE  # Port 443
     environment:
       AUTOMATO_UI_HOST: ${AUTOMATO_UI_HOST:-localhost}
       AUTOMATO_UI_TLS: ${AUTOMATO_UI_TLS:-internal}
@@ -250,6 +288,11 @@ services:
     image: caddy:2-alpine
     profiles: ["agent-gateway"]
     restart: unless-stopped
+    <<: *gehaertet
+    tmpfs:
+      - /tmp
+      - /data
+      - /config
     environment:
       AUTOMATO_AGENT_GATEWAY_HOST: ${AUTOMATO_AGENT_GATEWAY_HOST:-localhost}
       AUTOMATO_AGENT_GATEWAY_SECRET: ${AUTOMATO_AGENT_GATEWAY_SECRET:-}

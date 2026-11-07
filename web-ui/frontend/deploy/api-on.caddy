@@ -1,0 +1,8 @@
+# TLS intern: Orchestrator per HTTPS, Zertifikat gegen die interne CA geprüft; Verbindungen nach
+# 30 s ohne Anfrage schliessen (Orchestrator hält sie 75 s offen, 0.139.2)
+reverse_proxy {$ORCHESTRATOR_TLS_URL:https://orchestrator:8000} {
+	transport http {
+		tls_trust_pool file /etc/automato/tls/ca.crt
+		keepalive 30s
+	}
+}

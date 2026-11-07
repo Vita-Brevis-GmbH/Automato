@@ -1,0 +1,40 @@
+# Web-UI im Betrieb (1.0.0): statische Dateien der Oberfläche (dist/) und /api an den Orchestrator.
+# Vor diesem Dienst steht der Proxy (deploy/proxy/Caddyfile: TLS nach aussen, Freigabe der Netze,
+# Sicherheits-Header, /api/internal gesperrt). Mit TLS intern (AUTOMATO_INTERNAL_TLS=on, ADR 0023)
+# per HTTPS mit dem Zertifikat der internen CA, der Orchestrator per HTTPS gegen die interne CA.
+{
+	admin off
+	auto_https off
+	persist_config off
+	servers {
+		protocols h1 h2
+	}
+}
+
+:5173 {
+	import /etc/caddy/tls-{$AUTOMATO_INTERNAL_TLS:off}.caddy
+
+	encode zstd gzip
+
+	# Lebenszeichen für den Healthcheck des Containers
+	handle /healthz {
+		respond "ok" 200
+	}
+
+	# /api/* ohne Präfix an den Orchestrator (wie der Vite-Proxy bis 0.141.x)
+	handle_path /api/* {
+		import /etc/caddy/api-{$AUTOMATO_INTERNAL_TLS:off}.caddy
+	}
+
+	handle {
+		root * /srv
+		# Dateien mit Fingerabdruck im Namen dürfen lange im Browser bleiben, die Startseite nie –
+		# nach einem Update lädt der Browser so die neue Oberfläche
+		@assets path /assets/*
+		header @assets Cache-Control "public, max-age=31536000, immutable"
+		@page not path /assets/*
+		header @page Cache-Control "no-cache"
+		try_files {path} /index.html
+		file_server
+	}
+}

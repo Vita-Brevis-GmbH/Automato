@@ -900,6 +900,12 @@ VM mit Tang/vTPM bzw. der Passphrase.
 - [ ] **Automato:** `sudo deploy/aufbau.sh pruefen` Exit 0; System-Seite: Umgebung `prod`,
       Anmeldung `oidc`, TLS intern aktiv, DB-Rolle ohne DDL, Audit verschlüsselt, Agent-Kanal
       `bind`, letzte Sicherung von heute.
+- [ ] **Container (1.0.0):** `docker compose ps` alle `healthy` bzw. `Up`; die Oberfläche ist
+      der Produktions-Build (Browser-Konsole ohne „React DevTools“-Hinweis,
+      `curl -s 127.0.0.1:5173/healthz` → `ok`); gehärtet:
+      `docker inspect -f '{{.Name}} ro={{.HostConfig.ReadonlyRootfs}} drop={{.HostConfig.CapDrop}}'
+      $(docker compose ps -q)` zeigt für Orchestrator, Collector, Web-UI, Proxy und Agent-Gateway
+      `ro=true drop=[ALL]`.
 - [ ] **Anmeldung:** Login nur mit OTP; ohne Token `401`; Rollen (viewer/operator/admin) und
       Mandanten je Benutzer geprüft.
 - [ ] **Quellsysteme:** nur Read-only-Konten, NetBox-Schreib-Token auf die Sync-Objekttypen
@@ -928,10 +934,13 @@ VM mit Tang/vTPM bzw. der Passphrase.
   <admin>`, `gpasswd -d <admin> automato-admins`, ggf. SSH-Schlüssel), Keycloak-Benutzer
   deaktivieren.
 
-## 10. Bekannte Grenzen (Stand 0.116.0)
+## 10. Bekannte Grenzen (Stand 1.0.0)
 
-- Die Oberfläche läuft im Container `web-ui` als Vite-Server hinter dem Proxy (nur auf
-  `127.0.0.1`); ein Produktions-Build mit statischen Dateien ist offen (Roadmap Version 1 Nr. 6).
-- Die Container laufen noch ohne `read_only`, `cap_drop` und Ressourcen-Grenzen je Dienst; die
-  Härtung geschieht heute auf VM- und Docker-Ebene (dieses Runbook).
+- Die Oberfläche läuft seit 1.0.0 als Produktions-Build (statische Dateien hinter Caddy im
+  Container `web-ui`, nur auf `127.0.0.1`); Orchestrator, Migration, Collector, Web-UI, Proxy und
+  Agent-Gateway sind gehärtet (`cap_drop: ALL`, `no-new-privileges`, Dateisystem nur lesend).
+  Postgres, Redis und Keycloak laufen mit ihren eigenen Start-Skripten (Postgres und Redis mit
+  `no-new-privileges`); ihre Härtung geschieht auf VM- und Docker-Ebene (dieses Runbook).
+- Ressourcen-Grenzen je Dienst (CPU, Speicher) sind nicht gesetzt – sie hängen von der Grösse
+  der VM und der Umgebung ab; bei Bedarf in `docker-compose.override.yml` (`mem_limit`, `cpus`).
 - OTP für alle Benutzer ist ein Schritt in der Keycloak-Konsole (6.5), nicht im Realm-Import.

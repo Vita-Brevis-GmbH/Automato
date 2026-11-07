@@ -473,8 +473,9 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.141.0** | Rückmeldung 2026-11-06 („erst ausführen, wenn die Läufe durch sind … nur die Wege berechnen, welche von der geänderten Firewall Regel betroffen sind“, ADR 0049): Befunde und Vorrechnen nach dem letzten Lauf, Datenstand nach Inhalt (Lauf ohne Änderung rechnet nichts), nur betroffene Applikationen neu (Fussabdruck je Stand, Grund in der Übersicht), gleiche Kennungen beim Einlesen, Routing und Doku-Grundlagen geteilt (−61 % Abfragen) |
 | **0.141.1** | Rückmeldung 2026-11-06 („zeigt mir nicht den Rückweg an, welcher falsch sein soll“, „Parallelen Wege (ACI mehrere Leafs, Firewall Verbunde mit Sessionsync)“): Rückweg je Abschnitt Hop für Hop in Weg-Suche und Verbindungen (andere Firewall markiert), Session-Sync-Partner zählen wie der Verbund als dieselbe Firewall |
 | **0.141.2** | Befund 2026-11-06 (Klick auf die Regel in den Findings: „/api/rules/… 404“): Befunde der Applikationen folgen der Regel schon beim Einlesen (neue Kennung bzw. Befund weg), umbenannte Regeln und Regeln mit gleichem Schlüssel behalten ihre Kennung, Meldung „Regel gibt es nicht mehr“ statt Fehler |
+| **1.0.0** | **Version 1 abgeschlossen** (Anwender 2026-11-07: „Es funktioniert bisher alles wie gewünscht … Bitte den Stand fertigstellen“): Oberfläche als Produktions-Build (statische Dateien hinter Caddy, `/api` an den Orchestrator, TLS intern), eigene Dienste gehärtet (`cap_drop: ALL`, `no-new-privileges`, nur lesend), Roadmap Version 1 geschlossen, bekannte Einschränkungen und Übertrag nach Version 2, Risiko-Review |
 
-### Nächste Arbeiten (Stand 0.141.2)
+### Nächste Arbeiten (Stand 1.0.0)
 
 **Abgenommen (Anwender):** alle Stände bis 0.43.0 gegen die echten Systeme (2026-10-23), bis
 **0.68.0** (2026-10-26), bis **0.102.0** (2026-10-28: „ich teste nach dem Freigeben der Version
@@ -510,7 +511,7 @@ Eingangsfiltern und default-originate ohne Einwand), bis **0.132.0** (2026-11-04
 Dauer und VIP-Weg ohne Einwand zu 0.132.0). Zu 0.132.1 Einwand (2026-11-04: Weg über die VIP mit
 Sperrliste davor weiter als gesperrt gezeigt) – korrigiert in 0.132.2, bis **0.132.2** (2026-11-04,
 Rückmeldung zu BGP-Befunden und Netzwerkplan ohne Einwand zu 0.132.2), bis **0.133.0** (2026-11-04,
-Rückmeldung zur Dauer ohne Einwand zu 0.133.0). Zu 0.133.1 Einwand (2026-11-04: Berechnung bricht immer bei 391 von 808 Wegen ab und beginnt von vorn, 83 Applikationen nie berechnet) – korrigiert in 0.133.2, bis **0.133.2** (2026-11-05, „Er rechnet nun durch, super“; Rückmeldung zur Sperre in der Weg-Suche ohne Einwand zu 0.133.2). Zu 0.133.3 (2026-11-05): Dienst FT_any erledigt, „abhängig von: Eingang“ noch offen – in 0.133.4. Zu 0.133.4 Einwand (2026-11-05: Server hinter der VIP nur direkt gesucht, Rückweg nicht geprüft, VIPs ohne Ziel) – in 0.134.0. Zu 0.134.0 (2026-11-05): Verbindungen über die VIP und ACI ohne Quelle gewünscht – in 0.135.0. Zu 0.135.0 (2026-11-05): Rückweg auch in den Verbindungen gewünscht – in 0.136.0. Zu 0.136.0 (2026-11-05): Dienst bei geänderten Ports nicht eindeutig – in 0.137.0. Zu 0.137.0 (2026-11-05): 500 Paare von Hand bestätigen zu aufwendig – in 0.138.0. Zu 0.138.0 (2026-11-05): Neuberechnen startet bei jedem Import neu, Regeln je Applikation einlesen – in 0.139.0. Zu 0.139.0 Einwand (2026-11-05: keine Doku fertig, nach dem Update je Applikation minutenlang Befunde) – in 0.139.1. Zu 0.139.1 (2026-11-06): „Failed to fetch“ und HTTP 500 durch abgebrochene Verbindungen und Fehler-Rückmeldungen von Keycloak – in 0.139.2. Zu 0.139.2 (2026-11-06): „Failed to fetch“ nicht mehr aufgetaucht (wird weiter beobachtet); „Regel nie gebraucht“ auch für breite Regeln (3255 von 4153 Findings) – in 0.139.3. Zu 0.139.3 (2026-11-06): breite Regeln in der Doku per Regelwerk ausgeschlossen; Wegberechnung für grosse Umgebungen nicht zuverlässig (Grenzen) – in 0.140.0, bis **0.139.3** (2026-11-06, „Das wars mit der Abnahme von den 139er Stand“). Zu 0.140.0 (2026-11-06): Berechnungen starten trotz wartender Läufe und rechnen alles statt nur das Betroffene – in 0.141.0; Rückweg über andere Firewall ohne Anzeige des Rückwegs, parallele Wege (ACI-Leafs, Session-Sync) – in 0.141.1. Zu 0.141.1 (2026-11-06): Link auf die Regel in den Findings „404“ – in 0.141.2. Zur Abnahme stehen 0.140.0 bis 0.141.2. Seit 0.104.0 gilt eine
+Rückmeldung zur Dauer ohne Einwand zu 0.133.0). Zu 0.133.1 Einwand (2026-11-04: Berechnung bricht immer bei 391 von 808 Wegen ab und beginnt von vorn, 83 Applikationen nie berechnet) – korrigiert in 0.133.2, bis **0.133.2** (2026-11-05, „Er rechnet nun durch, super“; Rückmeldung zur Sperre in der Weg-Suche ohne Einwand zu 0.133.2). Zu 0.133.3 (2026-11-05): Dienst FT_any erledigt, „abhängig von: Eingang“ noch offen – in 0.133.4. Zu 0.133.4 Einwand (2026-11-05: Server hinter der VIP nur direkt gesucht, Rückweg nicht geprüft, VIPs ohne Ziel) – in 0.134.0. Zu 0.134.0 (2026-11-05): Verbindungen über die VIP und ACI ohne Quelle gewünscht – in 0.135.0. Zu 0.135.0 (2026-11-05): Rückweg auch in den Verbindungen gewünscht – in 0.136.0. Zu 0.136.0 (2026-11-05): Dienst bei geänderten Ports nicht eindeutig – in 0.137.0. Zu 0.137.0 (2026-11-05): 500 Paare von Hand bestätigen zu aufwendig – in 0.138.0. Zu 0.138.0 (2026-11-05): Neuberechnen startet bei jedem Import neu, Regeln je Applikation einlesen – in 0.139.0. Zu 0.139.0 Einwand (2026-11-05: keine Doku fertig, nach dem Update je Applikation minutenlang Befunde) – in 0.139.1. Zu 0.139.1 (2026-11-06): „Failed to fetch“ und HTTP 500 durch abgebrochene Verbindungen und Fehler-Rückmeldungen von Keycloak – in 0.139.2. Zu 0.139.2 (2026-11-06): „Failed to fetch“ nicht mehr aufgetaucht (wird weiter beobachtet); „Regel nie gebraucht“ auch für breite Regeln (3255 von 4153 Findings) – in 0.139.3. Zu 0.139.3 (2026-11-06): breite Regeln in der Doku per Regelwerk ausgeschlossen; Wegberechnung für grosse Umgebungen nicht zuverlässig (Grenzen) – in 0.140.0, bis **0.139.3** (2026-11-06, „Das wars mit der Abnahme von den 139er Stand“). Zu 0.140.0 (2026-11-06): Berechnungen starten trotz wartender Läufe und rechnen alles statt nur das Betroffene – in 0.141.0; Rückweg über andere Firewall ohne Anzeige des Rückwegs, parallele Wege (ACI-Leafs, Session-Sync) – in 0.141.1. Zu 0.141.1 (2026-11-06): Link auf die Regel in den Findings „404“ – in 0.141.2, bis **0.141.2** (2026-11-07, „Es funktioniert bisher alles wie gewünscht“). Zur Abnahme steht 1.0.0 (Produktions-Build der Oberfläche, Container-Härtung). Seit 0.104.0 gilt eine
 Version als abgenommen,
 sobald die nächste Rückmeldung des Anwenders keinen Einwand dazu enthält (`CLAUDE.md`, Ablauf).
 
@@ -518,21 +519,36 @@ sobald die nächste Rückmeldung des Anwenders keinen Einwand dazu enthält (`CL
 Produktivschaltung weiter 0.1xx; **1.0.0 = produktiv**, danach 2.x mit neuem Namen und Cockpit,
 3.x Automatisierung.
 
-*Version 1 – bis zur Produktivschaltung (1.0.0):*
+*Version 1 – bis zur Produktivschaltung (1.0.0): **abgeschlossen mit 1.0.0** (2026-11-07,
+Anwender: „Es funktioniert bisher alles wie gewünscht … Bitte den Stand fertigstellen“).*
 
 | Nr. | Inhalt | Stand |
 |---|---|---|
-| 1 | Module in eigene Pakete, Findings als steckbare Prüfungen, Oberfläche je Modul (ADR 0036, weitere Stufen) | **Stufe 1 in 0.110.0** (ADR 0039: Prüfungen je Modul steckbar und je Mandant schaltbar, Reiter „Prüfungen“, Ansichten je Modul aus dem Verzeichnis); die übrigen Dateien ziehen schrittweise in die Pakete ihres Moduls |
+| 1 | Module in eigene Pakete, Findings als steckbare Prüfungen, Oberfläche je Modul (ADR 0036, weitere Stufen) | **erledigt für 1.0.0:** Stufe 1 in 0.110.0 (ADR 0039: Prüfungen je Modul steckbar und je Mandant schaltbar, Reiter „Prüfungen“, Ansichten je Modul aus dem Verzeichnis); übrige Dateien ziehen beim nächsten Ändern in ihr Modul (Regel in `CLAUDE.md`) |
 | 2 | Prüfung, ob der Fingerabdruck der Doku jede Änderung bemerkt, im nächtlichen Lauf | **erledigt in 0.109.1** (CI-Schritt nachts bzw. von Hand, `AUTOMATO_TEST_DOC_SNAPSHOTS=1`) |
-| 3 | BGP in der Dokumentation; BGP-Filter je Zone aus Netzen und Ausschlüssen ableiten – als Vorschlag/Export, kein Schreibweg | **Stufe 1 in 0.113.0** (ADR 0041: Filter und Route Control lesen, Soll/Ist je Nachbar, Befunde, Netze der Filter für die Anbindungen); **Stufe 2 in 0.114.0** (Backup-Wege gegen die Filter, Soll je Nachbar aus den Zonen dahinter mit CLI-Vorschlag); **Stufe 3 in 0.116.0** (Ausgangsfilter aus den Zonen diesseits, ACI Import Route Control aus den Zonen dahinter) – **erledigt** |
-| 4 | Tests des Anwenders abschliessen; Juniper-Router einbinden und testen (Routing-Tabelle des MX für die Wege: gelesen seit 0.99.0 über `show route`/`show bgp neighbor` als JSON, am echten MX noch nicht getestet); Wege sauber und intensiv testen | offen (Tests des Anwenders) |
-| 5 | Schreibpfad mit Nachkontrolle: nach „Übernehmen“ über den Lesepfad zurücklesen und vergleichen, Abweichungen als Befund | **erledigt in 0.115.0** (ADR 0042: rein lesender Zugang, Vergleich je geschriebenem Objekt, Ergebnis am Plan, Befund `netbox_sync_mismatch`) |
-| 6 | R14 vor dem Produktivbetrieb: OTP für alle, Oberfläche nur aus Management-Netz/VPN, Verschlüsselung des Datenträgers – umsetzen bzw. bestätigen, was ausserhalb von Automato erledigt ist | **Teil 1 in 0.116.0** (`docs/INSTALLATION-PROD.md`: LUKS mit Tang/vTPM, VM-, OS- und Docker-Hardening, Abnahme-Liste; Oberfläche nur aus `AUTOMATO_UI_ALLOW`, Orchestrator/Web-UI nur auf `127.0.0.1`; OTP-Schritt beschrieben); offen: auf der Prod-VM umsetzen und bestätigen, Produktions-Build der Oberfläche, Container-Härtung je Dienst |
-| 7 | Fehler bereinigen: HTTP 500 beim Laden der Doku (Referenz im Protokoll nötig) | offen |
-| 8 | Produktiv gehen, wenn die meisten Fehler raus sind (DC, ADR 0013) = **1.0.0** | danach |
-| 9 | NetBox je Kunde (ADR 0044): NetBox-Host mit einem Stack je Kunde (eigene Datenbank, Redis, Secret, Sicherung), gemeinsamer Proxy mit Namen nach Schema; Werkzeug zum Anlegen, Sichern, Aktualisieren und Löschen einer Instanz mit Anleitung | **umgesetzt in 0.121.0** (eigene VM, `deploy/netbox-host/netbox-host.sh`, `docs/INSTALLATION-NETBOX-HOST.md`, Startseiten je Kunde); Anmeldung über Keycloak in V2 |
-| 10 | AD-DNS als Referenzquelle, nur lesend über Zonentransfer (Entscheid 2026-11-03, eigene ADR) – DNS-Namen ohne Infoblox | **umgesetzt in 0.123.0** (ADR 0045: Quellsystem *AD-DNS* mit Zonen, immer Anreicherung, Vergleich nach Namen); offen: DNS-Namen aus dem AD per NetBox-Sync in NetBox übernehmen (eigener Entscheid) |
-| 11 | Projekt Datacenter: möglicherweise als Kopie des Projekts weiterführen (ADR 0044) | Entscheid später |
+| 3 | BGP in der Dokumentation; BGP-Filter je Zone aus Netzen und Ausschlüssen ableiten – als Vorschlag/Export, kein Schreibweg | **erledigt** (ADR 0041: Stufe 1 in 0.113.0, Stufe 2 in 0.114.0, Stufe 3 in 0.116.0) |
+| 4 | Tests des Anwenders abschliessen; Juniper-Router einbinden und testen; Wege sauber und intensiv testen | **erledigt** (Abnahme bis 0.141.2, 2026-11-07; Wege mit ADR 0048/0049 ohne stille Grenzen, Rückweg Hop für Hop in 0.141.1); Juniper MX am echten Gerät noch nicht getestet → *Bekannte Einschränkungen* |
+| 5 | Schreibpfad mit Nachkontrolle: nach „Übernehmen“ über den Lesepfad zurücklesen und vergleichen, Abweichungen als Befund | **erledigt in 0.115.0** (ADR 0042) |
+| 6 | R14 vor dem Produktivbetrieb: OTP für alle, Oberfläche nur aus Management-Netz/VPN, Verschlüsselung des Datenträgers, Produktions-Build der Oberfläche, Container-Härtung je Dienst | **erledigt in Automato:** Teil 1 in 0.116.0 (`docs/INSTALLATION-PROD.md`, `AUTOMATO_UI_ALLOW`, nur `127.0.0.1`), **Produktions-Build und Container-Härtung in 1.0.0**; auf der Prod-VM vom Betreiber mit der Abnahme-Liste (`docs/INSTALLATION-PROD.md`, Abschnitt 8) zu bestätigen |
+| 7 | Fehler bereinigen: HTTP 500 beim Laden der Doku (Referenz im Protokoll nötig) | **geschlossen:** Fehler mit Referenz seit 0.94.1, Ursachen behoben in 0.133.2 (Abbruch bei /32-Route) und 0.139.2 (abgebrochene Verbindungen, Keycloak-Rückmeldungen); seither nicht mehr gemeldet. Tritt er wieder auf: Referenz aus der Meldung an die Entwicklung |
+| 8 | Produktiv gehen, wenn die meisten Fehler raus sind (DC, ADR 0013) = **1.0.0** | **1.0.0 freigegeben** (2026-11-07) |
+| 9 | NetBox je Kunde (ADR 0044) | **erledigt in 0.121.0** (`deploy/netbox-host/netbox-host.sh`, `docs/INSTALLATION-NETBOX-HOST.md`); Anmeldung über Keycloak → Version 2 Nr. 12 |
+| 10 | AD-DNS als Referenzquelle, nur lesend über Zonentransfer (ADR 0045) | **erledigt in 0.123.0**; DNS-Namen aus dem AD per NetBox-Sync → Version 2 Nr. 15 |
+| 11 | Projekt Datacenter: möglicherweise als Kopie des Projekts weiterführen (ADR 0044) | Entscheid nach 1.0.0 → Version 2 Nr. 16 |
+
+*Bekannte Einschränkungen von 1.0.0 (bewusst offen, keine Fehler):*
+
+| Bereich | Einschränkung | Weiter in |
+|---|---|---|
+| Juniper MX | Routing-Tabelle (`show route`/`show bgp neighbor` als JSON, seit 0.99.0) am echten MX nicht getestet | beim ersten MX im Betrieb prüfen |
+| ACI | Shared L3Out (`shared-rtctrl`/`shared-security` externer EPGs in anderen VRFs) und vzAny als Consumer eines Shared Service in der Doku nicht ausgewertet (ADR 0019) | Version 2 Nr. 17 |
+| NSX ALB | Adressen der Service Engines, Content Switching, GSLB nicht gelesen (ADR 0027) | Version 2 Nr. 9 |
+| VPN | IPsec/SSL-VPN der FortiGate nicht gelesen – Weg-Suche und Verbindungen kennen keine Tunnel | Version 2 Nr. 13 |
+| Befunde | Befunde der Applikationen und Vorrechnen erst nach den Läufen (ADR 0049); bis dahin zeigt die Übersicht „wartet auf n Läufe“, Links auf Regeln folgen der Regel (0.141.2) | so gewollt |
+| Grenzen | Wegberechnung mit Grenzen je Verbindung (Gegenstellen, Dienste, Wege); jede Kürzung ist gezählt und als Befund „Applikation: unvollständig geprüft“ sichtbar (ADR 0048) | so gewollt |
+| Betrieb | Postgres, Redis und Keycloak ohne `cap_drop` (eigene Start-Skripte); keine Ressourcen-Grenzen je Dienst (`docs/INSTALLATION-PROD.md`, Abschnitt 10) | bei Bedarf je Umgebung |
+| Anmeldung | ein Realm für alle Mandanten; OTP in der Keycloak-Konsole (nicht im Realm-Import) | Version 2 Nr. 12 |
+| Schreiben | nur NetBox-Sync schreibt (Vorschau → Übernehmen); FortiGate, APIC, DDI strikt lesend | Version 3 (eigene ADR je Schreibweg) |
 
 *Version 2 – neuer Name und Cockpit (2.x):*
 
@@ -552,6 +568,10 @@ Produktivschaltung weiter 0.1xx; **1.0.0 = produktiv**, danach 2.x mit neuem Nam
 | 12 | Anmeldung je Mandant: Realm je Mandant (eigene Login-Seite wie bei Magister), Betriebs-Realm mit dem lokalen AD (Entscheid 2026-11-03); Global Admin sieht und verwaltet alle Mandanten – Sicht eines Kunden oder globale Sicht über alle Mandanten, z. B. Regeln zwischen zwei Kunden erstellen bzw. überwachen (grösserer Umbau, ADR 0044) |
 | 13 | VPN-Verbindungen: IPsec und SSL-VPN der FortiGate lesend (Tunnel, Gegenstellen, Phase-2-Selektoren, Routen über Tunnel) in Weg-Suche, Verbindungen und Doku (Anwender 2026-11-03) |
 | 14 | Lizenz- und Gerätemanagement als weiteres Werkzeug auf der Startseite (später; Automatisierung siehe Version 3) |
+| 15 | DNS-Namen aus dem AD (ADR 0045) per NetBox-Sync in NetBox übernehmen (eigener Entscheid, aus Version 1 Nr. 10) |
+| 16 | Projekt Datacenter: als Kopie des Projekts weiterführen – Entscheid (ADR 0044, aus Version 1 Nr. 11) |
+| 17 | ACI: Shared L3Out und vzAny als Consumer eines Shared Service in Doku und Weg-Suche (ADR 0019, bekannte Einschränkung von 1.0.0) |
+| 18 | Prüfen vor dem Ändern (geplante Route bzw. Regel als Überlagerung) – Vorbereitung im Cockpit, Umsetzung mit Version 3 |
 
 *Version 3 – Automatisierung (3.x):* „Wiedergeburt“ von Automato mit Automatisierungen für
 Netzwerk und VMs (Proxmox, VMware usw.), in Zusammenarbeit mit Magister und dem
@@ -562,7 +582,7 @@ den gelesenen Stand; Entscheid 2026-10-29). Jeder neue Schreibweg mit eigener AD
 
 | Befund | Stand |
 |---|---|
-| HTTP 500 beim Laden der Doku einer Applikation | 0.94.1: Fehler mit Referenz im Protokoll; Ursache mit dem Protokoll des Anwenders beheben |
+| HTTP 500 beim Laden der Doku einer Applikation | 0.94.1: Fehler mit Referenz im Protokoll; Ursachen behoben in 0.133.2 und 0.139.2 – **geschlossen mit 1.0.0** (seither nicht mehr gemeldet) |
 | Klick auf ein Element der Applikation → Detail wie in „Objekte & Inventar“ statt Sprung zu den Regeln | **umgesetzt in 0.95.0** (EPG-Detail, Objekt-Detail in der Doku) |
 | L3Outs: nicht das ACI-Routing (zu offen), die Firewalls entscheiden; Zuordnung L3Out → Firewall | **umgesetzt in 0.97.0** (ADR 0034: Firewall dahinter abgeleitet bzw. von Hand, Routing der Firewall entscheidet) |
 | Contracts über L3Outs nur als Hilfs-Contract, nicht separat listen | **umgesetzt in 0.97.0** (Spalte „L3Out“ an der Firewall-Regel) |
@@ -596,8 +616,8 @@ den gelesenen Stand; Entscheid 2026-10-29). Jeder neue Schreibweg mit eigener AD
 |---|---|
 | 0.108 | **erledigt in 0.108.0** (ADR 0037): Doku und Verbindungen als Stand mit Fingerabdruck, sofort der letzte Stand, neu im Hintergrund, Vorrechnen; Befunde der Zonen beim Speichern im Hintergrund. |
 | 0.110 | **Schreibpfad mit Nachkontrolle:** **erledigt in 0.115.0** (ADR 0042) – nach „Übernehmen“ rein lesend zurücklesen und je Objekt vergleichen, Abweichungen als Befund. |
-| 0.111 | **Prüfen vor dem Ändern:** ein geplantes Routing bzw. eine geplante Regel als Überlagerung über den gelesenen Stand legen; Wegsucher und Findings warnen, was sich dadurch ändert (gesperrt, andere Zone, Regel nie gebraucht). |
-| danach | Dateien je Modul in eigene Pakete verschieben, wo es eine Änderung erleichtert; Findings als steckbare Prüfungen; Oberfläche je Modul aufteilen; Cockpit (Mehrmandanten, eigene ADR) mit den Basis-Settings je Mandant. |
+| 0.111 | **Prüfen vor dem Ändern:** ein geplantes Routing bzw. eine geplante Regel als Überlagerung über den gelesenen Stand legen; Wegsucher und Findings warnen, was sich dadurch ändert (gesperrt, andere Zone, Regel nie gebraucht). → **Version 2 Nr. 18 / Version 3** |
+| danach | Dateien je Modul in eigene Pakete verschieben, wo es eine Änderung erleichtert; Findings als steckbare Prüfungen; Oberfläche je Modul aufteilen; Cockpit (Mehrmandanten, eigene ADR) mit den Basis-Settings je Mandant. → Prüfungen und Ansichten je Modul **in 0.110.0**, Dateien ziehen beim Ändern um; Cockpit **Version 2 Nr. 2** |
 
 **Auftrag des Anwenders (2026-10-27: „2 durchführen ohne den Punkt 7 / 3 Sprache / 4
 Verkabelung, Applikationen, Kunden, Routing“):**
@@ -643,8 +663,8 @@ bleibt) – **umgesetzt in 0.74.0**; weiter mit Schritt 5.
 | 3 | **Schwachstellen** aus der Übersicht 0.70.0: ACI-Filter nur mit Quellport (Urteil statt „möglich“), Rückrichtung in der Doku je System wie in der Applikations-Doku, Leistung der Zonenmatrix mit der Rückrichtung messen (20 000 Contracts ≈ 1,2 s, linear – kein Zwischenspeicher nötig) | **umgesetzt in 0.72.1** |
 | 4 | **Lücken im Ablauf:** nächtlicher CI-Lauf auf dem aktuellen Stand (`main` nachführen), Überschriften der Roadmap | `main` = 0.70.0 (PR #1, 2026-10-26), = 0.87.0 (PR #2, 2026-10-27); weiter nachführen per PR auf Wunsch des Anwenders |
 | 5 | **Zonen komplett:** Zonen je Kunde im Grundschema, Befund „Zone ausserhalb des Schemas“, draw.io-Datei des Zonenplans zurück einlesen, Relevanz nach dem Weg in der Zonenmatrix, Übergänge über Routen ohne gemeinsames Netz, Absicht je Richtung im Plan, Zonen in den Verbindungen der Applikations-Doku (ADR 0024) | Teil 1 **umgesetzt in 0.78.0** (Zonen in den Verbindungen, Absicht je Richtung im Plan, Befund „Zone ausserhalb des Schemas“); Teil 2 **umgesetzt in 0.81.0** (Relevanz nach dem Weg in der Matrix, Übergänge zu Zonen nur hinter einem Router); Teil 3 **umgesetzt in 0.82.0** (Zonen je Kunde im Grundschema); Teil 4 **umgesetzt in 0.83.0** (Zonenplan aus draw.io zurück einlesen) – **abgeschlossen** |
-| 6 | **Daten verschärfen** (Inhalt mit dem Anwender festlegen) | erste Fassung **Datenqualität in 0.91.0** (ADR 0029: Bereiche mit Ampel/Ursache/Link, Befunde „Stand veraltet“/„nur teilweise gelesen“); Inhalt mit dem Anwender abstimmen |
-| 7 | **Erstes Projekt abschliessen:** Produktivschaltung des DC mit den R14-Massnahmen (ADR 0013, RISKS) | danach |
+| 6 | **Daten verschärfen** (Inhalt mit dem Anwender festlegen) | **Datenqualität in 0.91.0** (ADR 0029: Bereiche mit Ampel/Ursache/Link, Befunde „Stand veraltet“/„nur teilweise gelesen“), im Betrieb seither ohne Einwand – **abgeschlossen mit 1.0.0**; Erweiterungen nach Rückmeldung |
+| 7 | **Erstes Projekt abschliessen:** Produktivschaltung des DC mit den R14-Massnahmen (ADR 0013, RISKS) | **1.0.0** (2026-11-07) |
 
 **Danach (Entscheid nach der Produktivschaltung des DC): Mehrmandanten wie Magister.** Im
 Cockpit (ADR 0014) Firmen anlegen und definieren; neben dem DC weitere Kunden, unabhängige

@@ -207,6 +207,16 @@ jobs:
         run: docker build -f collectors/Dockerfile -t automato-collector:ci .
       - name: Image Web-UI
         run: docker build -t automato-web-ui:ci web-ui/frontend
+      # 1.0.0: Produktions-Build gehärtet wie im Compose (nur lesend, ohne Capabilities) -
+      # Startseite und Lebenszeichen müssen antworten
+      - name: Web-UI im Container (Rauchtest)
+        run: |
+          docker run -d --name webui -p 5173:5173 --read-only --tmpfs /tmp --tmpfs /data \
+            --tmpfs /config --cap-drop ALL --security-opt no-new-privileges:true automato-web-ui:ci
+          for i in $(seq 1 20); do curl -fsS http://127.0.0.1:5173/healthz && break; sleep 1; done
+          curl -fsS http://127.0.0.1:5173/ | grep -q '<div id="root">'
+          docker logs webui
+          docker rm -f webui
 
   # UI-Tests im Browser (Playwright): Orchestrator mit Beispieldaten + Vite, alle Ansichten und
   # die Kernablaeufe (Suche, NAT-Links, Findings, Dienste, Standorte, Alle einlesen).
