@@ -268,11 +268,16 @@ services:
       # Oberflaeche nur aus diesen Netzen (0.116.0, R14), z. B. "10.0.10.0/24 10.8.0.0/16"
       AUTOMATO_UI_ALLOW: ${AUTOMATO_UI_ALLOW:-0.0.0.0/0 ::/0}
       AUTOMATO_INTERNAL_TLS: ${AUTOMATO_INTERNAL_TLS:-off}
+      # Front-Proxy (1.2.0): Adresse der WAF – nur ihr wird X-Forwarded-For geglaubt
+      AUTOMATO_FRONT_WAF: ${AUTOMATO_FRONT_WAF:-127.0.0.1/32}
     ports:
       - "443:443"
     volumes:
       - ./deploy/proxy/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./deploy/proxy/pki:/etc/caddy/pki:ro
+      # Front-Proxy (1.2.0): von deploy/front/front.sh erzeugt (Einträge und Seiten)
+      - ./deploy/front/generated:/etc/caddy/front:ro
+      - ./deploy/front/generated/www:/srv/front:ro
       - ./deploy/tls/caddy:/etc/caddy/automato-tls:ro
       - ./deploy/tls/pki/client:/etc/automato/tls:ro
       - proxy-data:/data

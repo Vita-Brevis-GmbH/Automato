@@ -11,8 +11,16 @@
 	default_sni {$AUTOMATO_UI_HOST}
 	servers {
 		protocols h1 h2
+		# Front-Proxy (1.2.0): nur der WAF wird X-Forwarded-For geglaubt (Adresse des Benutzers)
+		trusted_proxies static {$AUTOMATO_FRONT_WAF:127.0.0.1/32}
 	}
 }
+
+# Front-Proxy (1.2.0, ADR 0044 Nachtrag): Startseiten, Portal und Weiterleitung je Werkzeug, von
+# deploy/front/front.sh erzeugt. Ohne Einrichtung gibt es die Dateien nicht – die Importe bleiben
+# dann leer (Hinweis im Protokoll, kein Fehler).
+import /etc/caddy/front/snippets*.caddy
+import /etc/caddy/front/sites/*.caddy
 
 {$AUTOMATO_UI_HOST} {
 	encode zstd gzip
