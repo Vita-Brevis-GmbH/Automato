@@ -1,19 +1,25 @@
 # Proxy des NetBox-Hosts (netbox-host.sh, ADR 0044): einziger veröffentlichter Port (443).
 # Die NetBox-Instanzen hängen mit dem Namen nb-<kunde> im Netz netbox-front und haben selbst
-# keinen Port nach aussen.
+# keinen Port nach aussen. Gehärtet wie die Dienste von Automato (1.0.0): keine Rechte über
+# setuid, keine Linux-Capabilities ausser Port 443, Dateisystem nur lesend (Daten in Volumes).
 name: netbox-host-proxy
 services:
   proxy:
     image: caddy:2-alpine
     restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]  # Port 443
+    read_only: true
+    tmpfs: [/tmp]
     environment:
       ALLOW: ${ALLOW:-0.0.0.0/0 ::/0}
+      FRONT: ${FRONT:-127.0.0.1/32}
     ports:
       - "443:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./sites:/etc/caddy/sites:ro
-      - ./www:/srv/www:ro
       - ./pki:/etc/caddy/pki:ro
       - proxy-data:/data
       - proxy-config:/config

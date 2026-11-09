@@ -1,28 +1,27 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC1111 # deutsche Anführungszeichen „…“ in Meldungen sind gewollt
 # NetBox-Host (0.121.0, ADR 0044): je Kunde eine eigene NetBox (netbox-docker, eigene Datenbank,
-# eigenes Redis, eigene Secrets, eigene Sicherung) hinter einem gemeinsamen Proxy (Caddy) mit
-# Wildcard-Zertifikat; dazu je Kunde eine Startseite mit Kacheln zu seinen Werkzeugen.
+# eigenes Redis, eigene Secrets, eigene Sicherung) hinter einem gemeinsamen Proxy (Caddy).
 #
-# Adressen (ADR 0044, Variante B; flach, weil das Wildcard-Zertifikat nur eine Ebene abdeckt):
-#   <kunde>.<domain>          Startseite des Kunden
-#   <kunde>-netbox.<domain>   NetBox des Kunden
-#   start.<domain>            interne Übersicht aller Kunden
+# Seit 1.1.0 (ADR 0044 Nachtrag) ist dieser Host ein Backend: Kunden kommen über die WAF auf den
+# Front-Proxy der Automato-VM (Startseiten, Portal, Weiterleitung je Werkzeug); hierher dürfen
+# nur der Front-Proxy und das Management-Netz (ALLOW). Adressen (flach, ein Wildcard-Zertifikat):
+#   <kunde>-nb.<domain>       NetBox des Kunden (dieser Host)
+#   <kunde>.<domain>, <kunde>-doc|-um|-cmdb.<domain>, start.<interne domain>  Front-Proxy
 #
 # Verwendung (als root bzw. mit sudo):
 #   netbox-host.sh init                         Grundgerüst, host.conf, Proxy, Sicherungsschlüssel, cron
 #   netbox-host.sh neu <kunde> [Anzeigename]    NetBox für einen Kunden anlegen und starten
 #   netbox-host.sh liste                        Kunden mit Zustand, Version und Adresse
 #   netbox-host.sh token <kunde>                Lese- und Sync-Benutzer mit Tokens für Automato
-#   netbox-host.sh link <kunde> <titel> <url> [beschreibung]   Kachel auf der Startseite ergänzen
-#   netbox-host.sh startseiten                  alle Startseiten und die Übersicht neu erzeugen
-#   netbox-host.sh sichern <kunde|alle>         Datenbank und Medien verschlüsselt sichern (age)
+#   netbox-host.sh sichern <kunde|alle|konfig>  Datenbank und Medien (alle: auch die Konfiguration) mit age
 #   netbox-host.sh wiederherstellen <kunde> <datei.sql.gz.age>   Sicherung einspielen
 #   netbox-host.sh update <kunde|alle>          sichern, Version aus host.conf holen, starten, prüfen
-#   netbox-host.sh loeschen <kunde> --ja        letzte Sicherung, dann Container, Daten und Seiten weg
+#   netbox-host.sh loeschen <kunde> --ja        letzte Sicherung, dann Container, Daten und Proxy-Eintrag weg
 #   netbox-host.sh pruefen                      Proxy, Zertifikat, Instanzen, Sicherungen
 #
-# Kurzname des Kunden: Kleinbuchstaben, Ziffern und Bindestrich (DNS-Label), z. B. "kunde-a".
+# Kurzname des Kunden: Kleinbuchstaben, Ziffern und Bindestrich (DNS-Label), z. B. "kunde-a"; nicht
+# auf -nb, -doc, -um oder -cmdb endend (sonst fiele er mit einem Werkzeug eines anderen Kunden zusammen).
 # Einstellungen: $NBH_DIR/host.conf (Vorlage beim ersten init). Für Tests ersetzbar: NBH_DIR,
 # DOCKER, GIT, AGE, AGE_KEYGEN, CURL, NBH_SKIP_ROOT=1, NBH_WAIT=<Sekunden>.
 set -euo pipefail
@@ -56,29 +55,30 @@ lade_conf() {
   NETBOX_DOCKER_TAG=${NETBOX_DOCKER_TAG:-5.0.2}
   NETBOX_VERSION=${NETBOX_VERSION:-v4.6.10-5.0.2}
   ALLOW=${ALLOW:-}
+  FRONT=${FRONT:-}
   TIME_ZONE=${TIME_ZONE:-Europe/Zurich}
   BACKUP_DIR=${BACKUP_DIR:-/var/backups/netbox-host}
   BACKUP_KEEP_DAYS=${BACKUP_KEEP_DAYS:-14}
   AGE_RECIPIENT=${AGE_RECIPIENT:-}
-  AUTOMATO_URL=${AUTOMATO_URL:-}
 }
 
 root_noetig() {
   [ "${NBH_SKIP_ROOT:-0}" = "1" ] || [ "$(id -u)" -eq 0 ] || abbruch "als root bzw. mit sudo ausführen"
 }
 
-kurzname() {  # prüft den Kurznamen des Kunden (DNS-Label, Platz für "-netbox")
+kurzname() {  # prüft den Kurznamen des Kunden (DNS-Label, Platz für "-cmdb")
   local k=${1:-}
   [ -n "$k" ] || abbruch "Kurzname des Kunden fehlt"
   [[ "$k" =~ ^[a-z0-9]([a-z0-9-]{0,40}[a-z0-9])?$ ]] \
     || abbruch "Kurzname '$k' ungültig: nur a-z, 0-9 und '-', nicht am Anfang/Ende, höchstens 42 Zeichen"
-  case "$k" in start | www | proxy | alle) abbruch "Kurzname '$k' ist reserviert" ;; esac
+  case "$k" in start | www | proxy | alle | konfig | mgmt) abbruch "Kurzname '$k' ist reserviert" ;; esac
+  # <kunde>-nb, -doc, -um, -cmdb sind die Werkzeuge eines Kunden (ADR 0044 Nachtrag)
+  case "$k" in *-nb | *-doc | *-um | *-cmdb) abbruch "Kurzname '$k' ist reserviert (endet wie ein Werkzeug: -nb, -doc, -um, -cmdb)" ;; esac
 }
 
 kdir() { printf '%s/kunden/%s' "$NBH_DIR" "$1"; }
 nbdir() { printf '%s/kunden/%s/netbox' "$NBH_DIR" "$1"; }
-nb_host() { printf '%s-netbox.%s' "$1" "$DOMAIN"; }
-start_host() { printf '%s.%s' "$1" "$DOMAIN"; }
+nb_host() { printf '%s-nb.%s' "$1" "$DOMAIN"; }
 
 kunden() {  # alle Kurznamen mit NetBox-Instanz
   local d
@@ -98,25 +98,15 @@ proxyc() { (cd "$NBH_DIR/proxy" && $DOCKER compose "$@"); }
 
 geheim() { openssl rand -hex 32; }
 
-html() {  # Text für HTML maskieren
-  local s=$1
-  # Ersatz in Anführungszeichen: sonst setzt bash ≥ 5.2 (patsub_replacement) für & den Treffer ein
-  s=${s//&/"&amp;"}
-  s=${s//</"&lt;"}
-  s=${s//>/"&gt;"}
-  s=${s//\"/"&quot;"}
-  printf '%s' "$s"
-}
-
 # --- init ---------------------------------------------------------------------------------------
 cmd_init() {
   root_noetig
   titel "Grundgerüst $NBH_DIR"
   install -d -m 750 "$NBH_DIR" "$NBH_DIR/kunden" "$NBH_DIR/proxy" "$NBH_DIR/proxy/sites" \
-    "$NBH_DIR/proxy/www" "$NBH_DIR/proxy/pki"
+    "$NBH_DIR/proxy/pki"
   if [ ! -f "$NBH_DIR/host.conf" ]; then
     install -m 600 "$SCRIPT_DIR/host.conf.example" "$NBH_DIR/host.conf"
-    ok "host.conf angelegt – DOMAIN, ALLOW, Zertifikat und AUTOMATO_URL eintragen, dann init erneut"
+    ok "host.conf angelegt – DOMAIN, ALLOW und FRONT eintragen, Zertifikat ablegen, dann init erneut"
   else
     ok "host.conf vorhanden"
   fi
@@ -150,7 +140,9 @@ cmd_init() {
   titel "Netz und Proxy"
   if $DOCKER network inspect netbox-front >/dev/null 2>&1; then ok "Netz netbox-front vorhanden"
   else $DOCKER network create netbox-front >/dev/null && ok "Netz netbox-front angelegt"; fi
-  cmd_startseiten >/dev/null
+  # Startseiten liegen seit 1.1.0 auf dem Front-Proxy – Reste früherer Fassungen entfernen
+  rm -rf "$NBH_DIR/proxy/www"
+  rm -f "$NBH_DIR/proxy/sites/_start.caddy"
   if [ -s "$NBH_DIR/proxy/pki/wildcard.crt" ]; then
     proxyc up -d >/dev/null && ok "Proxy läuft (443)"
   else
@@ -167,10 +159,14 @@ cmd_init() {
   fi
 }
 
-proxy_env() {  # .env des Proxys aus host.conf (Netze, aus denen zugegriffen werden darf)
+proxy_env() {  # .env des Proxys aus host.conf: wer zugreifen darf, wessen X-Forwarded-For gilt
   local allow=${ALLOW:-}
-  [ -n "$allow" ] || { allow="0.0.0.0/0 ::/0"; warn "ALLOW leer – alle Netze dürfen zugreifen (host.conf: ALLOW=\"<netze>\")"; }
-  printf 'ALLOW="%s"\n' "$allow" >"$NBH_DIR/proxy/.env"
+  [ -n "$allow" ] || { allow="0.0.0.0/0 ::/0"; warn "ALLOW leer – alle Netze dürfen zugreifen (host.conf: ALLOW=\"<Front-Proxy> <Management-Netz>\")"; }
+  {
+    printf 'ALLOW="%s"\n' "$allow"
+    # Front-Proxy: seine Angabe X-Forwarded-For (Adresse des Benutzers) wird übernommen
+    [ -z "${FRONT:-}" ] || printf 'FRONT="%s"\n' "$FRONT"
+  } >"$NBH_DIR/proxy/.env"
   chmod 640 "$NBH_DIR/proxy/.env"
 }
 
@@ -199,16 +195,11 @@ cmd_neu() {
     || abbruch "netbox-docker $NETBOX_DOCKER_TAG nicht geladen"
   ok "netbox-docker $NETBOX_DOCKER_TAG"
   printf 'NAME=%q\n' "${name:-$k}" >"$d/kunde.conf"
-  if [ ! -f "$d/links.tsv" ]; then
-    printf 'NetBox\thttps://%s\tIPAM, Geräte, Verkabelung\n' "$(nb_host "$k")" >"$d/links.tsv"
-    [ -z "$AUTOMATO_URL" ] || printf 'Dokumentation\t%s\tFirewall-Regeln, Applikationen, Wege\n' "$AUTOMATO_URL" >>"$d/links.tsv"
-  fi
   instanz_env "$k"
   instanz_override "$k"
   ok "Secrets in $nb/.env (nur root), Netz netbox-front als nb-$k"
   site_netbox "$k"
-  cmd_startseiten >/dev/null
-  ok "Proxy-Eintrag und Startseite https://$(start_host "$k")"
+  ok "Proxy-Eintrag https://$(nb_host "$k") (für Kunden über den Front-Proxy)"
   nbc "$k" pull -q >/dev/null 2>&1 || warn "Images nicht geladen (Netz?) – docker compose pull in $nb"
   nbc "$k" up -d netbox >/dev/null || abbruch "Start fehlgeschlagen: cd $nb && docker compose logs netbox"
   warte_netbox "$k" || abbruch "NetBox für $k antwortet nicht – cd $nb && docker compose logs netbox"
@@ -298,7 +289,7 @@ YAML
 
 site_netbox() {  # Proxy-Eintrag der NetBox eines Kunden
   local k=$1
-  cat >"$NBH_DIR/proxy/sites/$k-netbox.caddy" <<EOF
+  cat >"$NBH_DIR/proxy/sites/$k-nb.caddy" <<EOF
 # NetBox von $k (netbox-host.sh)
 $(nb_host "$k") {
 	import common
@@ -388,110 +379,6 @@ wieder angezeigt; erneut aufrufen ersetzt sie.
 EOF
 }
 
-# --- Startseiten --------------------------------------------------------------------------------
-cmd_link() {
-  root_noetig
-  lade_conf
-  local k=${1:-} t=${2:-} u=${3:-} b=${4:-}
-  kurzname "$k"
-  [ -d "$(kdir "$k")" ] || abbruch "Kunde '$k' unbekannt"
-  [ -n "$t" ] && [ -n "$u" ] || abbruch "Verwendung: link <kunde> <titel> <url> [beschreibung]"
-  [[ "$u" =~ ^https?:// ]] || abbruch "URL muss mit https:// beginnen"
-  [[ "$t$u$b" != *$'\t'* ]] || abbruch "keine Tabulatoren in Titel, URL oder Beschreibung"
-  printf '%s\t%s\t%s\n' "$t" "$u" "$b" >>"$(kdir "$k")/links.tsv"
-  cmd_startseiten >/dev/null
-  ok "Kachel „$t“ auf https://$(start_host "$k")"
-}
-
-seite() {  # HTML-Gerüst: $1 Titel, $2 Untertitel, Kacheln auf stdin (Titel\tURL\tBeschreibung)
-  local t=$1 sub=$2 kt ku kb
-  cat <<EOF
-<!doctype html>
-<html lang="de">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="robots" content="noindex">
-<title>$(html "$t")</title>
-<style>
-:root { color-scheme: light dark; --bg:#f6f7f9; --card:#fff; --fg:#1d2330; --muted:#5b6473; --line:#dfe3ea; --accent:#2457c5; }
-@media (prefers-color-scheme: dark) { :root { --bg:#14171d; --card:#1d222b; --fg:#e7eaf0; --muted:#9aa3b2; --line:#2c3340; --accent:#7aa2ff; } }
-* { box-sizing: border-box; }
-body { margin:0; font: 16px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; background:var(--bg); color:var(--fg); }
-main { max-width: 960px; margin: 0 auto; padding: 32px 16px; }
-h1 { margin: 0 0 4px; font-size: 1.6rem; }
-p.sub { margin: 0 0 24px; color: var(--muted); }
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
-a.tile { display:block; padding:18px; background:var(--card); border:1px solid var(--line); border-radius:10px; color:inherit; text-decoration:none; }
-a.tile:hover, a.tile:focus { border-color: var(--accent); outline: none; }
-a.tile b { display:block; font-size:1.1rem; color: var(--accent); margin-bottom: 4px; }
-a.tile span { color: var(--muted); font-size: .92rem; }
-footer { margin-top: 28px; color: var(--muted); font-size: .85rem; }
-</style>
-</head>
-<body>
-<main>
-<h1>$(html "$t")</h1>
-<p class="sub">$(html "$sub")</p>
-<div class="grid">
-EOF
-  while IFS=$'\t' read -r kt ku kb; do
-    [ -n "$kt" ] || continue
-    printf '<a class="tile" href="%s"><b>%s</b><span>%s</span></a>\n' "$(html "$ku")" "$(html "$kt")" "$(html "$kb")"
-  done
-  cat <<'EOF'
-</div>
-<footer>Anmeldung je Werkzeug · sign-in per tool</footer>
-</main>
-</body>
-</html>
-EOF
-}
-
-cmd_startseiten() {
-  lade_conf
-  local k d name www=$NBH_DIR/proxy/www
-  install -d -m 755 "$www"
-  for d in "$NBH_DIR"/kunden/*/; do
-    [ -d "$d" ] || continue
-    k=$(basename "$d")
-    name=$k
-    # shellcheck disable=SC1091
-    [ -f "$d/kunde.conf" ] && name=$(. "$d/kunde.conf" && printf '%s' "${NAME:-$k}")
-    install -d -m 755 "$www/$k"
-    seite "$name" "Werkzeuge · tools" <"$d/links.tsv" >"$www/$k/index.html"
-    cat >"$NBH_DIR/proxy/sites/$k.caddy" <<EOF
-# Startseite von $k (netbox-host.sh)
-$(start_host "$k") {
-	import common
-	root * /srv/www/$k
-	file_server
-}
-EOF
-  done
-  install -d -m 755 "$www/_start"
-  {
-    for d in "$NBH_DIR"/kunden/*/; do
-      [ -d "$d" ] || continue
-      k=$(basename "$d")
-      name=$k
-      # shellcheck disable=SC1091
-      [ -f "$d/kunde.conf" ] && name=$(. "$d/kunde.conf" && printf '%s' "${NAME:-$k}")
-      printf '%s\thttps://%s\tStartseite · NetBox: %s\n' "$name" "$(start_host "$k")" "$(nb_host "$k")"
-    done
-  } | seite "Kunden" "Übersicht aller Kunden · all customers" >"$www/_start/index.html"
-  cat >"$NBH_DIR/proxy/sites/_start.caddy" <<EOF
-# Interne Übersicht (netbox-host.sh)
-start.$DOMAIN {
-	import common
-	root * /srv/www/_start
-	file_server
-}
-EOF
-  ok "Startseiten erzeugt"
-  proxy_reload
-}
-
 # --- liste --------------------------------------------------------------------------------------
 cmd_liste() {
   root_noetig
@@ -529,15 +416,36 @@ sichere_einen() {
   ok "$k: $(basename "$db")"
 }
 
+sichere_konfig() {  # host.conf, Proxy (Zertifikat, Einträge) und je Kunde .env/Override – ohne Repo-Kopie
+  local ziel=$BACKUP_DIR/_konfig ts datei aus=()
+  install -d -m 700 "$ziel"
+  ts=$(date +%Y%m%d-%H%M%S)
+  datei=$ziel/konfig-$ts.tar.gz.age
+  # liegt das Repo (dieses Werkzeug) unter NBH_DIR, gehört es nicht in die Sicherung
+  case "$REPO_DIR/" in "$NBH_DIR"/*) aus=(--exclude="./${REPO_DIR#"$NBH_DIR"/}") ;; esac
+  if tar -C "$NBH_DIR" "${aus[@]}" -czf - . | $AGE -r "$AGE_RECIPIENT" -o "$datei.tmp"; then
+    mv "$datei.tmp" "$datei"
+  else
+    rm -f "$datei.tmp"
+    fehler "Konfiguration nicht gesichert"
+    return 1
+  fi
+  find "$ziel" -name 'konfig-*.age' -type f -mtime +"$BACKUP_KEEP_DAYS" -delete 2>/dev/null || true
+  ok "Konfiguration: $(basename "$datei") (host.conf, Zertifikat, Secrets je Kunde)"
+}
+
 cmd_sichern() {
   root_noetig
   lade_conf
   local wer=${1:-} k
-  [ -n "$wer" ] || abbruch "Verwendung: sichern <kunde|alle>"
+  [ -n "$wer" ] || abbruch "Verwendung: sichern <kunde|alle|konfig>"
   [ -n "$AGE_RECIPIENT" ] || abbruch "AGE_RECIPIENT fehlt in host.conf – netbox-host.sh init"
   titel "Sicherung nach $BACKUP_DIR"
   if [ "$wer" = alle ]; then
     for k in $(kunden); do sichere_einen "$k" || true; done
+    sichere_konfig || true
+  elif [ "$wer" = konfig ]; then
+    sichere_konfig || true
   else
     kurzname "$wer"
     [ -d "$(nbdir "$wer")" ] || abbruch "keine NetBox für '$wer'"
@@ -611,7 +519,7 @@ cmd_loeschen() {
   local k=${1:-} ja=${2:-}
   kurzname "$k"
   [ -d "$(kdir "$k")" ] || abbruch "Kunde '$k' unbekannt"
-  [ "$ja" = "--ja" ] || abbruch "löscht NetBox, Daten und Startseite von '$k' – bestätigen mit: loeschen $k --ja"
+  [ "$ja" = "--ja" ] || abbruch "löscht NetBox, Daten und Proxy-Eintrag von '$k' – bestätigen mit: loeschen $k --ja"
   titel "Löschen $k"
   if [ -d "$(nbdir "$k")" ]; then
     if [ -n "$AGE_RECIPIENT" ]; then
@@ -621,10 +529,10 @@ cmd_loeschen() {
     fi
     nbc "$k" down -v --remove-orphans >/dev/null 2>&1 || warn "$k: Container nicht entfernt"
   fi
-  rm -rf "$(kdir "$k")" "$NBH_DIR/proxy/www/$k"
-  rm -f "$NBH_DIR/proxy/sites/$k.caddy" "$NBH_DIR/proxy/sites/$k-netbox.caddy"
+  rm -rf "$(kdir "$k")"
+  rm -f "$NBH_DIR/proxy/sites/$k-nb.caddy"
   ok "$k entfernt – Sicherungen bleiben in $BACKUP_DIR/$k"
-  cmd_startseiten >/dev/null
+  proxy_reload
 }
 
 # --- pruefen ------------------------------------------------------------------------------------
@@ -644,6 +552,11 @@ cmd_pruefen() {
     fehler "Wildcard-Zertifikat fehlt ($NBH_DIR/proxy/pki/wildcard.crt)"
   fi
   [ -n "$ALLOW" ] && ok "Zugriff nur aus: $ALLOW" || warn "ALLOW leer – alle Netze dürfen zugreifen"
+  [ -n "$FRONT" ] && ok "Front-Proxy: $FRONT (Adresse des Benutzers aus X-Forwarded-For)" \
+    || info "FRONT leer – NetBox sieht als Adresse den Front-Proxy statt des Benutzers"
+  local konf
+  konf=$(find "$BACKUP_DIR/_konfig" -name 'konfig-*.tar.gz.age' -type f -mmin -$((26 * 60)) 2>/dev/null | head -1 || true)
+  [ -n "$konf" ] && ok "Konfiguration gesichert (jünger als 26 h)" || warn "keine Sicherung der Konfiguration der letzten 26 h (sichern konfig)"
   titel "Kunden"
   local k code neu
   for k in $(kunden); do
@@ -672,12 +585,10 @@ case "${1:-}" in
   neu) shift; cmd_neu "$@" ;;
   liste) cmd_liste ;;
   token) shift; cmd_token "$@" ;;
-  link) shift; cmd_link "$@" ;;
-  startseiten) root_noetig; cmd_startseiten ;;
   sichern) shift; cmd_sichern "$@" ;;
   wiederherstellen) shift; cmd_wiederherstellen "$@" ;;
   update) shift; cmd_update "$@" ;;
   loeschen) shift; cmd_loeschen "$@" ;;
   pruefen) cmd_pruefen ;;
-  *) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+  *) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

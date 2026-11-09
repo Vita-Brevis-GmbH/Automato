@@ -1,10 +1,12 @@
-# Proxy des NetBox-Hosts (netbox-host.sh, ADR 0044). Je Kunde zwei Einträge in sites/:
-#   <kunde>.<domain>         Startseite (statisch aus www/<kunde>)
-#   <kunde>-netbox.<domain>  NetBox des Kunden (Container nb-<kunde> im Netz netbox-front)
-# und start.<domain> als interne Übersicht. ALLOW (.env aus host.conf): Netze mit Zugriff.
+# Proxy des NetBox-Hosts (netbox-host.sh, ADR 0044). Je Kunde ein Eintrag in sites/:
+#   <kunde>-nb.<domain>  NetBox des Kunden (Container nb-<kunde> im Netz netbox-front)
+# Seit 1.1.0 ein Backend: Kunden kommen über den Front-Proxy der Automato-VM (Startseiten,
+# Portal, WAF davor). ALLOW (.env aus host.conf): Front-Proxy und Management-Netz.
+# FRONT: dem Front-Proxy wird X-Forwarded-For geglaubt (Adresse des Benutzers im Protokoll).
 {
 	servers {
 		protocols h1 h2
+		trusted_proxies static {$FRONT:127.0.0.1/32}
 	}
 }
 
@@ -20,7 +22,8 @@
 		X-Frame-Options "SAMEORIGIN"
 		-Server
 	}
-	# Nur aus freigegebenen Netzen; Docker muss die Quell-IP erhalten ("userland-proxy": false)
+	# Nur aus freigegebenen Netzen (direkte Gegenstelle, nicht X-Forwarded-For); Docker muss die
+	# Quell-IP erhalten ("userland-proxy": false)
 	@blocked not remote_ip {$ALLOW}
 	respond @blocked "Zugriff nur aus freigegebenen Netzen" 403
 }

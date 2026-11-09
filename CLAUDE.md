@@ -46,7 +46,7 @@ und wird erweitert. Details: `README.md`, `ARCHITECTURE.md`, `docs/adr/`.
 
 - **Abnahme:** Der Anwender testet jede freigegebene Version sofort. Eine Version gilt als
   abgenommen, sobald seine nächste Rückmeldung keinen Einwand dazu enthält – in `ROADMAP.md`
-  („Abgenommen“) nachführen. Abgenommen bis **0.141.2** (2026-11-07).
+  („Abgenommen“) nachführen. Abgenommen bis **1.0.0** (2026-11-09).
 - **Klärung vor dem Bauen:** ändert sich Bedienung oder Bedeutung und ist der Wunsch mehrdeutig,
   zuerst 3–5 Zeilen Vorschlag mit einer Rückfrage, dann bauen.
 - **Sammeln:** Anpassungen einer Rückmeldungsrunde in **einer** Version (Patch = Korrektur,
@@ -100,7 +100,8 @@ und wird erweitert. Details: `README.md`, `ARCHITECTURE.md`, `docs/adr/`.
 
 ## Aktueller Stand
 
-1.0.0 – **Version 1 abgeschlossen** (Produktivschaltung DC, R14). Einzelheiten je Bereich in
+1.1.0 – NetBox-Host als Backend hinter dem Front-Proxy (ADR 0044 Nachtrag); **Version 1 abgeschlossen**
+mit 1.0.0 (Produktivschaltung DC, R14). Einzelheiten je Bereich in
 `docs/STAND.md`, Produktiv-Installation in `docs/INSTALLATION-PROD.md`, NetBox je Kunde in
 `docs/INSTALLATION-NETBOX-HOST.md`. Bekannte Einschränkungen von 1.0.0 und nächste Arbeiten in
 `ROADMAP.md` („Roadmap nach Versionen“): Version 2 = neuer Name und Cockpit (eigenes Projekt),
