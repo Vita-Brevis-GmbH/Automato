@@ -3,7 +3,9 @@
 ## Status
 
 **Entwurf** (2026-11-03) – Entscheide des Anwenders beim Aufsetzen der Produktion; Umsetzung
-grösstenteils in Version 2 (neuer Name und Cockpit). Ergänzt ADR 0014 (Cockpit, Entwurf v2) und
+grösstenteils in Version 2 (neuer Name und Cockpit). **Nachtrag 1.1.0** (2026-11-09): Adressen
+mit `-nb`, `-doc`, `-um`, `-cmdb`, interne Seiten unter `*.mgmt.int`, Front-Proxy auf der
+Automato-VM hinter einer WAF, NetBox-Host als Backend (unten). Ergänzt ADR 0014 (Cockpit, Entwurf v2) und
 ADR 0018 (Kunden innerhalb eines Mandanten); passt die Empfehlungen zu den offenen Entscheiden 2
 und 3 von ADR 0014 an.
 
@@ -65,6 +67,45 @@ und 3 von ADR 0014 an.
    über **Zonentransfer** (Entscheid 2026-11-03; auf dem DC nur für die Automato-VM freigegeben, kein
    AD-Konto); umgesetzt in 0.123.0 (ADR 0045).
 7. **Projekt Datacenter:** möglicherweise als Kopie des Projekts weiterführen – Entscheid später.
+
+## Nachtrag 1.1.0 (2026-11-09) – Adressen und Front-Proxy
+
+Entscheid des Anwenders beim Aufsetzen des NetBox-Hosts. Ersetzt die Tabelle in Nr. 1 und die
+Rolle des Proxys aus Nr. 2:
+
+| Adresse | Inhalt | Wo | Zugang |
+|---|---|---|---|
+| `<kunde>.mgmt.example.ch` | Startseite des Kunden | Front-Proxy | über die WAF |
+| `<kunde>-nb.mgmt.example.ch` | NetBox des Kunden | NetBox-Host | über die WAF |
+| `<kunde>-doc.mgmt.example.ch` | Automato (eine Instanz, Mandant des Kunden) | Automato-VM | über die WAF |
+| `<kunde>-um.mgmt.example.ch` | Benutzerverwaltung (Magister) | Magister | über die WAF |
+| `<kunde>-cmdb.mgmt.example.ch` | CMDB (geplant) | – | über die WAF |
+| `mgmt.int.example.ch` | Verwaltung, neues Cockpit (V2) | Front-Proxy | nur Management-Netz |
+| `start.mgmt.int.example.ch` | Portal mit allen Kunden | Front-Proxy | nur Management-Netz |
+
+- **Ein Eingang:** Kunden kommen von aussen über eine **WAF** auf die feste externe Adresse von
+  `*.mgmt.example.ch`, und diese zeigt auf den **Front-Proxy der Automato-VM**. Er liefert
+  Startseiten und Portal aus und leitet je Werkzeug weiter (`-doc` an die Oberfläche von
+  Automato, `-nb` an den NetBox-Host, `-um` an Magister). Die internen Adressen
+  (`*.mgmt.int.example.ch`) beantwortet er nur aus dem Management-Netz – das Portal mit den Namen
+  aller Kunden ist für Kunden nicht erreichbar (bis 1.0.0 lag die Übersicht unter der Domain der
+  Kunden).
+- **NetBox-Host als Backend** (umgesetzt in 1.1.0, `deploy/netbox-host/netbox-host.sh`): keine
+  Startseiten mehr dort, nur `<kunde>-nb`; erreichbar nur vom Front-Proxy und aus dem
+  Management-Netz (`ALLOW`), der Angabe `X-Forwarded-For` des Front-Proxys wird geglaubt
+  (`FRONT`). Zertifikat für `*.mgmt.example.ch` dort von der eigenen CA – der private Schlüssel
+  des öffentlichen Wildcard-Zertifikats liegt nur auf dem Front-Proxy.
+- **Kurznamen** nur `a-z`, `0-9`, `-`; nicht auf `-nb`, `-doc`, `-um`, `-cmdb` endend (sonst
+  fiele die Startseite eines Kunden mit einem Werkzeug eines anderen zusammen).
+- **Zwei Zertifikate:** öffentliches Wildcard für `*.mgmt.example.ch` (Front-Proxy; im
+  Zertifikats-Log erscheint nur der Wildcard, keine Kundennamen) und eines der eigenen CA für
+  `mgmt.int.example.ch` und `*.mgmt.int.example.ch`.
+- **`-doc`** ist dieselbe Instanz von Automato (Nr. 3); die Adresse wählt in V2 den Realm des
+  Mandanten (Nr. 4). Freigeschaltet wird `-doc` für einen Kunden erst, wenn er selbst in die Doku
+  soll.
+- **Offen bis zum Bau des Front-Proxys:** Adressen und Zertifikat der WAF (TLS-Abschluss,
+  `X-Forwarded-For`), Ziel und Host-Namen von Magister für `-um`, Weg von Automato zur NetBox
+  (intern über den Front-Proxy statt über die WAF).
 
 ## Folgen
 

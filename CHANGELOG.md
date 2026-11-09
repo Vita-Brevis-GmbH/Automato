@@ -7,6 +7,28 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 1.1.0 – 2026-11-09
+
+Anwender 2026-11-09 beim Aufsetzen des NetBox-Hosts: Adressen `<kunde>` (Startseite), `<kunde>-nb`
+(NetBox), `<kunde>-doc` (Automato), `<kunde>-um` (Benutzerverwaltung Magister), `<kunde>-cmdb`
+(später), intern `mgmt.int…` (Verwaltung) und `start.mgmt.int…` (Portal); Kunden kommen über eine
+WAF auf die Automato-VM, die Startseite und Doku trägt (ADR 0044 Nachtrag).
+
+- **NetBox-Host als Backend:** `deploy/netbox-host/netbox-host.sh` legt die NetBox unter
+  `<kunde>-nb.<domain>` an (bisher `-netbox`) und keine Startseiten und keine Übersicht mehr an –
+  sie kommen auf den Front-Proxy der Automato-VM. `ALLOW` = Front-Proxy und Management-Netz;
+  neu `FRONT`: nur dem Front-Proxy wird `X-Forwarded-For` geglaubt (NetBox sieht die Adresse des
+  Benutzers). Befehle `link` und `startseiten` entfallen.
+- **Kurznamen** auf `-nb`, `-doc`, `-um`, `-cmdb` sind gesperrt (sonst fiele die Startseite eines
+  Kunden mit einem Werkzeug eines anderen zusammen), ebenso `konfig` und `mgmt`.
+- **Proxy gehärtet** wie die Dienste von Automato 1.0.0: `no-new-privileges`, keine
+  Capabilities ausser Port 443, Dateisystem nur lesend.
+- **Sicherung der Konfiguration:** `sichern alle` (täglich) sichert dazu `host.conf`, Proxy mit
+  Zertifikat und die Secrets je Kunde verschlüsselt nach `BACKUP_DIR/_konfig/`; einzeln mit
+  `sichern konfig`, `pruefen` meldet eine fehlende Sicherung.
+- **Anleitung** `docs/INSTALLATION-NETBOX-HOST.md` neu: VM nach `INSTALLATION-PROD.md` 1–5 mit
+  den Abweichungen, Deploy-Key nur lesen, Zertifikat der eigenen CA, Test vor dem Front-Proxy.
+
 ## 1.0.0 – 2026-11-07
 
 **Version 1 abgeschlossen** (Anwender 2026-11-07: „Es funktioniert bisher alles wie gewünscht …

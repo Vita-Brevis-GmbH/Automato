@@ -1,7 +1,9 @@
 """deploy/netbox-host/netbox-host.sh (0.121.0, ADR 0044): NetBox je Kunde hinter einem Proxy –
 mit Ersatz für docker, git, age und curl. Geprüft wird, was das Skript schreibt (Secrets nur in
-der .env der Instanz, eigene Namen im Netz des Proxys, Startseiten maskiert) und dass Löschen und
-Update nie ohne Sicherung laufen."""
+der .env der Instanz, eigene Namen im Netz des Proxys) und dass Löschen und Update nie ohne
+Sicherung laufen. Seit 1.1.0 (ADR 0044 Nachtrag) ein Backend hinter dem Front-Proxy der
+Automato-VM: NetBox unter <kunde>-nb, keine Startseiten hier, Proxy gehärtet, Konfiguration in
+der Sicherung."""
 
 import os
 import re
@@ -104,12 +106,23 @@ def test_init_legt_grundgeruest_und_schluessel_an(host):
     assert (d / "host.conf").stat().st_mode & 0o777 == 0o600
     conf = (d / "host.conf").read_text()
     assert "AGE_RECIPIENT=age1testempfaenger" in conf
-    assert (d / "proxy" / "docker-compose.yml").exists()
-    assert "import /etc/caddy/sites/*.caddy" in (d / "proxy" / "Caddyfile").read_text()
-    assert 'ALLOW="10.0.10.0/24"' in (d / "proxy" / ".env").read_text()
-    assert "start.mgmt.example.ch" in (d / "proxy" / "sites" / "_start.caddy").read_text()
-    assert (d / "proxy" / "www" / "_start" / "index.html").exists()
+    caddy = (d / "proxy" / "Caddyfile").read_text()
+    assert "import /etc/caddy/sites/*.caddy" in caddy
+    assert "trusted_proxies static {$FRONT" in caddy
+    env = (d / "proxy" / ".env").read_text()
+    assert 'ALLOW="10.0.30.5/32 10.0.10.0/24"' in env and 'FRONT="10.0.30.5/32"' in env
+    # Startseiten und Übersicht liegen seit 1.1.0 auf dem Front-Proxy
+    assert not (d / "proxy" / "www").exists()
+    assert not list((d / "proxy" / "sites").glob("*.caddy"))
     assert "network create netbox-front" in host.log.read_text()
+
+
+def test_proxy_ist_gehaertet(host):
+    compose = (host.dir / "proxy" / "docker-compose.yml").read_text()
+    assert 'security_opt: ["no-new-privileges:true"]' in compose
+    assert "cap_drop: [ALL]" in compose and "cap_add: [NET_BIND_SERVICE]" in compose
+    assert "read_only: true" in compose and "tmpfs: [/tmp]" in compose
+    assert compose.count('"443:443"') == 1  # einziger veröffentlichter Port
 
 
 def test_neu_schreibt_instanz_mit_eigenen_secrets(host):
@@ -120,7 +133,7 @@ def test_neu_schreibt_instanz_mit_eigenen_secrets(host):
     assert (nb / ".env").stat().st_mode & 0o777 == 0o600
     assert "COMPOSE_PROJECT_NAME=nb-kunde-a" in env
     assert "VERSION=v4.6.10-5.0.2" in env
-    assert "NBH_HOST=kunde-a-netbox.mgmt.example.ch" in env
+    assert "NBH_HOST=kunde-a-nb.mgmt.example.ch" in env
     werte = re.findall(r"^NBH_(?:SECRET_KEY|API_TOKEN_PEPPER_1|DB_PASSWORD|REDIS_PASSWORD|"
                        r"REDIS_CACHE_PASSWORD)=([0-9a-f]{64})$", env, re.M)  # fmt: skip
     assert len(werte) == 5 and len(set(werte)) == 5
@@ -136,16 +149,11 @@ def test_neu_schreibt_instanz_mit_eigenen_secrets(host):
     assert "J5brHrAXFLQSif0K" not in env + over  # Vorgabe-Passwort von netbox-docker nie benutzt
     assert "ports:" not in over  # nur der Proxy veröffentlicht einen Port
 
-    site = (host.dir / "proxy" / "sites" / "kunde-a-netbox.caddy").read_text()
-    assert "kunde-a-netbox.mgmt.example.ch {" in site and "reverse_proxy nb-kunde-a:8080" in site
-    seite = (host.dir / "proxy" / "www" / "kunde-a" / "index.html").read_text()
-    assert "<title>Kunde A</title>" in seite
-    assert 'href="https://kunde-a-netbox.mgmt.example.ch"' in seite
-    assert 'href="https://automato.int.example.ch"' in seite
-    assert (
-        "https://kunde-a.mgmt.example.ch"
-        in (host.dir / "proxy" / "www" / "_start" / "index.html").read_text()
-    )
+    sites = sorted(p.name for p in (host.dir / "proxy" / "sites").glob("*.caddy"))
+    assert sites == ["kunde-a-nb.caddy"]  # keine Startseite hier (Front-Proxy)
+    site = (host.dir / "proxy" / "sites" / "kunde-a-nb.caddy").read_text()
+    assert "kunde-a-nb.mgmt.example.ch {" in site and "reverse_proxy nb-kunde-a:8080" in site
+    assert "NAME=Kunde\\ A" in (host.dir / "kunden" / "kunde-a" / "kunde.conf").read_text()
     assert "Admin 'admin' angelegt" in out.stdout
     assert "git clone -q -c advice.detachedHead=false --depth 1 -b 5.0.2" in host.log.read_text()
 
@@ -153,23 +161,17 @@ def test_neu_schreibt_instanz_mit_eigenen_secrets(host):
     assert doppelt.returncode != 0 and "gibt es schon" in doppelt.stderr
 
 
-@pytest.mark.parametrize("name", ["Kunde_A", "-a", "a-", "start", "alle", "x" * 43])
+@pytest.mark.parametrize(
+    "name",
+    ["Kunde_A", "kundeA", "-a", "a-", "start", "alle", "konfig", "x" * 43,
+     # endet wie ein Werkzeug eines Kunden: "kunde-nb" fiele mit der NetBox von "kunde" zusammen
+     "kunde-nb", "kunde-doc", "kunde-um", "kunde-cmdb"],
+)  # fmt: skip
 def test_kurzname_wird_geprueft(host, name):
     out = host("neu", name)
     assert out.returncode != 0
     assert "ungültig" in out.stderr or "reserviert" in out.stderr
-
-
-def test_link_wird_maskiert(host):
-    host("neu", "kunde-a")
-    out = host("link", "kunde-a", "<b>Lizenzen</b>", "https://kunde-a-lizenzen.mgmt.example.ch",
-               'Geräte & "Lizenzen"')  # fmt: skip
-    assert out.returncode == 0, out.stdout + out.stderr
-    seite = (host.dir / "proxy" / "www" / "kunde-a" / "index.html").read_text()
-    assert "&lt;b&gt;Lizenzen&lt;/b&gt;" in seite and "<b>Lizenzen</b>" not in seite
-    assert "Geräte &amp; &quot;Lizenzen&quot;" in seite
-    boese = host("link", "kunde-a", "x", "javascript:alert(1)")
-    assert boese.returncode != 0 and "https://" in boese.stderr
+    assert not (host.dir / "kunden" / name).exists()
 
 
 def test_sichern_verschluesselt_und_raeumt_auf(host, tmp_path):
@@ -190,6 +192,26 @@ def test_sichern_verschluesselt_und_raeumt_auf(host, tmp_path):
     assert list(ziel.glob("kunde-a-*.media.tar.gz.age"))
     assert "pg_dump -c --if-exists" in host.log.read_text()
 
+    # "alle" sichert auch die Konfiguration: host.conf, Proxy und Secrets je Kunde
+    (konf,) = (tmp_path / "backups" / "_konfig").glob("konfig-*.tar.gz.age")
+    import io
+    import tarfile
+
+    with tarfile.open(fileobj=io.BytesIO(konf.read_bytes()), mode="r:gz") as tar:
+        namen = set(tar.getnames())
+    assert {"./host.conf", "./proxy/.env", "./kunden/kunde-a/netbox/.env",
+            "./kunden/kunde-a/netbox/docker-compose.override.yml"} <= namen  # fmt: skip
+
+
+def test_pruefen_meldet_sicherung_der_konfiguration(host):
+    host("neu", "kunde-a")
+    vorher = host("pruefen")
+    assert "keine Sicherung der Konfiguration" in vorher.stdout
+    assert host("sichern", "konfig").returncode == 0
+    nachher = host("pruefen")
+    assert "Konfiguration gesichert" in nachher.stdout
+    assert "Front-Proxy: 10.0.30.5/32" in nachher.stdout
+
 
 def test_loeschen_nur_mit_bestaetigung_und_sicherung(host, tmp_path):
     host("neu", "kunde-a")
@@ -199,8 +221,7 @@ def test_loeschen_nur_mit_bestaetigung_und_sicherung(host, tmp_path):
     out = host("loeschen", "kunde-a", "--ja")
     assert out.returncode == 0, out.stdout + out.stderr
     assert not (host.dir / "kunden" / "kunde-a").exists()
-    assert not (host.dir / "proxy" / "sites" / "kunde-a-netbox.caddy").exists()
-    assert not (host.dir / "proxy" / "www" / "kunde-a").exists()
+    assert not (host.dir / "proxy" / "sites" / "kunde-a-nb.caddy").exists()
     assert list((tmp_path / "backups" / "kunde-a").glob("*.sql.gz.age"))
     assert "down -v --remove-orphans" in host.log.read_text()
 
@@ -209,7 +230,7 @@ def test_token_legt_benutzer_fuer_automato_an(host):
     host("neu", "kunde-a")
     out = host("token", "kunde-a")
     assert out.returncode == 0, out.stdout + out.stderr
-    assert "https://kunde-a-netbox.mgmt.example.ch" in out.stdout
+    assert "https://kunde-a-nb.mgmt.example.ch" in out.stdout
     assert re.search(r"Lese-Token:\s+[0-9a-f]{40}", out.stdout)
     assert re.search(r"Schreib-Token:\s+[0-9a-f]{40}", out.stdout)
     shells = [z for z in host.log.read_text().splitlines() if "manage.py shell" in z]

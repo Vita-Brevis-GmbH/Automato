@@ -1,15 +1,18 @@
 # Einstellungen des NetBox-Hosts (netbox-host.sh) – liegt als /opt/netbox-host/host.conf (0600).
 
-# Domain der Adressen: <kunde>.<DOMAIN>, <kunde>-netbox.<DOMAIN>, start.<DOMAIN>
-# (Wildcard-DNS *.<DOMAIN> auf diese VM; Wildcard-Zertifikat in proxy/pki/wildcard.crt|key)
+# Domain der Adressen: NetBox des Kunden = <kunde>-nb.<DOMAIN>. Startseite (<kunde>.<DOMAIN>),
+# Automato (<kunde>-doc), Benutzerverwaltung (<kunde>-um) und CMDB (<kunde>-cmdb) liegen auf dem
+# Front-Proxy der Automato-VM (ADR 0044 Nachtrag). Zertifikat für *.<DOMAIN> in
+# proxy/pki/wildcard.crt|key – hier genügt eines der eigenen CA (der Front-Proxy prüft gegen sie).
 DOMAIN=mgmt.example.ch
 
-# Netze, die die Startseiten und NetBox öffnen dürfen (mit Leerzeichen getrennt) – mindestens das
-# Admin-Netz, die Netze der Kunden bzw. das VPN und die Adresse der Automato-VM (NetBox-Sync)
-ALLOW="10.0.10.0/24"
+# Wer diesen Host erreichen darf (mit Leerzeichen getrennt): der Front-Proxy (Automato-VM) und das
+# Management-Netz. Kunden kommen nur über den Front-Proxy, nie direkt.
+ALLOW="10.0.30.5/32 10.0.10.0/24"
 
-# Kachel „Dokumentation“ auf jeder neuen Startseite (leer = keine)
-AUTOMATO_URL=https://automato.int.example.ch
+# Front-Proxy (Automato-VM): nur seiner Angabe X-Forwarded-For wird geglaubt – NetBox sieht so die
+# Adresse des Benutzers statt die des Front-Proxys (leer = nicht übernehmen)
+FRONT="10.0.30.5/32"
 
 # Version: netbox-docker-Tag und passendes Image (gleich wie source-of-truth/netbox/setup.sh)
 NETBOX_DOCKER_TAG=5.0.2
@@ -17,6 +20,7 @@ NETBOX_VERSION=v4.6.10-5.0.2
 
 TIME_ZONE=Europe/Zurich
 
-# Sicherung (täglich per cron, verschlüsselt mit age; init legt den Schlüssel an)
+# Sicherung (täglich per cron, verschlüsselt mit age; init legt den Schlüssel an). "sichern alle"
+# sichert je Kunde Datenbank und Medien und dazu die Konfiguration (host.conf, Zertifikat, Secrets).
 BACKUP_DIR=/var/backups/netbox-host
 BACKUP_KEEP_DAYS=14
