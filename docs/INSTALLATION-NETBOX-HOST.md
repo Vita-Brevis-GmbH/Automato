@@ -41,6 +41,72 @@ Management-Netz ──▶ NetBox-Host: SSH 22, HTTPS 443 (Test, Betrieb)
 - **Ausgehend** braucht die VM: GitHub (netbox-docker, Repo), Docker Hub (Images),
   Paketquellen, DNS, NTP.
 
+### 1a. Eigene Daten-Disk (empfohlen)
+
+Die Daten der NetBox-Instanzen (Docker: Datenbanken, Medien, Images) liegen auf einer **zweiten
+virtuellen Disk**, die Sicherungen auf der System-Disk – fällt eine Disk aus, bleibt die andere.
+Nach der Installation von Ubuntu (Schritt 2) und **vor Docker** (Schritt 5); ersetzt dort
+„Volumes für Daten anlegen“. Richtwerte: System-Disk 80 GB (Root 30 GB, Sicherung 40 GB),
+Daten-Disk 200 GB.
+
+1. **vCenter:** Neues Gerät → Festplatte, 200 GB, Thin, Modus *Abhängig* (in Snapshots und
+   VM-Sicherung enthalten), gleiche Speicherrichtlinie wie die System-Disk.
+2. **Verschlüsseln** (LUKS2; entsperrt sich mit einer Schlüsseldatei auf der verschlüsselten
+   System-Disk, sobald diese offen ist – die Disk allein ist unlesbar):
+
+   ```bash
+   lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINTS      # neue Disk ohne Partition, z. B. sdb
+   DISK=/dev/sdb                                    # anpassen und prüfen!
+   sudo wipefs $DISK                                # keine Ausgabe = leer
+   sudo parted -s $DISK mklabel gpt mkpart daten 1MiB 100% && sudo partprobe $DISK
+   sudo cryptsetup luksFormat --type luks2 ${DISK}1   # Passphrase = Notfall (Tresor)
+   sudo install -d -m 700 /etc/cryptsetup-keys.d
+   sudo dd if=/dev/urandom of=/etc/cryptsetup-keys.d/daten.key bs=512 count=1 status=none
+   sudo chmod 400 /etc/cryptsetup-keys.d/daten.key
+   sudo cryptsetup luksAddKey ${DISK}1 /etc/cryptsetup-keys.d/daten.key
+   echo "daten UUID=$(sudo blkid -s UUID -o value ${DISK}1) /etc/cryptsetup-keys.d/daten.key luks,nofail" | sudo tee -a /etc/crypttab
+   sudo cryptsetup open --key-file /etc/cryptsetup-keys.d/daten.key ${DISK}1 daten
+   ```
+
+3. **Volumes** (LVM, Platz zum Vergrössern bleibt frei):
+
+   ```bash
+   sudo pvcreate /dev/mapper/daten && sudo vgcreate daten-vg /dev/mapper/daten
+   sudo lvcreate -L 150G -n docker daten-vg        # Container, Volumes (Datenbanken, Medien)
+   sudo lvcreate -L 30G -n containerd daten-vg     # Images (containerd)
+   sudo mkfs.ext4 -L docker /dev/daten-vg/docker
+   sudo mkfs.ext4 -L containerd /dev/daten-vg/containerd
+   sudo mkdir -p /var/lib/docker /var/lib/containerd
+   echo '/dev/daten-vg/docker /var/lib/docker ext4 defaults,nofail 0 2' | sudo tee -a /etc/fstab
+   echo '/dev/daten-vg/containerd /var/lib/containerd ext4 defaults,nofail 0 2' | sudo tee -a /etc/fstab
+   for s in docker containerd; do        # Docker startet nur mit eingehängter Daten-Disk
+     sudo mkdir -p /etc/systemd/system/$s.service.d
+     printf '[Unit]\nRequiresMountsFor=/var/lib/docker /var/lib/containerd\n' \
+       | sudo tee /etc/systemd/system/$s.service.d/10-daten-disk.conf >/dev/null
+   done
+   sudo systemctl daemon-reload && sudo mount -a && df -h /var/lib/docker /var/lib/containerd
+   ```
+
+4. **Sicherungen auf der System-Disk:**
+
+   ```bash
+   sudo vgs ubuntu-vg                               # VFree = freier Platz
+   sudo lvcreate -L 40G -n backup ubuntu-vg && sudo mkfs.ext4 -L backup /dev/ubuntu-vg/backup
+   sudo mkdir -p /var/backups/netbox-host
+   echo '/dev/ubuntu-vg/backup /var/backups/netbox-host ext4 defaults,nodev,nosuid,noexec 0 2' | sudo tee -a /etc/fstab
+   sudo mount -a
+   ```
+
+5. **LUKS-Header sichern** (`luksHeaderBackup` wie in `INSTALLATION-PROD.md` Schritt 2, Datei in
+   den Tresor), Audit-Regel `-w /etc/cryptsetup-keys.d -p rwa -k luks-key`, dann **Neustart-Test**:
+   `lsblk -f` zeigt `daten` → `daten--vg-docker`/`-containerd`, `findmnt /var/lib/docker
+   /var/lib/containerd /var/backups/netbox-host` alle eingehängt.
+
+**Vergrössern:** im vCenter die Disk vergrössern, dann
+`echo 1 | sudo tee /sys/class/block/sdb/device/rescan`, `sudo growpart /dev/sdb 1`,
+`sudo cryptsetup resize --key-file /etc/cryptsetup-keys.d/daten.key daten`,
+`sudo pvresize /dev/mapper/daten`, `sudo lvextend -r -L +50G daten-vg/docker`.
+
 ## 2. Zertifikat
 
 Ein Zertifikat für `*.mgmt.example.ch` (Fullchain + Schlüssel, PEM) von der **eigenen CA**: Die

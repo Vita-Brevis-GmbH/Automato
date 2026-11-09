@@ -27,7 +27,10 @@ WAF auf die Automato-VM, die Startseite und Doku trägt (ADR 0044 Nachtrag).
   Zertifikat und die Secrets je Kunde verschlüsselt nach `BACKUP_DIR/_konfig/`; einzeln mit
   `sichern konfig`, `pruefen` meldet eine fehlende Sicherung.
 - **Anleitung** `docs/INSTALLATION-NETBOX-HOST.md` neu: VM nach `INSTALLATION-PROD.md` 1–5 mit
-  den Abweichungen, Deploy-Key nur lesen, Zertifikat der eigenen CA, Test vor dem Front-Proxy.
+  den Abweichungen, Deploy-Key nur lesen, Zertifikat der eigenen CA, Test vor dem Front-Proxy;
+  **eigene Daten-Disk** (zweite VM-Disk mit LUKS2, entsperrt über eine Schlüsseldatei auf der
+  System-Disk, `/var/lib/docker` und `/var/lib/containerd` darauf, Docker startet nur mit
+  eingehängter Disk, Sicherungen auf der System-Disk, Vergrössern).
 
 ## 1.0.0 – 2026-11-07
 
