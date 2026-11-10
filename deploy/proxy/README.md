@@ -1,6 +1,6 @@
 # TLS-Proxy für die Automato-Web-UI (Profil `proxy`)
 
-Macht die Web-UI unter einer HTTPS-Adresse erreichbar (z. B. `https://172.25.12.12` oder
+Macht die Web-UI unter einer HTTPS-Adresse erreichbar (z. B. `https://10.0.12.12` oder
 `https://automato.int.example.ch`), statt `http://<VM>:5173`. Das braucht der
 Keycloak-Login: PKCE funktioniert im Browser nur über HTTPS oder `localhost`.
 
@@ -16,7 +16,7 @@ Kein DNS, keine CA nötig. Caddy erzeugt das Zertifikat selbst (eigene lokale CA
 In der `.env` (Repo-Wurzel):
 
 ```env
-AUTOMATO_UI_HOST=172.25.12.12
+AUTOMATO_UI_HOST=10.0.12.12
 # AUTOMATO_UI_TLS=internal   (Default, muss nicht gesetzt werden)
 ```
 
@@ -24,11 +24,11 @@ AUTOMATO_UI_HOST=172.25.12.12
 docker compose --profile core --profile proxy run --rm --no-deps proxy caddy validate --config /etc/caddy/Caddyfile
 docker compose --profile core --profile proxy up -d
 docker compose --profile core --profile proxy ps proxy                                    # Up, nicht Restarting
-curl -sk -o /dev/null -w "%{http_code}\n" https://172.25.12.12/   # 200
+curl -sk -o /dev/null -w "%{http_code}\n" https://10.0.12.12/   # 200
 ```
 
 Der Browser warnt beim ersten Aufruf („Verbindung nicht privat“), weil er Caddys CA nicht
-kennt: *Erweitert → Weiter zu 172.25.12.12*. Ohne Warnung: Caddys Root-Zertifikat einmal
+kennt: *Erweitert → Weiter zu 10.0.12.12*. Ohne Warnung: Caddys Root-Zertifikat einmal
 exportieren und auf dem Client vertrauen:
 
 ```bash

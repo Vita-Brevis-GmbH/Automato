@@ -141,8 +141,8 @@ def test_describe_error_klartext_an_https_orchestrator():
 
     client = httpx.Client(transport=httpx.MockTransport(drop))
     texts = []
-    for url in ("http://172.25.12.12:8000/internal/agent/update",
-                "https://172.25.12.12:8000/internal/agent/update"):  # fmt: skip
+    for url in ("http://10.0.12.12:8000/internal/agent/update",
+                "https://10.0.12.12:8000/internal/agent/update"):  # fmt: skip
         try:
             client.get(url)
         except httpx.HTTPError as exc:

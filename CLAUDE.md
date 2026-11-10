@@ -100,7 +100,7 @@ und wird erweitert. Details: `README.md`, `ARCHITECTURE.md`, `docs/adr/`.
 
 ## Aktueller Stand
 
-1.2.0 – Front-Proxy auf der Automato-VM, NetBox-Host als Backend (ADR 0044 Nachtrag); **Version 1 abgeschlossen**
+1.2.1 – Front-Proxy auf der Automato-VM, NetBox-Host als Backend (ADR 0044 Nachtrag); **Version 1 abgeschlossen**
 mit 1.0.0 (Produktivschaltung DC, R14). Einzelheiten je Bereich in
 `docs/STAND.md`, Produktiv-Installation in `docs/INSTALLATION-PROD.md`, NetBox je Kunde in
 `docs/INSTALLATION-NETBOX-HOST.md`, Front-Proxy in `docs/INSTALLATION-FRONT.md`. Bekannte Einschränkungen von 1.0.0 und nächste Arbeiten in

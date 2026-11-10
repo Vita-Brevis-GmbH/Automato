@@ -16,12 +16,23 @@ pytestmark = pytest.mark.skipif(
     not shutil.which("bash") or not shutil.which("openssl"), reason="bash/openssl fehlen"
 )
 
+# wie echtes Compose: der Proxy hängt an der Web-UI (Profil core) – nur mit beiden Profilen gültig
 DOCKER = r"""
 echo "docker $*" >> "$FRONT_LOG"
+case "$*" in
+  "compose --profile core --profile proxy "*) ;;
+  compose*) echo 'service "proxy" depends on undefined service "web-ui"' >&2; exit 1 ;;
+esac
 case "$*" in
   *"ps --status running --services"*) echo proxy ;;
 esac
 exit 0
+"""
+
+IPTABLES = r"""
+printf '%s\n' '-N DOCKER-USER' '-A DOCKER-USER -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN'
+[ "${FRONT_DOCKER_USER_LEER:-}" = 1 ] ||
+  printf '%s\n' '-A DOCKER-USER -i ens33 -m conntrack --ctstate NEW -j DROP'
 """
 
 ENV = """AUTOMATO_FRONT_DOMAIN=mgmt.example.ch
@@ -64,6 +75,7 @@ def front(tmp_path):
         "FRONT_SKIP_ROOT": "1",
         "FRONT_LOG": str(tmp_path / "aufrufe.log"),
         "DOCKER": str(_stub(bin_dir / "docker", DOCKER)),
+        "IPTABLES": str(_stub(bin_dir / "iptables", IPTABLES)),
         "CURL": str(curl),
     }
     for k in [k for k in env if k.startswith("AUTOMATO_FRONT_")]:
@@ -118,6 +130,7 @@ def test_kunde_erzeugt_startseite_weiterleitung_und_portal(front):
     unbekannt = (g / "sites" / "_unbekannt.caddy").read_text()
     assert "*.mgmt.example.ch {" in unbekannt and "*.mgmt.int.example.ch {" in unbekannt
     assert "exec -T proxy caddy reload" in front.log.read_text()
+    assert "Proxy neu geladen" in out.stdout and "Proxy läuft nicht" not in out.stdout
 
 
 def test_werkzeuge_nur_mit_freischaltung(front):
@@ -230,6 +243,10 @@ def test_pruefen_zertifikate_und_wege(front):
     assert "mgmt.crt gültig bis" in out.stdout and "mgmt-int.crt gültig bis" in out.stdout
     assert "kunde-a: Startseite antwortet" in out.stdout
     assert "kunde-a: NetBox vom Front-Proxy aus erreichbar" in out.stdout
+    assert "Proxy läuft" in out.stdout and "DOCKER-USER sperrt" in out.stdout
+
+    offen = front("pruefen", FRONT_DOCKER_USER_LEER="1")  # veröffentlichte Ports ohne Sperre
+    assert "DOCKER-USER ohne Sperre" in offen.stdout + offen.stderr
 
     _zertifikat(front.pki, "mgmt-int", "DNS:mgmt.int.example.ch")  # ohne Wildcard
     out = front("pruefen", FRONT_CURL_CODE="403")

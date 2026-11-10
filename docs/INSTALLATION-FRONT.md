@@ -78,10 +78,18 @@ AUTOMATO_FRONT_NETBOX=10.0.30.20         # NetBox-Host
 
 ```bash
 cd /opt/automato/automato
-sudo deploy/update.sh                                   # bzw. bei laufendem Stand:
-sudo docker compose --profile core --profile proxy up -d proxy   # Proxy mit den neuen Ordnern
-sudo deploy/front/front.sh erzeugen                     # Portal, Einträge, Proxy neu laden
+sudo deploy/update.sh origin/main        # ohne Angabe nur auf einem Branch (sonst „kein Branch“)
+cat VERSION                              # ≥ 1.2.1
+sudo deploy/front/front.sh erzeugen      # Portal, Einträge, Proxy neu laden („Proxy neu geladen“)
 ```
+
+- `update.sh` startet den Proxy mit den neuen Ordnern, sofern `AUTOMATO_COMPOSE_PROFILES` das Profil
+  `proxy` enthält; sonst `sudo docker compose --profile core --profile proxy up -d proxy`.
+- Compose immer mit **beiden** Profilen `core` und `proxy` aufrufen – der Proxy hängt an der Web-UI;
+  nur mit `--profile proxy` lehnt Compose das Projekt ab.
+- Antwortet ein neuer Name mit `ERR_SSL_PROTOCOL_ERROR`, kennt der Proxy ihn noch nicht (kein
+  Zertifikat für den Namen): `front.sh erzeugen` bzw. `sudo docker compose --profile core --profile
+  proxy restart proxy`.
 
 ## 5. Kunden
 
@@ -120,6 +128,11 @@ NetBox-Sync) nicht blockieren.
 
 ## 8. Betrieb
 
+- **Collector-Agenten über die WAF** (Port 8443): nur als reine TCP-Durchleitung, ohne TLS
+  aufzubrechen – das Agent-Gateway prüft das Client-Zertifikat des Agenten selbst. Absender ist
+  dann die WAF; in `DOCKER-USER` muss 8443 von ihr erlaubt sein.
+- `front.sh pruefen` und `aufbau.sh pruefen` warnen, wenn `DOCKER-USER` keine Sperre enthält
+  (veröffentlichte Ports sonst aus jedem Netz erreichbar).
 - Nach einem Update bleiben Kunden und erzeugte Dateien erhalten (`deploy/front/kunden/`,
   `deploy/front/generated/`, nicht im Repo); `front.sh erzeugen` schreibt alles neu.
 - **Sicherung:** `deploy/front/kunden/` zusammen mit `.env` und `deploy/proxy/pki` sichern (wie die

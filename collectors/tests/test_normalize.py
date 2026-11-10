@@ -51,7 +51,7 @@ def test_fortigate_resolve_address_typen():
         "IFSUB": {
             "name": "IFSUB",
             "type": "interface-subnet",
-            "subnet": "172.25.15.0 255.255.255.0",
+            "subnet": "10.0.15.0 255.255.255.0",
         },
         "RNG": {
             "name": "RNG",
@@ -64,7 +64,7 @@ def test_fortigate_resolve_address_typen():
         "MC": {"name": "MC", "type": "mac"},
         "DYN": {"name": "DYN", "type": "dynamic"},
     }
-    assert norm.resolve_address("IFSUB", amap) == ["172.25.15.0/24"]  # echtes Subnetz
+    assert norm.resolve_address("IFSUB", amap) == ["10.0.15.0/24"]  # echtes Subnetz
     assert norm.resolve_address("RNG", amap) == ["range:172.26.0.100-172.26.0.150"]
     assert norm.resolve_address("FQ", amap) == ["fqdn:ntp.example"]
     assert norm.resolve_address("GEO", amap) == ["geo:GEO"]

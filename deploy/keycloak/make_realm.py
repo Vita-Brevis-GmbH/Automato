@@ -8,7 +8,7 @@ Realm-Name, Anzeigename und die erlaubten Web-UI-Adressen des Clients ``automato
 
 Beispiel:
     python3 deploy/keycloak/make_realm.py --realm automato-dev \\
-        --ui-url https://172.25.12.12 --display-name "Automato Dev" --with-localhost \\
+        --ui-url https://10.0.12.12 --display-name "Automato Dev" --with-localhost \\
         > realm-automato-dev.json
 """
 
@@ -72,7 +72,7 @@ def main(argv: list[str] | None = None) -> int:
         dest="ui_urls",
         action="append",
         required=True,
-        help="Adresse der Web-UI, z. B. https://172.25.12.12 (mehrfach moeglich)",
+        help="Adresse der Web-UI, z. B. https://10.0.12.12 (mehrfach moeglich)",
     )
     parser.add_argument("--display-name", help="Anzeigename auf der Login-Seite")
     parser.add_argument(

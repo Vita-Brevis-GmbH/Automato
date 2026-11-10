@@ -24,7 +24,7 @@ Der zentrale Worker (internes Token) spricht weiter direkt mit dem Orchestrator.
    ```bash
    cd deploy/agent-gateway
    ./make-certs.sh ca                    # einmalig; pki/agents-ca.key sicher verwahren
-   ./make-certs.sh server 172.25.12.12   # Adresse, unter der die Agenten das Gateway erreichen
+   ./make-certs.sh server 10.0.12.12   # Adresse, unter der die Agenten das Gateway erreichen
    ./make-certs.sh agent <agent-name>    # je Agent, Name wie im UI ("Collector-Agenten")
    ```
 
@@ -34,7 +34,7 @@ Der zentrale Worker (internes Token) spricht weiter direkt mit dem Orchestrator.
 2. **`.env`** der Automato-VM:
 
    ```bash
-   AUTOMATO_AGENT_GATEWAY_HOST=172.25.12.12
+   AUTOMATO_AGENT_GATEWAY_HOST=10.0.12.12
    AUTOMATO_AGENT_GATEWAY_SECRET=<openssl rand -hex 32>
    AUTOMATO_INTERNAL_MTLS_MODE=bind
    ```
@@ -46,7 +46,7 @@ Der zentrale Worker (internes Token) spricht weiter direkt mit dem Orchestrator.
    Zertifikate eintragen:
 
    ```ini
-   AUTOMATO_ORCHESTRATOR_URL=https://172.25.12.12:8443
+   AUTOMATO_ORCHESTRATOR_URL=https://10.0.12.12:8443
    AUTOMATO_ORCHESTRATOR_CA_BUNDLE=C:\ProgramData\Automato\agents-ca.crt
    AUTOMATO_CLIENT_CERT=C:\ProgramData\Automato\agent-<name>.crt
    AUTOMATO_CLIENT_KEY=C:\ProgramData\Automato\agent-<name>.key

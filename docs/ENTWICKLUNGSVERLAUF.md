@@ -276,9 +276,9 @@ Wait auf OIDC-Discovery. **Realm-Härtung** im gemeinsamen `realm-automato.json`
 Brute-Force-Schutz, Passwort-Policy (12+, Mix, History, Ablauf), **OTP/TOTP-Pflicht**,
 Browser-Security-Header, `registrationAllowed=false`. Doku `deploy/keycloak/ansible/README.md`.
 **Keycloak Prod live** (manuelles Runbook `deploy/keycloak/PROD-INSTALL.md`, Ubuntu 26.04,
-eigenes Sectigo-Wildcard als Fullchain, kein ACME): öffentlich `auth.vitabrevis.ch` (Kunden,
+eigenes Sectigo-Wildcard als Fullchain, kein ACME): öffentlich `auth.example.ch` (Kunden,
 hinter FortiGate-Virtual-Server + WAF; `/admin` + `/realms/master` gesperrt), Admin-Konsole nur
-intern `auth.int.vitabrevis.ch` (`KC_HOSTNAME_ADMIN`, Zertifikat von der DC-CA, Caddy
+intern `auth.int.example.ch` (`KC_HOSTNAME_ADMIN`, Zertifikat von der DC-CA, Caddy
 `remote_ip` + interne FortiGate-Policy ohne NAT). WAF-Ausnahme per URL-Access-Regel auf Host +
 OIDC-Pfad gescoped (Negativ-Test Pflicht, Abschnitt 12). Integrations-Fixes: `docker-compose.yml`
 reicht `AUTOMATO_AUTH_MODE`/`AUTOMATO_OIDC_*` an den Orchestrator durch; Realm-Export mit
@@ -286,7 +286,7 @@ reicht `AUTOMATO_AUTH_MODE`/`AUTOMATO_OIDC_*` an den Orchestrator durch; Realm-E
 User-Profile-Attribut (nur Admin editierbar), OTP-Pflicht per Required-Action-Default (nicht
 per Flow-Änderung — sperrt in KC 26 aus); Dev-Login per SSH-Tunnel (PKCE braucht sicheren
 Kontext). **TLS-Proxy für die Web-UI** (Compose-Profil `proxy`, `deploy/proxy/`): Caddy auf 443
-vor `web-ui:5173`, Host aus `AUTOMATO_UI_HOST` (IP oder Name; Dev: `172.25.12.12`), Zertifikat per
+vor `web-ui:5173`, Host aus `AUTOMATO_UI_HOST` (IP oder Name; Dev: `10.0.12.12`), Zertifikat per
 `AUTOMATO_UI_TLS`: `internal` (Default, selbst erzeugt, auch für IPs; `default_sni` nötig, da
 Browser bei IPs kein SNI senden) oder Fullchain+Key der eigenen CA aus `deploy/proxy/pki/`
 (gitignored); `/api/internal` nicht ausgeliefert; Profil `proxy` nur zusammen mit `core`
@@ -354,10 +354,10 @@ erneuter Redirect, stattdessen Fehlerseite mit Grund + „Erneut anmelden"), die
 (Code+PKCE, Refresh-Erneuerung, falsche Audience → Fehlerseite, kein Loop). Tests
 `test_auth_oidc.py` (Grund je Fehlerart, 503). Tests: orchestrator 111.
 **OIDC-Backchannel (Dev-Befund):** Im Dev meldete der Orchestrator `503 JWKS nicht
-erreichbar` — der Container erreicht `auth.vitabrevis.ch` nicht über den öffentlichen Weg
+erreichbar` — der Container erreicht `auth.example.ch` nicht über den öffentlichen Weg
 (Hairpin/WAF/DNS), der Browser schon. Lösung (dokumentiert in `PROD-INSTALL.md` 9c):
 Backchannel Server-zu-Server direkt zur Keycloak-VM per `docker-compose.override.yml`
-(`extra_hosts: auth.vitabrevis.ch:<KEYCLOAK-VM-IP>`, VM-spezifisch, gitignored); Issuer
+(`extra_hosts: auth.example.ch:<KEYCLOAK-VM-IP>`, VM-spezifisch, gitignored); Issuer
 bleibt die öffentliche URL, Browser/Kunden laufen unverändert über die WAF.
 **Uhrenabweichung (Dev-Befund `ImmatureSignatureError`):** Keycloak-VM und Automato-VM liefen
 zeitlich auseinander (Token-`iat` aus Sicht des Orchestrators in der Zukunft). `oidc.py` prüft

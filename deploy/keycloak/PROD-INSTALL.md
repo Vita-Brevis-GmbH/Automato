@@ -1,4 +1,4 @@
-# Keycloak produktiv auf einer neuen VM installieren (`auth.vitabrevis.ch`)
+# Keycloak produktiv auf einer neuen VM installieren (`auth.example.ch`)
 
 Schritt-für-Schritt-Runbook für eine **frische VM**: Paketinstallation + Konfiguration von
 Hand, produktionsreif gehärtet (ADR 0007). Ergebnis ist derselbe Stack wie das
@@ -21,12 +21,12 @@ aussen erreichbar. Health/Metrics liegen auf Keycloaks Management-Port 9000 (nur
 - **VM:** Ubuntu 26.04 LTS („Resolute") — oder 22.04/24.04 LTS bzw. Debian 12 — 2 vCPU /
   2–4 GB RAM / 20 GB Disk, SSH mit sudo. Dediziert nur für Keycloak (ADR 0007: eigener IdP,
   eigene VM).
-- **Wildcard-Zertifikat** (`*.vitabrevis.ch`) als **PEM** bereithalten — **kein Let's
+- **Wildcard-Zertifikat** (`*.example.ch`) als **PEM** bereithalten — **kein Let's
   Encrypt/ACME**:
-  - Zertifikatskette (Leaf **+** Intermediates) in **einer** Datei, z. B. `auth.vitabrevis.ch.crt`
-  - privater Schlüssel **unverschlüsselt** (ohne Passphrase), z. B. `auth.vitabrevis.ch.key`
-- **DNS:** Ein A/AAAA-Record **`auth.vitabrevis.ch` → öffentliche IP der VM**. Prüfen:
-  `dig +short auth.vitabrevis.ch`. (Ohne ACME wird Port 80 dafür **nicht** gebraucht.)
+  - Zertifikatskette (Leaf **+** Intermediates) in **einer** Datei, z. B. `auth.example.ch.crt`
+  - privater Schlüssel **unverschlüsselt** (ohne Passphrase), z. B. `auth.example.ch.key`
+- **DNS:** Ein A/AAAA-Record **`auth.example.ch` → öffentliche IP der VM**. Prüfen:
+  `dig +short auth.example.ch`. (Ohne ACME wird Port 80 dafür **nicht** gebraucht.)
 - **Firewall am Perimeter/Cloud-Provider:** eingehend nur **22 (SSH) + 443** offen; **80
   nur**, falls ihr den automatischen HTTP→HTTPS-Redirect wollt (sonst weglassen).
 
@@ -141,12 +141,12 @@ den `tenant_ids`-Mapper und den geseedten `automato-admin`.
 ```bash
 sudo mkdir -p /opt/automato-keycloak/pki
 # vom Arbeitsplatz aus:
-scp auth.vitabrevis.ch.crt auth.vitabrevis.ch.key ops@<VM>:/tmp/
+scp auth.example.ch.crt auth.example.ch.key ops@<VM>:/tmp/
 # auf der VM:
-sudo mv /tmp/auth.vitabrevis.ch.crt /opt/automato-keycloak/pki/
-sudo mv /tmp/auth.vitabrevis.ch.key /opt/automato-keycloak/pki/
-sudo chmod 640 /opt/automato-keycloak/pki/auth.vitabrevis.ch.crt
-sudo chmod 600 /opt/automato-keycloak/pki/auth.vitabrevis.ch.key   # Key streng 0600
+sudo mv /tmp/auth.example.ch.crt /opt/automato-keycloak/pki/
+sudo mv /tmp/auth.example.ch.key /opt/automato-keycloak/pki/
+sudo chmod 640 /opt/automato-keycloak/pki/auth.example.ch.crt
+sudo chmod 600 /opt/automato-keycloak/pki/auth.example.ch.key   # Key streng 0600
 ```
 
 > - Die `.crt` muss die **vollständige Kette** enthalten: **Leaf zuerst, dann Intermediate(s)**.
@@ -154,27 +154,27 @@ sudo chmod 600 /opt/automato-keycloak/pki/auth.vitabrevis.ch.key   # Key streng 
 >   „unable to get local issuer certificate" (und ein unsauberes `cat` ohne Zeilenumbruch
 >   kann Caddy sogar zum Crashen bringen).
 > - **Prüfen, wie viele Zertifikate drin sind** (≥ 2 = Kette vorhanden; 1 = nur Leaf):
->   `grep -c "BEGIN CERTIFICATE" auth.vitabrevis.ch.crt`.
+>   `grep -c "BEGIN CERTIFICATE" auth.example.ch.crt`.
 > - **Nur Leaf?** Intermediate besorgen und **sauber** anhängen. Bei öffentlichen CAs
 >   (z. B. Sectigo) steht die Intermediate-URL im Leaf (AIA) und lässt sich automatisch
 >   ziehen:
 >   ```bash
->   cp auth.vitabrevis.ch.crt leaf.crt
+>   cp auth.example.ch.crt leaf.crt
 >   AIA=$(openssl x509 -in leaf.crt -noout -text | awk -F'URI:' '/CA Issuers/{print $2}' | tr -d ' \r')
 >   curl -fsS "$AIA" -o interm.in
 >   openssl x509 -in interm.in -noout 2>/dev/null && cp interm.in interm.pem \
 >     || openssl x509 -inform DER -in interm.in -out interm.pem
 >   # Fullchain sauber neu schreiben (openssl re-serialisiert mit korrekten Zeilenumbrüchen):
->   { openssl x509 -in leaf.crt; openssl x509 -in interm.pem; } > auth.vitabrevis.ch.crt
->   grep -c "BEGIN CERTIFICATE" auth.vitabrevis.ch.crt    # jetzt 2
+>   { openssl x509 -in leaf.crt; openssl x509 -in interm.pem; } > auth.example.ch.crt
+>   grep -c "BEGIN CERTIFICATE" auth.example.ch.crt    # jetzt 2
 >   openssl verify -untrusted interm.pem leaf.crt         # erwartet: leaf.crt: OK
 >   ```
->   (Alternativ das `.ca-bundle` der CA nehmen: `{ openssl x509 -in leaf.crt; cat ca-bundle; } > auth.vitabrevis.ch.crt`.)
+>   (Alternativ das `.ca-bundle` der CA nehmen: `{ openssl x509 -in leaf.crt; cat ca-bundle; } > auth.example.ch.crt`.)
 > - Der Key muss **ohne Passphrase** sein (Caddy entschlüsselt nicht interaktiv). Falls
->   verschlüsselt: `openssl rsa -in verschluesselt.key -out auth.vitabrevis.ch.key`.
+>   verschlüsselt: `openssl rsa -in verschluesselt.key -out auth.example.ch.key`.
 > - Kette/Key gehören zusammen? Beide Public-Keys im **gleichen** Format vergleichen:
->   `openssl x509 -in auth.vitabrevis.ch.crt -noout -pubkey | openssl md5` vs.
->   `openssl pkey -in auth.vitabrevis.ch.key -pubout | openssl md5` — MD5 müssen gleich sein.
+>   `openssl x509 -in auth.example.ch.crt -noout -pubkey | openssl md5` vs.
+>   `openssl pkey -in auth.example.ch.key -pubout | openssl md5` — MD5 müssen gleich sein.
 > - Nach jeder Änderung Config prüfen:
 >   `docker run --rm -v $PWD/Caddyfile:/etc/caddy/Caddyfile:ro -v $PWD/pki:/etc/caddy/pki:ro caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile`.
 
@@ -227,7 +227,7 @@ services:
       KC_DB_USERNAME: keycloak
       KC_DB_PASSWORD: ${KC_DB_PASSWORD}
       # Öffentliche URL; TLS wird von Caddy terminiert
-      KC_HOSTNAME: "https://auth.vitabrevis.ch"
+      KC_HOSTNAME: "https://auth.example.ch"
       KC_PROXY_HEADERS: xforwarded
       KC_HTTP_ENABLED: "true"       # nur intern; Caddy spricht http an
       KC_HEALTH_ENABLED: "true"
@@ -283,12 +283,12 @@ sudo tee /opt/automato-keycloak/Caddyfile >/dev/null <<'EOF'
     }
 }
 
-auth.vitabrevis.ch {
+auth.example.ch {
     encode zstd gzip
 
     # Wildcard-Zertifikat aus ./pki (im Container /etc/caddy/pki). TLS 1.3 only.
     # Nur falls Altclients zwingen: protocols tls1.2 tls1.3
-    tls /etc/caddy/pki/auth.vitabrevis.ch.crt /etc/caddy/pki/auth.vitabrevis.ch.key {
+    tls /etc/caddy/pki/auth.example.ch.crt /etc/caddy/pki/auth.example.ch.key {
         protocols tls1.3 tls1.3
     }
 
@@ -335,13 +335,13 @@ Caddy das im Log.
 
 ```bash
 # Öffentliche OIDC-Discovery über TLS (muss 200 + JSON liefern):
-curl -s https://auth.vitabrevis.ch/realms/automato/.well-known/openid-configuration | head
+curl -s https://auth.example.ch/realms/automato/.well-known/openid-configuration | head
 
 # Zertifikat/TLS-Version prüfen:
-curl -Iv https://auth.vitabrevis.ch/realms/automato 2>&1 | grep -Ei 'TLS|HTTP/'
+curl -Iv https://auth.example.ch/realms/automato 2>&1 | grep -Ei 'TLS|HTTP/'
 ```
 
-Admin-Konsole im Browser: **https://auth.vitabrevis.ch/admin/** (grünes Schloss).
+Admin-Konsole im Browser: **https://auth.example.ch/admin/** (grünes Schloss).
 
 > **Troubleshooting — „This transfer is blocked" / UTM-Firewall.** Blockt eine FortiGate
 > (o. ä.) den Zugriff, während der lokale curl (Schritt 7) funktioniert, liegt es an der
@@ -372,7 +372,7 @@ Es gibt **zwei verschiedene Admins** — nicht verwechseln:
 > getestet ist** — sonst ist die Keycloak-Verwaltung ausgesperrt.
 
 1. **Als Boot-Admin anmelden:** Admin-Konsole (bei Internet-Betrieb über den internen Namen,
-   Schritt 12: `https://auth.int.vitabrevis.ch/admin/`), User `bootstrap-admin`,
+   Schritt 12: `https://auth.int.example.ch/admin/`), User `bootstrap-admin`,
    Passwort `$BOOT_PW` (aus Schritt 4).
 2. **Dauerhaften Master-Admin anlegen** (Realm `master`): *Users → Add user* (persönliches
    Konto) → *Credentials → Set password* (Temporary = On) → *Role mapping → Assign role* →
@@ -388,7 +388,7 @@ Es gibt **zwei verschiedene Admins** — nicht verwechseln:
    Prüfen, dass alles funktioniert (z. B. Realm `automato` öffnen).
 4. **`automato-admin` (Plattform-Admin) aktivieren:** Realm **`automato`** → *Users →
    `automato-admin` → Credentials → Set password* (Temporary = On). Beim ersten Login
-   (z. B. `https://auth.vitabrevis.ch/realms/automato/account/`) erzwingt Keycloak
+   (z. B. `https://auth.example.ch/realms/automato/account/`) erzwingt Keycloak
    **Passwort-Wechsel + OTP**.
 5. **Erst jetzt den Boot-Admin entfernen:** Realm `master` → *Users* → `bootstrap-admin`
    löschen (angemeldet als der neue Admin). Danach die Boot-Variablen aus `.env` **und**
@@ -460,9 +460,9 @@ den Orchestrator durch):
 
 ```env
 AUTOMATO_AUTH_MODE=oidc
-AUTOMATO_OIDC_ISSUER=https://auth.vitabrevis.ch/realms/automato
+AUTOMATO_OIDC_ISSUER=https://auth.example.ch/realms/automato
 AUTOMATO_OIDC_AUDIENCE=automato-api
-AUTOMATO_OIDC_JWKS_URL=https://auth.vitabrevis.ch/realms/automato/protocol/openid-connect/certs
+AUTOMATO_OIDC_JWKS_URL=https://auth.example.ch/realms/automato/protocol/openid-connect/certs
 # Defaults passen: ROLES_CLAIM=realm_access.roles, TENANTS_CLAIM=tenant_ids, WEB_CLIENT_ID=automato-web
 ```
 
@@ -472,7 +472,7 @@ curl -s http://localhost:8000/auth/config      # auth_mode "oidc", issuer, clien
 curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8000/rules   # 401 ohne Token = korrekt
 ```
 
-Der Orchestrator muss die JWKS von `auth.vitabrevis.ch` laden können (ausgehend HTTPS).
+Der Orchestrator muss die JWKS von `auth.example.ch` laden können (ausgehend HTTPS).
 Meldet das UI **„JWKS vom Orchestrator nicht erreichbar“ (HTTP 503)**, kommt der Container
 nicht über den öffentlichen Weg (Hairpin/WAF/DNS). Der Grund steht im Log:
 
@@ -488,15 +488,15 @@ und WAF; Browser und Kunden laufen unverändert über die WAF). Erst prüfen, da
 
 ```bash
 # 200 = direkter Weg funktioniert (gleiches Zertifikat, gleicher Hostname)
-curl -s -o /dev/null -w "%{http_code}\n" --resolve auth.vitabrevis.ch:443:<KEYCLOAK-VM-IP> \
-  https://auth.vitabrevis.ch/realms/automato/protocol/openid-connect/certs
+curl -s -o /dev/null -w "%{http_code}\n" --resolve auth.example.ch:443:<KEYCLOAK-VM-IP> \
+  https://auth.example.ch/realms/automato/protocol/openid-connect/certs
 
-# nur im Orchestrator-Container auth.vitabrevis.ch auf die interne IP zeigen lassen
+# nur im Orchestrator-Container auth.example.ch auf die interne IP zeigen lassen
 cat > docker-compose.override.yml <<'YAML'
 services:
   orchestrator:
     extra_hosts:
-      - "auth.vitabrevis.ch:<KEYCLOAK-VM-IP>"
+      - "auth.example.ch:<KEYCLOAK-VM-IP>"
 YAML
 docker compose --profile core --profile collectors --profile proxy up -d
 ```
@@ -539,7 +539,7 @@ Bei Internet-Betrieb hinter WAF (Schritt 12): Holt der Browser das Token, geht e
   legen (gleiche Dateinamen) und Caddy neu laden:
   `sudo docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile`
   (oder `sudo docker compose restart caddy`). **Ablaufdatum überwachen** (z. B. Monitoring
-  auf `notAfter`): `openssl x509 -enddate -noout -in /opt/automato-keycloak/pki/auth.vitabrevis.ch.crt`.
+  auf `notAfter`): `openssl x509 -enddate -noout -in /opt/automato-keycloak/pki/auth.example.ch.crt`.
 - **Logs:** `docker compose logs --since 1h keycloak`. Fehlgeschlagene Logins stehen als
   `LOGIN_ERROR` mit Grund drin: `docker compose logs --since 1h keycloak | grep LOGIN_ERROR`
   — `invalid_user_credentials` = falsches Passwort, `user_not_found` = User existiert in
@@ -591,46 +591,46 @@ Bei Internet-Betrieb hinter WAF (Schritt 12): Holt der Browser das Token, geht e
 
 ## 12. Internet-Betrieb: Admin intern trennen + WAF-Ausnahme (gemeinsamer Virtual Server)
 
-Ausgangslage: `auth.vitabrevis.ch` ist aus dem Internet erreichbar (Kunden-Logins) und läuft
+Ausgangslage: `auth.example.ch` ist aus dem Internet erreichbar (Kunden-Logins) und läuft
 mit anderen Tools über **einen** FortiGate-Virtual-Server (eine IP, Host-Routing per FQDN) →
 **eine** Policy, **ein** WAF-Profil. Die WAF-Klasse „Generic Attacks" hält OIDC-Querys
 (v. a. `redirect_uri=https://…`) für Angriffe — das trifft **jeden** Login, auch Kunden.
 Ziel: Admin-Oberfläche gar nicht öffentlich, WAF nur für den IdP minimal lockern, die
 anderen Tools unverändert lassen.
 
-### 12a. Admin auf internen Hostnamen (`auth.int.vitabrevis.ch`)
+### 12a. Admin auf internen Hostnamen (`auth.int.example.ch`)
 
-- **DNS (AD-Zone `int.vitabrevis.ch`):** A-Record `auth` → `172.25.4.13`. Der Admin-Zugriff
+- **DNS (AD-Zone `int.example.ch`):** A-Record `auth` → `10.0.4.13`. Der Admin-Zugriff
   läuft damit direkt auf die VM, **nicht** über den Virtual Server/die WAF.
 - **Keycloak** (`docker-compose.yml`, Service `keycloak`):
-  `KC_HOSTNAME_ADMIN: "https://auth.int.vitabrevis.ch"` ergänzen.
-- **Zertifikat** — das Wildcard `*.vitabrevis.ch` deckt `auth.int.vitabrevis.ch` **nicht** ab.
+  `KC_HOSTNAME_ADMIN: "https://auth.int.example.ch"` ergänzen.
+- **Zertifikat** — das Wildcard `*.example.ch` deckt `auth.int.example.ch` **nicht** ab.
   Empfohlen: von der **DC-CA (AD CS)** ausstellen lassen (wie LDAPS; Domänen-Clients
   vertrauen der Wurzel bereits):
   ```bash
   cd /opt/automato-keycloak/pki
   openssl req -new -newkey rsa:3072 -nodes \
-    -keyout auth.int.vitabrevis.ch.key -out auth.int.vitabrevis.ch.csr \
-    -subj "/CN=auth.int.vitabrevis.ch" \
-    -addext "subjectAltName=DNS:auth.int.vitabrevis.ch" \
+    -keyout auth.int.example.ch.key -out auth.int.example.ch.csr \
+    -subj "/CN=auth.int.example.ch" \
+    -addext "subjectAltName=DNS:auth.int.example.ch" \
     -addext "extendedKeyUsage=serverAuth"
-  chmod 600 auth.int.vitabrevis.ch.key
+  chmod 600 auth.int.example.ch.key
   ```
   Auf einem Domänen-Windows-Rechner (CSR dorthin kopieren; CA-Name zeigt `certutil`):
   ```powershell
-  certreq -submit -attrib "CertificateTemplate:WebServer" auth.int.vitabrevis.ch.csr auth.int.vitabrevis.ch.cer
+  certreq -submit -attrib "CertificateTemplate:WebServer" auth.int.example.ch.csr auth.int.example.ch.cer
   certutil -config "<DC>\<CA-Name>" -ca.cert issuing-ca.cer
   ```
   Beide `.cer` nach `/tmp` auf die VM, dann Fullchain bauen (PEM oder DER, beides geht):
   ```bash
   cd /opt/automato-keycloak/pki
-  for f in /tmp/auth.int.vitabrevis.ch.cer /tmp/issuing-ca.cer; do
+  for f in /tmp/auth.int.example.ch.cer /tmp/issuing-ca.cer; do
     openssl x509 -in "$f" 2>/dev/null || openssl x509 -inform DER -in "$f"
-  done > auth.int.vitabrevis.ch.crt
-  chmod 640 auth.int.vitabrevis.ch.crt
-  grep -c "BEGIN CERTIFICATE" auth.int.vitabrevis.ch.crt          # 2
-  openssl x509 -in auth.int.vitabrevis.ch.crt -noout -pubkey | openssl md5
-  openssl pkey -in auth.int.vitabrevis.ch.key -pubout | openssl md5  # muss gleich sein
+  done > auth.int.example.ch.crt
+  chmod 640 auth.int.example.ch.crt
+  grep -c "BEGIN CERTIFICATE" auth.int.example.ch.crt          # 2
+  openssl x509 -in auth.int.example.ch.crt -noout -pubkey | openssl md5
+  openssl pkey -in auth.int.example.ch.key -pubout | openssl md5  # muss gleich sein
   ```
   Alternative ohne CA: im Caddyfile `tls internal` (Caddy erzeugt selbst ein Zertifikat);
   Browser warnen dann, bis Caddys Root (`/data/caddy/pki/authorities/local/root.crt` im
@@ -644,9 +644,9 @@ anderen Tools unverändert lassen.
       }
   }
 
-  auth.vitabrevis.ch {
+  auth.example.ch {
       encode zstd gzip
-      tls /etc/caddy/pki/auth.vitabrevis.ch.crt /etc/caddy/pki/auth.vitabrevis.ch.key {
+      tls /etc/caddy/pki/auth.example.ch.crt /etc/caddy/pki/auth.example.ch.key {
           protocols tls1.3 tls1.3
       }
       header {
@@ -661,9 +661,9 @@ anderen Tools unverändert lassen.
       reverse_proxy keycloak:8080
   }
 
-  auth.int.vitabrevis.ch {
+  auth.int.example.ch {
       encode zstd gzip
-      tls /etc/caddy/pki/auth.int.vitabrevis.ch.crt /etc/caddy/pki/auth.int.vitabrevis.ch.key {
+      tls /etc/caddy/pki/auth.int.example.ch.crt /etc/caddy/pki/auth.int.example.ch.key {
           protocols tls1.3 tls1.3
       }
       header {
@@ -679,7 +679,7 @@ anderen Tools unverändert lassen.
   }
   ```
 - **FortiGate (intern):** eigene Policy *Client → DMZ*, Source = Admin-Adressgruppe,
-  Destination = `172.25.4.13`, Service HTTPS, **NAT aus** (sonst sieht Caddy nur die
+  Destination = `10.0.4.13`, Service HTTPS, **NAT aus** (sonst sieht Caddy nur die
   FortiGate-IP und `remote_ip` greift nicht), kein WAF nötig (intern, IP-beschränkt, MFA).
   Achtung: der interne Name geht **direkt** auf die Server-IP, nicht über die VIP — ohne
   diese Policy gibt es einen Timeout.
@@ -694,29 +694,29 @@ anderen Tools unverändert lassen.
   docker compose exec keycloak /opt/keycloak/bin/kcadm.sh config credentials \
     --server http://localhost:8080 --realm master --user bootstrap-admin   # Passwort-Abfrage
   docker compose exec keycloak /opt/keycloak/bin/kcadm.sh update realms/master \
-    -s 'attributes.frontendUrl=https://auth.int.vitabrevis.ch'
+    -s 'attributes.frontendUrl=https://auth.int.example.ch'
   docker compose exec keycloak /opt/keycloak/bin/kcadm.sh get realms/master --fields attributes
   ```
   (Später auch in der Konsole: Realm `master` → *Realm settings → General → Frontend URL*.)
-  Die Kunden-Realms behalten `auth.vitabrevis.ch`.
+  Die Kunden-Realms behalten `auth.example.ch`.
 
-### 12b. WAF-Ausnahme nur für `auth.vitabrevis.ch` im gemeinsamen Profil
+### 12b. WAF-Ausnahme nur für `auth.example.ch` im gemeinsamen Profil
 
 Policy und Profil bleiben für alle Tools gleich; im Profil eine **URL-Access-Regel**, die
 auf Host **und** Pfad gescoped ist. Minimal anfangen (nur der Endpoint, der auslöst) und
 nur bei weiteren Log-Treffern gezielt erweitern:
 ```
 config firewall address
-    edit "FQDN_auth.vitabrevis.ch"
+    edit "FQDN_auth.example.ch"
         set type fqdn
-        set fqdn "auth.vitabrevis.ch"
+        set fqdn "auth.example.ch"
     next
 end
 config waf profile
     edit "WAF_vs-https-vb"
         config url-access
             edit 10
-                set address "FQDN_auth.vitabrevis.ch"
+                set address "FQDN_auth.example.ch"
                 set action block
                 set log enable
                 config access-pattern
@@ -727,7 +727,7 @@ config waf profile
                 end
             next
             edit 20
-                set address "FQDN_auth.vitabrevis.ch"
+                set address "FQDN_auth.example.ch"
                 set action bypass
                 set log enable
                 config access-pattern
@@ -750,11 +750,11 @@ Dann würde die Ausnahme für **alle** Tools gelten. Prüfen (von extern):
 ```bash
 # 1) Muss weiter BLOCKIERT werden (anderes Tool, gleicher Pfad, Angriffsmuster):
 curl -s -o /dev/null -w "%{http_code}\n" \
-  "https://<anderes-tool>.vitabrevis.ch/realms/x/protocol/openid-connect/auth?q=%3Cscript%3Ealert(1)%3C%2Fscript%3E"
+  "https://<anderes-tool>.example.ch/realms/x/protocol/openid-connect/auth?q=%3Cscript%3Ealert(1)%3C%2Fscript%3E"
 # 2) Muss weiter BLOCKIERT werden (IdP, aber Pfad nicht freigegeben):
 curl -s -o /dev/null -w "%{http_code}\n" \
-  "https://auth.vitabrevis.ch/realms/x/account?q=%3Cscript%3Ealert(1)%3C%2Fscript%3E"
-# 3) Kunden-Login im Browser funktioniert, kein WAF-Log-Eintrag für auth.vitabrevis.ch.
+  "https://auth.example.ch/realms/x/account?q=%3Cscript%3Ealert(1)%3C%2Fscript%3E"
+# 3) Kunden-Login im Browser funktioniert, kein WAF-Log-Eintrag für auth.example.ch.
 ```
 Kommt bei (1) **keine** Blockseite, greift das Host-Scoping nicht → Regel 20 sofort
 entfernen. Fallback: eigene öffentliche IP + eigene VIP/Policy/WAF-Profil für den IdP
@@ -771,7 +771,7 @@ erlaubte UI-Adressen bleiben getrennt. Ein bestehender Realm wird dabei nicht an
 1. Realm-Datei aus der Vorlage erzeugen (Repo, Python 3, keine Abhängigkeiten):
    ```bash
    python3 deploy/keycloak/make_realm.py --realm automato-dev \
-     --ui-url https://172.25.12.12 --display-name "Automato Dev" --with-localhost \
+     --ui-url https://10.0.12.12 --display-name "Automato Dev" --with-localhost \
      > realm-automato-dev.json
    ```
    Übernimmt Rollen, Clients, `tenant_ids`- und Audience-Mapper, Härtung und den geseedeten
@@ -783,8 +783,8 @@ erlaubte UI-Adressen bleiben getrennt. Ein bestehender Realm wird dabei nicht an
    `automato-admin` ein Passwort setzen (Temporary On). Der Audience-Mapper ist schon drin.
 4. Orchestrator der Umgebung auf den Realm zeigen lassen (`.env`):
    ```env
-   AUTOMATO_OIDC_ISSUER=https://auth.vitabrevis.ch/realms/automato-dev
-   AUTOMATO_OIDC_JWKS_URL=https://auth.vitabrevis.ch/realms/automato-dev/protocol/openid-connect/certs
+   AUTOMATO_OIDC_ISSUER=https://auth.example.ch/realms/automato-dev
+   AUTOMATO_OIDC_JWKS_URL=https://auth.example.ch/realms/automato-dev/protocol/openid-connect/certs
    ```
    WAF-Ausnahme (Abschnitt 12b) und Caddy decken alle Realms ab — nichts weiter nötig.
 
@@ -797,7 +797,7 @@ Wer einen Control-Host hat, bekommt denselben Stack ohne Handarbeit:
 ```bash
 cd deploy/keycloak/ansible
 cp inventory.example.ini inventory.ini                      # VM eintragen
-cp group_vars/keycloak.example.yml group_vars/keycloak.yml  # kc_domain: auth.vitabrevis.ch
+cp group_vars/keycloak.example.yml group_vars/keycloak.yml  # kc_domain: auth.example.ch
 #   + Wildcard statt ACME: kc_tls_cert / kc_tls_key auf die PEM-Dateien setzen
 cat > group_vars/vault.yml <<EOF
 kc_bootstrap_admin_password: "$(openssl rand -base64 18)"
