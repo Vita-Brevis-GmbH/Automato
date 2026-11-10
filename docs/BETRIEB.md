@@ -2356,6 +2356,10 @@ an (`deploy/agent-gateway`, Port 8443).
   und Magister. Client-Secret je Realm: `sudo deploy/front/front.sh tor <realm>`; Stand:
   `front.sh tor` und im Kunden-Portal. Kunden ohne Realm sind gesperrt. NetBox:
   `netbox-host.sh sso <kunde|alle>` (`docs/INSTALLATION-FRONT.md` 6).
+- **Zugriff je Kunde** (1.5.0): im Kunden-Portal *Zugriff* – überall (Vorgabe), nur intern
+  (Management-Netz) oder nur aus diesen Netzen; von Hand `front.sh kunde … --zugriff intern|"<netze>"`.
+  Wer nicht darf, sieht für alle Adressen des Kunden nur „Unbekannte Adresse“ (auch keine
+  Anmeldung, keine NetBox-API). `front.sh liste` zeigt Zugriff und Quelle (Portal/Hand).
 - Agent-Tokens werden nur gehasht gespeichert und einmalig angezeigt. Produktiv sprechen
   Agenten nur über das **mTLS-Agent-Gateway** (`deploy/agent-gateway`, Modus `bind`:
   Zertifikat und Token gehören zum selben Agenten); Port 8000 nicht in Agent-Netze freigeben.

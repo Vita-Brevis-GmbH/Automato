@@ -16,7 +16,8 @@
 # und nie über die WAF.
 #
 # Verwendung (im Repo-Ordner, mit sudo):
-#   front.sh kunde <kunde> "<Anzeigename>" [--doc] [--um] [--cmdb] [--realm <r>]   anlegen/ändern
+#   front.sh kunde <kunde> "<Anzeigename>" [--doc] [--um] [--cmdb] [--realm <r>]
+#                  [--zugriff ueberall|intern|"<netz> …"]           anlegen/ändern
 #   front.sh link <kunde> <titel> <url> [beschreibung]               weitere Kachel auf der Startseite
 #   front.sh entfernen <kunde> --ja                                 Kunde aus dem Front-Proxy nehmen
 #   front.sh liste                                                  Kunden mit ihren Werkzeugen
@@ -37,6 +38,11 @@
 # sich die Werkzeuge über die Keycloak-Sitzung ohne zweite Maske an; NetBox, Magister und CMDB
 # bekommen den Benutzer als Kopfzeile (X-Automato-User/-Realm/-Groups, nur vom Tor). Kunden ohne
 # Realm bzw. ohne Client-Secret sind gesperrt; die NetBox-API mit Token bleibt erreichbar.
+#
+# Seit 1.5.0 der Zugriff je Kunde (Kunden-Portal bzw. --zugriff): ueberall (Vorgabe), intern (nur
+# Management-Netz, nie über die WAF) oder nur aus bestimmten Netzen (Adresse des Benutzers, über
+# die WAF aus X-Forwarded-For). Allen anderen antworten alle Adressen des Kunden wie eine
+# unbekannte Adresse (404) – auch vor dem Anmelde-Tor und für die NetBox-API.
 #
 # Einstellungen: AUTOMATO_FRONT_* in .env (siehe .env.example). Kunden: deploy/front/kunden/,
 # erzeugt: deploy/front/generated/, Client-Secrets: deploy/front/tor/ (alles nicht im Repo).
@@ -190,11 +196,59 @@ kunden() {  # alle Kurznamen
   return 0
 }
 
-lies_kunde() {  # setzt NAME, DOC, UM, CMDB_AN, QUELLE, REALM aus kunden/<k>.conf
+lies_kunde() {  # setzt NAME, DOC, UM, CMDB_AN, QUELLE, REALM, ZUGRIFF, NETZE aus kunden/<k>.conf
   local k=$1
-  NAME=$k DOC=nein UM=nein CMDB_AN=nein QUELLE=befehl REALM=""
+  NAME=$k DOC=nein UM=nein CMDB_AN=nein QUELLE=befehl REALM="" ZUGRIFF=ueberall NETZE=""
   # shellcheck disable=SC1090 # mit printf %q geschrieben (kunde)
   . "$(kdir)/$k.conf"
+}
+
+zugriff_pruefen() {  # $1 Zugriff, $2 Netze (mit Leerzeichen): gültig für Caddy und Datei?
+  case "$1" in
+    ueberall | intern) ;;
+    netze)
+      [ -n "${2// /}" ] || abbruch "Zugriff „netze“ ohne Netz"
+      netze "Netze des Kunden" "$2"
+      local n
+      for n in $2; do  # je Eintrag IPv4 bzw. IPv6 (mit Doppelpunkt), optional mit Maske
+        [[ "$n" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]{1,2})?$ || "$n" =~ ^[0-9A-Fa-f:.]*:[0-9A-Fa-f:.]*(/[0-9]{1,3})?$ ]] \
+          || abbruch "Netz '$n' ungültig (z. B. 203.0.113.0/24 oder 2001:db8::/48)"
+      done
+      ;;
+    *) abbruch "Zugriff '$1' ungültig (ueberall, intern oder Netze)" ;;
+  esac
+}
+
+zugriff_text() {  # für liste und pruefen
+  case "$ZUGRIFF" in
+    intern) printf 'nur intern' ;;
+    netze) printf 'nur %s' "$NETZE" ;;
+    *) printf 'überall' ;;
+  esac
+}
+
+zugriff_matcher() {  # auf Ebene der Adresse: wer diesen Kunden nicht sehen darf (1.5.0)
+  case "$ZUGRIFF" in
+    intern)
+      # Management-Netz nach der Adresse der Gegenstelle, nie über die WAF (wie das Portal)
+      printf '\t@front_kunde_fremd not remote_ip %s\n' "$MGMT"
+      [ -z "$WAF" ] || printf '\t@front_kunde_waf remote_ip %s\n' "$WAF"
+      ;;
+    netze)
+      # Adresse des Benutzers: über die WAF aus X-Forwarded-For (trusted_proxies), sonst direkt
+      printf '\t@front_kunde_fremd not client_ip %s\n' "$NETZE"
+      ;;
+  esac
+}
+
+zugriff_sperre() {  # in route direkt nach der Sperre nach Absender: wie eine unbekannte Adresse
+  case "$ZUGRIFF" in
+    intern | netze)
+      printf '\t\trespond @front_kunde_fremd "Unbekannte Adresse" 404\n'
+      [ "$ZUGRIFF" != intern ] || [ -z "$WAF" ] || printf '\t\trespond @front_kunde_waf "Unbekannte Adresse" 404\n'
+      ;;
+  esac
+  return 0
 }
 
 html() {  # Text für HTML maskieren
@@ -374,6 +428,7 @@ tor_fuer_kunde() {  # setzt TOR_DIENST (Container des Tors; leer = ohne Tor bzw.
 
 route_kunde() {  # route einer Kunden-Adresse: $1 Ziel, $2 vor dem Tor (immer), $3 vor dem Tor (nur mit Tor)
   printf '\troute {\n\t\timport front-kunden-sperre\n'
+  zugriff_sperre
   [ -z "${2:-}" ] || printf '%s\n' "$2"
   if [ -n "$GESPERRT" ]; then
     printf '\t\timport front-gesperrt\n\t}\n'
@@ -394,6 +449,7 @@ schreibe_kunde() {  # Caddy-Einträge eines Kunden
   [ -z "$NETBOX_CA" ] || trust=$'\n\t\t\t\ttls_trust_pool file /etc/caddy/pki/'"$NETBOX_CA"
   printf '# Kunde %s (front.sh) – nicht von Hand ändern\n' "$k"
   printf '%s.%s {\n\timport front-kunden\n' "$k" "$DOMAIN"
+  zugriff_matcher
   route_kunde $'\t\t'"root * /srv/front/$k"$'\n\t\timport front-seite'
   printf '}\n'
   if [ -n "$NETBOX" ]; then
@@ -402,6 +458,7 @@ schreibe_kunde() {  # Caddy-Einträge eines Kunden
         "$NETBOX" "${1:-}" "$trust"
     }
     printf '\n%s-nb.%s {\n\timport front-kunden\n' "$k" "$DOMAIN"
+    zugriff_matcher
     # API mit Token (NetBox-Sync von Automato, Skripte): NetBox prüft den Token selbst – ohne Tor
     printf '\t@front_nb_token {\n\t\tpath /api/* /graphql/*\n\t\theader_regexp Authorization ^(Token|Bearer)\\s\n\t}\n'
     route_kunde "$(nb_ziel "$ident")" \
@@ -412,6 +469,7 @@ schreibe_kunde() {  # Caddy-Einträge eines Kunden
   if [ "$DOC" = ja ]; then
     local ui=$'\t\treverse_proxy web-ui:5173 {\n\t\t\timport /etc/caddy/automato-tls/upstream-{$AUTOMATO_INTERNAL_TLS:off}.caddy\n\t\t}'
     printf '\n%s-doc.%s {\n\timport front-kunden\n' "$k" "$DOMAIN"
+    zugriff_matcher
     printf '\t@internal path /api/internal /api/internal/*\n\t@front_api path /api/*\n'
     # die API prüft das Token von Automato selbst (Kunden-Realm, ADR 0050) – nur die Oberfläche hinter dem Tor
     route_kunde "$ui" $'\t\trespond @internal 404' \
@@ -420,11 +478,13 @@ schreibe_kunde() {  # Caddy-Einträge eines Kunden
   fi
   if [ "$UM" = ja ] && [ -n "$MAGISTER" ]; then
     printf '\n%s-um.%s {\n\timport front-kunden\n' "$k" "$DOMAIN"
+    zugriff_matcher
     route_kunde $'\t\t'"reverse_proxy $MAGISTER {$ident"$'\n\t\t}'
     printf '}\n'
   fi
   if [ "$CMDB_AN" = ja ] && [ -n "$CMDB" ]; then
     printf '\n%s-cmdb.%s {\n\timport front-kunden\n' "$k" "$DOMAIN"
+    zugriff_matcher
     route_kunde $'\t\t'"reverse_proxy $CMDB {$ident"$'\n\t\t}'
     printf '}\n'
   fi
@@ -650,10 +710,10 @@ werkzeuge() {  # Kurzliste der Werkzeuge eines Kunden
 cmd_kunde() {
   root_noetig
   lade_conf
-  local k=${1:-} name=${2:-} doc=nein um=nein cmdb=nein realm=""
+  local k=${1:-} name=${2:-} doc=nein um=nein cmdb=nein realm="" zugriff=ueberall netz=""
   kurzname "$k"
   nur_befehl "$k"
-  [ -n "$name" ] && [[ "$name" != --* ]] || abbruch "Verwendung: kunde <kunde> \"<Anzeigename>\" [--doc] [--um] [--cmdb] [--realm <realm>]"
+  [ -n "$name" ] && [[ "$name" != --* ]] || abbruch "Verwendung: kunde <kunde> \"<Anzeigename>\" [--doc] [--um] [--cmdb] [--realm <realm>] [--zugriff ueberall|intern|\"<netz> …\"]"
   shift 2
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -661,13 +721,24 @@ cmd_kunde() {
       --um) um=ja ;;
       --cmdb) cmdb=ja ;;
       --realm) realm=${2:-}; realm_pruefen "$realm"; shift ;;
-      *) abbruch "unbekannte Angabe '$1' (--doc, --um, --cmdb, --realm <realm>)" ;;
+      --zugriff)
+        case "${2:-}" in
+          ueberall | intern) zugriff=$2 ;;
+          *) zugriff=netze netz=$(printf '%s' "${2:-}" | tr ',' ' ' | xargs) ;;
+        esac
+        zugriff_pruefen "$zugriff" "$netz"
+        shift
+        ;;
+      *) abbruch "unbekannte Angabe '$1' (--doc, --um, --cmdb, --realm <realm>, --zugriff …)" ;;
     esac
     shift
   done
   install -d -m 750 "$(kdir)"
-  printf 'NAME=%q\nDOC=%q\nUM=%q\nCMDB_AN=%q\nREALM=%q\n' "$name" "$doc" "$um" "$cmdb" "$realm" >"$(kdir)/$k.conf"
+  printf 'NAME=%q\nDOC=%q\nUM=%q\nCMDB_AN=%q\nREALM=%q\nZUGRIFF=%q\nNETZE=%q\n' \
+    "$name" "$doc" "$um" "$cmdb" "$realm" "$zugriff" "$netz" >"$(kdir)/$k.conf"
   titel "Kunde $k im Front-Proxy"
+  ZUGRIFF=$zugriff NETZE=$netz
+  ok "Zugriff: $(zugriff_text)"
   ok "Startseite https://$k.$DOMAIN"
   [ -n "$NETBOX" ] && ok "NetBox https://$k-nb.$DOMAIN → $NETBOX" || warn "AUTOMATO_FRONT_NETBOX fehlt – keine Weiterleitung zur NetBox"
   if [ "$doc" = ja ]; then
@@ -715,10 +786,14 @@ cmd_entfernen() {
 cmd_liste() {
   lade_conf
   local k
-  printf '%-20s %-28s %-16s %s\n' KUNDE WERKZEUGE REALM STARTSEITE
+  local quelle
+  printf '%-20s %-28s %-16s %-14s %-8s %s\n' KUNDE WERKZEUGE REALM ZUGRIFF QUELLE STARTSEITE
   for k in $(kunden); do
     lies_kunde "$k"
-    printf '%-20s %-28s %-16s https://%s.%s\n' "$k" "$(werkzeuge "$k")" "${REALM:-–}" "$k" "$DOMAIN"
+    quelle=Hand
+    [ "$QUELLE" != oberflaeche ] || quelle=Portal
+    printf '%-20s %-28s %-16s %-14s %-8s https://%s.%s\n' "$k" "$(werkzeuge "$k")" "${REALM:-–}" \
+      "$(zugriff_text | cut -c1-14)" "$quelle" "$k" "$DOMAIN"
   done
 }
 
@@ -756,6 +831,25 @@ cmd_pruefen() {
   [ -n "$NETBOX" ] && ok "NetBox-Host: $NETBOX" || warn "AUTOMATO_FRONT_NETBOX leer – keine Weiterleitung zur NetBox"
   [ -n "$MAGISTER" ] && ok "Magister: $MAGISTER" || info "Magister (-um) aus"
   [ -n "$CMDB" ] && ok "CMDB: $CMDB" || info "CMDB (-cmdb) aus"
+  # Kunden-Adressen aus jedem Netz (z. B. FortiGate-VIP, die die Adresse des Besuchers weitergibt):
+  # dann muss die Oberfläche selbst auf das Management-Netz beschränkt sein (1.5.0)
+  if [[ " $KUNDEN_ALLOW " == *" 0.0.0.0/0 "* ]] && [ -z "${AUTOMATO_UI_ALLOW:-}" ]; then
+    warn "Kunden-Adressen aus jedem Netz, aber AUTOMATO_UI_ALLOW leer – die Oberfläche wäre über ihre Adresse auch von aussen erreichbar"
+  fi
+
+  titel "Host-Agent (Kunden aus dem Kunden-Portal)"
+  local hand="" k owner
+  if $SYSTEMCTL is-active --quiet automato-front-sync.path 2>/dev/null; then
+    ok "läuft (automato-front-sync.path)"
+  else
+    warn "nicht eingerichtet bzw. aus – Änderungen im Kunden-Portal kommen nicht an: sudo deploy/front/front.sh agent"
+  fi
+  if [ -d "$FRONT_STATE" ]; then
+    owner=$(stat -c %u "$FRONT_STATE" 2>/dev/null || true)
+    [ "$owner" = "$ORCH_UID" ] || warn "$FRONT_STATE gehört nicht dem Orchestrator (uid $ORCH_UID) – sudo deploy/front/front.sh agent"
+  fi
+  for k in $(kunden); do aus_oberflaeche "$k" || hand+="$k "; done
+  [ -z "$hand" ] || info "von Hand angelegt (nicht im Kunden-Portal): $hand– übernimmt das Portal, sobald dort ein Kunde mit diesem Kurznamen gespeichert wird"
 
   titel "Zertifikate"
   pruefe_zertifikat mgmt "*.$DOMAIN"
@@ -789,6 +883,17 @@ cmd_pruefen() {
     for r in $TOR_BEREIT; do ok "Realm $r: Client-Secret hinterlegt"; done
     for r in $TOR_FEHLT; do fehler "Realm $r: Client-Secret fehlt – front.sh tor $r"; done
     for r in $TOR_GESPERRT; do warn "Kunde $r gesperrt (kein Realm bzw. kein Client-Secret) – front.sh tor"; done
+    # die Container des Tors holen Token und Schlüssel bei Keycloak – wie der Proxy (gleiches Netz,
+    # gleiche Namensauflösung, ohne extra_hosts des Orchestrators)
+    if proxy_laeuft; then
+      for r in $TOR_BEREIT; do
+        if dc exec -T proxy wget -q -T 5 -O /dev/null "$KC_INTERN/realms/$r/.well-known/openid-configuration" >/dev/null 2>&1; then
+          ok "Keycloak für Realm $r vom Proxy aus erreichbar"
+        else
+          fehler "Keycloak $KC_INTERN (Realm $r) vom Proxy aus nicht erreichbar – Name, Firewall bzw. AUTOMATO_FRONT_KEYCLOAK_INTERN"
+        fi
+      done
+    fi
     if [ -f "$(gen)/tor/compose.yml" ]; then
       soll=$(grep -c '^  tor-' "$(gen)/tor/compose.yml" || true)
       laufend=$($DOCKER compose -p automato-tor -f "$(gen)/tor/compose.yml" ps --status running --services 2>/dev/null | grep -c '^tor-' || true)
@@ -803,16 +908,28 @@ cmd_pruefen() {
   fi
 
   titel "Kunden"
-  local k code ca=()
+  local code ca=() orch coll
   [ -z "$NETBOX_CA" ] || ca=(--cacert "$FRONT_PKI/$NETBOX_CA")
   for k in $(kunden); do
+    lies_kunde "$k"
     code=$($CURL -sk --noproxy '*' -o /dev/null -w '%{http_code}' --resolve "$k.$DOMAIN:443:127.0.0.1" "https://$k.$DOMAIN/" 2>/dev/null || true)
     case "$code" in
       200 | 403) ok "$k: Startseite antwortet (HTTP $code; 403 = gesperrt bzw. diese VM nicht freigegeben)" ;;
       302) ok "$k: Startseite leitet zur Anmeldung (Anmelde-Tor)" ;;
+      404) if [ "$ZUGRIFF" != ueberall ]; then
+             ok "$k: Startseite antwortet (HTTP 404 – diese VM ausserhalb des Zugriffs: $(zugriff_text))"
+           else fehler "$k: Startseite nicht gefunden (HTTP 404) – front.sh erzeugen"; fi ;;
       *) fehler "$k: Startseite antwortet nicht (HTTP ${code:-–})" ;;
     esac
+    [ "$ZUGRIFF" = ueberall ] || info "$k: Zugriff $(zugriff_text)"
     [ -n "$NETBOX" ] || continue
+    # Orchestrator (Prüfen, NetBox-Sync) und zentraler Worker (Einlesen, Abgleich) müssen die
+    # NetBox gleich erreichen – extra_hosts in docker-compose.override.yml für beide (1.5.0)
+    orch=$(dc exec -T orchestrator getent hosts "$k-nb.$DOMAIN" 2>/dev/null | awk 'NR==1 {print $1}' || true)
+    coll=$($DOCKER compose --profile core --profile collectors exec -T collector getent hosts "$k-nb.$DOMAIN" 2>/dev/null | awk 'NR==1 {print $1}' || true)
+    if [ -n "$orch" ] && [ -n "$coll" ] && [ "$orch" != "$coll" ]; then
+      warn "$k-nb.$DOMAIN: Orchestrator → $orch, zentraler Worker (collector) → $coll – in docker-compose.override.yml extra_hosts für beide gleich setzen (INSTALLATION-FRONT 8)"
+    fi
     local nbhost=${NETBOX%:*} nbport=443
     [ "$nbhost" = "$NETBOX" ] || nbport=${NETBOX##*:}
     code=$($CURL -s --noproxy '*' "${ca[@]}" -o /dev/null -w '%{http_code}' --resolve "$k-nb.$DOMAIN:$nbport:$nbhost" "https://$k-nb.$DOMAIN:$nbport/login/" 2>/dev/null || true)
@@ -832,7 +949,7 @@ cmd_pruefen() {
 # --- Host-Agent: Kunden aus der Oberfläche (1.3.0, ADR 0050) ---------------------------------
 sync_anwenden() {  # läuft in einer Subshell: abbruch beendet nur diese
   lade_conf
-  local soll=$1 zeilen art k a b c d e
+  local soll=$1 zeilen art k a b c d e f g
   local -A gewollt=()
   install -d -m 750 "$(kdir)"
   rm -f "$(kdir)"/*.neu
@@ -847,18 +964,24 @@ data = json.load(open(sys.argv[1], encoding="utf-8"))
 for kunde in data.get("kunden") or []:
     k = clean(kunde.get("kurzname"))
     flags = ["ja" if kunde.get(t) else "nein" for t in ("doc", "um", "cmdb")]
-    print(SEP.join(["K", k, clean(kunde.get("name"))] + flags + [clean(kunde.get("realm"))]))
+    zugriff = clean(kunde.get("zugriff") or "ueberall")  # 1.5.0; ältere Oberfläche: überall
+    netze = " ".join(clean(n) for n in kunde.get("netze") or [])
+    print(SEP.join(["K", k, clean(kunde.get("name"))] + flags
+                   + [clean(kunde.get("realm")), zugriff, netze]))
     for link in kunde.get("links") or []:
         print(SEP.join(["L", k, clean(link.get("title")), clean(link.get("url")), clean(link.get("text"))]))
 PY
   ) || abbruch "soll.json nicht lesbar ($soll)"
-  while IFS=$'\x1f' read -r art k a b c d e; do
+  while IFS=$'\x1f' read -r art k a b c d e f g; do
     case "$art" in
       K)
         kurzname "$k"
         [ -n "$a" ] || abbruch "Kunde '$k' ohne Anzeigename"
         [ -z "$e" ] || realm_pruefen "$e"
-        printf 'NAME=%q\nDOC=%q\nUM=%q\nCMDB_AN=%q\nREALM=%q\nQUELLE=oberflaeche\n' "$a" "$b" "$c" "$d" "$e" >"$(kdir)/$k.conf.neu"
+        [ "$f" = netze ] || g=""
+        zugriff_pruefen "${f:-ueberall}" "$g"
+        printf 'NAME=%q\nDOC=%q\nUM=%q\nCMDB_AN=%q\nREALM=%q\nZUGRIFF=%q\nNETZE=%q\nQUELLE=oberflaeche\n' \
+          "$a" "$b" "$c" "$d" "$e" "${f:-ueberall}" "$g" >"$(kdir)/$k.conf.neu"
         : >"$(kdir)/$k.links.tsv.neu"
         gewollt[$k]=1
         ;;

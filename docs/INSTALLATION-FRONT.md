@@ -40,6 +40,25 @@ Management-Netz ──▶ Automato-VM :443 direkt
 - **Host-Firewall dieser VM** (`INSTALLATION-PROD.md` 4.3): in `DOCKER-USER` Port 443 zusätzlich
   von der Adresse der WAF; Firewall davor ebenso, ohne Source-NAT.
 
+### Variante: FortiGate mit VIP statt WAF als Proxy (1.5.0)
+
+Leitet die Firewall nur um (VIP/DNAT, auch mit WAF-Profil), kommt nicht die WAF an, sondern die
+**Adresse des Besuchers** (`tcpdump -ni any 'tcp port 443 and (tcp[tcpflags] & tcp-syn != 0)'`
+zeigt öffentliche Absender). Dann:
+
+1. `.env`: `AUTOMATO_FRONT_KUNDEN_ALLOW="0.0.0.0/0 ::/0"` – wer hereinkommt, entscheidet die
+   FortiGate; `AUTOMATO_FRONT_WAF` bleibt (niemandem sonst wird `X-Forwarded-For` geglaubt).
+2. **`AUTOMATO_UI_ALLOW` setzen** (Management-Netz): sonst wäre die Oberfläche über ihre Adresse
+   auch von aussen erreichbar (`front.sh pruefen` warnt). Interne Adressen prüft der Proxy weiter
+   nach Absender.
+3. `/etc/ufw/after.rules` im Block `DOCKER-USER` **vor** der `DROP`-Zeile (nur 443, 8443 bleibt
+   eingeschränkt), danach `sudo ufw reload`:
+   ```text
+   -A DOCKER-USER -i ens192 -p tcp -m conntrack --ctorigdstport 443 --ctdir ORIGINAL -j RETURN
+   ```
+4. `sudo docker compose up -d` und `sudo deploy/front/front.sh erzeugen`. Einzelne Kunden nur intern
+   bzw. nur aus bestimmten Netzen: Zugriff je Kunde (Abschnitt 5).
+
 ## 2. Zertifikate
 
 In `deploy/proxy/pki/` (nicht im Repo), Fullchain zuerst mit dem eigenen Zertifikat:
@@ -138,6 +157,21 @@ sudo deploy/front/front.sh entfernen kunde-a --ja             # NetBox und Daten
   `deploy/keycloak/make_realm.py --realm kunde-a --ui-url https://kunde-a-doc.mgmt.example.ch` und
   in der Admin-Konsole importieren (`deploy/keycloak/PROD-INSTALL.md`, Abschnitt 13).
 - **`--um`, `--cmdb`:** wirken erst mit `AUTOMATO_FRONT_MAGISTER` bzw. `AUTOMATO_FRONT_CMDB`.
+- **Kunde von Hand → Portal:** wird im Kunden-Portal ein Kunde mit demselben Kurznamen gespeichert,
+  gilt ab dann der Eintrag aus dem Portal (Werkzeuge, Realm, Zugriff und Kacheln – eigene Kacheln
+  vorher dort eintragen). `front.sh liste` zeigt die Quelle (Portal bzw. Hand).
+
+**Zugriff je Kunde (1.5.0):** im Kunden-Portal bzw. mit `--zugriff`:
+
+| Zugriff | Wer erreicht die Adressen des Kunden | Von Hand |
+|---|---|---|
+| Überall (Vorgabe) | wie `AUTOMATO_FRONT_KUNDEN_ALLOW` (WAF bzw. Internet) | `--zugriff ueberall` |
+| Nur intern | nur das Management-Netz (`AUTOMATO_FRONT_MGMT`), nie über die WAF | `--zugriff intern` |
+| Nur aus diesen Netzen | nur die Liste (Adresse des Benutzers, über die WAF aus `X-Forwarded-For`) | `--zugriff "203.0.113.0/24 198.51.100.7"` |
+
+Gilt für Startseite und alle Werkzeuge des Kunden – vor dem Anmelde-Tor und auch für die NetBox-API
+mit Token. Allen anderen antworten die Adressen wie ein Name, den es nicht gibt (404 „Unbekannte
+Adresse“), so verrät die Antwort nicht, dass es den Kunden gibt.
 
 ## 6. Anmelde-Tor (1.4.0, ADR 0051)
 
@@ -178,18 +212,45 @@ zweite Maske an: Automato selbst, NetBox über den Benutzer vom Tor
 sudo deploy/front/front.sh pruefen
 ```
 
-Einstellungen, beide Zertifikate (passt der Schlüssel, deckt es die Namen ab, 30 Tage vor Ablauf
-eine Warnung), Proxy, Anmelde-Tor (Client-Secrets, Container, gesperrte Kunden), je Kunde
-Startseite (mit Tor: Weiterleitung zur Anmeldung) und Weg zur NetBox (von dieser VM aus). Im Browser aus dem
+Einstellungen (seit 1.5.0: Warnung, wenn Kunden-Adressen aus jedem Netz erreichbar sind und
+`AUTOMATO_UI_ALLOW` leer ist), Host-Agent (läuft, Ordner gehört dem Orchestrator, von Hand angelegte
+Kunden), beide Zertifikate (passt der Schlüssel, deckt es die Namen ab, 30 Tage vor Ablauf eine
+Warnung), Proxy, Anmelde-Tor (Client-Secrets, Container, gesperrte Kunden, Keycloak vom Proxy aus
+erreichbar), je Kunde Startseite (mit Tor: Weiterleitung zur Anmeldung; bei Zugriff „intern“ bzw.
+„Netze“ 404 für diese VM), Zugriff, Weg zur NetBox (von dieser VM aus) und ob Orchestrator und
+zentraler Worker die NetBox-Adresse gleich auflösen. Im Browser aus dem
 Management-Netz: `https://start.mgmt.int.example.ch` (Portal), über die WAF
 `https://kunde-a.mgmt.example.ch` und `https://kunde-a-nb.mgmt.example.ch`.
 
 ## 8. Automato an die NetBox eines Kunden
 
-`netbox-host.sh token kunde-a` auf dem NetBox-Host, dann in Automato beim Mandanten des Kunden →
+`netbox-host.sh token kunde-a` auf dem NetBox-Host (Lese- und Schreib-Token werden nur einmal
+angezeigt – direkt eintragen bzw. in den Tresor), dann in Automato beim Mandanten des Kunden →
 Quellsysteme → NetBox mit `https://kunde-a-nb.mgmt.example.ch`. Der Weg geht über die WAF (diese
 VM muss die externe Adresse erreichen); die WAF darf die API der NetBox (JSON, `PATCH`/`POST` beim
 NetBox-Sync) nicht blockieren.
+
+**Erreicht diese VM die externe Adresse nicht** (Test:
+`curl -s -o /dev/null -w "%{http_code}\n" -H "Authorization: Token test" https://kunde-a-nb.mgmt.example.ch/api/status/`
+→ `403` = gut, `000` = kein Weg, z. B. FortiGate ohne Hairpin): den Namen in
+`docker-compose.override.yml` direkt auf den NetBox-Host zeigen – **für `orchestrator` und
+`collector`** (Prüfen und NetBox-Sync laufen im Orchestrator, Einlesen und Abgleich im zentralen
+Worker):
+
+```yaml
+services:
+  orchestrator:
+    extra_hosts:
+      - "kunde-a-nb.mgmt.example.ch:10.0.30.20"
+  collector:
+    extra_hosts:
+      - "kunde-a-nb.mgmt.example.ch:10.0.30.20"
+```
+
+Danach `sudo docker compose up -d`. Steht `COMPOSE_PROFILES` in `.env`, kein `--profile` auf der
+Kommandozeile angeben – es ersetzt die Profile aus `.env` (dann fehlt z. B. `redis`). Prüfen:
+`sudo docker compose exec collector getent hosts kunde-a-nb.mgmt.example.ch`; `front.sh pruefen`
+warnt, wenn Orchestrator und Worker verschieden auflösen.
 
 ## 9. Betrieb
 

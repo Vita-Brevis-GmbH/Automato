@@ -11,6 +11,7 @@ Kacheln nur mit https://) - so meldet die Oberflaeche einen Fehler sofort statt 
 """
 
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -33,6 +34,9 @@ REALM = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 URL = re.compile(r"^https://[^\s\t\"<>]{1,500}$")
 MAX_LINKS = 20
 SOLL, STATUS = "soll.json", "status.json"
+# Zugriff je Kunde (1.5.0): von wo die Adressen des Kunden erreichbar sind
+ACCESS = ("ueberall", "intern", "netze")
+MAX_NETS = 50
 
 
 class PortalError(ValueError):
@@ -137,6 +141,39 @@ def check_scope(session: Session, tenant_id: int | None, customer_ids: list[int]
     return ids
 
 
+def check_access(access: str | None, nets: list[str] | None) -> tuple[str, list[str]]:
+    """Zugriff je Kunde (1.5.0): `ueberall`, `intern` (Management-Netz) oder `netze` (nur aus
+    der Liste). Netze werden normalisiert (Adresse ohne Maske = Einzeladresse); nur bei `netze`
+    gespeichert."""
+    value = str(access or "ueberall").strip().lower()
+    if value not in ACCESS:
+        raise PortalError(L(f"Zugriff '{value}' unbekannt ({', '.join(ACCESS)})",
+                            f"Access '{value}' unknown ({', '.join(ACCESS)})"))  # fmt: skip
+    if value != "netze":
+        return value, []
+    out: list[str] = []
+    for raw in nets or []:
+        text = str(raw or "").strip()
+        if not text:
+            continue
+        try:
+            net = str(ipaddress.ip_network(text, strict=False))
+        except ValueError as exc:
+            raise PortalError(L(f"Netz '{text}' ungültig (z. B. 203.0.113.0/24 oder 2001:db8::/48)",
+                                f"Network '{text}' invalid (e.g. 203.0.113.0/24 or 2001:db8::/48)")
+                              ) from exc  # fmt: skip
+        if net not in out:
+            out.append(net)
+    if not out:
+        raise PortalError(L(
+            "Zugriff „nur aus diesen Netzen“ braucht mindestens ein Netz",
+            "Access “only from these networks” needs at least one network",
+        ))  # fmt: skip
+    if len(out) > MAX_NETS:
+        raise PortalError(L(f"höchstens {MAX_NETS} Netze", f"at most {MAX_NETS} networks"))
+    return value, out
+
+
 def check_role(role: str | None) -> str:
     value = str(role or caps.VIEWER).strip().lower()
     if value not in caps.CUSTOMER_ROLES:
@@ -203,6 +240,8 @@ def out(pc: PortalCustomer, domain: str = "") -> dict:
         "tenant_id": pc.tenant_id,
         "customer_ids": list(pc.customer_ids or []),
         "default_role": pc.default_role,
+        "access": pc.access or "ueberall",
+        "access_nets": list(pc.access_nets or []),
         "addresses": addresses,
         "updated_by": pc.updated_by,
         "updated_at": pc.updated_at,
@@ -220,24 +259,44 @@ def listing(session: Session) -> list[PortalCustomer]:
 def desired(session: Session) -> dict:
     """Soll-Stand fuer den Front-Proxy (nur, was front.sh braucht - kein Mandant). Seit 1.4.0
     mit dem Realm: das Anmelde-Tor fragt je Kunde in dessen Realm (ADR 0051); ohne Realm
-    gesperrt."""
+    gesperrt. Seit 1.5.0 mit dem Zugriff je Kunde (`zugriff`, `netze`)."""
     return {
         "version": 1,
         "erzeugt": datetime.now(UTC).isoformat(timespec="seconds"),
         "kunden": [
             {"kurzname": pc.short_name, "name": pc.name, "doc": pc.doc, "um": pc.um,
-             "cmdb": pc.cmdb, "realm": pc.realm or "", "links": list(pc.links or [])}
+             "cmdb": pc.cmdb, "realm": pc.realm or "", "zugriff": pc.access or "ueberall",
+             "netze": list(pc.access_nets or []), "links": list(pc.links or [])}
             for pc in listing(session)
         ],
     }  # fmt: skip
 
 
-def write_desired(session: Session, state_dir: str) -> str | None:
-    """`soll.json` atomar schreiben; ohne Ordner (nicht eingerichtet) nichts. Wirft OSError."""
+def _content(data: dict) -> dict:
+    """Soll-Stand ohne Zeitstempel (zum Vergleich mit der vorhandenen Datei)."""
+    return {k: v for k, v in data.items() if k != "erzeugt"}
+
+
+def write_desired(session: Session, state_dir: str, only_if_changed: bool = False) -> str | None:
+    """`soll.json` atomar schreiben; ohne Ordner (nicht eingerichtet) nichts. Wirft OSError.
+
+    `only_if_changed` (beim Start, 1.5.0): nur schreiben, wenn sich der Inhalt gegenueber der
+    vorhandenen Datei geaendert hat - z. B. nach einem Update, das neue Felder mitgibt (1.4.0:
+    Realm). Sonst bliebe der alte Soll-Stand liegen, bis jemand im Portal speichert."""
     if not state_dir:
         return None
     folder = Path(state_dir)
-    data = json.dumps(desired(session), ensure_ascii=False, indent=1)
+    soll = desired(session)
+    if only_if_changed:
+        try:
+            current = json.loads((folder / SOLL).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            current = None
+        if current is None and not soll["kunden"]:
+            return None  # nie eingerichtet und keine Kunden: nichts anzulegen
+        if isinstance(current, dict) and _content(current) == _content(soll):
+            return None
+    data = json.dumps(soll, ensure_ascii=False, indent=1)
     fd, tmp = tempfile.mkstemp(prefix=".soll-", dir=folder)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:

@@ -7,6 +7,32 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 1.5.0 – 2026-11-10
+
+Anwender 2026-11-10 bei der Einrichtung von 1.4.0 (LDAPS, Anmelde-Tor, NetBox über den Realm,
+FortiGate statt WAF als Proxy): „Kann ich eventuell noch einstellen, von wo ich die einzelnen Kunden
+drauf zugreifen können? Bei VB wäre es am liebsten nur von intern möglich, andere ‚zahlende‘ Kunden
+von extern“ – drei Stufen, zusammen mit den Korrekturen als 1.5.0.
+
+- **Zugriff je Kunde** (Kunden-Portal bzw. `front.sh kunde … --zugriff`): **überall** (Vorgabe),
+  **nur intern** (Management-Netz, nie über die WAF) oder **nur aus diesen Netzen** (Adresse des
+  Benutzers, über die WAF aus `X-Forwarded-For`). Gilt für Startseite und alle Werkzeuge, vor dem
+  Anmelde-Tor und auch für die NetBox-API; allen anderen antworten die Adressen wie ein Name, den es
+  nicht gibt (404 „Unbekannte Adresse“). Liste mit Zugriff und Quelle (Portal bzw. Hand).
+- **Korrektur Soll-Stand nach Update:** der Orchestrator schreibt `soll.json` beim Start neu, wenn
+  sich der Inhalt geändert hat (z. B. Realm seit 1.4.0) – vorher blieb der alte Stand liegen, bis
+  jemand im Kunden-Portal speicherte.
+- **`front.sh pruefen`:** Host-Agent läuft bzw. Ordner gehört dem Orchestrator, von Hand angelegte
+  Kunden, Keycloak vom Proxy aus erreichbar (wie die Container des Tors), Orchestrator und
+  zentraler Worker lösen die NetBox-Adresse gleich auf, Warnung bei Kunden-Adressen aus jedem Netz
+  ohne `AUTOMATO_UI_ALLOW`.
+- **Keycloak:** Audience-Mapper `aud-automato-front` im Client des Tors (Vorlage, `make_realm.py`,
+  Anleitung 13c), wie von oauth2-proxy empfohlen.
+- **Anleitungen:** LDAPS (Truststore-Pfad im Container, `compose up -d` statt `restart`, Namen im
+  DC-Zertifikat, Log-Prüfung), Gruppen-Mapper für AD und Mandanten der Operatoren als
+  Gruppen-Attribut; Front-Proxy hinter einer FortiGate mit VIP; `extra_hosts` für Orchestrator
+  **und** Collector, wenn die VM die externe NetBox-Adresse nicht erreicht; Compose-Profile.
+
 ## 1.4.0 – 2026-11-10
 
 Anwender 2026-11-10: „Können wir die Authentication nicht bereits auf der Startseite … vorab

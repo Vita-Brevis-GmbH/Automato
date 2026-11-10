@@ -3,7 +3,8 @@
 Nur Admin. Jede Aenderung landet im Audit und als Soll-Stand (`soll.json`) im Ordner des
 Host-Agenten (`store/portal.py`); der Agent auf der VM uebernimmt sie in den Front-Proxy
 (`front.sh sync`) und meldet den Stand zurueck. Realm, Mandant und Kunden steuern die Anmeldung
-der Benutzer eines Kunden-Realms (`auth/oidc.py`) - sie gehen nicht an den Host.
+der Benutzer eines Kunden-Realms (`auth/oidc.py`) - sie gehen nicht an den Host. Der Zugriff je
+Kunde (1.5.0: ueberall, intern, netze) geht an den Host; der Front-Proxy sperrt danach.
 """
 
 from datetime import UTC, datetime
@@ -43,6 +44,9 @@ class PortalIn(BaseModel):
     tenant_id: int | None = None
     customer_ids: list[int] = Field(default_factory=list)
     default_role: str = "viewer"
+    # Zugriff je Kunde (1.5.0): ueberall | intern | netze (dann access_nets)
+    access: str = "ueberall"
+    access_nets: list[str] = Field(default_factory=list, max_length=200)
 
 
 def _keycloak(settings: Settings) -> dict:
@@ -67,6 +71,7 @@ def _apply(session: Session, pc: PortalCustomer, data: PortalIn) -> dict:
         realm = portal.check_realm(data.realm)
         customers = portal.check_scope(session, data.tenant_id, data.customer_ids)
         role = portal.check_role(data.default_role)
+        access, nets = portal.check_access(data.access, data.access_nets)
     except portal.PortalError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     clash = session.scalar(select(PortalCustomer).where(
@@ -85,7 +90,8 @@ def _apply(session: Session, pc: PortalCustomer, data: PortalIn) -> dict:
                 f"Realm '{realm}' already belongs to '{other.short_name}'"))  # fmt: skip
     new = {"short_name": short, "name": name, "doc": data.doc, "um": data.um,
            "cmdb": data.cmdb, "links": links, "realm": realm, "tenant_id": data.tenant_id,
-           "customer_ids": customers, "default_role": role}  # fmt: skip
+           "customer_ids": customers, "default_role": role, "access": access,
+           "access_nets": nets}  # fmt: skip
     changed = {k: v for k, v in new.items() if getattr(pc, k, None) != v}
     for key, value in new.items():
         setattr(pc, key, value)
