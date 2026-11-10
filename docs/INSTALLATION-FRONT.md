@@ -3,6 +3,8 @@
 Seit 1.2.0 (ADR 0044 Nachtrag). Der Proxy von Automato (Profil `proxy`, Caddy) ist zugleich der
 Eingang für die Kunden: Er liefert die Startseite je Kunde und das interne Portal aus und leitet
 je Werkzeug weiter. Das Werkzeug `deploy/front/front.sh` erzeugt dafür die Einträge und Seiten.
+Seit 1.4.0 (ADR 0051) steht davor das **Anmelde-Tor**: eine Anmeldung im Realm des Kunden für
+Startseite und alle Werkzeuge (Abschnitt 6).
 
 ```
 Kunden / Mitarbeitende ──▶ WAF (TLS mit dem öffentlichen Wildcard) ──▶ Automato-VM :443
@@ -21,6 +23,8 @@ Management-Netz ──▶ Automato-VM :443 direkt
   Management-Netz und **nie über die WAF** – auch wenn das Management-Netz die WAF einschliesst.
   Unbekannte Namen unter beiden Domains: 404.
 - Startseiten und Portal sind statisch, ohne Skripte (Content-Security-Policy `default-src 'none'`).
+- Mit Anmelde-Tor (`AUTOMATO_FRONT_TOR=an`) kommt ohne Anmeldung niemand weiter als bis zu Keycloak;
+  Kunden ohne Realm sind gesperrt.
 - Die Adresse der Oberfläche von Automato (`AUTOMATO_UI_HOST`, z. B. `automato.int.example.ch`)
   bleibt, wie sie ist.
 
@@ -72,6 +76,12 @@ AUTOMATO_FRONT_NETBOX=10.0.30.20         # NetBox-Host
 # AUTOMATO_FRONT_NETBOX_CA=ca.crt        # nur wenn der NetBox-Host ein Zertifikat der eigenen CA hat
 # AUTOMATO_FRONT_MAGISTER=https://…      # später: Benutzerverwaltung (-um)
 # AUTOMATO_FRONT_KUNDEN_ALLOW=           # leer = WAF + Management-Netz
+# Anmelde-Tor (1.4.0, Abschnitt 6)
+AUTOMATO_FRONT_TOR=an
+# AUTOMATO_FRONT_KEYCLOAK=https://login.example.ch   # leer = aus AUTOMATO_OIDC_ISSUER
+# AUTOMATO_FRONT_KEYCLOAK_INTERN=        # leer = aus AUTOMATO_OIDC_JWKS_URL
+# AUTOMATO_FRONT_KEYCLOAK_CA=ca.crt      # wenn Keycloak ein Zertifikat der eigenen CA hat
+# AUTOMATO_FRONT_INTERN_ROLLEN=admin operator
 ```
 
 ## 4. Starten
@@ -129,25 +139,59 @@ sudo deploy/front/front.sh entfernen kunde-a --ja             # NetBox und Daten
   in der Admin-Konsole importieren (`deploy/keycloak/PROD-INSTALL.md`, Abschnitt 13).
 - **`--um`, `--cmdb`:** wirken erst mit `AUTOMATO_FRONT_MAGISTER` bzw. `AUTOMATO_FRONT_CMDB`.
 
-## 6. Prüfen
+## 6. Anmelde-Tor (1.4.0, ADR 0051)
+
+Vor jeder Kunden-Adresse (Startseite, `-nb`, `-doc`, `-um`, `-cmdb`) und vor dem Portal fragt der
+Proxy einen **oauth2-proxy** (je Realm ein Container, Projekt `automato-tor`, Netz
+`automato-front-tor`). Wer nicht angemeldet ist, geht zu Keycloak im Realm des Kunden und danach
+zurück auf die ursprüngliche Adresse. Die Werkzeuge melden sich über die Keycloak-Sitzung ohne
+zweite Maske an: Automato selbst, NetBox über den Benutzer vom Tor
+(`docs/INSTALLATION-NETBOX-HOST.md`, `sso`), Magister wahlweise über Keycloak oder die Kopfzeilen.
+
+1. **Client je Realm** `automato-front` in Keycloak (`deploy/keycloak/PROD-INSTALL.md` 13c);
+   `sudo deploy/front/front.sh tor` zeigt je Realm die *Valid redirect URIs*.
+2. **Client-Secret** je Realm auf dieser VM hinterlegen (Eingabe unsichtbar, Datei nur root in
+   `deploy/front/tor/`):
+   ```bash
+   sudo deploy/front/front.sh tor vb        # Realm von Automato bzw. eines Kunden
+   ```
+3. `AUTOMATO_FRONT_TOR=an` in `.env`, dann `sudo deploy/front/front.sh erzeugen` (startet die
+   Container des Tors, lädt den Proxy neu). Bei Kunden aus der Oberfläche übernimmt das der Agent.
+
+- **Realm nötig:** Kunden ohne Realm bzw. mit Realm ohne Client-Secret sind gesperrt (403);
+  notfalls ein Realm mit lokalen Benutzern. Von Hand: `front.sh kunde <kunde> "<Name>" --realm <r>`.
+- **Portal** `start.<intern>` nur für die Rollen `AUTOMATO_FRONT_INTERN_ROLLEN` (Vorgabe `admin
+  operator`) im Realm von Automato (aus `AUTOMATO_OIDC_ISSUER`).
+- **Ohne Tor erreichbar:** die NetBox-API mit Token (`Authorization: Token …`, NetBox prüft selbst –
+  NetBox-Sync von Automato) und die API von Automato unter `-doc` (prüft ihr Token selbst).
+- **Benutzer für die Werkzeuge:** `X-Automato-User` (`<benutzer>@<realm>`), `X-Automato-Realm`,
+  `X-Automato-Groups` (`automato-lesen`, Realm-Rollen als `role:<rolle>`); nur das Tor setzt sie,
+  vom Absender werden sie immer entfernt. Magister vertraut ihnen nur von dieser VM.
+- **Abmelden:** „Abmelden“ auf der Startseite bzw. in NetBox beendet auch die Keycloak-Sitzung.
+- **Sitzung:** 12 h, alle 5 min bei Keycloak erneuert.
+- **Keycloak erreichbar:** die Anmeldeseite für alle Benutzer (Kunden über die WAF); dieser Proxy
+  braucht Keycloak für Token und Schlüssel (`AUTOMATO_FRONT_KEYCLOAK_INTERN`).
+
+## 7. Prüfen
 
 ```bash
 sudo deploy/front/front.sh pruefen
 ```
 
 Einstellungen, beide Zertifikate (passt der Schlüssel, deckt es die Namen ab, 30 Tage vor Ablauf
-eine Warnung), Proxy, je Kunde Startseite und Weg zur NetBox (von dieser VM aus). Im Browser aus dem
+eine Warnung), Proxy, Anmelde-Tor (Client-Secrets, Container, gesperrte Kunden), je Kunde
+Startseite (mit Tor: Weiterleitung zur Anmeldung) und Weg zur NetBox (von dieser VM aus). Im Browser aus dem
 Management-Netz: `https://start.mgmt.int.example.ch` (Portal), über die WAF
 `https://kunde-a.mgmt.example.ch` und `https://kunde-a-nb.mgmt.example.ch`.
 
-## 7. Automato an die NetBox eines Kunden
+## 8. Automato an die NetBox eines Kunden
 
 `netbox-host.sh token kunde-a` auf dem NetBox-Host, dann in Automato beim Mandanten des Kunden →
 Quellsysteme → NetBox mit `https://kunde-a-nb.mgmt.example.ch`. Der Weg geht über die WAF (diese
 VM muss die externe Adresse erreichen); die WAF darf die API der NetBox (JSON, `PATCH`/`POST` beim
 NetBox-Sync) nicht blockieren.
 
-## 8. Betrieb
+## 9. Betrieb
 
 - **Collector-Agenten über die WAF** (Port 8443): nur als reine TCP-Durchleitung, ohne TLS
   aufzubrechen – das Agent-Gateway prüft das Client-Zertifikat des Agenten selbst. Absender ist
@@ -156,5 +200,7 @@ NetBox-Sync) nicht blockieren.
   (veröffentlichte Ports sonst aus jedem Netz erreichbar).
 - Nach einem Update bleiben Kunden und erzeugte Dateien erhalten (`deploy/front/kunden/`,
   `deploy/front/generated/`, nicht im Repo); `front.sh erzeugen` schreibt alles neu.
-- **Sicherung:** `deploy/front/kunden/` zusammen mit `.env` und `deploy/proxy/pki` sichern (wie die
-  Konfiguration in `INSTALLATION-PROD.md` 7).
+- **Sicherung:** `deploy/front/kunden/` und `deploy/front/tor/` (Client-Secrets) zusammen mit
+  `.env` und `deploy/proxy/pki` sichern (wie die Konfiguration in `INSTALLATION-PROD.md` 7).
+- **Update auf 1.4.0:** `update.sh` startet den Proxy im neuen Netz `automato-front-tor`; danach
+  `sudo deploy/front/front.sh erzeugen`. Ohne `AUTOMATO_FRONT_TOR=an` bleibt alles wie in 1.3.

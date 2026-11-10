@@ -28,6 +28,10 @@ test("Kunden-Portal: anlegen, Einrichtung, ändern, entfernen (1.3.0)", async ({
   const setup = page.locator(".portal-setup");
   await expect(setup).toContainText("netbox-host.sh neu kunde-e2e");
   await expect(setup).toContainText("make_realm.py --realm kunde-e2e");
+  // 1.4.0 (ADR 0051): Anmelde-Tor – Client des Realms mit allen Werkzeugen, Secret auf der VM
+  await expect(setup).toContainText("--front-kunde kunde-e2e");
+  await expect(setup).toContainText("front.sh tor kunde-e2e");
+  await expect(setup).toContainText("netbox-host.sh sso kunde-e2e");
 
   // reservierte Kurznamen lehnt der Server ab
   await row.locator("button:has-text('Bearbeiten')").click();

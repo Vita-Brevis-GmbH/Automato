@@ -14,6 +14,11 @@ ALLOW="10.0.30.5/32 10.0.10.0/24"
 # Adresse des Benutzers statt die des Front-Proxys (leer = nicht übernehmen)
 FRONT="10.0.30.5/32"
 
+# Anmeldung über das Anmelde-Tor des Front-Proxys (1.4.0, ADR 0051): NetBox übernimmt den Benutzer
+# aus den Kopfzeilen des Front-Proxys (nur von FRONT); Rechte aus den Realm-Rollen (role:admin =
+# Superuser, role:operator = bearbeiten, sonst lesen). Einrichten bzw. nachführen: sso alle
+SSO=an
+
 # Version: netbox-docker-Tag und passendes Image (gleich wie source-of-truth/netbox/setup.sh)
 NETBOX_DOCKER_TAG=5.0.2
 NETBOX_VERSION=v4.6.10-5.0.2

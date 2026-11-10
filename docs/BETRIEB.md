@@ -2350,6 +2350,12 @@ an (`deploy/agent-gateway`, Port 8443).
   Ein **eigener Realm** je Kunde: Anmeldung unter `<kurzname>-doc.<domain>` an diesem Realm; seine
   Benutzer sind immer Kunden-Benutzer mit Mandant, Kunden und Rolle aus dem Portal (nie Admin, nie
   aus dem Token). Realm leer bzw. Realm von Automato = bisherige Anmeldung.
+- **Anmelde-Tor** (1.4.0, ADR 0051, `AUTOMATO_FRONT_TOR=an`): vor Startseite, Portal und allen
+  Werkzeugen eines Kunden zuerst die Anmeldung in seinem Realm (oauth2-proxy je Realm); danach
+  ohne zweite Maske in Automato, NetBox (Rechte aus den Realm-Rollen admin/operator, sonst lesen)
+  und Magister. Client-Secret je Realm: `sudo deploy/front/front.sh tor <realm>`; Stand:
+  `front.sh tor` und im Kunden-Portal. Kunden ohne Realm sind gesperrt. NetBox:
+  `netbox-host.sh sso <kunde|alle>` (`docs/INSTALLATION-FRONT.md` 6).
 - Agent-Tokens werden nur gehasht gespeichert und einmalig angezeigt. Produktiv sprechen
   Agenten nur über das **mTLS-Agent-Gateway** (`deploy/agent-gateway`, Modus `bind`:
   Zertifikat und Token gehören zum selben Agenten); Port 8000 nicht in Agent-Netze freigeben.

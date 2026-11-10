@@ -55,3 +55,4 @@ Format: eine Datei pro Entscheidung, z. B. `0001-monorepo-vs-multirepo.md`.
 | 0048 | Wege einmal je Mandant und Datenstand (Wege, Policies, Urteile je Hop gemerkt), Urteile je Adressklasse (exakt), keine stillen Grenzen – jede Kürzung gezählt, Befund „Applikation: unvollständig geprüft“ |
 | 0049 | Datenstand nach Inhalt (gleiche Kennungen, Abdruck je Quellsystem), nur betroffene Applikationen neu (Fussabdruck je Stand), Befunde und Vorrechnen erst nach den Läufen |
 | 0050 | Kunden-Portal in der Oberfläche (Soll-Stand, Host-Agent `front.sh sync`), Realm je Kunde unter `<kurzname>-doc` mit Rechten nur aus dem Portal, gemeinsamer Realm für den Betreiber |
+| 0051 | Anmelde-Tor im Front-Proxy: oauth2-proxy je Realm vor Startseite und allen Werkzeugen, eine Anmeldung je Realm (SSO), NetBox über den Realm (Rollen → Rechte), Kunde ohne Realm gesperrt |

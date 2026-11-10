@@ -19,6 +19,12 @@
 #   netbox-host.sh update <kunde|alle>          sichern, Version aus host.conf holen, starten, prüfen
 #   netbox-host.sh loeschen <kunde> --ja        letzte Sicherung, dann Container, Daten und Proxy-Eintrag weg
 #   netbox-host.sh pruefen                      Proxy, Zertifikat, Instanzen, Sicherungen
+#   netbox-host.sh sso <kunde|alle>             Anmeldung über das Anmelde-Tor einrichten (1.4.0)
+#
+# Seit 1.4.0 (ADR 0051) meldet sich NetBox über das Anmelde-Tor des Front-Proxys an (SSO=an in
+# host.conf): der Front-Proxy setzt X-Automato-User (<benutzer>@<realm>) und X-Automato-Groups
+# (Realm-Rollen als role:<rolle>), dieser Proxy nimmt sie nur von FRONT an. Rechte: role:admin =
+# Superuser, role:operator = bearbeiten, alle anderen lesen; lokale Konten (admin, Tokens) bleiben.
 #
 # Kurzname des Kunden: Kleinbuchstaben, Ziffern und Bindestrich (DNS-Label), z. B. "kunde-a"; nicht
 # auf -nb, -doc, -um oder -cmdb endend (sonst fiele er mit einem Werkzeug eines anderen Kunden zusammen).
@@ -60,6 +66,8 @@ lade_conf() {
   BACKUP_DIR=${BACKUP_DIR:-/var/backups/netbox-host}
   BACKUP_KEEP_DAYS=${BACKUP_KEEP_DAYS:-14}
   AGE_RECIPIENT=${AGE_RECIPIENT:-}
+  SSO=${SSO:-an}
+  case "$SSO" in an | aus) ;; *) abbruch "SSO in host.conf: an oder aus ('$SSO')" ;; esac
 }
 
 root_noetig() {
@@ -205,8 +213,96 @@ cmd_neu() {
   warte_netbox "$k" || abbruch "NetBox für $k antwortet nicht – cd $nb && docker compose logs netbox"
   nbc "$k" up -d >/dev/null 2>&1 || warn "Hintergrunddienste (worker) nicht gestartet – cd $nb && docker compose up -d"
   admin_anlegen "$k"
+  sso_rechte "$k"
   proxy_reload
   info "Lese- und Sync-Token für Automato: netbox-host.sh token $k"
+}
+
+# --- Anmeldung über das Anmelde-Tor (1.4.0, ADR 0051) -------------------------------------------
+sso_datei() {  # NetBox-Einstellungen für die Anmeldung über Kopfzeilen (im Konfig-Ordner der Instanz)
+  local k=$1 ziel
+  ziel="$(nbdir "$k")/configuration/zz_automato_sso.py"
+  [ -d "$(dirname "$ziel")" ] || return 0
+  if [ "$SSO" != an ]; then
+    rm -f "$ziel"
+    return 0
+  fi
+  cat >"$ziel" <<'EOF'
+# Anmeldung über das Anmelde-Tor des Front-Proxys (Automato 1.4.0, ADR 0051) – geschrieben von
+# netbox-host.sh, nicht von Hand ändern. Die Kopfzeilen setzt nur der Front-Proxy; der Proxy des
+# NetBox-Hosts entfernt sie bei allen anderen Absendern. Lokale Konten (admin, Token-Benutzer)
+# melden sich weiter mit Passwort bzw. Token an.
+REMOTE_AUTH_ENABLED = True
+REMOTE_AUTH_BACKEND = "netbox.authentication.RemoteUserBackend"
+REMOTE_AUTH_HEADER = "HTTP_X_AUTOMATO_USER"  # <benutzer>@<realm>
+REMOTE_AUTH_AUTO_CREATE_USER = True
+REMOTE_AUTH_GROUP_SYNC_ENABLED = True
+REMOTE_AUTH_GROUP_HEADER = "HTTP_X_AUTOMATO_GROUPS"  # automato-lesen,role:<rolle>,…
+REMOTE_AUTH_GROUP_SEPARATOR = ","
+REMOTE_AUTH_AUTO_CREATE_GROUPS = False  # nur die Gruppen mit Rechten (netbox-host.sh sso)
+REMOTE_AUTH_SUPERUSER_GROUPS = ["role:admin"]
+REMOTE_AUTH_STAFF_GROUPS = ["role:admin"]
+REMOTE_AUTH_DEFAULT_GROUPS = []
+EOF
+  chmod 644 "$ziel"
+}
+
+sso_rechte() {  # Gruppen und Rechte: automato-lesen (alle), role:operator (bearbeiten), role:admin
+  local k=$1
+  [ "$SSO" = an ] || return 0
+  if nbc "$k" exec -T netbox /opt/netbox/netbox/manage.py shell >/dev/null 2>&1 <<'EOF'; then
+from django.contrib.contenttypes.models import ContentType
+from users.models import Group, ObjectPermission
+
+typen = list(ContentType.objects.values_list("pk", flat=True))
+rechte = {
+    "automato-lesen": ("automato-sso-lesen", ["view"]),
+    "role:operator": ("automato-sso-bearbeiten", ["view", "add", "change", "delete"]),
+}
+for gruppe, (name, aktionen) in rechte.items():
+    g, _ = Group.objects.get_or_create(name=gruppe)
+    perm, _ = ObjectPermission.objects.get_or_create(name=name, defaults={"actions": aktionen})
+    perm.enabled = True
+    perm.actions = aktionen
+    perm.save()
+    perm.object_types.set(typen)
+    perm.groups.add(g)
+Group.objects.get_or_create(name="role:admin")  # Superuser (REMOTE_AUTH_SUPERUSER_GROUPS)
+EOF
+    ok "$k: Anmeldung über den Realm – role:admin Superuser, role:operator bearbeiten, sonst lesen"
+  else
+    warn "$k: Gruppen für die Anmeldung nicht angelegt – später: netbox-host.sh sso $k"
+  fi
+}
+
+cmd_sso() {
+  root_noetig
+  lade_conf
+  local wer=${1:-} k liste
+  [ -n "$wer" ] || abbruch "Verwendung: sso <kunde|alle>"
+  [ "$SSO" = an ] || info "SSO=aus in host.conf – Anmeldung über das Tor wird entfernt"
+  [ -n "$FRONT" ] || warn "FRONT leer in host.conf – ohne Front-Proxy kommt keine Anmeldung an"
+  titel "Proxy (Kopfzeilen der Anmeldung nur vom Front-Proxy)"
+  install -m 644 "$SCRIPT_DIR/proxy/Caddyfile" "$NBH_DIR/proxy/Caddyfile"
+  proxy_env
+  proxy_reload
+  liste=$wer
+  [ "$wer" != alle ] || liste=$(kunden)
+  for k in $liste; do
+    kurzname "$k"
+    [ -d "$(nbdir "$k")" ] || abbruch "keine NetBox für '$k'"
+    titel "NetBox $k"
+    sso_datei "$k"
+    # shellcheck disable=SC2046 # Dienste der Instanz, die NetBox nutzen (netbox, netbox-worker, …)
+    nbc "$k" restart $(nbc "$k" config --services 2>/dev/null | grep '^netbox') >/dev/null 2>&1 \
+      || warn "$k: NetBox nicht neu gestartet – cd $(nbdir "$k") && docker compose restart"
+    if warte_netbox "$k"; then
+      sso_rechte "$k"
+    else
+      fehler "$k: NetBox antwortet nicht – cd $(nbdir "$k") && docker compose logs netbox"
+    fi
+  done
+  [ "$FEHLER" -eq 0 ]
 }
 
 instanz_env() {  # .env der Instanz: Version, Projektname, Secrets (überschreibt die Vorgaben von netbox-docker)
@@ -232,6 +328,7 @@ instanz_env() {  # .env der Instanz: Version, Projektname, Secrets (überschreib
 instanz_override() {  # Secrets, Name, Neustart-Regel und Netz zum Proxy für alle Dienste der Instanz
   local k=$1 nb svc
   nb=$(nbdir "$k")
+  sso_datei "$k"
   local services
   services=$(nbc "$k" config --services 2>/dev/null) || abbruch "docker compose config in $nb fehlgeschlagen"
   printf '%s\n' "$services" | grep -qx netbox || abbruch "Dienst 'netbox' fehlt in netbox-docker $NETBOX_DOCKER_TAG"
@@ -356,7 +453,7 @@ perm, _ = ObjectPermission.objects.get_or_create(name="automato-readonly-view", 
 perm.enabled = True
 perm.actions = ["view"]
 perm.save()
-perm.object_types.set(ContentType.objects.all())
+perm.object_types.set(list(ContentType.objects.values_list("pk", flat=True)))  # NetBox 4: ObjectType
 try:
     u.object_permissions.add(perm)
 except AttributeError:
@@ -489,7 +586,9 @@ update_einen() {
   instanz_override "$k"
   nbc "$k" pull -q >/dev/null 2>&1 || warn "$k: Images nicht geladen"
   nbc "$k" up -d >/dev/null || { fehler "$k: Start fehlgeschlagen"; return 1; }
-  if warte_netbox "$k"; then ok "$k läuft mit $NETBOX_VERSION"
+  if warte_netbox "$k"; then
+    ok "$k läuft mit $NETBOX_VERSION"
+    sso_rechte "$k"
   else
     fehler "$k: NetBox antwortet nicht – zurück: alte Werte in host.conf, update $k, ggf. wiederherstellen $k <letzte Sicherung>"
     return 1
@@ -554,12 +653,21 @@ cmd_pruefen() {
   [ -n "$ALLOW" ] && ok "Zugriff nur aus: $ALLOW" || warn "ALLOW leer – alle Netze dürfen zugreifen"
   [ -n "$FRONT" ] && ok "Front-Proxy: $FRONT (Adresse des Benutzers aus X-Forwarded-For)" \
     || info "FRONT leer – NetBox sieht als Adresse den Front-Proxy statt des Benutzers"
+  if [ "$SSO" = an ]; then
+    [ -n "$FRONT" ] && ok "Anmeldung über das Anmelde-Tor (Kopfzeilen nur von $FRONT)" \
+      || warn "SSO an, aber FRONT leer – die Anmeldung über das Tor kommt nicht an"
+    grep -q "X-Automato-User" "$NBH_DIR/proxy/Caddyfile" 2>/dev/null \
+      || fehler "Proxy entfernt gefälschte Anmelde-Kopfzeilen nicht – netbox-host.sh sso alle"
+  fi
   local konf
   konf=$(find "$BACKUP_DIR/_konfig" -name 'konfig-*.tar.gz.age' -type f -mmin -$((26 * 60)) 2>/dev/null | head -1 || true)
   [ -n "$konf" ] && ok "Konfiguration gesichert (jünger als 26 h)" || warn "keine Sicherung der Konfiguration der letzten 26 h (sichern konfig)"
   titel "Kunden"
   local k code neu
   for k in $(kunden); do
+    if [ "$SSO" = an ] && [ ! -f "$(nbdir "$k")/configuration/zz_automato_sso.py" ]; then
+      warn "$k: Anmeldung über das Tor nicht eingerichtet – netbox-host.sh sso $k"
+    fi
     if nbc "$k" exec -T netbox curl -fsS -o /dev/null http://localhost:8080/login/ >/dev/null 2>&1; then
       ok "$k: NetBox läuft"
     else
@@ -590,5 +698,6 @@ case "${1:-}" in
   update) shift; cmd_update "$@" ;;
   loeschen) shift; cmd_loeschen "$@" ;;
   pruefen) cmd_pruefen ;;
-  *) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+  sso) shift; cmd_sso "$@" ;;
+  *) sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

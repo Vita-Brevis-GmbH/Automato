@@ -793,10 +793,12 @@ erlaubte UI-Adressen bleiben getrennt. Ein bestehender Realm wird dabei nicht an
 Ein Kunde kann sich mit seinem eigenen Verzeichnis anmelden (Azure/Entra als Identity Provider,
 AD per LDAPS als User Federation): eigener Realm, Anmeldung unter `https://<kurzname>-doc.<domain>`.
 
-1. Realm-Datei wie oben, mit der Doku-Adresse des Kunden:
+1. Realm-Datei wie oben, mit der Doku-Adresse des Kunden und (1.4.0) den Adressen des
+   Anmelde-Tors (Client `automato-front`, siehe 13c):
    ```bash
    python3 deploy/keycloak/make_realm.py --realm kunde-a --display-name "Kunde A" \
-     --ui-url https://kunde-a-doc.mgmt.example.ch > realm-kunde-a.json
+     --ui-url https://kunde-a-doc.mgmt.example.ch \
+     --front-kunde kunde-a --front-domain mgmt.example.ch > realm-kunde-a.json
    ```
    importieren (*Create realm*), OTP und Notfall-Konto wie in Schritt 3.
 2. In Automato: Administration → **Kunden-Portal** → Kunde mit **Realm** `kunde-a`, Mandant,
@@ -810,10 +812,17 @@ AD per LDAPS als User Federation): eigener Realm, Anmeldung unter `https://<kurz
 
 ### 13b. AD per LDAPS anbinden (User Federation, nur lesend)
 
-- **Vertrauen:** Root-CA des AD als PEM nach `/opt/automato-keycloak/truststores/`, im Dienst
-  `keycloak` `KC_TRUSTSTORE_PATHS: /opt/keycloak/conf/truststores/<ca>.pem` und das Volume
-  `./truststores:/opt/keycloak/conf/truststores:ro`. Das LDAPS-Zertifikat muss den Namen der
-  Verbindungsadresse enthalten (z. B. `int.example.ch` bei DNS-Round-Robin über die DCs).
+- **Vertrauen:** die CA, die das Zertifikat der DCs ausgestellt hat (nicht die eigene Plattform-CA),
+  als PEM nach `/opt/automato-keycloak/truststores/`, im Dienst `keycloak`
+  `KC_TRUSTSTORE_PATHS: /opt/keycloak/conf/truststores` (ganzer Ordner, alle PEM-Dateien) und das
+  Volume `./truststores:/opt/keycloak/conf/truststores:ro`. Welche CA ausstellt:
+  `openssl s_client -connect <dc>:636 -showcerts </dev/null | grep -E "^ *[0-9]+ s:|^ *i:"`.
+  Ist sie nur per LDAP veröffentlicht (AIA `ldap:///…`), unter Windows exportieren:
+  `Get-ChildItem Cert:\LocalMachine\Root, Cert:\LocalMachine\CA | Where-Object Subject -like "*<CA-Name>*"`
+  bzw. auf der CA `certutil -ca.cert ad-ca.cer`. Prüfen je DC:
+  `openssl s_client -connect <ip>:636 -CAfile ad-ca.pem -verify_hostname int.example.ch` →
+  `Verify return code: 0 (ok)`; Code 21 = falsche CA, Code 62 = Name fehlt im Zertifikat (dann in
+  der Connection URL die DC-Namen mit Leerzeichen getrennt: `ldaps://dc1.int.example.ch:636 ldaps://dc2…`).
 - **User federation → Add LDAP providers:** Vendor *Active Directory*, Connection URL
   `ldaps://int.example.ch:636`, StartTLS Off, *Use Truststore SPI* Always, Bind DN = Service-Konto
   nur lesen (`svc-keycloak-ldap@int.example.ch`), **Edit mode READ_ONLY**, Users DN der Benutzer-OU,
@@ -824,6 +833,24 @@ AD per LDAPS als User Federation): eigener Realm, Anmeldung unter `https://<kurz
 - **Mapper `group-ldap-mapper`** (Groups DN der Gruppen-OU, Filter auf die Gruppen, READ_ONLY) →
   *Sync LDAP groups*; in *Groups* den Gruppen die Realm-Rollen `admin` bzw. `operator` zuweisen.
 - **Test:** `https://auth.example.ch/realms/<realm>/account` mit AD-Benutzer und -Passwort.
+
+### 13c. Anmelde-Tor: Client `automato-front` (1.4.0, ADR 0051)
+
+Vor Startseite und Werkzeugen fragt der Front-Proxy die Anmeldung im Realm des Kunden ab
+(`docs/INSTALLATION-FRONT.md` Abschnitt 6). Je Realm ein vertraulicher Client:
+
+- Neue Realms aus `make_realm.py` haben ihn schon (mit `--front-kunde`/`--front-domain` bzw.
+  `--front-url https://start.mgmt.int.example.ch` für das Portal im Realm von Automato).
+- Bestehende Realms: *Clients → Create client* `automato-front`, *Client authentication* an,
+  *Standard flow* an, *Direct access grants* aus; *Valid redirect URIs* = je Adresse
+  `https://<adresse>/oauth2/callback` (Startseite, `-nb`, `-doc`, `-um`, `-cmdb`, im Realm von
+  Automato zusätzlich `https://start.<interne Domain>/oauth2/callback`); *Advanced → PKCE Method* S256.
+  `sudo deploy/front/front.sh tor` zeigt die Adressen je Realm.
+- *Credentials → Client secret* kopieren und nur auf der Automato-VM eingeben:
+  `sudo deploy/front/front.sh tor <realm>` (Eingabe unsichtbar) – nie in Chat, Ticket oder Datei.
+- Rollen: die Realm-Rollen `admin` und `operator` (AD-Gruppen über den Gruppen-Mapper, 13b) gelten
+  im Portal und in NetBox; ohne Rolle liest man nur.
+- Die Anmeldeseite von Keycloak muss für alle Benutzer erreichbar sein, für Kunden also über die WAF.
 
 ---
 

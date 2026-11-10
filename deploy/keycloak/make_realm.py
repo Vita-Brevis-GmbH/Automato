@@ -6,10 +6,18 @@ Redirect-Adressen bleiben getrennt. Die Vorlage ``realm-automato.json`` (Rollen,
 tenant_ids-/Audience-Mapper, Haertung, geseedeter automato-admin) wird nur angepasst:
 Realm-Name, Anzeigename und die erlaubten Web-UI-Adressen des Clients ``automato-web``.
 
-Beispiel:
+Seit 1.4.0 (ADR 0051) dazu der Client ``automato-front`` des Anmelde-Tors im Front-Proxy: mit
+``--front-kunde``/``--front-domain`` die Rückkehr-Adressen aller Werkzeuge des Kunden (Startseite,
+-nb, -doc, -um, -cmdb), mit ``--front-url`` weitere (z. B. das Portal start.<interne Domain>).
+Das Client-Secret erzeugt Keycloak beim Import; es gehört nur auf die Automato-VM (front.sh tor).
+
+Beispiele:
     python3 deploy/keycloak/make_realm.py --realm automato-dev \\
         --ui-url https://10.0.12.12 --display-name "Automato Dev" --with-localhost \\
         > realm-automato-dev.json
+    python3 deploy/keycloak/make_realm.py --realm kunde-a --display-name "Kunde A" \\
+        --ui-url https://kunde-a-doc.mgmt.example.ch \\
+        --front-kunde kunde-a --front-domain mgmt.example.ch > realm-kunde-a.json
 """
 
 import argparse
@@ -22,6 +30,8 @@ from urllib.parse import urlsplit
 
 TEMPLATE = Path(__file__).with_name("realm-automato.json")
 WEB_CLIENT = "automato-web"
+FRONT_CLIENT = "automato-front"
+FRONT_TOOLS = ("", "-nb", "-doc", "-um", "-cmdb")  # Werkzeuge eines Kunden (front.sh)
 LOCAL_DEV_ORIGIN = "http://localhost:5173"
 _REALM_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
@@ -33,12 +43,32 @@ def _origin(url: str) -> str:
     return f"{parts.scheme}://{parts.netloc}"
 
 
+def front_urls(kunde: str | None, domain: str | None, extra: list[str] | None = None) -> list[str]:
+    """Adressen hinter dem Anmelde-Tor: alle Werkzeuge eines Kunden und weitere (Portal)."""
+    urls = []
+    if kunde or domain:
+        if not (kunde and domain):
+            raise ValueError("--front-kunde und --front-domain gehoeren zusammen")
+        if not re.fullmatch(r"[a-z0-9]([a-z0-9-]{0,40}[a-z0-9])?", kunde):
+            raise ValueError(f"ungueltiger Kurzname: {kunde!r}")
+        if not re.fullmatch(r"[a-z0-9.-]+", domain):
+            raise ValueError(f"ungueltige Domain: {domain!r}")
+        urls += [f"https://{kunde}{w}.{domain}" for w in FRONT_TOOLS]
+    for url in extra or []:
+        origin = _origin(url)
+        if not origin.startswith("https://"):
+            raise ValueError(f"Anmelde-Tor nur mit https: {url!r}")
+        urls.append(origin)
+    return list(dict.fromkeys(urls))
+
+
 def build_realm(
     template: dict,
     realm: str,
     ui_urls: list[str],
     display_name: str | None = None,
     with_localhost: bool = False,
+    front: list[str] | None = None,
 ) -> dict:
     """Vorlage kopieren und auf die Umgebung zuschneiden (Vorlage bleibt unveraendert)."""
     if not _REALM_NAME.match(realm):
@@ -53,13 +83,17 @@ def build_realm(
         origins.append(LOCAL_DEV_ORIGIN)
     origins = list(dict.fromkeys(origins))  # Duplikate raus, Reihenfolge stabil
 
-    for client in out.get("clients", []):
-        if client.get("clientId") == WEB_CLIENT:
-            client["redirectUris"] = [f"{o}/*" for o in origins]
-            client["webOrigins"] = origins
-            client.setdefault("attributes", {})["post.logout.redirect.uris"] = "+"
-            return out
-    raise ValueError(f"Client {WEB_CLIENT!r} fehlt in der Vorlage")
+    clients = {c.get("clientId"): c for c in out.get("clients", [])}
+    if WEB_CLIENT not in clients:
+        raise ValueError(f"Client {WEB_CLIENT!r} fehlt in der Vorlage")
+    web = clients[WEB_CLIENT]
+    web["redirectUris"] = [f"{o}/*" for o in origins]
+    web["webOrigins"] = origins
+    web.setdefault("attributes", {})["post.logout.redirect.uris"] = "+"
+    if FRONT_CLIENT in clients:  # Anmelde-Tor: nur die Rückkehr zu oauth2-proxy, kein Web-Origin
+        clients[FRONT_CLIENT]["redirectUris"] = [f"{u}/oauth2/callback" for u in front or []]
+        clients[FRONT_CLIENT].pop("secret", None)  # erzeugt Keycloak, nie aus einer Datei
+    return out
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -80,13 +114,25 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help=f"zusaetzlich {LOCAL_DEV_ORIGIN} erlauben (Dev per SSH-Tunnel)",
     )
+    parser.add_argument(
+        "--front-kunde", help="Anmelde-Tor: Kurzname des Kunden (mit --front-domain)"
+    )
+    parser.add_argument("--front-domain", help="Anmelde-Tor: Domain der Kunden-Adressen")
+    parser.add_argument(
+        "--front-url",
+        dest="front_urls",
+        action="append",
+        default=[],
+        help="Anmelde-Tor: weitere Adresse, z. B. https://start.mgmt.int.example.ch (mehrfach)",
+    )
     parser.add_argument("--template", type=Path, default=TEMPLATE, help="Vorlage (Default: Repo)")
     args = parser.parse_args(argv)
 
     template = json.loads(args.template.read_text(encoding="utf-8"))
     try:
+        front = front_urls(args.front_kunde, args.front_domain, args.front_urls)
         realm = build_realm(
-            template, args.realm, args.ui_urls, args.display_name, args.with_localhost
+            template, args.realm, args.ui_urls, args.display_name, args.with_localhost, front
         )
     except ValueError as exc:
         parser.error(str(exc))

@@ -7,6 +7,40 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 1.4.0 – 2026-11-10
+
+Anwender 2026-11-10: „Können wir die Authentication nicht bereits auf der Startseite … vorab
+abfragen“ und „Startseite, Magister und Automato mit dem gleichen Realm schützen … SSO … nicht drei
+Loginscreens … zudem soll die NetBox auf den Realm schauen“ – „1.4 bauen“; Magister „beide
+vorsehen“, Rechte in NetBox „passt so“, ohne Realm „Realm notwendig, notfalls mit lokalen Usern“
+(ADR 0051).
+
+- **Anmelde-Tor im Front-Proxy** (`AUTOMATO_FRONT_TOR=an`): vor Startseite, `-nb`, `-doc`, `-um`,
+  `-cmdb` und dem Portal zuerst die Anmeldung im Realm des Kunden – je Realm ein oauth2-proxy
+  (Client `automato-front`, PKCE), von `front.sh` erzeugt und gestartet (gehärtet, eigenes Netz).
+  Danach öffnen sich die Werkzeuge über die Keycloak-Sitzung ohne zweite Maske; „Abmelden“ beendet
+  auch die Keycloak-Sitzung. Rückkehr auf die ursprüngliche Adresse samt Abfrage.
+- **Kunde ohne Realm gesperrt** (bzw. Realm ohne Client-Secret); das Portal `start.<intern>` nur für
+  die Rollen admin/operator des Realms von Automato. Ohne Tor erreichbar bleiben nur die NetBox-API
+  mit Token (NetBox-Sync) und die API von Automato unter `-doc` (prüfen selbst).
+- **Benutzer für die Werkzeuge:** `X-Automato-User` (`<benutzer>@<realm>`), `-Realm`, `-Groups`
+  (Realm-Rollen als `role:<rolle>`) – nur vom Tor, vom Absender immer entfernt. Magister kann
+  sich über Keycloak anmelden oder diese Kopfzeilen nutzen.
+- **NetBox über den Realm** (`netbox-host.sh sso <kunde|alle>`, neue Instanzen automatisch):
+  Anmeldung aus den Kopfzeilen des Front-Proxys (nur von `FRONT`), Rechte aus den Realm-Rollen
+  (admin = Superuser, operator = bearbeiten, sonst lesen); lokale Konten bleiben für den Notfall.
+- **`front.sh tor [<realm>]`:** Client-Secret je Realm unsichtbar eingeben (nur root), Stand und
+  die Rückkehr-Adressen je Realm; `front.sh kunde … --realm <r>`; Realm im Soll-Stand der
+  Oberfläche; Kunden-Portal zeigt Stand des Tors, gesperrte Kunden und die Einrichtung je Kunde.
+- **Keycloak:** Client `automato-front` in der Realm-Vorlage, `make_realm.py --front-kunde/
+  --front-domain/--front-url`; Anleitung 13c, LDAPS-Hinweise (ausstellende CA, nur per LDAP
+  veröffentlichte CA, DC-Namen bei fehlendem Namen im Zertifikat).
+- **Front-Proxy:** jede Adresse läuft in fester Reihenfolge (`route`: Sperre, Ausnahmen, Tor, Ziel).
+- **Korrektur:** `netbox-host.sh token` setzt die Objekttypen der Leserechte über ihre Kennungen
+  (NetBox 4: ObjectType).
+- Tests: Tor in `front.sh`, NetBox-Host, `make_realm.py` und **Ende zu Ende** mit echtem Caddy
+  und oauth2-proxy gegen einen Test-Keycloak (CI-Job docker).
+
 ## 1.3.0 – 2026-11-10
 
 Anwender 2026-11-10: „Ich möchte das Erstellen und Verwalten von Kunden im Cockpit haben“ und „für
