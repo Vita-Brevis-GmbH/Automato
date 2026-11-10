@@ -404,6 +404,13 @@ firewall_pruefen() {
     2) warn "nicht als root – ufw nicht geprüft (sudo deploy/aufbau.sh pruefen)"; return ;;
   esac
   ok "ufw aktiv"
+  # Von Docker veröffentlichte Ports (443, 8443) laufen an ufw vorbei – ohne Sperre in DOCKER-USER
+  # sind sie aus jedem Netz erreichbar (INSTALLATION-PROD 4.3, 1.2.1)
+  local du
+  if du=$(iptables -S DOCKER-USER 2>/dev/null); then
+    if grep -qE -- '-j (DROP|REJECT)' <<<"$du"; then ok "DOCKER-USER sperrt nicht freigegebene Netze"
+    else warn "DOCKER-USER ohne Sperre – veröffentlichte Ports aus jedem Netz erreichbar (INSTALLATION-PROD 4.3)"; fi
+  fi
   # Sperren aus den Docker-Netzen der letzten Stunde (Kernel-Log)
   local log zeilen
   log=$( (journalctl -k --since "-1 hour" 2>/dev/null || dmesg 2>/dev/null) | grep "UFW BLOCK" | grep -E "IN=(br-|docker)" || true)

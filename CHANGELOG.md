@@ -7,6 +7,29 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 1.2.1 – 2026-11-10
+
+Befund des Anwenders 2026-11-10 bei der Einrichtung: `front.sh erzeugen` meldet „Proxy läuft
+nicht“, obwohl er läuft; `https://start.mgmt.int…` antwortet mit `ERR_SSL_PROTOCOL_ERROR`.
+
+- **Ursache:** `front.sh` rief Compose nur mit `--profile proxy` auf. Der Proxy hängt an der
+  Web-UI (Profil `core`) – Compose lehnt das Projekt dann ab („depends on undefined service
+  web-ui“), der laufende Proxy galt als aus und wurde nie neu geladen; er kannte die neuen Namen
+  nicht (kein Zertifikat für den Namen → Abbruch beim TLS-Aufbau).
+- **Korrektur:** Compose immer mit `--profile core --profile proxy`; schlägt das Neuladen fehl,
+  steht der Grund von Caddy in der Meldung. Der Test-Ersatz für Docker verhält sich jetzt wie
+  Compose (nur mit beiden Profilen gültig).
+- **Firewall-Prüfung:** `front.sh pruefen` und `aufbau.sh pruefen` (läuft nach jedem Update)
+  warnen, wenn die Kette `DOCKER-USER` keine Sperre enthält – die von Docker veröffentlichten
+  Ports 443/8443 laufen an ufw vorbei und wären sonst aus jedem Netz erreichbar.
+- **`.env.example`:** der globale NetBox-Eintrag (Labor, `host.docker.internal:8080`) ist
+  auskommentiert und als Rückfall beschrieben – im Betrieb NetBox je Mandant als Quellsystem.
+- **Anleitung Front-Proxy:** Update mit `deploy/update.sh origin/main` (VM auf festem Stand),
+  Compose mit beiden Profilen, `ERR_SSL_PROTOCOL_ERROR` bei unbekanntem Namen, Agenten über die
+  WAF nur als TCP-Durchleitung (mTLS).
+- **Beispiele anonymisiert:** die Keycloak-Anleitung und drei Dokumente nutzen `example.ch`;
+  Beispieladressen in Anleitungen, Hilfsskripten und zwei Collector-Tests aus `10.0.x`.
+
 ## 1.2.0 – 2026-11-09
 
 Anwender 2026-11-09: Kunden kommen über die WAF (eine Adresse, TLS mit dem öffentlichen Wildcard

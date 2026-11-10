@@ -35,6 +35,7 @@ REPO_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 FRONT_DIR=${FRONT_DIR:-$SCRIPT_DIR}
 FRONT_PKI=${FRONT_PKI:-$REPO_DIR/deploy/proxy/pki}
 DOCKER=${DOCKER:-docker}
+IPTABLES=${IPTABLES:-iptables}
 CURL=${CURL:-curl}
 cd "$REPO_DIR"
 # shellcheck source=deploy/env.sh
@@ -275,12 +276,19 @@ EOF
   fi
 }
 
+# Der Proxy hängt an der Web-UI (Profil core): Compose braucht beide Profile, sonst lehnt es das
+# Projekt ab („depends on undefined service web-ui“) und der laufende Proxy gälte als aus (1.2.1)
+dc() { $DOCKER compose --profile core --profile proxy "$@"; }
+proxy_laeuft() { dc ps --status running --services 2>/dev/null | grep -qx proxy; }
+
 proxy_reload() {
-  if $DOCKER compose --profile proxy ps --status running --services 2>/dev/null | grep -qx proxy; then
-    if $DOCKER compose --profile proxy exec -T proxy caddy reload --config /etc/caddy/Caddyfile >/dev/null 2>&1; then
+  if proxy_laeuft; then
+    local meldung
+    if meldung=$(dc exec -T proxy caddy reload --config /etc/caddy/Caddyfile 2>&1); then
       ok "Proxy neu geladen"
     else
-      fehler "Proxy-Konfiguration ungültig – alte bleibt aktiv: docker compose --profile proxy logs proxy"
+      fehler "Proxy-Konfiguration ungültig – alte bleibt aktiv: ${meldung##*$'\n'}"
+      info "Einzelheiten: docker compose --profile core --profile proxy logs --since 5m proxy"
     fi
   else
     info "Proxy läuft nicht – Start: docker compose --profile core --profile proxy up -d"
@@ -465,12 +473,24 @@ cmd_pruefen() {
   [ -z "$INTERN" ] || pruefe_zertifikat mgmt-int "$INTERN" "*.$INTERN"
 
   titel "Proxy"
-  if $DOCKER compose --profile proxy ps --status running --services 2>/dev/null | grep -qx proxy; then
+  if proxy_laeuft; then
     ok "Proxy läuft"
   else
     fehler "Proxy läuft nicht – docker compose --profile core --profile proxy up -d"
   fi
   [ -f "$(gen)/snippets.caddy" ] && ok "Front-Proxy erzeugt" || fehler "noch nicht erzeugt – front.sh erzeugen"
+  # Von Docker veröffentlichte Ports laufen an ufw vorbei; ohne Sperre in DOCKER-USER sind 443/8443
+  # aus jedem Netz erreichbar (INSTALLATION-PROD 4.3)
+  local regeln
+  if regeln=$($IPTABLES -S DOCKER-USER 2>/dev/null); then
+    if grep -qE -- '-j (DROP|REJECT)' <<<"$regeln"; then
+      ok "Firewall: DOCKER-USER sperrt nicht freigegebene Netze"
+    else
+      warn "Firewall: DOCKER-USER ohne Sperre – 443/8443 aus jedem Netz erreichbar (INSTALLATION-PROD 4.3)"
+    fi
+  else
+    info "Firewall: DOCKER-USER nicht lesbar – Sperre von Hand prüfen (iptables -L DOCKER-USER)"
+  fi
 
   titel "Kunden"
   local k code ca=()

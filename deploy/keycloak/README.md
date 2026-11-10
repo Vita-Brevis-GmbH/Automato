@@ -130,5 +130,5 @@ Keycloak prod-mode → Postgres persistent; Secrets ausserhalb Repo, Firewall de
 OTP-Pflicht + Passwort-Policy aus dem Realm):
 
 - **Manuelles Runbook (Paketinstallation + Konfiguration Schritt für Schritt):**
-  `deploy/keycloak/PROD-INSTALL.md` — am Beispiel `auth.vitabrevis.ch`.
+  `deploy/keycloak/PROD-INSTALL.md` — am Beispiel `auth.example.ch`.
 - **Ansible (ein Befehl):** `deploy/keycloak/ansible/README.md`.

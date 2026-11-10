@@ -2385,7 +2385,7 @@ an (`deploy/agent-gateway`, Port 8443).
   grep OIDC`): `token audience invalid` → im Realm fehlt der Audience-Mapper
   `automato-api` (Client `automato-web` → Client scopes → dedicated → Mapper);
   `token issuer invalid` → `AUTOMATO_OIDC_ISSUER` passt nicht zum Realm (exakt wie
-  `iss`, z. B. `https://auth.vitabrevis.ch/realms/automato-dev`); `Signaturschlüssel
+  `iss`, z. B. `https://auth.example.ch/realms/automato-dev`); `Signaturschlüssel
   nicht in der JWKS` → `AUTOMATO_OIDC_JWKS_URL` zeigt auf einen anderen Realm. HTTP 503
   `JWKS vom Orchestrator nicht erreichbar` → der Orchestrator-Container erreicht Keycloak
   nicht (DNS/Firewall/WAF); Lösung „Backchannel direkt zur Keycloak-VM“ per
