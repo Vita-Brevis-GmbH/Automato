@@ -82,7 +82,8 @@ internen CA (`automato-ca.crt`, nur das öffentliche Zertifikat). Das Paket aus 
 die CA mit; `install.ps1` legt sie nach `C:\Automato\collector\automato-ca.crt`, stellt eine
 `http://…:8000`-Adresse in der `agent.env` auf `https://` um und ergänzt die CA-Zeile. Mit
 `http://` beendet der Orchestrator die Verbindung ohne Antwort („RemoteProtocolError: Server
-disconnected without sending a response“). Über das Agent-Gateway (`:8443`) ändert sich nichts.
+disconnected without sending a response“). Über das Agent-Gateway (Vorgabe `:8443`, Port nach
+`AUTOMATO_AGENT_GATEWAY_PORT`) ändert sich nichts.
 
 `install.ps1` legt ein venv an, installiert das Wheel (bringt `automato-collector` mit),
 kopiert `run-agent.ps1` + `agent.env` und registriert die Aufgabe **Automato Collector

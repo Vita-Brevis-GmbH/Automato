@@ -63,6 +63,9 @@ class Settings(BaseSettings):
     # (internes Token) spricht weiter direkt mit dem Orchestrator.
     internal_mtls_mode: Literal["off", "require", "bind"] = "off"
     agent_gateway_secret: str = ""  # Gateway setzt X-Gateway-Secret (auch Secret-Referenz)
+    # Adresse des Gateways von den Agenten aus (1.5.1): Vorgabe der agent.env in der Einrichtung
+    agent_gateway_host: str = ""
+    agent_gateway_port: int = 8443
 
     # Signierte Agent-Updates (Ed25519): oeffentlicher Schluessel (Base64, 32 Byte) zum Pruefen
     # der eingespielten Signatur; die Signatur liegt im Daten-Volume (siehe deploy/agent-signing).

@@ -1546,6 +1546,7 @@ export interface AgentPackageInfo {
   internal_tls: boolean;
   ca: boolean;
   ca_name: string;
+  gateway_url?: string; // 1.5.1: Agenten nur über das mTLS-Agent-Gateway (leer = direkt auf :8000)
 }
 export const fetchAgentPackageInfo = () => getJSON<AgentPackageInfo>("/api/agents/package/info");
 export const downloadAgentCa = async (): Promise<Blob> => (await fetchChecked("/api/agents/package/ca")).blob();

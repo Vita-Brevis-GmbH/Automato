@@ -176,6 +176,9 @@ services:
       # Agent-Kanal nur ueber das mTLS-Agent-Gateway (Profil agent-gateway): off | require | bind
       AUTOMATO_INTERNAL_MTLS_MODE: ${AUTOMATO_INTERNAL_MTLS_MODE:-off}
       AUTOMATO_AGENT_GATEWAY_SECRET: ${AUTOMATO_AGENT_GATEWAY_SECRET:-}
+      # Adresse des Gateways fuer die Einrichtung der Agenten (agent.env im UI, 1.5.1)
+      AUTOMATO_AGENT_GATEWAY_HOST: ${AUTOMATO_AGENT_GATEWAY_HOST:-}
+      AUTOMATO_AGENT_GATEWAY_PORT: ${AUTOMATO_AGENT_GATEWAY_PORT:-8443}
       # Signierte Agent-Updates (deploy/agent-signing): oeffentlicher Schluessel zum Pruefen
       AUTOMATO_AGENT_SIGNING_PUBKEY: ${AUTOMATO_AGENT_SIGNING_PUBKEY:-}
       # TLS intern (0.49.0): HTTPS, Datenbank verify-full, Redis rediss://
@@ -314,8 +317,9 @@ services:
       AUTOMATO_AGENT_GATEWAY_HOST: ${AUTOMATO_AGENT_GATEWAY_HOST:-localhost}
       AUTOMATO_AGENT_GATEWAY_SECRET: ${AUTOMATO_AGENT_GATEWAY_SECRET:-}
       AUTOMATO_INTERNAL_TLS: ${AUTOMATO_INTERNAL_TLS:-off}
+    # Port auf der VM (1.5.1): AUTOMATO_AGENT_GATEWAY_PORT, im Container immer 8443
     ports:
-      - "8443:8443"
+      - "${AUTOMATO_AGENT_GATEWAY_PORT:-8443}:8443"
     volumes:
       - ./deploy/agent-gateway/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./deploy/agent-gateway/pki:/etc/caddy/pki:ro

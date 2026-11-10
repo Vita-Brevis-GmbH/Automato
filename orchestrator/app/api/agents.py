@@ -209,14 +209,31 @@ class PackageInfoOut(BaseModel):
     internal_tls: bool  # Orchestrator spricht auf :8000 HTTPS mit der internen CA
     ca: bool  # CA-Zertifikat verfuegbar (im Paket und als Download)
     ca_name: str = CA_NAME
+    # mTLS-Agent-Gateway (1.5.1): Agenten nur darueber - Adresse + Client-Zertifikat in agent.env
+    gateway_url: str = ""
+
+
+def _gateway_url(settings: Settings) -> str:
+    host = settings.agent_gateway_host.strip()
+    if settings.internal_mtls_mode == "off" or not host or host == "localhost":
+        return ""
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"  # IPv6
+    port = settings.agent_gateway_port
+    return f"https://{host}" if port == 443 else f"https://{host}:{port}"
 
 
 @router.get("/package/info", response_model=PackageInfoOut)
 def package_info(
     _: Principal = Depends(require_admin), settings: Settings = Depends(get_settings)
 ) -> PackageInfoOut:
-    """Fuer die Einrichtung (0.78.2): TLS intern an? Dann https:// und die CA in agent.env."""
-    return PackageInfoOut(internal_tls=settings.internal_tls, ca=_ca_pem(settings) is not None)
+    """Fuer die Einrichtung (0.78.2): TLS intern an? Dann https:// und die CA in agent.env.
+    Mit dem mTLS-Gateway (1.5.1) dessen Adresse - Port 8000 ist dann fuer Agenten gesperrt."""
+    return PackageInfoOut(
+        internal_tls=settings.internal_tls,
+        ca=_ca_pem(settings) is not None,
+        gateway_url=_gateway_url(settings),
+    )
 
 
 @router.get("/package/ca")
