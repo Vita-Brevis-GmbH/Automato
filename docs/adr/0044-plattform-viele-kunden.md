@@ -103,9 +103,14 @@ Rolle des Proxys aus Nr. 2:
 - **`-doc`** ist dieselbe Instanz von Automato (Nr. 3); die Adresse wählt in V2 den Realm des
   Mandanten (Nr. 4). Freigeschaltet wird `-doc` für einen Kunden erst, wenn er selbst in die Doku
   soll.
-- **Offen bis zum Bau des Front-Proxys:** Adressen und Zertifikat der WAF (TLS-Abschluss,
-  `X-Forwarded-For`), Ziel und Host-Namen von Magister für `-um`, Weg von Automato zur NetBox
-  (intern über den Front-Proxy statt über die WAF).
+- **Front-Proxy umgesetzt in 1.2.0** (`deploy/front/front.sh`, `docs/INSTALLATION-FRONT.md`): die
+  WAF beendet TLS mit dem öffentlichen Wildcard und baut eine neue HTTPS-Verbindung zum Front-Proxy
+  auf (eine Adresse, `X-Forwarded-For` an) – nur ihr wird die Angabe geglaubt. Kunden-Adressen nur
+  von der WAF und aus dem Management-Netz; Mitarbeitende gehen für Kunden-Adressen ebenfalls über
+  die WAF (kein Split-DNS), die internen Adressen gehen direkt auf die Automato-VM. Automato
+  erreicht die NetBox der Kunden über die WAF. Werkzeuge erscheinen je Kunde nur mit Freischaltung
+  (`--doc`, `--um`, `--cmdb`); `-um` (Magister) wird später umgebaut und bis dahin nicht
+  weitergeleitet.
 
 ## Folgen
 

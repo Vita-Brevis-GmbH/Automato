@@ -2340,6 +2340,11 @@ an (`deploy/agent-gateway`, Port 8443).
   (`no-new-privileges`) und mit nur lesendem Dateisystem – geschrieben wird nur in Volumes und
   `/tmp`. Postgres und Redis laufen mit `no-new-privileges`, Keycloak unverändert. Meldet ein
   Dienst „Read-only file system“, schreibt er an eine neue Stelle – Meldung an die Entwicklung.
+- **Front-Proxy** (1.2.0, `docs/INSTALLATION-FRONT.md`): Startseiten `<kunde>.<domain>`,
+  Weiterleitung `<kunde>-nb`/`-doc`/`-um`/`-cmdb` und internes Portal `start.<intern>` laufen im
+  Proxy von Automato. Kunden pflegen mit `sudo deploy/front/front.sh kunde|link|entfernen|liste`,
+  prüfen mit `front.sh pruefen`; Einstellungen `AUTOMATO_FRONT_*` in `.env`, danach
+  `front.sh erzeugen`. Kunden-Adressen nur von der WAF und aus dem Management-Netz.
 - Agent-Tokens werden nur gehasht gespeichert und einmalig angezeigt. Produktiv sprechen
   Agenten nur über das **mTLS-Agent-Gateway** (`deploy/agent-gateway`, Modus `bind`:
   Zertifikat und Token gehören zum selben Agenten); Port 8000 nicht in Agent-Netze freigeben.

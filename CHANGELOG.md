@@ -7,6 +7,29 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 1.2.0 – 2026-11-09
+
+Anwender 2026-11-09: Kunden kommen über die WAF (eine Adresse, TLS mit dem öffentlichen Wildcard
+neu aufgebaut, `X-Forwarded-For` an) auf die Automato-VM, die Startseite und Doku trägt; die
+internen Adressen gehen direkt auf die VM; Magister (`-um`) wird später umgebaut.
+
+- **Front-Proxy auf der Automato-VM** (ADR 0044 Nachtrag): Der Proxy von Automato liefert die
+  Startseite je Kunde (`<kunde>.<domain>`, Kacheln) und das interne Portal (`start.<intern>`, alle
+  Kunden; `<intern>` leitet bis zum Cockpit dorthin) aus und leitet je Werkzeug weiter:
+  `<kunde>-nb` an den NetBox-Host (Name und SNI der Anfrage, optional eigene CA), `<kunde>-doc` an
+  die Oberfläche von Automato, `<kunde>-um` an Magister und `<kunde>-cmdb` – die drei Letzten nur
+  mit Freischaltung je Kunde. Unbekannte Namen geben 404.
+- **Werkzeug `deploy/front/front.sh`:** `kunde` (mit `--doc`, `--um`, `--cmdb`), `link`,
+  `entfernen`, `liste`, `erzeugen`, `pruefen` (Zertifikate mit Schlüssel, Namen und Ablauf, Proxy,
+  je Kunde Startseite und Weg zur NetBox). Zeigt bei `--doc` die nötigen Einträge in Keycloak.
+- **Abgesichert:** Kunden-Adressen nur von der WAF und aus dem Management-Netz, interne nur aus dem
+  Management-Netz und nie über die WAF (auch wenn das Management-Netz die WAF einschliesst – sonst
+  käme ein Kunde mit gesetztem Host-Kopf aufs Portal); `X-Forwarded-For` nur von der WAF (`trusted_proxies`); Freigaben nie leer;
+  Einstellungen werden geprüft, damit nichts in den Caddyfile gelangt; Startseiten ohne Skripte
+  (Content-Security-Policy), HSTS. Ohne Einrichtung bleibt der Proxy wie bisher.
+- **Einstellungen** `AUTOMATO_FRONT_*` in `.env` (`.env.example`), Zertifikate
+  `deploy/proxy/pki/mgmt.crt|key` und `mgmt-int.crt|key`; Anleitung `docs/INSTALLATION-FRONT.md`.
+
 ## 1.1.0 – 2026-11-09
 
 Anwender 2026-11-09 beim Aufsetzen des NetBox-Hosts: Adressen `<kunde>` (Startseite), `<kunde>-nb`

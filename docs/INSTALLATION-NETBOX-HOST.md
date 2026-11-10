@@ -206,8 +206,9 @@ Das Werkzeug selbst aktualisieren: `sudo git pull`, danach `init` (übernimmt di
 
 ## 6. Grenzen
 
-- Startseiten, Portal und Weiterleitung liegen auf dem Front-Proxy der Automato-VM (eigener
-  Schritt); bis dahin erreicht man die NetBox nur aus dem Management-Netz.
+- Startseiten, Portal und Weiterleitung liegen seit 1.2.0 auf dem Front-Proxy der Automato-VM
+  (`deploy/front/front.sh`, `docs/INSTALLATION-FRONT.md`); ohne ihn erreicht man die NetBox nur
+  aus dem Management-Netz.
 - Ein Update ändert das Schema der Datenbank – zurück geht es nur über `wiederherstellen` mit der
   Sicherung, die `update` vorher anlegt.
 - `token` legt klassische Tokens an (NetBox 4.6); für spätere Versionen die Tokens in NetBox
