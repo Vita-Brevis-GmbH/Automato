@@ -72,6 +72,14 @@ class Settings(BaseSettings):
     # Letzte Sicherung (schreibt deploy/backup/backup.sh ins Daten-Volume; System-Seite)
     backup_status_file: str = "/var/lib/automato/last-backup.json"
 
+    # Kunden-Portal (1.3.0, ADR 0050): Ordner, in den der Orchestrator den Soll-Stand der Kunden
+    # schreibt (soll.json) und aus dem er den Stand des Host-Agenten liest (status.json) - auf der
+    # VM deploy/front/state, abgeholt von `front.sh sync`. Leer = Portal nur in der Datenbank.
+    front_state_dir: str = ""
+    # Domain der Kunden-Adressen (wie AUTOMATO_FRONT_DOMAIN im Front-Proxy) - nur fuer die
+    # Anzeige der Adressen und Keycloak-Eintraege in der Oberflaeche
+    front_domain: str = ""
+
     # Zeitgesteuerte Laeufe je Quellsystem (Cron am Quellsystem). Aus = keine Hintergrund-
     # Schleife (Tests, Werkzeuge); docker-compose schaltet ihn fuer den Orchestrator ein.
     scheduler_enabled: bool = False

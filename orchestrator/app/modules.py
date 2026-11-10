@@ -82,6 +82,7 @@ MODULES: tuple[Module, ...] = (
             "auth_config",
             "system",
             "health",
+            "portal",
         ),
         store=(
             "aci_direction",
@@ -101,6 +102,7 @@ MODULES: tuple[Module, ...] = (
             "nat",
             "objects",
             "parallel",
+            "portal",
             "reachability",
             "relevance",
             "retention",
@@ -122,6 +124,7 @@ MODULES: tuple[Module, ...] = (
             "tenants",
             "kunden",
             "kundenbenutzer",
+            "kundenportal",
             "system",
         ),
     ),  # fmt: skip

@@ -4,7 +4,7 @@ import logging
 
 from fastapi import Depends, Header, HTTPException, Request
 
-from app.auth import assignments, customer_routes, oidc
+from app.auth import assignments, customer_routes, oidc, realms
 from app.auth import capabilities as caps
 from app.auth import roles as R
 from app.auth.principal import Principal
@@ -33,16 +33,20 @@ def get_principal(
     """Aufrufer aus dem Token (bzw. im dev-Modus aus den Kopfzeilen) - dazu die Zuordnung
     Benutzer -> Kunde aus Automato (0.53.0), die einen Benutzer zum Kunden-Benutzer macht."""
     principal = _authenticate(authorization, x_dev_roles, x_dev_tenants, x_dev_customers,
-                              x_dev_user, x_dev_customer_role)  # fmt: skip
+                              x_dev_user, x_dev_customer_role, factory)  # fmt: skip
+    if (principal.customer_source or "").startswith("realm:"):
+        # Kunden-Realm (1.3.0): Ausschnitt nur aus dem Portal, keine Zuordnung ueber Kennungen
+        return principal
     return assignments.resolve(factory, principal)
 
 
 def _authenticate(authorization, x_dev_roles, x_dev_tenants, x_dev_customers,
-                  x_dev_user, x_dev_customer_role=None) -> Principal:  # fmt: skip
+                  x_dev_user, x_dev_customer_role=None, factory=None) -> Principal:  # fmt: skip
     settings = get_settings()
     if settings.auth_mode == "oidc":
         try:
-            return oidc.principal_from_bearer(authorization, settings)
+            scopes = realms.scopes(factory, settings) if factory is not None else None
+            return oidc.principal_from_bearer(authorization, settings, scopes)
         except HTTPException:
             raise
         except Exception as exc:  # noqa: BLE001 - jede weitere Validierungs-Panne -> 401

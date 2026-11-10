@@ -70,6 +70,7 @@ from app.models.network_object import (
     SourceOfRecord,
 )
 from app.models.parallel import ParallelRejection
+from app.models.portal import PortalCustomer
 from app.models.reference_record import ReferenceRecordRow
 from app.models.rule import (
     EndpointKind,
@@ -185,6 +186,7 @@ __all__ = [
     "SourceOfRecord",
     "SourceSystem",
     "ParallelRejection",
+    "PortalCustomer",
     "SubjectKind",
     "Tenant",
     "TenantCheck",

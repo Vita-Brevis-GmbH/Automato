@@ -23,6 +23,7 @@ from jwt.exceptions import PyJWKClientConnectionError, PyJWKClientError
 from app.auth import capabilities as caps
 from app.auth.principal import Principal
 from app.i18n import L
+from app.store.portal import RealmScope, realm_of
 
 CUSTOMER_ROLE = "customer"  # Realm-Rolle der Kunden-Benutzer (ADR 0018)
 
@@ -116,21 +117,85 @@ def claims_to_principal(claims: dict, settings) -> Principal:
     return Principal(subject=str(subject), roles=roles, tenant_ids=tenant_ids, logins=logins)
 
 
-@lru_cache(maxsize=8)
+def realm_principal(claims: dict, scope: RealmScope, settings) -> Principal:
+    """Benutzer aus einem Kunden-Realm (1.3.0, ADR 0050): immer Kunden-Benutzer, nie Admin.
+
+    Mandant und Kunden kommen aus dem Kunden-Portal, nie aus dem Token - den Realm verwaltet
+    gegebenenfalls der Kunde selbst (z. B. Azure/Entra), seine Claims duerfen keinen fremden
+    Ausschnitt oeffnen. Die Kunden-Rolle (viewer … customer_admin) darf der Realm melden
+    (`customer_role` bzw. Realm-Rollen), sonst gilt die Standard-Rolle des Portals. Ohne
+    Mandant sieht der Benutzer nichts (fail-closed). Keine Zuordnung ueber `customer_user`
+    (`logins` leer): Kennungen aus einem fremden Realm sind nicht vertrauenswuerdig.
+    """
+    subject = claims.get("sub") or claims.get("preferred_username") or "unknown"
+    raw_roles = _dig(claims, settings.oidc_roles_claim) or []
+    roles = (
+        frozenset(str(r) for r in raw_roles) if isinstance(raw_roles, list | tuple) else frozenset()
+    )
+    role = customer_role_of(roles, _dig(claims, settings.oidc_customer_role_claim))
+    role = role or scope.default_role
+    customers = scope.customer_ids if scope.tenant_id is not None else ()
+    return Principal(
+        subject=f"{scope.realm}:{subject}",
+        roles=frozenset({"viewer"}),
+        tenant_ids=(scope.tenant_id,) if scope.tenant_id is not None else (),
+        customer_ids=tuple(customers),
+        logins=(),
+        customer_source=f"realm:{scope.realm}",
+        customer_roles=tuple((c, role) for c in customers),
+    )
+
+
+def realm_issuer(settings, realm: str) -> str | None:
+    parsed = realm_of(settings.oidc_issuer)
+    return f"{parsed[0]}/realms/{realm}" if parsed else None
+
+
+def realm_jwks_url(settings, realm: str) -> str:
+    """JWKS eines Kunden-Realms: wie die des Haupt-Realms (gleicher Weg, z. B. intern), nur
+    mit dem anderen Realm - sonst die Standard-Adresse von Keycloak."""
+    parsed = realm_of(settings.oidc_issuer)
+    main = f"/realms/{parsed[1]}/" if parsed else None
+    if main and settings.oidc_jwks_url and main in settings.oidc_jwks_url:
+        return settings.oidc_jwks_url.replace(main, f"/realms/{realm}/", 1)
+    return f"{realm_issuer(settings, realm)}/protocol/openid-connect/certs"
+
+
+def scope_for_token(token: str, settings, realms: dict | None) -> RealmScope | None:
+    """Kunden-Realm des Tokens (nach seinem Issuer, noch ungeprueft - geprueft wird danach
+    gegen genau diesen Realm); None = Haupt-Realm bzw. unbekannt (dann Pruefung wie bisher)."""
+    if not realms:
+        return None
+    try:
+        issuer = jwt.decode(token, options={"verify_signature": False}).get("iss")
+    except jwt.InvalidTokenError:
+        return None
+    if not issuer or issuer == settings.oidc_issuer:
+        return None
+    for realm, scope in realms.items():
+        if realm_issuer(settings, realm) == issuer:
+            return scope
+    return None
+
+
+@lru_cache(maxsize=64)
 def _jwks_client(url: str) -> PyJWKClient:
     # Wiederverwenden: PyJWKClient cached das Key-Set (sonst ein JWKS-Abruf pro Request).
     return PyJWKClient(url, timeout=10)
 
 
-def verify_token(token: str, settings) -> dict:
-    """JWT gegen die Keycloak-JWKS validieren; wirft bei ungueltigem Token."""
-    signing_key = _jwks_client(settings.oidc_jwks_url).get_signing_key_from_jwt(token)
+def verify_token(token: str, settings, scope: RealmScope | None = None) -> dict:
+    """JWT gegen die Keycloak-JWKS validieren (Haupt-Realm bzw. Realm des Kunden); wirft bei
+    ungueltigem Token."""
+    jwks = realm_jwks_url(settings, scope.realm) if scope else settings.oidc_jwks_url
+    issuer = realm_issuer(settings, scope.realm) if scope else settings.oidc_issuer
+    signing_key = _jwks_client(jwks).get_signing_key_from_jwt(token)
     return jwt.decode(
         token,
         signing_key.key,
         algorithms=["RS256"],
         audience=settings.oidc_audience or None,
-        issuer=settings.oidc_issuer or None,
+        issuer=issuer or None,
         leeway=settings.oidc_clock_skew_seconds,
         options={"verify_aud": bool(settings.oidc_audience)},
     )
@@ -155,14 +220,18 @@ def _reject(status: int, detail: str, exc: Exception, en: str | None = None) -> 
     return HTTPException(status_code=status, detail=L(detail, en or detail))
 
 
-def principal_from_bearer(authorization: str | None, settings) -> Principal:
+def principal_from_bearer(
+    authorization: str | None, settings, realms: dict | None = None
+) -> Principal:
+    """Aufrufer aus dem Bearer-Token; `realms` = Kunden-Realms aus dem Portal (1.3.0)."""
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="missing bearer token")
     token = authorization.split(" ", 1)[1].strip()
+    scope = scope_for_token(token, settings, realms)
     try:
-        claims = verify_token(token, settings)
+        claims = verify_token(token, settings, scope) if scope else verify_token(token, settings)
     except PyJWKClientConnectionError as exc:
-        url = settings.oidc_jwks_url
+        url = realm_jwks_url(settings, scope.realm) if scope else settings.oidc_jwks_url
         raise _reject(
             503,
             f"JWKS vom Orchestrator nicht erreichbar: {url}",
@@ -202,7 +271,7 @@ def principal_from_bearer(authorization: str | None, settings) -> Principal:
             f"token audience invalid (expected: {audience})",
         ) from exc
     except jwt.InvalidIssuerError as exc:
-        issuer = settings.oidc_issuer
+        issuer = realm_issuer(settings, scope.realm) if scope else settings.oidc_issuer
         raise _reject(
             401,
             f"token issuer invalid (erwartet: {issuer})",
@@ -211,4 +280,6 @@ def principal_from_bearer(authorization: str | None, settings) -> Principal:
         ) from exc
     except jwt.InvalidTokenError as exc:
         raise _reject(401, f"invalid token ({type(exc).__name__})", exc) from exc
+    if scope is not None:
+        return realm_principal(claims, scope, settings)
     return claims_to_principal(claims, settings)

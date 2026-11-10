@@ -3,6 +3,8 @@ je Kunde, Portal, Weiterleitung je Werkzeug. Mit Ersatz für docker und curl; ge
 Skript schreibt (Caddy-Einträge, Seiten maskiert, Freigaben nie leer), dass Werkzeuge nur mit
 Freischaltung erscheinen und dass Einstellungen nichts in den Caddyfile schleusen können."""
 
+import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -252,3 +254,79 @@ def test_pruefen_zertifikate_und_wege(front):
     out = front("pruefen", FRONT_CURL_CODE="403")
     assert "mgmt-int.crt deckt *.mgmt.int.example.ch nicht ab" in out.stderr
     assert "NetBox-Host lehnt diese VM ab (403)" in out.stderr
+
+
+def _soll(front, kunden: list[dict]) -> Path:
+    state = front.gen.parent / "state"
+    state.mkdir(parents=True, exist_ok=True)
+    datei = state / "soll.json"
+    datei.write_text(json.dumps({"version": 1, "kunden": kunden}), encoding="utf-8")
+    return datei
+
+
+def _status(front) -> dict:
+    return json.loads((front.gen.parent / "state" / "status.json").read_text(encoding="utf-8"))
+
+
+def test_sync_uebernimmt_kunden_aus_der_oberflaeche(front):
+    front("kunde", "kunde-c", "Kunde C")  # von Hand angelegt - bleibt unberührt
+    soll = _soll(front, [
+        {"kurzname": "vb", "name": "Vita & <Co>", "doc": True, "um": False, "cmdb": False,
+         "links": [{"title": "Handbuch", "url": "https://handbuch.example.ch", "text": "Doku"}]},
+        {"kurzname": "kunde-b", "name": "Kunde B", "doc": False, "links": []},
+    ])  # fmt: skip
+    out = front("sync")
+    assert out.returncode == 0, out.stdout + out.stderr
+    site = (front.gen / "sites" / "vb.caddy").read_text()
+    assert "vb-doc.mgmt.example.ch {" in site
+    seite = (front.gen / "www" / "vb" / "index.html").read_text()
+    assert "Vita &amp; &lt;Co&gt;" in seite and 'href="https://handbuch.example.ch"' in seite
+    status = _status(front)
+    assert status["ok"] and set(status["kunden"]) >= {"vb", "kunde-b", "kunde-c"}
+    assert status["soll_sha256"] == hashlib.sha256(soll.read_bytes()).hexdigest()
+
+    # aus der Oberfläche gepflegt: nicht per Befehl änderbar
+    nein = front("kunde", "vb", "Anders")
+    assert nein.returncode != 0 and "Oberfläche" in nein.stderr
+    # unverändert: nichts zu tun
+    assert "unverändert" in front("sync").stdout
+
+    # in der Oberfläche entfernt: weg; der von Hand angelegte bleibt
+    _soll(front, [{"kurzname": "vb", "name": "Vita", "doc": True, "links": []}])
+    assert front("sync").returncode == 0
+    assert not (front.gen / "sites" / "kunde-b.caddy").exists()
+    assert (front.gen / "sites" / "kunde-c.caddy").exists()
+
+
+@pytest.mark.parametrize(
+    ("kunde", "meldung"),
+    [
+        ({"kurzname": "start", "name": "X"}, "reserviert"),
+        ({"kurzname": "a b", "name": "X"}, "ungültig"),
+        ({"kurzname": "kunde-x", "name": "X",
+          "links": [{"title": "T", "url": "javascript:alert(1)"}]}, "https://"),
+    ],
+)  # fmt: skip
+def test_sync_prueft_den_soll_stand(front, kunde, meldung):
+    _soll(front, [{"kurzname": "vb", "name": "Vita", "links": []}])
+    assert front("sync").returncode == 0
+    _soll(front, [kunde])
+    out = front("sync")
+    assert out.returncode != 0
+    status = _status(front)
+    assert status["ok"] is False and meldung in status["meldung"]
+    assert (front.gen / "sites" / "vb.caddy").exists()  # alter Stand bleibt
+
+
+def test_agent_richtet_systemd_ein(front, tmp_path):
+    systemd = tmp_path / "systemd"
+    log = tmp_path / "systemctl.log"
+    stub = _stub(tmp_path / "bin" / "systemctl", f'echo "$*" >> "{log}"\n')
+    out = front("agent", FRONT_SYSTEMD_DIR=str(systemd), SYSTEMCTL=str(stub))
+    assert out.returncode == 0, out.stdout + out.stderr
+    path = (systemd / "automato-front-sync.path").read_text()
+    assert f"PathChanged={front.gen.parent / 'state' / 'soll.json'}" in path
+    service = (systemd / "automato-front-sync.service").read_text()
+    assert service.rstrip().endswith("front.sh sync")
+    assert "OnUnitActiveSec=10min" in (systemd / "automato-front-sync.timer").read_text()
+    assert "enable --now automato-front-sync.path automato-front-sync.timer" in log.read_text()

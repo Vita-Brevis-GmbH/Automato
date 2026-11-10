@@ -22,6 +22,7 @@ export type View =
   | "tenants"
   | "kunden"
   | "kundenbenutzer"
+  | "kundenportal"
   | "dict"
   | "agents"
   | "netbox"

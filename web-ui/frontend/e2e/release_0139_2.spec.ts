@@ -13,7 +13,8 @@ const BACK = "/?error=temporarily_unavailable&error_description=authentication_e
 
 async function keycloak(page: Page): Promise<string[]> {
   const authorize: string[] = [];
-  await page.route(/\/api\/auth\/config$/, (route) =>
+  // seit 1.3.0 mit ?host=<adresse> (Realm je Kunde)
+  await page.route(/\/api\/auth\/config(\?.*)?$/, (route) =>
     route.fulfill({ json: { auth_mode: "oidc", issuer: ISSUER, client_id: CLIENT, scope: "openid", admin_console_url: "" } }),
   );
   await page.route(`${ISSUER}/.well-known/openid-configuration`, (route) =>
