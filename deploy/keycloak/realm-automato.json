@@ -102,6 +102,21 @@
       ]
     },
     {
+      "clientId": "automato-front",
+      "name": "Automato Anmelde-Tor (Front-Proxy)",
+      "description": "oauth2-proxy vor Startseite und Werkzeugen (ADR 0051); Secret nur auf der Automato-VM (front.sh tor)",
+      "enabled": true,
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [],
+      "webOrigins": [],
+      "attributes": { "pkce.code.challenge.method": "S256" }
+    },
+    {
       "clientId": "automato-api",
       "name": "Automato Orchestrator API",
       "enabled": true,

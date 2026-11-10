@@ -289,6 +289,11 @@ services:
       - ./deploy/tls/pki/client:/etc/automato/tls:ro
       - proxy-data:/data
       - proxy-config:/config
+    networks:
+      - default
+      # Anmelde-Tor (1.4.0, ADR 0051): deploy/front/front.sh startet je Realm einen oauth2-proxy
+      # (Projekt automato-tor) in diesem Netz; der Proxy fragt ihn vor jeder Kunden-Adresse
+      - front-tor
     depends_on:
       - web-ui
 
@@ -351,3 +356,8 @@ volumes:
   keycloak-data:
   proxy-data:
   proxy-config:
+
+networks:
+  # Anmelde-Tor (1.4.0): eigenes Netz zwischen Proxy und den Containern des Tors
+  front-tor:
+    name: automato-front-tor

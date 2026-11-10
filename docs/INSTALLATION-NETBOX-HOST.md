@@ -194,6 +194,7 @@ Automato-VM muss der eigenen CA vertrauen (`docs/INSTALLATION-PROD.md` 6.3) und 
 | `wiederherstellen <kunde> <datei.sql.gz.age>` | NetBox stoppen, Datenbank (und Medien derselben Sicherung) einspielen, starten – einmal pro Jahr testen |
 | `update <kunde\|alle>` | erst sichern, dann netbox-docker und NetBox in der Version aus `host.conf` holen, starten, prüfen. Neue Version zuerst bei einem Kunden |
 | `loeschen <kunde> --ja` | letzte Sicherung, dann Container, Daten und Proxy-Eintrag entfernen; die Sicherungen bleiben |
+| `sso <kunde\|alle>` | Anmeldung über das Anmelde-Tor einrichten bzw. nachführen (1.4.0): Proxy-Vorlage übernehmen, NetBox-Einstellungen schreiben, NetBox neu starten, Gruppen und Rechte anlegen |
 
 Alle Befehle mit `sudo deploy/netbox-host/netbox-host.sh …` im Ordner `/opt/netbox-host/automato`.
 Das Werkzeug selbst aktualisieren: `sudo git pull`, danach `init` (übernimmt die Proxy-Vorlage).
@@ -201,8 +202,13 @@ Das Werkzeug selbst aktualisieren: `sudo git pull`, danach `init` (übernimmt di
 - **Sicherung ausser Haus:** `BACKUP_DIR` liegt auf der VM – regelmässig auf das Sicherungssystem
   kopieren (die Dateien sind verschlüsselt). Konfiguration zurückholen:
   `age -d -i /root/netbox-host-backup.agekey konfig-….tar.gz.age | tar -xzf - -C /opt/netbox-host`.
-- **Anmeldung:** vorerst lokale NetBox-Benutzer je Instanz (Anmeldung immer nötig). Anmeldung über
-  Keycloak mit einem Realm je Mandant folgt in Version 2 (ADR 0044).
+- **Anmeldung (seit 1.4.0, ADR 0051):** über das Anmelde-Tor des Front-Proxys im Realm des Kunden –
+  einmal anmelden, NetBox öffnet sich ohne eigene Maske. Der Front-Proxy übergibt den Benutzer als
+  `X-Automato-User` (`<benutzer>@<realm>`) und die Realm-Rollen; dieser Proxy nimmt die Kopfzeilen
+  nur von `FRONT` an und entfernt sie bei allen anderen. Rechte: Realm-Rolle **admin** = Superuser,
+  **operator** = bearbeiten, alle anderen lesen. `SSO=an` in `host.conf` (Vorgabe); neue Instanzen
+  richtet `neu` ein, bestehende `sso <kunde|alle>`. Lokale Konten (`admin`, Token-Benutzer) bleiben
+  für den Notfall und melden sich direkt aus dem Management-Netz mit Passwort an.
 
 ## 6. Grenzen
 

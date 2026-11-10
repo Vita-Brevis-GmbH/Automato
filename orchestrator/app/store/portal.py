@@ -218,13 +218,15 @@ def listing(session: Session) -> list[PortalCustomer]:
 
 
 def desired(session: Session) -> dict:
-    """Soll-Stand fuer den Front-Proxy (nur, was front.sh braucht - kein Realm, kein Mandant)."""
+    """Soll-Stand fuer den Front-Proxy (nur, was front.sh braucht - kein Mandant). Seit 1.4.0
+    mit dem Realm: das Anmelde-Tor fragt je Kunde in dessen Realm (ADR 0051); ohne Realm
+    gesperrt."""
     return {
         "version": 1,
         "erzeugt": datetime.now(UTC).isoformat(timespec="seconds"),
         "kunden": [
             {"kurzname": pc.short_name, "name": pc.name, "doc": pc.doc, "um": pc.um,
-             "cmdb": pc.cmdb, "links": list(pc.links or [])}
+             "cmdb": pc.cmdb, "realm": pc.realm or "", "links": list(pc.links or [])}
             for pc in listing(session)
         ],
     }  # fmt: skip

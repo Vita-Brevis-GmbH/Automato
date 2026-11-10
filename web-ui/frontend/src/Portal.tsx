@@ -44,32 +44,104 @@ function tools(c: PortalCustomer): string {
   return ["NetBox", c.doc && "Doku", c.um && "UM", c.cmdb && "CMDB"].filter(Boolean).join(", ");
 }
 
-// Befehle für das, was der Agent (noch) nicht selbst macht: NetBox-Instanz und Keycloak-Realm
+// Befehle für das, was der Agent (noch) nicht selbst macht: NetBox-Instanz, Keycloak-Realm und
+// seit 1.4.0 (ADR 0051) das Client-Secret des Anmelde-Tors je Realm
 function setupSteps(c: PortalCustomer, data: PortalListing): { title: string; cmd: string }[] {
   const steps = [
     {
-      title: L("NetBox-Host: Instanz anlegen (einmal)", "NetBox host: create the instance (once)"),
-      cmd: `sudo deploy/netbox-host/netbox-host.sh neu ${c.short_name}`,
+      title: L(
+        "NetBox-Host: Instanz anlegen (einmal; bestehende Instanz: Anmeldung über das Tor mit „sso“)",
+        "NetBox host: create the instance (once; existing instance: sign-in via the gate with “sso”)",
+      ),
+      cmd: `sudo deploy/netbox-host/netbox-host.sh neu ${c.short_name}\nsudo deploy/netbox-host/netbox-host.sh sso ${c.short_name}`,
     },
   ];
-  const doc = c.addresses.doc ?? `https://${c.short_name}-doc.<domain>`;
+  const domain = data.domain || "<domain>";
+  const doc = c.addresses.doc ?? `https://${c.short_name}-doc.${domain}`;
   const main = data.keycloak.main_realm;
-  if (c.doc && c.realm && c.realm !== main) {
+  const callbacks = Object.values(c.addresses).map((u) => `${u}/oauth2/callback`);
+  if (!c.realm) {
+    steps.push({
+      title: L(
+        "Anmelde-Tor: ohne Realm ist der Kunde gesperrt – Realm eintragen (notfalls ein Realm mit lokalen Benutzern)",
+        "Sign-in gate: without a realm the customer is locked – enter a realm (if need be a realm with local users)",
+      ),
+      cmd: L("Bearbeiten → Realm", "Edit → Realm"),
+    });
+    return [...steps, ...webClient(c, main, doc)];
+  }
+  if (c.realm !== main) {
     steps.push({
       title: L(`Keycloak: Realm „${c.realm}“ anlegen (Automato-VM, dann in der Admin-Konsole importieren)`,
         `Keycloak: create realm “${c.realm}” (Automato VM, then import in the admin console)`),
-      cmd: `python3 deploy/keycloak/make_realm.py --realm ${c.realm} --display-name "${c.name.replace(/"/g, "'")}" --ui-url ${doc} > ~/realm-${c.realm}.json`,
+      cmd: `python3 deploy/keycloak/make_realm.py --realm ${c.realm} --display-name "${c.name.replace(/"/g, "'")}" --ui-url ${doc} --front-kunde ${c.short_name} --front-domain ${domain} > ~/realm-${c.realm}.json`,
     });
-  } else if (c.doc) {
+  } else {
     steps.push({
+      title: L(
+        `Keycloak (Realm ${main}, Client automato-front): Valid redirect URIs ergänzen`,
+        `Keycloak (realm ${main}, client automato-front): add valid redirect URIs`,
+      ),
+      cmd: callbacks.join("\n"),
+    });
+  }
+  steps.push({
+    title: L(
+      `Automato-VM: Client-Secret von automato-front (Realm ${c.realm} → Clients → automato-front → Credentials) hinterlegen – einmal je Realm`,
+      `Automato VM: store the client secret of automato-front (realm ${c.realm} → Clients → automato-front → Credentials) – once per realm`,
+    ),
+    cmd: `sudo deploy/front/front.sh tor ${c.realm}`,
+  });
+  return c.realm === main ? [...steps, ...webClient(c, main, doc)] : steps;
+}
+
+// Doku im Realm von Automato: Rückkehr-Adresse und Origin des Clients automato-web
+function webClient(c: PortalCustomer, main: string, doc: string): { title: string; cmd: string }[] {
+  if (!c.doc) return [];
+  return [
+    {
       title: L(
         `Keycloak (Realm ${main || "von Automato"}, Client automato-web): Redirect-URI und Web-Origin ergänzen`,
         `Keycloak (realm ${main || "of Automato"}, client automato-web): add redirect URI and web origin`,
       ),
       cmd: `${doc}/*\n${doc}`,
-    });
-  }
-  return steps;
+    },
+  ];
+}
+
+// Anmelde-Tor (1.4.0, ADR 0051): was der Host-Agent zuletzt gemeldet hat
+type Tor = NonNullable<NonNullable<PortalListing["agent"]["status"]>["tor"]>;
+function TorStand({ tor }: { tor?: Tor }) {
+  if (!tor) return null;
+  if (!tor.an)
+    return (
+      <div className="hint" id="portal-tor" style={{ marginTop: 8 }}>
+        {L(
+          "Anmelde-Tor aus – Startseiten und Werkzeuge ohne Anmeldung davor (AUTOMATO_FRONT_TOR=an in .env)",
+          "Sign-in gate off – start pages and tools without sign-in in front (AUTOMATO_FRONT_TOR=an in .env)",
+        )}
+      </div>
+    );
+  return (
+    <div id="portal-tor" style={{ marginTop: 8 }}>
+      <span className="chip ok">
+        {L("Anmelde-Tor an", "Sign-in gate on")}
+        {tor.realms_bereit.length > 0 && ` · Realm ${tor.realms_bereit.join(", ")}`}
+      </span>
+      {tor.realms_ohne_secret.map((r) => (
+        <Note warn key={r}>
+          {L(`Realm ${r}: Client-Secret fehlt – auf der VM: `, `Realm ${r}: client secret missing – on the VM: `)}
+          <span className="mono">sudo deploy/front/front.sh tor {r}</span>
+        </Note>
+      ))}
+      {tor.gesperrt.length > 0 && (
+        <div className="hint">
+          {L("Gesperrt (kein Realm bzw. kein Client-Secret): ", "Locked (no realm or no client secret): ")}
+          <span className="mono">{tor.gesperrt.join(", ")}</span>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function Portal({ tenants }: { tenants: Tenant[] }) {
@@ -168,6 +240,7 @@ export default function Portal({ tenants }: { tenants: Tenant[] }) {
                 {agent.status?.zeit && ` · ${fmtTime(agent.status.zeit)}`}
               </span>
             )}
+            <TorStand tor={agent.status?.tor} />
           </div>
         </div>
       )}
@@ -207,6 +280,11 @@ export default function Portal({ tenants }: { tenants: Tenant[] }) {
                           </span>
                         ) : (
                           <span className="chip">{L("Automato", "Automato")}</span>
+                        )}
+                        {agent?.status?.tor?.an && agent.status.tor.gesperrt.includes(c.short_name) && (
+                          <span className="chip warn" title={L("Anmelde-Tor: kein Realm bzw. kein Client-Secret", "Sign-in gate: no realm or no client secret")}>
+                            {L("gesperrt", "locked")}
+                          </span>
                         )}
                       </td>
                       <td>

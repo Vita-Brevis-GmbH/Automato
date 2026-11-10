@@ -3544,7 +3544,14 @@ export interface PortalAgent {
   configured: boolean;
   writable: boolean;
   pending: boolean | null;
-  status: { ok: boolean; zeit?: string; meldung?: string; kunden?: string[] } | null;
+  status: {
+    ok: boolean;
+    zeit?: string;
+    meldung?: string;
+    kunden?: string[];
+    // Anmelde-Tor (1.4.0, ADR 0051): von front.sh sync gemeldet
+    tor?: { an: boolean; realms_bereit: string[]; realms_ohne_secret: string[]; gesperrt: string[]; haupt_realm: string };
+  } | null;
 }
 export interface PortalListing {
   customers: PortalCustomer[];

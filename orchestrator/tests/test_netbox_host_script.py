@@ -40,7 +40,7 @@ GIT = r"""
 echo "$PWD|git $*" >> "$NBH_LOG"
 if [ "$1" = clone ]; then
   dir="${@: -1}"
-  mkdir -p "$dir/env"
+  mkdir -p "$dir/env" "$dir/configuration"
   printf 'services:\n  netbox:\n    image: x\n' > "$dir/docker-compose.yml"
   printf 'DB_PASSWORD=J5brHrAXFLQSif0K\n' > "$dir/env/netbox.env"
 fi
@@ -155,6 +155,12 @@ def test_neu_schreibt_instanz_mit_eigenen_secrets(host):
     assert "kunde-a-nb.mgmt.example.ch {" in site and "reverse_proxy nb-kunde-a:8080" in site
     assert "NAME=Kunde\\ A" in (host.dir / "kunden" / "kunde-a" / "kunde.conf").read_text()
     assert "Admin 'admin' angelegt" in out.stdout
+    # 1.4.0: Anmeldung über das Anmelde-Tor – Benutzer und Rollen aus Kopfzeilen des Front-Proxys
+    sso = (nb / "configuration" / "zz_automato_sso.py").read_text()
+    assert 'REMOTE_AUTH_HEADER = "HTTP_X_AUTOMATO_USER"' in sso
+    assert 'REMOTE_AUTH_SUPERUSER_GROUPS = ["role:admin"]' in sso
+    assert "REMOTE_AUTH_AUTO_CREATE_GROUPS = False" in sso
+    assert "Anmeldung über den Realm" in out.stdout
     assert "git clone -q -c advice.detachedHead=false --depth 1 -b 5.0.2" in host.log.read_text()
 
     doppelt = host("neu", "kunde-a")
@@ -234,7 +240,8 @@ def test_token_legt_benutzer_fuer_automato_an(host):
     assert re.search(r"Lese-Token:\s+[0-9a-f]{40}", out.stdout)
     assert re.search(r"Schreib-Token:\s+[0-9a-f]{40}", out.stdout)
     shells = [z for z in host.log.read_text().splitlines() if "manage.py shell" in z]
-    assert len(shells) == 3  # Admin bei "neu", Lese-Benutzer, Sync-Benutzer (sync-user.sh)
+    # Admin und Gruppen der Anmeldung bei "neu", Lese-Benutzer, Sync-Benutzer (sync-user.sh)
+    assert len(shells) == 4
 
 
 def test_update_sichert_vorher_und_setzt_version(host, tmp_path):
@@ -272,3 +279,29 @@ def test_wiederherstellen_stoppt_netbox_und_spielt_ein(host, tmp_path):
     assert "psql -q -v ON_ERROR_STOP=1" in log
     assert log.index("stop netbox netbox-worker") < log.index("psql")
     assert "Medien eingespielt" in out.stdout
+
+
+def test_proxy_nimmt_anmelde_kopfzeilen_nur_vom_front_proxy(host):
+    caddy = (host.dir / "proxy" / "Caddyfile").read_text()
+    assert "@nicht_front not remote_ip {$FRONT:255.255.255.255/32}" in caddy
+    for kopf in ("X-Automato-User", "X-Automato-Realm", "X-Automato-Groups"):
+        assert f"request_header @nicht_front -{kopf}" in caddy
+
+
+def test_sso_richtet_ein_und_entfernt(host):
+    host("neu", "kunde-a")
+    datei = host.dir / "kunden" / "kunde-a" / "netbox" / "configuration" / "zz_automato_sso.py"
+    conf = host.dir / "host.conf"
+    conf.write_text(conf.read_text() + "SSO=aus\n")
+    out = host("sso", "kunde-a")
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert not datei.exists()  # aus: nur noch lokale Konten
+    conf.write_text(conf.read_text().replace("SSO=aus\n", "SSO=an\n"))
+    out = host("sso", "alle")
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert datei.exists() and "Anmeldung über den Realm" in out.stdout
+    log = host.log.read_text()
+    assert "restart netbox netbox-worker" in log  # neue Einstellungen erst nach dem Neustart
+    falsch = conf.read_text().replace("SSO=an\n", "SSO=vielleicht\n")
+    conf.write_text(falsch)
+    assert "SSO in host.conf" in host("sso", "alle").stderr

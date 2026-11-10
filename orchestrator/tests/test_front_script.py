@@ -6,6 +6,7 @@ Freischaltung erscheinen und dass Einstellungen nichts in den Caddyfile schleuse
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -23,9 +24,13 @@ DOCKER = r"""
 echo "docker $*" >> "$FRONT_LOG"
 case "$*" in
   "compose --profile core --profile proxy "*) ;;
+  "compose -p automato-tor "*) ;;
   compose*) echo 'service "proxy" depends on undefined service "web-ui"' >&2; exit 1 ;;
 esac
 case "$*" in
+  "compose -p automato-tor "*"ps --status running --services"*)
+    f=""; vor=""; for a in "$@"; do [ "$vor" = -f ] && f=$a; vor=$a; done
+    sed -n 's/^  \(tor-[^:]*\):$/\1/p' "$f" ;;
   *"ps --status running --services"*) echo proxy ;;
 esac
 exit 0
@@ -83,13 +88,14 @@ def front(tmp_path):
     for k in [k for k in env if k.startswith("AUTOMATO_FRONT_")]:
         del env[k]  # nur die Test-.env zählt
 
-    def run(*args: str, **extra: str) -> subprocess.CompletedProcess:
+    def run(*args: str, input: str | None = None, **extra: str) -> subprocess.CompletedProcess:  # noqa: A002
         return subprocess.run(  # noqa: S603 - Testskript des Repos
-            [shutil.which("bash") or "bash", str(SCRIPT), *args],
+            [shutil.which("bash") or "bash", str(SCRIPT), *args], input=input,
             capture_output=True, text=True, env={**env, **extra}, timeout=60, check=False,
         )  # fmt: skip
 
     run.gen = tmp_path / "front" / "generated"  # type: ignore[attr-defined]
+    run.dir = tmp_path / "front"  # type: ignore[attr-defined]
     run.env_file = env_file  # type: ignore[attr-defined]
     run.pki = pki  # type: ignore[attr-defined]
     run.log = tmp_path / "aufrufe.log"  # type: ignore[attr-defined]
@@ -105,12 +111,18 @@ def test_kunde_erzeugt_startseite_weiterleitung_und_portal(front):
     assert "@front_fremd not remote_ip 10.0.40.1/32 10.0.10.0/24" in snippets
     assert "@front_fremd not remote_ip 10.0.10.0/24\n" in snippets
     # interne Adressen nie über die WAF, auch wenn das Management-Netz sie einschliesst
-    assert "@front_waf remote_ip 10.0.40.1/32\n\trespond @front_waf" in snippets
+    assert "@front_waf remote_ip 10.0.40.1/32\n}" in snippets
+    assert 'respond @front_waf "Zugriff nur aus dem Management-Netz" 403' in snippets
+    # 1.4.0: die Sperre läuft zuerst (in route), Kopfzeilen der Anmeldung nie vom Absender
+    assert "(front-kunden-sperre) {\n\trespond @front_fremd" in snippets
+    assert "request_header -X-Automato-User" in snippets
     assert "tls /etc/caddy/pki/mgmt.crt /etc/caddy/pki/mgmt.key" in snippets
     assert "Content-Security-Policy \"default-src 'none'" in snippets
 
     site = (g / "sites" / "kunde-a.caddy").read_text()
     assert "kunde-a.mgmt.example.ch {" in site and "root * /srv/front/kunde-a" in site
+    assert "route {\n\t\timport front-kunden-sperre\n\t\troot * /srv/front/kunde-a" in site
+    assert "front-tor" not in site and "front-gesperrt" not in site  # Tor aus: wie bis 1.3
     assert "kunde-a-nb.mgmt.example.ch {" in site
     assert "reverse_proxy https://10.0.30.20 {" in site
     assert "header_up Host {host}" in site and "tls_server_name {host}" in site
@@ -126,9 +138,9 @@ def test_kunde_erzeugt_startseite_weiterleitung_und_portal(front):
     assert 'href="https://kunde-a.mgmt.example.ch"' in portal
     intern = (g / "sites" / "_intern.caddy").read_text()
     assert "start.mgmt.int.example.ch {" in intern and "import front-intern" in intern
-    # redir läuft vor respond: nur für erlaubte Adressen, nie über die WAF
-    assert "remote_ip 10.0.10.0/24\n\t\tnot remote_ip 10.0.40.1/32\n" in intern
-    assert "redir @front_portal https://start.mgmt.int.example.ch{uri} 302" in intern
+    # redir läuft sonst vor respond: in route erst die Sperre, dann die Weiterleitung
+    assert ("route {\n\t\timport front-intern-sperre\n"
+            "\t\tredir https://start.mgmt.int.example.ch{uri} 302") in intern  # fmt: skip
     unbekannt = (g / "sites" / "_unbekannt.caddy").read_text()
     assert "*.mgmt.example.ch {" in unbekannt and "*.mgmt.int.example.ch {" in unbekannt
     assert "exec -T proxy caddy reload" in front.log.read_text()
@@ -330,3 +342,139 @@ def test_agent_richtet_systemd_ein(front, tmp_path):
     assert service.rstrip().endswith("front.sh sync")
     assert "OnUnitActiveSec=10min" in (systemd / "automato-front-sync.timer").read_text()
     assert "enable --now automato-front-sync.path automato-front-sync.timer" in log.read_text()
+
+
+TOR_ENV = (
+    ENV
+    + """AUTOMATO_FRONT_TOR=an
+AUTOMATO_OIDC_ISSUER=https://login.example.ch/realms/vb
+AUTOMATO_OIDC_JWKS_URL=https://keycloak.int.example.ch/realms/vb/protocol/openid-connect/certs
+AUTOMATO_FRONT_MAGISTER=https://magister.int.example.ch
+"""
+)
+
+
+def test_tor_schuetzt_jede_adresse_und_sperrt_ohne_realm(front):
+    """1.4.0 (ADR 0051): je Realm ein Tor, Kunden ohne Realm bzw. ohne Client-Secret gesperrt."""
+    front.env_file.write_text(TOR_ENV)
+    assert front("kunde", "vb", "Vita", "--doc", "--um", "--realm", "vb").returncode == 0
+    out = front("kunde", "kunde-b", "Kunde B")
+    assert "ohne --realm gesperrt" in out.stdout
+    # ohne Client-Secret: gesperrt, die NetBox-API mit Token bleibt erreichbar
+    site = (front.gen / "sites" / "vb.caddy").read_text()
+    assert "import front-gesperrt" in site and "front-tor" not in site
+    assert "handle @front_nb_token" in site
+    out = front("tor", "vb", input="ein-client-secret-123\n")
+    assert out.returncode == 0, out.stdout + out.stderr
+    datei = front.dir / "tor" / "vb.env"
+    assert datei.stat().st_mode & 0o777 == 0o600
+    werte = datei.read_text()
+    assert "OAUTH2_PROXY_CLIENT_SECRET=ein-client-secret-123" in werte
+    assert re.search(r"^OAUTH2_PROXY_COOKIE_SECRET=[0-9a-f]{32}$", werte, re.M)
+    assert "ein-client-secret-123" not in out.stdout + out.stderr
+
+    site = (front.gen / "sites" / "vb.caddy").read_text()
+    dienst = re.search(r"import front-tor (tor-vb-[0-9a-f]{8})", site).group(1)
+    # Startseite, NetBox, Doku und Magister hinter dem Tor; Reihenfolge: Sperre, …, Tor, Ziel
+    assert site.count(f"import front-tor {dienst}") == 4
+    nb = site.split("vb-nb.mgmt.example.ch {")[1].split("\n}\n")[0]
+    assert nb.index("front-kunden-sperre") < nb.index("handle @front_nb_token {") < nb.index(
+        "redir /logout/ /oauth2/sign_out") < nb.index("import front-tor") < nb.index(
+        "import front-identitaet vb")  # fmt: skip
+    doc = site.split("vb-doc.mgmt.example.ch {")[1].split("\n}\n")[0]
+    assert doc.index("respond @internal 404") < doc.index("handle @front_api") < doc.index(
+        "import front-tor")  # fmt: skip
+    assert "import front-identitaet vb" in site.split("vb-um.mgmt.example.ch {")[1]
+    assert "Abmelden" in (front.gen / "www" / "vb" / "index.html").read_text()
+    gesperrt = (front.gen / "sites" / "kunde-b.caddy").read_text()
+    assert gesperrt.count("import front-gesperrt") == 2 and "front-tor" not in gesperrt
+
+    snippets = (front.gen / "snippets.caddy").read_text()
+    assert '"{http.request.header.X-Auth-Request-Preferred-Username}@{args[0]}"' in snippets
+    assert "copy_headers X-Auth-Request-User" in snippets
+
+    # Portal nur für admin/operator des Realms von Automato, eigener Container
+    intern = (front.gen / "sites" / "_intern.caddy").read_text()
+    assert "import front-tor tor-intern" in intern
+    compose = (front.gen / "tor" / "compose.yml").read_text()
+    assert f"  {dienst}:" in compose and "  tor-intern:" in compose
+    teil = compose.split("  tor-intern:")[1]
+    assert '"--allowed-role=admin"' in teil and '"--allowed-role=operator"' in teil
+    assert '"--allowed-role' not in compose.split("  tor-intern:")[0]
+    assert '"--oidc-issuer-url=https://login.example.ch/realms/vb"' in compose
+    assert ('"--redeem-url=https://keycloak.int.example.ch/realms/vb/protocol/openid-connect/token"'
+            in compose)  # fmt: skip
+    assert '"--code-challenge-method=S256"' in compose and '"--cookie-secure=true"' in compose
+    assert f'env_file: ["{datei}"]' in compose and "ein-client-secret" not in compose
+    assert "read_only: true" in compose and 'cap_drop: ["ALL"]' in compose
+    assert "name: automato-front-tor\n    external: true" in compose
+    log = front.log.read_text()
+    assert "compose -p automato-tor -f" in log and "up -d --remove-orphans" in log
+
+
+def test_tor_stand_und_pruefen(front):
+    front.env_file.write_text(TOR_ENV)
+    front("kunde", "vb", "Vita", "--realm", "vb")
+    front("kunde", "kunde-a", "Kunde A", "--realm", "kunde-a")
+    front("tor", "vb", input="ein-client-secret-123\n")
+    out = front("tor")
+    assert "Realm vb: Client-Secret hinterlegt" in out.stdout
+    assert "Realm kunde-a: Client-Secret fehlt" in out.stdout
+    assert "https://kunde-a-nb.mgmt.example.ch/oauth2/callback" in out.stdout
+    assert "https://start.mgmt.int.example.ch/oauth2/callback" in out.stdout
+    _zertifikat(front.pki, "mgmt", "DNS:*.mgmt.example.ch")
+    _zertifikat(front.pki, "mgmt-int", "DNS:mgmt.int.example.ch,DNS:*.mgmt.int.example.ch")
+    pr = front("pruefen", FRONT_CURL_CODE="302")
+    assert "Realm kunde-a: Client-Secret fehlt" in pr.stderr
+    assert "Anmelde-Tor läuft (2 Container)" in pr.stdout
+    assert "leitet zur Anmeldung" in pr.stdout
+
+
+@pytest.mark.parametrize("geheim", ["", "zu kurz", 'mit"anführung-1234'])
+def test_tor_nimmt_nur_gueltige_client_secrets(front, geheim):
+    front.env_file.write_text(TOR_ENV)
+    out = front("tor", "vb", input=geheim + "\n")
+    assert out.returncode != 0 and "nichts geändert" in out.stderr
+    assert not (front.dir / "tor" / "vb.env").exists()
+
+
+@pytest.mark.parametrize("realm", ["master", "a b", "-x", "x" * 65])
+def test_realm_wird_geprueft(front, realm):
+    front.env_file.write_text(TOR_ENV)
+    out = front("kunde", "kunde-a", "Kunde A", "--realm", realm)
+    assert out.returncode != 0 and "ungültig" in out.stderr
+
+
+def test_tor_braucht_keycloak(front):
+    front.env_file.write_text(ENV + "AUTOMATO_FRONT_TOR=an\n")
+    out = front("erzeugen")
+    assert out.returncode != 0 and "braucht Keycloak" in out.stderr
+
+
+def test_tor_aus_haelt_container_an(front):
+    front.env_file.write_text(TOR_ENV)
+    front("kunde", "vb", "Vita", "--realm", "vb")
+    front("tor", "vb", input="ein-client-secret-123\n")
+    assert (front.gen / "tor" / "compose.yml").exists()
+    front.env_file.write_text(ENV)  # Tor aus
+    out = front("erzeugen")
+    assert out.returncode == 0 and "nicht mehr benötigte Container angehalten" in out.stdout
+    assert not (front.gen / "tor" / "compose.yml").exists()
+    assert "down --remove-orphans" in front.log.read_text()
+    site = (front.gen / "sites" / "vb.caddy").read_text()
+    assert "front-tor" not in site and "front-gesperrt" not in site
+
+
+def test_sync_uebernimmt_realm(front):
+    front.env_file.write_text(TOR_ENV)
+    _soll(front, [{"kurzname": "vb", "name": "Vita", "realm": "vb", "links": []},
+                  {"kurzname": "kunde-b", "name": "B", "realm": "", "links": []}])  # fmt: skip
+    assert front("sync").returncode == 0
+    assert "REALM=vb" in (front.dir / "kunden" / "vb.conf").read_text()
+    status = _status(front)
+    assert status["tor"]["an"] and status["tor"]["realms_ohne_secret"] == ["vb"]
+    assert set(status["tor"]["gesperrt"]) == {"vb", "kunde-b"}
+    assert status["tor"]["haupt_realm"] == "vb"
+    _soll(front, [{"kurzname": "vb", "name": "Vita", "realm": "master", "links": []}])
+    out = front("sync")
+    assert out.returncode != 0 and "ungültig" in _status(front)["meldung"]

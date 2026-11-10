@@ -26,6 +26,12 @@
 	# Quell-IP erhalten ("userland-proxy": false)
 	@blocked not remote_ip {$ALLOW}
 	respond @blocked "Zugriff nur aus freigegebenen Netzen" 403
+	# Anmeldung über das Anmelde-Tor (1.4.0, ADR 0051): wer angemeldet ist, sagt nur der
+	# Front-Proxy (direkte Gegenstelle FRONT) – bei allen anderen Absendern weg
+	@nicht_front not remote_ip {$FRONT:255.255.255.255/32}
+	request_header @nicht_front -X-Automato-User
+	request_header @nicht_front -X-Automato-Realm
+	request_header @nicht_front -X-Automato-Groups
 }
 
 import /etc/caddy/sites/*.caddy

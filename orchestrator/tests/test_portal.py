@@ -56,9 +56,11 @@ def test_kunde_anlegen_schreibt_soll_stand(portal_client, session_factory, tmp_p
     soll = json.loads((tmp_path / "soll.json").read_text(encoding="utf-8"))
     assert soll["kunden"] == [{
         "kurzname": "kunde-a", "name": "Kunde A", "doc": True, "um": False, "cmdb": False,
+        "realm": "kunde-a",  # 1.4.0: das Anmelde-Tor fragt im Realm des Kunden (ADR 0051)
         "links": [{"title": "Handbuch", "url": "https://handbuch.example.ch", "text": "Doku"}],
     }]  # fmt: skip
-    assert "realm" not in json.dumps(soll)  # Realm und Mandant gehen nicht an den Host
+    # Mandant, Kunden und Rolle bleiben in Automato
+    assert "tenant" not in json.dumps(soll) and "customer_ids" not in json.dumps(soll)
 
     listing = portal_client.get("/portal/customers").json()
     assert listing["agent"]["configured"] and listing["agent"]["pending"] is True
