@@ -24,10 +24,16 @@ DOCKER = r"""
 echo "docker $*" >> "$FRONT_LOG"
 case "$*" in
   "compose --profile core --profile proxy "*) ;;
+  "compose --profile core --profile collectors "*) ;;
   "compose -p automato-tor "*) ;;
   compose*) echo 'service "proxy" depends on undefined service "web-ui"' >&2; exit 1 ;;
 esac
 case "$*" in
+  *"exec -T orchestrator getent hosts "*)
+    [ -z "${FRONT_GETENT_ORCH:-}" ] || echo "$FRONT_GETENT_ORCH  ${!#}"; exit 0 ;;
+  *"exec -T collector getent hosts "*)
+    [ -z "${FRONT_GETENT_COLL:-}" ] || echo "$FRONT_GETENT_COLL  ${!#}"; exit 0 ;;
+  *"exec -T proxy wget "*) [ "${FRONT_WGET_FAIL:-}" != 1 ] || exit 1; exit 0 ;;
   "compose -p automato-tor "*"ps --status running --services"*)
     f=""; vor=""; for a in "$@"; do [ "$vor" = -f ] && f=$a; vor=$a; done
     sed -n 's/^  \(tor-[^:]*\):$/\1/p' "$f" ;;
@@ -84,6 +90,8 @@ def front(tmp_path):
         "DOCKER": str(_stub(bin_dir / "docker", DOCKER)),
         "IPTABLES": str(_stub(bin_dir / "iptables", IPTABLES)),
         "CURL": str(curl),
+        # Host-Agent (1.5.0: pruefen fragt systemd) – Vorgabe: läuft
+        "SYSTEMCTL": str(_stub(bin_dir / "systemctl", 'exit "${FRONT_AGENT_RC:-0}"\n')),
     }
     for k in [k for k in env if k.startswith("AUTOMATO_FRONT_")]:
         del env[k]  # nur die Test-.env zählt
@@ -478,3 +486,105 @@ def test_sync_uebernimmt_realm(front):
     _soll(front, [{"kurzname": "vb", "name": "Vita", "realm": "master", "links": []}])
     out = front("sync")
     assert out.returncode != 0 and "ungültig" in _status(front)["meldung"]
+
+
+# --- Zugriff je Kunde (1.5.0) --------------------------------------------------------------------
+
+
+def test_zugriff_je_kunde_sperrt_alle_adressen_wie_unbekannt(front):
+    assert front("kunde", "vb", "VB", "--doc", "--zugriff", "intern").returncode == 0
+    nets = "203.0.113.0/24, 2001:db8::/48"
+    assert front("kunde", "kunde-a", "A", "--zugriff", nets).returncode == 0
+    assert front("kunde", "kunde-b", "B").returncode == 0
+
+    vb = (front.gen / "sites" / "vb.caddy").read_text()
+    # jede Adresse des Kunden: intern = Management-Netz, nie über die WAF
+    for adresse in ("vb", "vb-nb", "vb-doc"):
+        block = vb.split(f"{adresse}.mgmt.example.ch {{", 1)[1]
+        assert block.startswith(
+            "\n\timport front-kunden\n\t@front_kunde_fremd not remote_ip 10.0.10.0/24\n"
+            "\t@front_kunde_waf remote_ip 10.0.40.1/32\n"
+        )
+    sperre = (
+        "\t\timport front-kunden-sperre\n"
+        '\t\trespond @front_kunde_fremd "Unbekannte Adresse" 404\n'
+        '\t\trespond @front_kunde_waf "Unbekannte Adresse" 404\n'
+    )
+    assert vb.count(sperre) == 3
+    # auch die NetBox-API mit Token erst nach der Sperre
+    nb = vb.split("vb-nb.mgmt.example.ch {", 1)[1]
+    assert nb.index("respond @front_kunde_fremd") < nb.index("handle @front_nb_token {")
+
+    a = (front.gen / "sites" / "kunde-a.caddy").read_text()
+    # Netze nach der Adresse des Benutzers (über die WAF aus X-Forwarded-For)
+    assert "@front_kunde_fremd not client_ip 203.0.113.0/24 2001:db8::/48\n" in a
+    assert "@front_kunde_waf" not in a
+    assert "front_kunde" not in (front.gen / "sites" / "kunde-b.caddy").read_text()
+
+    liste = front("liste").stdout
+    assert re.search(r"^vb\s.*nur intern\s+Hand", liste, re.M)
+    assert re.search(r"^kunde-b\s.*überall\s+Hand", liste, re.M)
+
+
+@pytest.mark.parametrize(
+    "zugriff",
+    ["dead", "10.0.0.0/8; respond 200", "10.0.0.0/8 {", "vpn", "300.1.2"],
+)
+def test_zugriff_nimmt_nur_netze(front, zugriff):
+    out = front("kunde", "kunde-a", "A", "--zugriff", zugriff)
+    assert out.returncode != 0 and "ungültig" in out.stderr
+    assert not (front.dir / "kunden" / "kunde-a.conf").exists()
+
+
+def test_sync_uebernimmt_zugriff(front):
+    _soll(front, [
+        {"kurzname": "vb", "name": "VB", "realm": "vb", "zugriff": "intern", "netze": [],
+         "links": []},
+        {"kurzname": "kunde-a", "name": "A", "zugriff": "netze", "netze": ["203.0.113.0/24"],
+         "links": []},
+        {"kurzname": "kunde-c", "name": "C", "links": []},  # Oberfläche vor 1.5.0: überall
+    ])  # fmt: skip
+    assert front("sync").returncode == 0
+    conf = (front.dir / "kunden" / "vb.conf").read_text()
+    assert "ZUGRIFF=intern" in conf and "QUELLE=oberflaeche" in conf
+    assert "not client_ip 203.0.113.0/24" in (front.gen / "sites" / "kunde-a.caddy").read_text()
+    assert "ZUGRIFF=ueberall" in (front.dir / "kunden" / "kunde-c.conf").read_text()
+    liste = front("liste").stdout
+    assert re.search(r"^vb\s.*nur intern\s+Portal", liste, re.M)
+
+    _soll(front, [{"kurzname": "vb", "name": "VB", "zugriff": "netze", "netze": ["10.0.0.0/8 {"],
+                   "links": []}])  # fmt: skip
+    out = front("sync")
+    assert out.returncode != 0 and "ungültig" in _status(front)["meldung"]
+    assert "ZUGRIFF=intern" in (front.dir / "kunden" / "vb.conf").read_text()  # alter Stand bleibt
+
+
+def test_pruefen_host_agent_namen_und_keycloak(front):
+    _zertifikat(front.pki, "mgmt", "DNS:*.mgmt.example.ch")
+    _zertifikat(front.pki, "mgmt-int", "DNS:mgmt.int.example.ch,DNS:*.mgmt.int.example.ch")
+    front.env_file.write_text(TOR_ENV + 'AUTOMATO_FRONT_KUNDEN_ALLOW="0.0.0.0/0 ::/0"\n')
+    front("kunde", "vb", "VB", "--realm", "vb", "--zugriff", "intern")
+    front("tor", "vb", input="ein-client-secret-123\n")
+    out = front("pruefen", FRONT_CURL_CODE="404", FRONT_AGENT_RC="3", FRONT_WGET_FAIL="1",
+                FRONT_GETENT_ORCH="10.0.30.20", FRONT_GETENT_COLL="203.0.113.9")  # fmt: skip
+    text = out.stdout + out.stderr
+    # FortiGate-VIP: Kunden-Adressen aus jedem Netz, dann muss die Oberfläche intern bleiben
+    assert "AUTOMATO_UI_ALLOW leer" in text
+    assert "Änderungen im Kunden-Portal kommen nicht an" in text
+    assert "von Hand angelegt (nicht im Kunden-Portal): vb" in text
+    kc = "Keycloak https://keycloak.int.example.ch (Realm vb) vom Proxy aus nicht erreichbar"
+    assert kc in text
+    assert "Orchestrator → 10.0.30.20, zentraler Worker (collector) → 203.0.113.9" in text
+    gesperrt = "vb: Startseite antwortet (HTTP 404 – diese VM ausserhalb des Zugriffs: nur intern)"
+    assert gesperrt in text
+
+    front.env_file.write_text(
+        TOR_ENV + 'AUTOMATO_FRONT_KUNDEN_ALLOW="0.0.0.0/0 ::/0"\nAUTOMATO_UI_ALLOW=10.0.10.0/24\n'
+    )
+    gut = front("pruefen", FRONT_GETENT_ORCH="10.0.30.20",
+                FRONT_GETENT_COLL="10.0.30.20")  # fmt: skip
+    text = gut.stdout + gut.stderr
+    assert gut.returncode == 0, text
+    assert "AUTOMATO_UI_ALLOW leer" not in text and "zentraler Worker" not in text
+    assert "Keycloak für Realm vb vom Proxy aus erreichbar" in text
+    assert "läuft (automato-front-sync.path)" in text

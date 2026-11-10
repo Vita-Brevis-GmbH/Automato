@@ -815,7 +815,13 @@ AD per LDAPS als User Federation): eigener Realm, Anmeldung unter `https://<kurz
 - **Vertrauen:** die CA, die das Zertifikat der DCs ausgestellt hat (nicht die eigene Plattform-CA),
   als PEM nach `/opt/automato-keycloak/truststores/`, im Dienst `keycloak`
   `KC_TRUSTSTORE_PATHS: /opt/keycloak/conf/truststores` (ganzer Ordner, alle PEM-Dateien) und das
-  Volume `./truststores:/opt/keycloak/conf/truststores:ro`. Welche CA ausstellt:
+  Volume `./truststores:/opt/keycloak/conf/truststores:ro`. **`/opt/keycloak/conf/truststores` ist
+  der Pfad im Container** (auf dem Host gibt es ihn nicht – das Volume legt den Host-Ordner dort
+  hin). Dateien lesbar für den Container (`chmod 755` Ordner, `chmod 644` Dateien); übernehmen mit
+  `sudo docker compose up -d keycloak` (**nicht** `restart` – das liest die Compose-Datei nicht neu).
+  Kontrolle: `sudo docker compose exec keycloak ls -l /opt/keycloak/conf/truststores` und
+  `sudo docker compose logs keycloak | grep -i "truststore files"` (Keycloak nennt jede geladene
+  Datei). Welche CA ausstellt:
   `openssl s_client -connect <dc>:636 -showcerts </dev/null | grep -E "^ *[0-9]+ s:|^ *i:"`.
   Ist sie nur per LDAP veröffentlicht (AIA `ldap:///…`), unter Windows exportieren:
   `Get-ChildItem Cert:\LocalMachine\Root, Cert:\LocalMachine\CA | Where-Object Subject -like "*<CA-Name>*"`
@@ -823,6 +829,12 @@ AD per LDAPS als User Federation): eigener Realm, Anmeldung unter `https://<kurz
   `openssl s_client -connect <ip>:636 -CAfile ad-ca.pem -verify_hostname int.example.ch` →
   `Verify return code: 0 (ok)`; Code 21 = falsche CA, Code 62 = Name fehlt im Zertifikat (dann in
   der Connection URL die DC-Namen mit Leerzeichen getrennt: `ldaps://dc1.int.example.ch:636 ldaps://dc2…`).
+  Welche Namen das DC-Zertifikat enthält: `openssl s_client -connect <ip>:636 </dev/null 2>/dev/null
+  | openssl x509 -noout -subject -ext subjectAltName`. Mit der Vorlage „Kerberos-Authentifizierung“
+  ausgestellte DC-Zertifikate enthalten auch den Namen der Domäne – dann genügt `ldaps://int.example.ch:636`.
+  Ist ein `.cer` binär: `openssl x509 -inform DER -in ad-ca.cer -out ad-ca.pem`. Bleibt der Fehler
+  `SSLHandshakeFailed`, nach *Test connection* `sudo docker compose logs --since 5m keycloak | grep -i
+  -E "PKIX|subject alternative|handshake"` (PKIX = CA fehlt, subject alternative = Name).
 - **User federation → Add LDAP providers:** Vendor *Active Directory*, Connection URL
   `ldaps://int.example.ch:636`, StartTLS Off, *Use Truststore SPI* Always, Bind DN = Service-Konto
   nur lesen (`svc-keycloak-ldap@int.example.ch`), **Edit mode READ_ONLY**, Users DN der Benutzer-OU,
@@ -830,8 +842,17 @@ AD per LDAPS als User Federation): eigener Realm, Anmeldung unter `https://<kurz
   `person, organizationalPerson, user`, Filter auf die Gruppen und ohne deaktivierte Konten
   (`(&(|(memberOf=CN=G_admin,…)(memberOf=CN=G_operator,…))(!(userAccountControl:1.2.840.113556.1.4.803:=2)))`),
   Import On, periodische Synchronisation.
-- **Mapper `group-ldap-mapper`** (Groups DN der Gruppen-OU, Filter auf die Gruppen, READ_ONLY) →
-  *Sync LDAP groups*; in *Groups* den Gruppen die Realm-Rollen `admin` bzw. `operator` zuweisen.
+- **Mapper `group-ldap-mapper`** (*User federation → Anbieter → Mappers → Add mapper*): Groups DN =
+  OU der Gruppen, Group Name LDAP Attribute `cn`, Group Object Classes `group`, Membership LDAP
+  Attribute `member`, Membership Attribute Type `DN`, Groups LDAP Filter nur auf die Gruppen
+  (`(|(cn=G_admin)(cn=G_operator))`), Mode READ_ONLY → *Action → Sync LDAP groups to Keycloak*; in
+  *Groups* den Gruppen die Realm-Rollen `admin` bzw. `operator` zuweisen (*Role mapping*). Prüfen:
+  *Users* → AD-Benutzer → *Role mapping*, *Hide inherited roles* aus.
+- **Mandanten für Operatoren** (Realm ist zugleich der von Automato): `admin` sieht alle Mandanten,
+  `operator`/`viewer` brauchen `tenant_ids`. Statt je Benutzer an der Gruppe: *Groups →
+  G_operator → Attributes* `tenant_ids` = `1` (mehrere `1,2`) – Keycloak nimmt das Attribut der
+  Gruppe ins Token, wenn der Benutzer selbst keins hat. Die ID zeigt Automato unter *Administration
+  → Mandanten*. `tenant_ids` im *User profile* nur für Admin bearbeitbar (Schritt 9a).
 - **Test:** `https://auth.example.ch/realms/<realm>/account` mit AD-Benutzer und -Passwort.
 
 ### 13c. Anmelde-Tor: Client `automato-front` (1.4.0, ADR 0051)
@@ -845,7 +866,10 @@ Vor Startseite und Werkzeugen fragt der Front-Proxy die Anmeldung im Realm des K
   *Standard flow* an, *Direct access grants* aus; *Valid redirect URIs* = je Adresse
   `https://<adresse>/oauth2/callback` (Startseite, `-nb`, `-doc`, `-um`, `-cmdb`, im Realm von
   Automato zusätzlich `https://start.<interne Domain>/oauth2/callback`); *Advanced → PKCE Method* S256.
-  `sudo deploy/front/front.sh tor` zeigt die Adressen je Realm.
+  `sudo deploy/front/front.sh tor` zeigt die Adressen je Realm. Dazu (1.5.0, von oauth2-proxy für
+  Keycloak empfohlen) *Client scopes → automato-front-dedicated → Configure a new mapper →
+  Audience*: Name `aud-automato-front`, Included Client Audience `automato-front`, *Add to ID token*
+  und *Add to access token* an. Neue Realms aus `make_realm.py` haben ihn schon.
 - *Credentials → Client secret* kopieren und nur auf der Automato-VM eingeben:
   `sudo deploy/front/front.sh tor <realm>` (Eingabe unsichtbar) – nie in Chat, Ticket oder Datei.
 - Rollen: die Realm-Rollen `admin` und `operator` (AD-Gruppen über den Gruppen-Mapper, 13b) gelten

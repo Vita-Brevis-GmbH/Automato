@@ -3534,11 +3534,15 @@ export interface PortalCustomer {
   tenant_id: number | null;
   customer_ids: number[];
   default_role: string;
+  // Zugriff je Kunde (1.5.0): überall, nur intern (Management-Netz) oder nur aus access_nets
+  access: PortalAccess;
+  access_nets: string[];
   addresses: Record<string, string>; // start, netbox, doc, um, cmdb (mit Domain)
   updated_by: string | null;
   updated_at: string | null;
   note?: string | null; // Hinweis, wenn der Soll-Stand nicht geschrieben wurde
 }
+export type PortalAccess = "ueberall" | "intern" | "netze";
 export type PortalCustomerIn = Omit<PortalCustomer, "id" | "addresses" | "updated_by" | "updated_at" | "note">;
 export interface PortalAgent {
   configured: boolean;

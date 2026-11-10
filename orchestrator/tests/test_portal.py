@@ -57,6 +57,7 @@ def test_kunde_anlegen_schreibt_soll_stand(portal_client, session_factory, tmp_p
     assert soll["kunden"] == [{
         "kurzname": "kunde-a", "name": "Kunde A", "doc": True, "um": False, "cmdb": False,
         "realm": "kunde-a",  # 1.4.0: das Anmelde-Tor fragt im Realm des Kunden (ADR 0051)
+        "zugriff": "ueberall", "netze": [],  # 1.5.0: Vorgabe wie bisher
         "links": [{"title": "Handbuch", "url": "https://handbuch.example.ch", "text": "Doku"}],
     }]  # fmt: skip
     # Mandant, Kunden und Rolle bleiben in Automato
@@ -84,6 +85,10 @@ def test_kunde_anlegen_schreibt_soll_stand(portal_client, session_factory, tmp_p
         ({"links": [{"title": "x", "url": "http://a.example.ch"}]}, 422, "https://"),
         ({"name": "A\tB"}, 422, "Tabulator"),
         ({"default_role": "admin"}, 422, "Rolle"),
+        ({"access": "vpn"}, 422, "Zugriff"),
+        ({"access": "netze"}, 422, "mindestens ein Netz"),
+        ({"access": "netze", "access_nets": ["10.0.0.0/33"]}, 422, "ungültig"),
+        ({"access": "netze", "access_nets": ["kunde.example.ch"]}, 422, "ungültig"),
     ],
 )
 def test_angaben_werden_geprueft(portal_client, data, status, text):
@@ -124,6 +129,48 @@ def test_kurzname_und_realm_eindeutig_aendern_entfernen(portal_client, tmp_path)
     assert portal_client.delete(f"/portal/customers/{pid}").status_code == 200
     soll = json.loads((tmp_path / "soll.json").read_text(encoding="utf-8"))
     assert [k["kurzname"] for k in soll["kunden"]] == ["b"]
+
+
+def test_zugriff_je_kunde_im_soll_stand(portal_client, tmp_path):
+    """1.5.0: von wo die Adressen eines Kunden erreichbar sind - geht an den Host-Agenten."""
+    r = portal_client.post("/portal/customers", json={
+        "short_name": "vb", "name": "VB", "access": "netze",
+        "access_nets": [" 203.0.113.7 ", "2001:db8::/48", "203.0.113.7/32", ""],
+    })  # fmt: skip
+    assert r.status_code == 201, r.text
+    assert r.json()["access"] == "netze"
+    assert r.json()["access_nets"] == ["203.0.113.7/32", "2001:db8::/48"]  # normalisiert, einmal
+    pid = r.json()["id"]
+    r = portal_client.put(f"/portal/customers/{pid}", json={
+        "short_name": "vb", "name": "VB", "access": "intern", "access_nets": ["10.0.0.0/8"],
+    })  # fmt: skip
+    assert r.status_code == 200 and r.json()["access_nets"] == []  # nur bei "netze"
+    soll = json.loads((tmp_path / "soll.json").read_text(encoding="utf-8"))
+    assert soll["kunden"][0]["zugriff"] == "intern" and soll["kunden"][0]["netze"] == []
+
+
+def test_soll_stand_beim_start_nur_bei_neuem_inhalt(session_factory, tmp_path):
+    """1.5.0: nach einem Update (z. B. 1.3.0 -> 1.4.0, neues Feld Realm) schreibt der Start den
+    Soll-Stand neu - sonst bliebe der alte liegen, bis jemand im Portal speichert."""
+    from app.store import portal
+
+    with session_factory() as s:
+        # nie eingerichtet, keine Kunden: nichts anlegen
+        assert portal.write_desired(s, str(tmp_path), only_if_changed=True) is None
+        assert not (tmp_path / "soll.json").exists()
+        s.add(PortalCustomer(short_name="vb", name="VB", links=[], customer_ids=[], realm="vb"))
+        s.commit()
+        alt = {"version": 1, "erzeugt": "2026-11-01T00:00:00+00:00",
+               "kunden": [{"kurzname": "vb", "name": "VB", "doc": False, "um": False,
+                           "cmdb": False, "links": []}]}  # fmt: skip
+        (tmp_path / "soll.json").write_text(json.dumps(alt))
+        assert portal.write_desired(s, str(tmp_path), only_if_changed=True)
+        neu = json.loads((tmp_path / "soll.json").read_text(encoding="utf-8"))
+        assert neu["kunden"][0]["realm"] == "vb" and neu["kunden"][0]["zugriff"] == "ueberall"
+        # gleicher Inhalt (nur anderer Zeitstempel): Datei bleibt, der Agent rechnet nicht neu
+        vorher = (tmp_path / "soll.json").read_bytes()
+        assert portal.write_desired(s, str(tmp_path), only_if_changed=True) is None
+        assert (tmp_path / "soll.json").read_bytes() == vorher
 
 
 def test_nur_admin(portal_client):

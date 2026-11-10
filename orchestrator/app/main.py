@@ -44,6 +44,7 @@ from app.db import get_sessionmaker
 from app.i18n import middleware as i18n_middleware
 from app.secrets import resolve_settings
 from app.store import customer_alias, version_refresh
+from app.store import portal as portal_store
 
 log = logging.getLogger(__name__)
 
@@ -58,6 +59,15 @@ def _lifespan(settings: Settings):
             netbox_sync.abort_interrupted(get_sessionmaker())
         except Exception:  # noqa: BLE001 - z. B. Datenbank noch nicht migriert: Start geht vor
             log.exception("Haengende NetBox-Syncs nicht bereinigt")
+        # Soll-Stand des Front-Proxys nach einem Update nachfuehren (1.5.0): neue Felder (1.4.0
+        # Realm, 1.5.0 Zugriff) erreichen den Host-Agenten sonst erst beim naechsten Speichern
+        if settings.front_state_dir:
+            try:
+                with get_sessionmaker()() as session:
+                    if portal_store.write_desired(session, settings.front_state_dir, True):
+                        log.info("Soll-Stand des Front-Proxys nachgefuehrt")
+            except Exception:  # noqa: BLE001 - Ordner fehlt/nicht beschreibbar: Start geht vor
+                log.warning("Soll-Stand des Front-Proxys nicht geschrieben", exc_info=True)
         if settings.scheduler_enabled:  # zeitgesteuerte Laeufe je Quellsystem
             stop = scheduler.start(
                 get_sessionmaker(),

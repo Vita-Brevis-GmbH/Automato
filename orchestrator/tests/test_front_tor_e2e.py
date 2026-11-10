@@ -266,6 +266,8 @@ def tor(tmp_path_factory):  # noqa: C901 - ein Aufbau, Schritt für Schritt
     front("kunde", "vb", "Eigene Firma", "--doc", "--um", "--realm", "vb")
     front("kunde", "kunde-a", "Kunde A", "--realm", "kunde-a")
     front("kunde", "kunde-b", "Kunde B")  # ohne Realm: gesperrt
+    # 1.5.0: nur aus bestimmten Netzen (der Test-Client gehört nicht dazu)
+    front("kunde", "kunde-c", "Kunde C", "--realm", "kunde-a", "--zugriff", "203.0.113.0/24")
     for realm, geheim in SECRETS.items():
         front("tor", realm, eingabe=geheim + "\n")
     gen = d / "front" / "generated"
@@ -404,6 +406,20 @@ def test_kunde_ohne_realm_gesperrt_api_mit_token_bleibt(tor):
         assert c.get("https://kunde-b-nb.mgmt.example.ch/dcim/").status_code == 403
         r = c.get("https://kunde-b-nb.mgmt.example.ch/api/x", headers={"Authorization": "Token t"})
         assert r.status_code == 200 and "auth=Token t" in r.text
+
+
+def test_zugriff_nur_aus_netzen_wie_unbekannt(tor):
+    """1.5.0: wer nicht aus den Netzen des Kunden kommt, sieht weder Anmeldung noch Werkzeug -
+    alle Adressen antworten wie ein Name, den es nicht gibt (auch die NetBox-API mit Token)."""
+    with _browser() as c:
+        unbekannt = c.get("https://gibt-es-nicht.mgmt.example.ch/")
+        assert unbekannt.status_code == 404 and "Unbekannte Adresse" in unbekannt.text
+        for adresse in ("https://kunde-c.mgmt.example.ch/", "https://kunde-c-nb.mgmt.example.ch/",
+                        "https://kunde-c.mgmt.example.ch/oauth2/start"):  # fmt: skip
+            r = c.get(adresse)
+            assert (r.status_code, r.text) == (404, unbekannt.text), adresse
+        r = c.get("https://kunde-c-nb.mgmt.example.ch/api/x", headers={"Authorization": "Token t"})
+        assert r.status_code == 404
 
 
 def test_eigener_realm_je_kunde(tor):

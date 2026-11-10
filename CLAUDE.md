@@ -46,7 +46,7 @@ und wird erweitert. Details: `README.md`, `ARCHITECTURE.md`, `docs/adr/`.
 
 - **Abnahme:** Der Anwender testet jede freigegebene Version sofort. Eine Version gilt als
   abgenommen, sobald seine nächste Rückmeldung keinen Einwand dazu enthält – in `ROADMAP.md`
-  („Abgenommen“) nachführen. Abgenommen bis **1.1.0** (2026-11-09).
+  („Abgenommen“) nachführen. Abgenommen bis **1.4.0** (2026-11-10).
 - **Klärung vor dem Bauen:** ändert sich Bedienung oder Bedeutung und ist der Wunsch mehrdeutig,
   zuerst 3–5 Zeilen Vorschlag mit einer Rückfrage, dann bauen.
 - **Sammeln:** Anpassungen einer Rückmeldungsrunde in **einer** Version (Patch = Korrektur,
@@ -104,11 +104,12 @@ und wird erweitert. Details: `README.md`, `ARCHITECTURE.md`, `docs/adr/`.
   Ziel); Kopfzeilen der Anmeldung (`X-Automato-*`, `X-Auth-Request-*`) setzt nur das Tor, vom
   Absender immer entfernen; ohne Realm gesperrt; Client-Secrets nur auf der VM (`front.sh tor`),
   nie in Oberfläche, Datenbank oder Repo. Änderungen am Tor mit `test_front_tor_e2e.py` prüfen.
+  Zugriff je Kunde (1.5.0) steht vor dem Tor; gesperrt antwortet wie eine unbekannte Adresse.
 - Entscheide als ADR in `docs/adr/`, Risiken in `docs/RISKS.md`, Bedienung in `docs/BETRIEB.md`.
 
 ## Aktueller Stand
 
-1.4.0 – Anmelde-Tor im Front-Proxy, eine Anmeldung je Realm, NetBox über den Realm (ADR 0051); 1.3.0 Kunden-Portal mit Host-Agent und Realm je Kunde (ADR 0050), Front-Proxy auf der Automato-VM, NetBox-Host als Backend (ADR 0044 Nachtrag); **Version 1 abgeschlossen**
+1.5.0 – Zugriff je Kunde (überall, intern, Netze) und Korrekturen aus der Einrichtung; 1.4.0 Anmelde-Tor im Front-Proxy, eine Anmeldung je Realm, NetBox über den Realm (ADR 0051); 1.3.0 Kunden-Portal mit Host-Agent und Realm je Kunde (ADR 0050), Front-Proxy auf der Automato-VM, NetBox-Host als Backend (ADR 0044 Nachtrag); **Version 1 abgeschlossen**
 mit 1.0.0 (Produktivschaltung DC, R14). Einzelheiten je Bereich in
 `docs/STAND.md`, Produktiv-Installation in `docs/INSTALLATION-PROD.md`, NetBox je Kunde in
 `docs/INSTALLATION-NETBOX-HOST.md`, Front-Proxy in `docs/INSTALLATION-FRONT.md`. Bekannte Einschränkungen von 1.0.0 und nächste Arbeiten in

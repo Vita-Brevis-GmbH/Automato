@@ -38,6 +38,10 @@ def test_kunden_realm_mit_anmelde_tor():
         for w in ("", "-nb", "-doc", "-um", "-cmdb")
     ] + ["https://start.mgmt.int.example.ch/oauth2/callback"]
     assert "secret" not in tor and tor["webOrigins"] == []
+    # 1.5.0: wie von oauth2-proxy für Keycloak empfohlen - der Client steht in der Audience
+    aud = {m["name"]: m["config"] for m in tor["protocolMappers"]}["aud-automato-front"]
+    assert aud["included.client.audience"] == "automato-front"
+    assert aud["access.token.claim"] == "true" and aud["id.token.claim"] == "true"
     # die Vorlage selbst bleibt unverändert
     assert _clients(VORLAGE)["automato-front"]["redirectUris"] == []
 

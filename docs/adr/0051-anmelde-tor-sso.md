@@ -66,3 +66,19 @@ ADR 0044 Nachtrag (Front-Proxy).
   oauth2-proxy gegen einen Test-Keycloak.
 - Offen: Mitarbeitende auf Kunden-Adressen ohne Konto im Kunden-Realm – über einen Identity
   Provider „Mit eigener Firma anmelden“ im Kunden-Realm (Keycloak-Brokering), nach Bedarf.
+
+## Nachtrag 1.5.0 (2026-11-10): Zugriff je Kunde
+
+Anwender: „Kann ich eventuell noch einstellen, von wo ich die einzelnen Kunden drauf zugreifen
+können? Bei VB wäre es am liebsten nur von intern möglich, andere ‚zahlende‘ Kunden von extern“;
+auf den Vorschlag „Drei Stufen“ und „Zusammen als 1.5.0“.
+
+- Je Kunde **überall** (Vorgabe, wie bisher), **nur intern** (Management-Netz nach der Adresse der
+  Gegenstelle, nie über die WAF – wie das Portal) oder **nur aus diesen Netzen** (Adresse des
+  Benutzers: über die WAF aus `X-Forwarded-For`, nur der WAF geglaubt; sonst die Gegenstelle).
+- Die Sperre steht in `route` direkt nach der Sperre nach Absender – vor den Ausnahmen (NetBox-API
+  mit Token) und vor dem Tor. Gesperrt antwortet wie eine unbekannte Adresse (404 „Unbekannte
+  Adresse“), damit die Antwort nicht verrät, dass es den Kunden gibt.
+- Hinter einer FortiGate mit VIP (Adresse des Besuchers statt WAF) gilt für die Kunden-Adressen
+  `AUTOMATO_FRONT_KUNDEN_ALLOW="0.0.0.0/0 ::/0"`; die Oberfläche bleibt über `AUTOMATO_UI_ALLOW`
+  intern, interne Adressen prüft der Proxy weiter nach Absender.

@@ -5,6 +5,7 @@ import {
   deletePortalCustomer,
   fetchCustomers,
   fetchPortal,
+  PortalAccess,
   PortalCustomer,
   PortalCustomerIn,
   PortalLink,
@@ -38,7 +39,16 @@ const EMPTY: PortalCustomerIn = {
   tenant_id: null,
   customer_ids: [],
   default_role: "viewer",
+  access: "ueberall",
+  access_nets: [],
 };
+
+// Zugriff je Kunde (1.5.0): Text in der Liste
+function accessText(c: PortalCustomer): string {
+  if (c.access === "intern") return L("nur intern", "internal only");
+  if (c.access === "netze") return L(`nur ${c.access_nets.join(", ")}`, `only ${c.access_nets.join(", ")}`);
+  return L("überall", "everywhere");
+}
 
 function tools(c: PortalCustomer): string {
   return ["NetBox", c.doc && "Doku", c.um && "UM", c.cmdb && "CMDB"].filter(Boolean).join(", ");
@@ -281,6 +291,11 @@ export default function Portal({ tenants }: { tenants: Tenant[] }) {
                         ) : (
                           <span className="chip">{L("Automato", "Automato")}</span>
                         )}
+                        {c.access && c.access !== "ueberall" && (
+                          <span className="chip local" title={L("Zugriff auf alle Adressen des Kunden", "Access to all addresses of the customer")}>
+                            {accessText(c)}
+                          </span>
+                        )}
                         {agent?.status?.tor?.an && agent.status.tor.gesperrt.includes(c.short_name) && (
                           <span className="chip warn" title={L("Anmelde-Tor: kein Realm bzw. kein Client-Secret", "Sign-in gate: no realm or no client secret")}>
                             {L("gesperrt", "locked")}
@@ -377,12 +392,15 @@ function PortalEditor({
           tenant_id: existing.tenant_id,
           customer_ids: [...existing.customer_ids],
           default_role: existing.default_role,
+          access: existing.access ?? "ueberall",
+          access_nets: [...(existing.access_nets ?? [])],
         }
-      : { ...EMPTY, links: [], customer_ids: [] },
+      : { ...EMPTY, links: [], customer_ids: [], access_nets: [] },
   );
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<unknown>(null);
+  const [netsText, setNetsText] = useState(() => (existing?.access_nets ?? []).join("\n"));
   const set = (patch: Partial<PortalCustomerIn>) => setF((old) => ({ ...old, ...patch }));
 
   useEffect(() => {
@@ -401,7 +419,9 @@ function PortalEditor({
   const save = async () => {
     setBusy(true);
     setErr(null);
-    const body = { ...f, short_name: f.short_name.trim(), name: f.name.trim(), realm: f.realm?.trim() || null };
+    // Netze: je Zeile bzw. mit Komma/Leerzeichen getrennt; nur bei „nur aus diesen Netzen“
+    const nets = f.access === "netze" ? netsText.split(/[\s,;]+/).map((n) => n.trim()).filter(Boolean) : [];
+    const body = { ...f, short_name: f.short_name.trim(), name: f.name.trim(), realm: f.realm?.trim() || null, access_nets: nets };
     try {
       const r = existing ? await updatePortalCustomer(existing.id, body) : await createPortalCustomer(body);
       onSaved(r.note ?? null);
@@ -462,6 +482,31 @@ function PortalEditor({
         <label className="check">
           <input type="checkbox" checked={f.cmdb} onChange={(e) => set({ cmdb: e.target.checked })} /> CMDB (-cmdb)
         </label>
+      </div>
+
+      <div className="field">
+        <label htmlFor="pc-access">{L("Zugriff (von wo die Adressen erreichbar sind)", "Access (where the addresses can be reached from)")}</label>
+        <select id="pc-access" className="input" value={f.access} onChange={(e) => set({ access: e.target.value as PortalAccess })}>
+          <option value="ueberall">{L("Überall – aus dem Internet (über WAF bzw. FortiGate)", "Everywhere – from the internet (via WAF or FortiGate)")}</option>
+          <option value="intern">{L("Nur intern – nur aus dem Management-Netz", "Internal only – only from the management network")}</option>
+          <option value="netze">{L("Nur aus diesen Netzen", "Only from these networks")}</option>
+        </select>
+        {f.access === "netze" && (
+          <textarea
+            id="pc-access-nets"
+            className="input mono"
+            rows={3}
+            value={netsText}
+            placeholder={L("z. B. 203.0.113.0/24 (je Zeile ein Netz oder eine Adresse)", "e.g. 203.0.113.0/24 (one network or address per line)")}
+            onChange={(e) => setNetsText(e.target.value)}
+          />
+        )}
+        <div className="hint">
+          {L(
+            "Gilt für Startseite und alle Werkzeuge des Kunden, auch vor der Anmeldung und für die NetBox-API. Von anderswo sieht man nur „Unbekannte Adresse“ – wie bei einem Namen, den es nicht gibt.",
+            "Applies to the start page and all tools of the customer, also before sign-in and for the NetBox API. From elsewhere one only sees “Unknown address” – as for a name that does not exist.",
+          )}
+        </div>
       </div>
 
       <h3 style={{ marginTop: 12 }}>{L("Anmeldung", "Sign-in")}</h3>
