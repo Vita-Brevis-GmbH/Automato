@@ -90,6 +90,8 @@ def test_kunde_erzeugt_startseite_weiterleitung_und_portal(front):
     # Kunden-Adressen: WAF + Management-Netz; intern nur das Management-Netz
     assert "@front_fremd not remote_ip 10.0.40.1/32 10.0.10.0/24" in snippets
     assert "@front_fremd not remote_ip 10.0.10.0/24\n" in snippets
+    # interne Adressen nie über die WAF, auch wenn das Management-Netz sie einschliesst
+    assert "@front_waf remote_ip 10.0.40.1/32\n\trespond @front_waf" in snippets
     assert "tls /etc/caddy/pki/mgmt.crt /etc/caddy/pki/mgmt.key" in snippets
     assert "Content-Security-Policy \"default-src 'none'" in snippets
 
@@ -110,7 +112,9 @@ def test_kunde_erzeugt_startseite_weiterleitung_und_portal(front):
     assert 'href="https://kunde-a.mgmt.example.ch"' in portal
     intern = (g / "sites" / "_intern.caddy").read_text()
     assert "start.mgmt.int.example.ch {" in intern and "import front-intern" in intern
-    assert "redir https://start.mgmt.int.example.ch{uri} 302" in intern
+    # redir läuft vor respond: nur für erlaubte Adressen, nie über die WAF
+    assert "remote_ip 10.0.10.0/24\n\t\tnot remote_ip 10.0.40.1/32\n" in intern
+    assert "redir @front_portal https://start.mgmt.int.example.ch{uri} 302" in intern
     unbekannt = (g / "sites" / "_unbekannt.caddy").read_text()
     assert "*.mgmt.example.ch {" in unbekannt and "*.mgmt.int.example.ch {" in unbekannt
     assert "exec -T proxy caddy reload" in front.log.read_text()

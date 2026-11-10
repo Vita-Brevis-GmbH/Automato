@@ -12,7 +12,8 @@
 #   start.<intern>          Portal mit allen Kunden (nur Management-Netz)
 #   <intern>                Verwaltung (Cockpit, Version 2) – bis dahin Weiterleitung aufs Portal
 # Kunden-Adressen nur von der WAF und aus dem Management-Netz (AUTOMATO_FRONT_KUNDEN_ALLOW), der
-# Angabe X-Forwarded-For wird nur von der WAF geglaubt; interne Adressen nur aus dem Management-Netz.
+# Angabe X-Forwarded-For wird nur von der WAF geglaubt; interne Adressen nur aus dem Management-Netz
+# und nie über die WAF.
 #
 # Verwendung (im Repo-Ordner, mit sudo):
 #   front.sh kunde <kunde> "<Anzeigename>" [--doc] [--um] [--cmdb]   anlegen bzw. ändern
@@ -179,6 +180,10 @@ kacheln() {  # Kacheln der Startseite eines Kunden (Titel\tURL\tBeschreibung)
 
 # --- Caddy ---------------------------------------------------------------------------------------
 schreibe_snippets() {
+  # Interne Adressen nie über die WAF – auch wenn das Management-Netz die WAF einschliesst (sonst
+  # käme ein Kunde mit gesetztem Host-Kopf über die WAF aufs Portal)
+  local ohne_waf=""
+  [ -z "$WAF" ] || ohne_waf=$'\n\t'"@front_waf remote_ip $WAF"$'\n\t''respond @front_waf "Zugriff nur aus dem Management-Netz" 403'
   cat <<EOF
 # Erzeugt von deploy/front/front.sh – nicht von Hand ändern (front.sh erzeugen)
 # Kunden-Adressen: Zertifikat für *.$DOMAIN, nur WAF und Management-Netz
@@ -212,7 +217,7 @@ schreibe_snippets() {
 		-Server
 	}
 	@front_fremd not remote_ip $MGMT
-	respond @front_fremd "Zugriff nur aus dem Management-Netz" 403
+	respond @front_fremd "Zugriff nur aus dem Management-Netz" 403$ohne_waf
 }
 
 # Statische Seite: nichts nachladen, nichts einbetten
@@ -313,6 +318,8 @@ cmd_erzeugen() {
         printf '%s\thttps://%s.%s\t%s\n' "$name" "$k" "$DOMAIN" "$(werkzeuge "$k")"
       done
     } | seite "Kunden" "Portal · alle Kunden" >"$www/_portal/index.html"
+    local erlaubt="remote_ip $MGMT"
+    [ -z "$WAF" ] || erlaubt+=$'\n\t\t'"not remote_ip $WAF"
     cat >"$g/sites/_intern.caddy" <<EOF
 # Interne Adressen (front.sh) – nicht von Hand ändern
 start.$INTERN {
@@ -321,10 +328,14 @@ start.$INTERN {
 	import front-seite
 }
 
-# Verwaltung (Cockpit, Version 2) – bis dahin das Portal
+# Verwaltung (Cockpit, Version 2) – bis dahin das Portal; redir läuft vor respond, darum nur für
+# erlaubte Adressen (sonst gilt die Sperre aus front-intern)
 $INTERN {
 	import front-intern
-	redir https://start.$INTERN{uri} 302
+	@front_portal {
+		$erlaubt
+	}
+	redir @front_portal https://start.$INTERN{uri} 302
 }
 EOF
   else
@@ -444,7 +455,7 @@ cmd_pruefen() {
   titel "Einstellungen"
   ok "Kunden-Adressen *.$DOMAIN nur aus: $KUNDEN_ALLOW"
   [ -n "$WAF" ] && ok "WAF: $WAF (X-Forwarded-For wird übernommen)" || warn "AUTOMATO_FRONT_WAF leer – Adresse der Benutzer unbekannt"
-  [ -n "$INTERN" ] && ok "Intern start.$INTERN und $INTERN nur aus: $MGMT" || warn "AUTOMATO_FRONT_DOMAIN_INT leer – kein Portal"
+  [ -n "$INTERN" ] && ok "Intern start.$INTERN und $INTERN nur aus: $MGMT${WAF:+ (nie über die WAF)}" || warn "AUTOMATO_FRONT_DOMAIN_INT leer – kein Portal"
   [ -n "$NETBOX" ] && ok "NetBox-Host: $NETBOX" || warn "AUTOMATO_FRONT_NETBOX leer – keine Weiterleitung zur NetBox"
   [ -n "$MAGISTER" ] && ok "Magister: $MAGISTER" || info "Magister (-um) aus"
   [ -n "$CMDB" ] && ok "CMDB: $CMDB" || info "CMDB (-cmdb) aus"
@@ -493,5 +504,5 @@ case "${1:-}" in
   liste) cmd_liste ;;
   erzeugen) root_noetig; cmd_erzeugen ;;
   pruefen) cmd_pruefen ;;
-  *) sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+  *) sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

@@ -18,7 +18,8 @@ Management-Netz ──▶ Automato-VM :443 direkt
 
 - **Kunden-Adressen** nur von der **WAF** (und zum Testen aus dem Management-Netz); der Angabe
   `X-Forwarded-For` wird nur von der WAF geglaubt. **Interne Adressen** nur aus dem
-  Management-Netz. Unbekannte Namen unter beiden Domains: 404.
+  Management-Netz und **nie über die WAF** – auch wenn das Management-Netz die WAF einschliesst.
+  Unbekannte Namen unter beiden Domains: 404.
 - Startseiten und Portal sind statisch, ohne Skripte (Content-Security-Policy `default-src 'none'`).
 - Die Adresse der Oberfläche von Automato (`AUTOMATO_UI_HOST`, z. B. `automato.int.example.ch`)
   bleibt, wie sie ist.

@@ -23,7 +23,8 @@ internen Adressen gehen direkt auf die VM; Magister (`-um`) wird später umgebau
   `entfernen`, `liste`, `erzeugen`, `pruefen` (Zertifikate mit Schlüssel, Namen und Ablauf, Proxy,
   je Kunde Startseite und Weg zur NetBox). Zeigt bei `--doc` die nötigen Einträge in Keycloak.
 - **Abgesichert:** Kunden-Adressen nur von der WAF und aus dem Management-Netz, interne nur aus dem
-  Management-Netz; `X-Forwarded-For` nur von der WAF (`trusted_proxies`); Freigaben nie leer;
+  Management-Netz und nie über die WAF (auch wenn das Management-Netz die WAF einschliesst – sonst
+  käme ein Kunde mit gesetztem Host-Kopf aufs Portal); `X-Forwarded-For` nur von der WAF (`trusted_proxies`); Freigaben nie leer;
   Einstellungen werden geprüft, damit nichts in den Caddyfile gelangt; Startseiten ohne Skripte
   (Content-Security-Policy), HSTS. Ohne Einrichtung bleibt der Proxy wie bisher.
 - **Einstellungen** `AUTOMATO_FRONT_*` in `.env` (`.env.example`), Zertifikate
