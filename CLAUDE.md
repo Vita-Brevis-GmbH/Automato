@@ -96,11 +96,15 @@ und wird erweitert. Details: `README.md`, `ARCHITECTURE.md`, `docs/adr/`.
   (`no-new-privileges`, `cap_drop: ALL`, Dateisystem nur lesend) – geschrieben wird nur in
   Volumes und `tmpfs`; eine nötige Capability einzeln mit `cap_add` und Begründung. Die
   Oberfläche läuft im Betrieb als gebaute Dateien hinter Caddy (`web-ui/frontend/deploy/`).
+- **Kunden-Portal und Realm je Kunde** (ADR 0050): der Orchestrator ändert nie selbst etwas auf dem
+  Host – er schreibt nur `soll.json`, `front.sh sync` prüft und wendet an. Benutzer eines
+  Kunden-Realms bekommen Mandant, Kunden und höchstens eine Kunden-Rolle aus dem Portal, nie Rechte
+  aus dem Token und nie Admin.
 - Entscheide als ADR in `docs/adr/`, Risiken in `docs/RISKS.md`, Bedienung in `docs/BETRIEB.md`.
 
 ## Aktueller Stand
 
-1.2.1 – Front-Proxy auf der Automato-VM, NetBox-Host als Backend (ADR 0044 Nachtrag); **Version 1 abgeschlossen**
+1.3.0 – Kunden-Portal mit Host-Agent und Realm je Kunde (ADR 0050), Front-Proxy auf der Automato-VM, NetBox-Host als Backend (ADR 0044 Nachtrag); **Version 1 abgeschlossen**
 mit 1.0.0 (Produktivschaltung DC, R14). Einzelheiten je Bereich in
 `docs/STAND.md`, Produktiv-Installation in `docs/INSTALLATION-PROD.md`, NetBox je Kunde in
 `docs/INSTALLATION-NETBOX-HOST.md`, Front-Proxy in `docs/INSTALLATION-FRONT.md`. Bekannte Einschränkungen von 1.0.0 und nächste Arbeiten in

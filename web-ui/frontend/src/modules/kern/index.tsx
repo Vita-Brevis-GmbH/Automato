@@ -5,6 +5,7 @@ import { L } from "../../i18n";
 import type { ViewEntry } from "../types";
 
 const Customers = lazy(() => import("../../Customers"));
+const Portal = lazy(() => import("../../Portal"));
 const OwnCustomerUsers = lazy(() => import("../../Customers").then((m) => ({ default: m.OwnCustomerUsers })));
 const NatTable = lazy(() => import("../../Nat"));
 const Objects = lazy(() => import("../../Objects"));
@@ -144,6 +145,17 @@ export const VIEWS: ViewEntry[] = [
     customerOnly: true,
     cap: "customer_users.manage",
     render: (p) => <OwnCustomerUsers me={p.me} tenantId={p.tenantId} />,
+  },
+  // Kunden-Portal (1.3.0, ADR 0050): Kunden des Front-Proxys, Werkzeuge und Realm je Kunde
+  {
+    key: "kundenportal",
+    module: "kern",
+    label: L("Kunden-Portal", "Customer portal"),
+    icon: "customers",
+    section: "admin",
+    order: 240,
+    adminOnly: true,
+    render: (p) => <Portal tenants={p.tenantsList ?? p.tenants} />,
   },
   {
     key: "system",

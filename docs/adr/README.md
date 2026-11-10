@@ -54,3 +54,4 @@ Format: eine Datei pro Entscheidung, z. B. `0001-monorepo-vs-multirepo.md`.
 | 0047 | Lauf nur der Regeln einer Applikation (FortiGate: Policies, Objekte, NAT; ACI: Tenant-Baum – Inventar und Routing bleiben), danach rechnet nur sie neu; Vorrechnen in Durchgängen (je Stand einmal, Lauf währenddessen = weiterer Durchgang), Befunde Regel ↔ Weg zusammengefasst hinter den Läufen |
 | 0048 | Wege einmal je Mandant und Datenstand (Wege, Policies, Urteile je Hop gemerkt), Urteile je Adressklasse (exakt), keine stillen Grenzen – jede Kürzung gezählt, Befund „Applikation: unvollständig geprüft“ |
 | 0049 | Datenstand nach Inhalt (gleiche Kennungen, Abdruck je Quellsystem), nur betroffene Applikationen neu (Fussabdruck je Stand), Befunde und Vorrechnen erst nach den Läufen |
+| 0050 | Kunden-Portal in der Oberfläche (Soll-Stand, Host-Agent `front.sh sync`), Realm je Kunde unter `<kurzname>-doc` mit Rechten nur aus dem Portal, gemeinsamer Realm für den Betreiber |

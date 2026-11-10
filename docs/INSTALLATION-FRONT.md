@@ -93,6 +93,23 @@ sudo deploy/front/front.sh erzeugen      # Portal, Einträge, Proxy neu laden (�
 
 ## 5. Kunden
 
+**Seit 1.3.0 in der Oberfläche** (ADR 0050): Administration → **Kunden-Portal** – Kurzname, Name,
+Werkzeuge, Kacheln und optional ein eigener Realm. Den Front-Proxy ändert ein Host-Agent auf der
+VM; einmal einrichten:
+
+```bash
+cd /opt/automato/automato
+sudo deploy/front/front.sh agent      # Ordner deploy/front/state (uid 1001) + systemd-Einheiten
+systemctl status automato-front-sync.path   # aktiv (waiting)
+```
+
+Danach übernimmt der Agent jede Änderung aus der Oberfläche innert Sekunden (`front.sh sync`,
+Protokoll: `journalctl -u automato-front-sync`); das Kunden-Portal zeigt, ob der Front-Proxy aktuell
+ist bzw. was der Agent meldet. Kunden aus der Oberfläche ändert der Befehl nicht; von Hand angelegte
+bleiben unberührt. Je Kunde zeigt „Einrichtung“ die Befehle für die NetBox-Instanz und den Realm.
+
+**Von Hand** (wie bis 1.2.x, z. B. ohne Oberfläche):
+
 ```bash
 sudo deploy/front/front.sh kunde kunde-a "Kunde A"            # Startseite + NetBox
 sudo deploy/front/front.sh kunde kunde-a "Kunde A" --doc      # dazu Automato (-doc)
@@ -104,8 +121,12 @@ sudo deploy/front/front.sh entfernen kunde-a --ja             # NetBox und Daten
 - Derselbe Kurzname wie auf dem NetBox-Host (`netbox-host.sh neu kunde-a`).
 - **`--doc`:** Anmeldung über Keycloak – im Client `automato-web` je Kunde die *Valid redirect
   URI* `https://kunde-a-doc.mgmt.example.ch/*` und den *Web origin* ergänzen (das Werkzeug zeigt
-  beides an). Die Anmeldeseite (Keycloak) muss für die Benutzer erreichbar sein; für Kunden von
-  aussen erst mit Version 2 (Realm je Mandant).
+  beides an). Die Anmeldeseite (Keycloak) muss für die Benutzer erreichbar sein.
+- **Eigener Realm je Kunde (1.3.0):** im Kunden-Portal den Realm eintragen – unter
+  `https://kunde-a-doc.…` meldet sich der Kunde dann dort an (z. B. Azure/Entra oder LDAPS), mit den
+  Rechten aus dem Portal (Mandant, Kunden, Rolle). Realm anlegen mit
+  `deploy/keycloak/make_realm.py --realm kunde-a --ui-url https://kunde-a-doc.mgmt.example.ch` und
+  in der Admin-Konsole importieren (`deploy/keycloak/PROD-INSTALL.md`, Abschnitt 13).
 - **`--um`, `--cmdb`:** wirken erst mit `AUTOMATO_FRONT_MAGISTER` bzw. `AUTOMATO_FRONT_CMDB`.
 
 ## 6. Prüfen

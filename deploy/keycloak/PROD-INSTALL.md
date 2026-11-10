@@ -788,6 +788,43 @@ erlaubte UI-Adressen bleiben getrennt. Ein bestehender Realm wird dabei nicht an
    ```
    WAF-Ausnahme (Abschnitt 12b) und Caddy decken alle Realms ab — nichts weiter nötig.
 
+### 13a. Realm je Kunde (1.3.0, ADR 0050)
+
+Ein Kunde kann sich mit seinem eigenen Verzeichnis anmelden (Azure/Entra als Identity Provider,
+AD per LDAPS als User Federation): eigener Realm, Anmeldung unter `https://<kurzname>-doc.<domain>`.
+
+1. Realm-Datei wie oben, mit der Doku-Adresse des Kunden:
+   ```bash
+   python3 deploy/keycloak/make_realm.py --realm kunde-a --display-name "Kunde A" \
+     --ui-url https://kunde-a-doc.mgmt.example.ch > realm-kunde-a.json
+   ```
+   importieren (*Create realm*), OTP und Notfall-Konto wie in Schritt 3.
+2. In Automato: Administration → **Kunden-Portal** → Kunde mit **Realm** `kunde-a`, Mandant,
+   Kunden und Standard-Rolle. Benutzer dieses Realms sehen nur diesen Ausschnitt – Rollen, Mandanten
+   und Kunden aus dem Token zählen nicht (nie Admin); die Kunden-Rolle (`customer_role` bzw.
+   Realm-Rollen) darf der Realm melden.
+3. Kein zusätzlicher Eintrag in `.env` nötig: der Orchestrator leitet Issuer und JWKS aus
+   `AUTOMATO_OIDC_ISSUER` bzw. `AUTOMATO_OIDC_JWKS_URL` ab (gleicher Keycloak, anderer Realm).
+4. Der Realm von Automato selbst kann zugleich der Realm eines Kunden sein (Betreiber als erster
+   Kunde): dann gilt die bisherige Anmeldung mit allen Rollen.
+
+### 13b. AD per LDAPS anbinden (User Federation, nur lesend)
+
+- **Vertrauen:** Root-CA des AD als PEM nach `/opt/automato-keycloak/truststores/`, im Dienst
+  `keycloak` `KC_TRUSTSTORE_PATHS: /opt/keycloak/conf/truststores/<ca>.pem` und das Volume
+  `./truststores:/opt/keycloak/conf/truststores:ro`. Das LDAPS-Zertifikat muss den Namen der
+  Verbindungsadresse enthalten (z. B. `int.example.ch` bei DNS-Round-Robin über die DCs).
+- **User federation → Add LDAP providers:** Vendor *Active Directory*, Connection URL
+  `ldaps://int.example.ch:636`, StartTLS Off, *Use Truststore SPI* Always, Bind DN = Service-Konto
+  nur lesen (`svc-keycloak-ldap@int.example.ch`), **Edit mode READ_ONLY**, Users DN der Benutzer-OU,
+  Username LDAP attribute `sAMAccountName`, RDN `cn`, UUID `objectGUID`, Object classes
+  `person, organizationalPerson, user`, Filter auf die Gruppen und ohne deaktivierte Konten
+  (`(&(|(memberOf=CN=G_admin,…)(memberOf=CN=G_operator,…))(!(userAccountControl:1.2.840.113556.1.4.803:=2)))`),
+  Import On, periodische Synchronisation.
+- **Mapper `group-ldap-mapper`** (Groups DN der Gruppen-OU, Filter auf die Gruppen, READ_ONLY) →
+  *Sync LDAP groups*; in *Groups* den Gruppen die Realm-Rollen `admin` bzw. `operator` zuweisen.
+- **Test:** `https://auth.example.ch/realms/<realm>/account` mit AD-Benutzer und -Passwort.
+
 ---
 
 ## Alternative: dasselbe per Ansible (ein Befehl)

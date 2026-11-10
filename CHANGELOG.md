@@ -7,6 +7,34 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 1.3.0 – 2026-11-10
+
+Anwender 2026-11-10: „Ich möchte das Erstellen und Verwalten von Kunden im Cockpit haben“ und „für
+das Login jeweils ein eigener Realm, damit die Kunden mit dem Login von Azure oder LDAPS verwenden
+können … der erste Kunde sind wir selber und der Realm geteilt mit dem Kunden“ – „1.3.0 so bauen“
+(ADR 0050).
+
+- **Kunden-Portal** (Administration → Kunden-Portal, Admin): Kunden der Plattform mit Kurzname,
+  Anzeigename, Werkzeugen (`-doc`, `-um`, `-cmdb`; NetBox immer), weiteren Kacheln, Realm, Mandant,
+  Kunden und Standard-Rolle anlegen, ändern und entfernen – mit Audit. Prüfungen wie im Front-Proxy
+  (reservierte Namen und Endungen, Kacheln nur `https://`, Kunden nur des gewählten Mandanten). Je
+  Kunde zeigt „Einrichtung“ die Befehle für NetBox-Instanz und Keycloak-Realm.
+- **Host-Agent:** Der Orchestrator schreibt nach jeder Änderung nur den Soll-Stand
+  (`deploy/front/state/soll.json`); `front.sh sync` (systemd, einrichten mit `front.sh agent`)
+  prüft ihn wie `kunde`/`link`, übernimmt ihn in den Front-Proxy, lädt neu und meldet das Ergebnis in
+  `status.json`. Die Oberfläche zeigt, ob der Front-Proxy aktuell ist. Kunden aus der Oberfläche
+  ändert der Befehl nicht, von Hand angelegte bleiben unberührt.
+- **Realm je Kunde:** Unter `<kurzname>-doc.<domain>` meldet sich die Oberfläche am Realm des Kunden
+  an (`/auth/config?host=`). Der Orchestrator nimmt Tokens des eigenen Realms und der Realms aus dem
+  Portal an (Issuer und JWKS je Realm). Benutzer eines Kunden-Realms sind immer Kunden-Benutzer:
+  Mandant und Kunden aus dem Portal, nie aus dem Token, nie Admin; die Kunden-Rolle darf der Realm
+  melden, sonst gilt die Standard-Rolle. Der Realm von Automato selbst kann zugleich Realm eines
+  Kunden sein (gemeinsamer Realm).
+- **Anleitungen:** Front-Proxy (Kunden aus der Oberfläche, Host-Agent), Keycloak (Realm je Kunde,
+  AD per LDAPS nur lesend mit Gruppen → Rollen).
+- **Tests:** Portal-API und Anmeldung je Realm (`test_portal.py`), `front.sh sync`/`agent`
+  (`test_front_script.py`), Oberfläche (`release_130.spec.ts`).
+
 ## 1.2.1 – 2026-11-10
 
 Befund des Anwenders 2026-11-10 bei der Einrichtung: `front.sh erzeugen` meldet „Proxy läuft

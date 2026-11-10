@@ -22,12 +22,20 @@
 #   front.sh liste                                                  Kunden mit ihren Werkzeugen
 #   front.sh erzeugen                                               alles neu erzeugen, Proxy neu laden
 #   front.sh pruefen                                                Einstellungen, Zertifikate, Wege
+#   front.sh sync [--immer]                                         Kunden aus der Oberfläche übernehmen
+#   front.sh agent                                                  Host-Agent einrichten (systemd)
+#
+# Seit 1.3.0 (ADR 0050) pflegt die Oberfläche die Kunden (Administration → Kunden-Portal): der
+# Orchestrator schreibt den Soll-Stand nach deploy/front/state/soll.json, der Host-Agent
+# (systemd, `front.sh sync`) übernimmt ihn und meldet das Ergebnis in status.json. Kunden aus der
+# Oberfläche ändert nur die Oberfläche; von Hand angelegte bleiben unberührt.
 #
 # Einstellungen: AUTOMATO_FRONT_* in .env (siehe .env.example). Kunden: deploy/front/kunden/,
 # erzeugt: deploy/front/generated/ (beides nicht im Repo). Zertifikate: deploy/proxy/pki/mgmt.crt|key
 # (Kunden-Adressen) und mgmt-int.crt|key (interne Adressen).
 # Kurzname: Kleinbuchstaben, Ziffern und Bindestrich (DNS-Label), nicht auf -nb/-doc/-um/-cmdb endend.
-# Für Tests ersetzbar: DOCKER, CURL, FRONT_DIR, FRONT_PKI, AUTOMATO_ENV_FILE, FRONT_SKIP_ROOT=1.
+# Für Tests ersetzbar: DOCKER, CURL, IPTABLES, SYSTEMCTL, FRONT_DIR, FRONT_PKI, FRONT_STATE,
+# FRONT_SYSTEMD_DIR, AUTOMATO_ENV_FILE, FRONT_SKIP_ROOT=1.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -37,6 +45,10 @@ FRONT_PKI=${FRONT_PKI:-$REPO_DIR/deploy/proxy/pki}
 DOCKER=${DOCKER:-docker}
 IPTABLES=${IPTABLES:-iptables}
 CURL=${CURL:-curl}
+SYSTEMCTL=${SYSTEMCTL:-systemctl}
+FRONT_STATE=${FRONT_STATE:-$FRONT_DIR/state}  # Soll-Stand der Oberfläche (1.3.0)
+FRONT_SYSTEMD_DIR=${FRONT_SYSTEMD_DIR:-/etc/systemd/system}
+ORCH_UID=1001  # Benutzer im Orchestrator-Container (orchestrator/Dockerfile)
 cd "$REPO_DIR"
 # shellcheck source=deploy/env.sh
 . "$REPO_DIR/deploy/env.sh"
@@ -96,6 +108,12 @@ kurzname() {  # wie deploy/netbox-host/netbox-host.sh (DNS-Label, Platz für "-c
 }
 
 kdir() { printf '%s/kunden' "$FRONT_DIR"; }
+aus_oberflaeche() {  # Kunde wird in der Oberfläche gepflegt (QUELLE=oberflaeche)?
+  [ -f "$(kdir)/$1.conf" ] && grep -qx 'QUELLE=oberflaeche' "$(kdir)/$1.conf"
+}
+nur_befehl() {
+  ! aus_oberflaeche "$1" || abbruch "Kunde '$1' wird in der Oberfläche gepflegt (Administration → Kunden-Portal)"
+}
 gen() { printf '%s/generated' "$FRONT_DIR"; }
 
 kunden() {  # alle Kurznamen
@@ -106,9 +124,9 @@ kunden() {  # alle Kurznamen
   return 0
 }
 
-lies_kunde() {  # setzt NAME, DOC, UM, CMDB_AN aus kunden/<k>.conf
+lies_kunde() {  # setzt NAME, DOC, UM, CMDB_AN, QUELLE aus kunden/<k>.conf
   local k=$1
-  NAME=$k DOC=nein UM=nein CMDB_AN=nein
+  NAME=$k DOC=nein UM=nein CMDB_AN=nein QUELLE=befehl
   # shellcheck disable=SC1090 # mit printf %q geschrieben (kunde)
   . "$(kdir)/$k.conf"
 }
@@ -374,6 +392,7 @@ cmd_kunde() {
   lade_conf
   local k=${1:-} name=${2:-} doc=nein um=nein cmdb=nein a
   kurzname "$k"
+  nur_befehl "$k"
   [ -n "$name" ] && [[ "$name" != --* ]] || abbruch "Verwendung: kunde <kunde> \"<Anzeigename>\" [--doc] [--um] [--cmdb]"
   shift 2
   for a in "$@"; do
@@ -403,6 +422,7 @@ cmd_link() {
   lade_conf
   local k=${1:-} t=${2:-} u=${3:-} b=${4:-}
   kurzname "$k"
+  nur_befehl "$k"
   [ -f "$(kdir)/$k.conf" ] || abbruch "Kunde '$k' unbekannt (erst: kunde $k \"<Name>\")"
   [ -n "$t" ] && [ -n "$u" ] || abbruch "Verwendung: link <kunde> <titel> <url> [beschreibung]"
   [[ "$u" =~ ^https?:// ]] || abbruch "URL muss mit https:// beginnen"
@@ -417,6 +437,7 @@ cmd_entfernen() {
   lade_conf
   local k=${1:-} ja=${2:-}
   kurzname "$k"
+  nur_befehl "$k"
   [ -f "$(kdir)/$k.conf" ] || abbruch "Kunde '$k' unbekannt"
   [ "$ja" = "--ja" ] || abbruch "nimmt Startseite und Weiterleitungen von '$k' aus dem Front-Proxy (NetBox und Daten bleiben) – bestätigen mit: entfernen $k --ja"
   rm -f "$(kdir)/$k.conf" "$(kdir)/$k.links.tsv"
@@ -517,6 +538,152 @@ cmd_pruefen() {
   if [ "$WARNUNGEN" -gt 0 ]; then echo "Alles in Ordnung ($WARNUNGEN Warnungen)."; else echo "Alles in Ordnung."; fi
 }
 
+
+# --- Host-Agent: Kunden aus der Oberfläche (1.3.0, ADR 0050) ---------------------------------
+sync_anwenden() {  # läuft in einer Subshell: abbruch beendet nur diese
+  lade_conf
+  local soll=$1 zeilen art k a b c d
+  local -A gewollt=()
+  install -d -m 750 "$(kdir)"
+  rm -f "$(kdir)"/*.neu
+  # JSON nur lesen und in Zeilen wandeln (Trenner 0x1f) – geprüft wird danach wie bei `kunde`
+  zeilen=$(python3 -I - "$soll" <<'PY'
+import json, sys
+SEP = "\x1f"
+def clean(value):
+    text = "" if value is None else str(value)
+    return "".join(" " if ch in "\t\r\n\x1f" else ch for ch in text)
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+for kunde in data.get("kunden") or []:
+    k = clean(kunde.get("kurzname"))
+    flags = ["ja" if kunde.get(t) else "nein" for t in ("doc", "um", "cmdb")]
+    print(SEP.join(["K", k, clean(kunde.get("name"))] + flags))
+    for link in kunde.get("links") or []:
+        print(SEP.join(["L", k, clean(link.get("title")), clean(link.get("url")), clean(link.get("text"))]))
+PY
+  ) || abbruch "soll.json nicht lesbar ($soll)"
+  while IFS=$'\x1f' read -r art k a b c d; do
+    case "$art" in
+      K)
+        kurzname "$k"
+        [ -n "$a" ] || abbruch "Kunde '$k' ohne Anzeigename"
+        printf 'NAME=%q\nDOC=%q\nUM=%q\nCMDB_AN=%q\nQUELLE=oberflaeche\n' "$a" "$b" "$c" "$d" >"$(kdir)/$k.conf.neu"
+        : >"$(kdir)/$k.links.tsv.neu"
+        gewollt[$k]=1
+        ;;
+      L)
+        [ -n "${gewollt[$k]:-}" ] || continue
+        [ -n "$a" ] || abbruch "Kachel von '$k' ohne Titel"
+        [[ "$b" =~ ^https:// ]] || abbruch "Kachel „$a“ von '$k': Adresse muss mit https:// beginnen"
+        printf '%s\t%s\t%s\n' "$a" "$b" "$c" >>"$(kdir)/$k.links.tsv.neu"
+        ;;
+      "") ;;
+      *) abbruch "soll.json: unbekannte Zeile" ;;
+    esac
+  done <<<"$zeilen"
+  local f
+  for f in "$(kdir)"/*.neu; do
+    [ -e "$f" ] && mv -f "$f" "${f%.neu}"
+  done
+  for k in $(kunden); do  # in der Oberfläche entfernt
+    if aus_oberflaeche "$k" && [ -z "${gewollt[$k]:-}" ]; then
+      rm -f "$(kdir)/$k.conf" "$(kdir)/$k.links.tsv"
+      ok "$k aus dem Front-Proxy genommen (in der Oberfläche entfernt)"
+    fi
+  done
+  cmd_erzeugen
+  [ "$FEHLER" -eq 0 ] || exit 1
+}
+
+status_schreiben() {  # $1 = ok|fehler, $2 = Prüfsumme, $3 = Meldung
+  local ziel="$FRONT_STATE/status.json" tmp
+  tmp=$(mktemp "$FRONT_STATE/.status-XXXXXX")
+  python3 -I - "$1" "$2" "$3" "$(kunden | tr '\n' ' ')" >"$tmp" <<'PY'
+import json, sys
+from datetime import datetime, timezone
+ok, summe, meldung, kunden = sys.argv[1:5]
+print(json.dumps({
+    "ok": ok == "ok",
+    "zeit": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    "soll_sha256": summe,
+    "meldung": meldung,
+    "kunden": kunden.split(),
+}, ensure_ascii=False))
+PY
+  chmod 644 "$tmp"
+  mv -f "$tmp" "$ziel"
+}
+
+cmd_sync() {
+  root_noetig
+  local soll="$FRONT_STATE/soll.json" summe alt fehlertext rc=0
+  if [ ! -f "$soll" ]; then
+    info "kein Soll-Stand aus der Oberfläche ($soll)"
+    return 0
+  fi
+  summe=$(sha256sum "$soll" | cut -d' ' -f1)
+  alt=$(python3 -I -c 'import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+print(d.get("soll_sha256", "") if d.get("ok") else "")' "$FRONT_STATE/status.json" 2>/dev/null || true)
+  if [ "$summe" = "$alt" ] && [ "${1:-}" != "--immer" ]; then
+    info "Soll-Stand unverändert – nichts zu tun"
+    return 0
+  fi
+  fehlertext=$(mktemp)
+  if (sync_anwenden "$soll") 2>"$fehlertext"; then rc=0; else rc=$?; fi
+  cat "$fehlertext" >&2
+  if [ "$rc" -eq 0 ]; then
+    status_schreiben ok "$summe" "übernommen"
+    rm -f "$fehlertext"
+    ok "Kunden aus der Oberfläche übernommen"
+  else
+    status_schreiben fehler "$summe" "$(grep -m1 'FEHLER' "$fehlertext" | sed -E 's/^ *FEHLER:? *//' || true)"
+    rm -f "$fehlertext"
+    abbruch "Kunden aus der Oberfläche nicht übernommen (Meldung in status.json)"
+  fi
+}
+
+cmd_agent() {
+  root_noetig
+  local skript="$SCRIPT_DIR/front.sh"
+  install -d -m 750 "$FRONT_STATE"
+  chown "$ORCH_UID:$ORCH_UID" "$FRONT_STATE" 2>/dev/null || warn "Besitzer von $FRONT_STATE nicht gesetzt (uid $ORCH_UID)"
+  install -d -m 755 "$FRONT_SYSTEMD_DIR"
+  printf '%s\n' \
+    '[Unit]' \
+    'Description=Automato Front-Proxy: Kunden aus der Oberfläche übernehmen (ADR 0050)' \
+    'After=docker.service' \
+    '' \
+    '[Service]' \
+    'Type=oneshot' \
+    "ExecStart=$skript sync" >"$FRONT_SYSTEMD_DIR/automato-front-sync.service"
+  printf '%s\n' \
+    '[Unit]' \
+    'Description=Automato Front-Proxy: Soll-Stand der Oberfläche beobachten' \
+    '' \
+    '[Path]' \
+    "PathChanged=$FRONT_STATE/soll.json" \
+    'Unit=automato-front-sync.service' \
+    '' \
+    '[Install]' \
+    'WantedBy=multi-user.target' >"$FRONT_SYSTEMD_DIR/automato-front-sync.path"
+  printf '%s\n' \
+    '[Unit]' \
+    'Description=Automato Front-Proxy: Soll-Stand regelmässig prüfen (falls ein Ereignis fehlte)' \
+    '' \
+    '[Timer]' \
+    'OnBootSec=2min' \
+    'OnUnitActiveSec=10min' \
+    'Unit=automato-front-sync.service' \
+    '' \
+    '[Install]' \
+    'WantedBy=timers.target' >"$FRONT_SYSTEMD_DIR/automato-front-sync.timer"
+  $SYSTEMCTL daemon-reload
+  $SYSTEMCTL enable --now automato-front-sync.path automato-front-sync.timer
+  ok "Host-Agent eingerichtet: $FRONT_STATE/soll.json → front.sh sync (systemd)"
+  info "Stand: systemctl status automato-front-sync.path; Log: journalctl -u automato-front-sync"
+}
+
 case "${1:-}" in
   kunde) shift; cmd_kunde "$@" ;;
   link) shift; cmd_link "$@" ;;
@@ -524,5 +691,7 @@ case "${1:-}" in
   liste) cmd_liste ;;
   erzeugen) root_noetig; cmd_erzeugen ;;
   pruefen) cmd_pruefen ;;
-  *) sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+  sync) shift; cmd_sync "$@" ;;
+  agent) cmd_agent ;;
+  *) sed -n '2,38p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

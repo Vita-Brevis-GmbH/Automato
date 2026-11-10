@@ -38,6 +38,7 @@ from app.api import (
     zones,
 )
 from app.api import modules as module_api
+from app.api import portal as portal_api
 from app.config import Settings, check_security_config, get_settings
 from app.db import get_sessionmaker
 from app.i18n import middleware as i18n_middleware
@@ -136,6 +137,7 @@ def create_app() -> FastAPI:
     app.include_router(topology.router, dependencies=[Depends(modules.guard("analyse"))])
     app.include_router(customers.router)
     app.include_router(customer_users.router)
+    app.include_router(portal_api.router)  # Kunden-Portal (1.3.0, ADR 0050)
     app.include_router(zones.router, dependencies=[Depends(modules.guard("design"))])
     app.include_router(cabling.router, dependencies=[Depends(modules.guard("analyse"))])
     app.include_router(data_quality.router, dependencies=[Depends(modules.guard("analyse"))])

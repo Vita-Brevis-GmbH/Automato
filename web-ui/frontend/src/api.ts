@@ -1317,8 +1317,9 @@ function qs(params: Record<string, string | number | null | undefined>): string 
 
 // Öffentlich (ohne Token)
 export const fetchHealth = () => fetch("/api/health").then((r) => r.json() as Promise<HealthStatus>);
+// Realm je Kunde (1.3.0): unter <kurzname>-doc.<domain> liefert der Orchestrator den Realm des Kunden
 export const fetchAuthConfig = async (): Promise<AuthConfig> => {
-  const r = await fetch("/api/auth/config");
+  const r = await fetch(`/api/auth/config${qs({ host: window.location.hostname })}`);
   if (!r.ok) throw new ApiError(r.status, "");
   return r.json();
 };
@@ -3514,6 +3515,49 @@ export const fetchCustomers = (tenantId: number) => getJSON<Customer[]>(`/api/cu
 export const createCustomer = (body: CustomerIn) => sendJSON<Customer>("/api/customers", "POST", body);
 export const updateCustomer = (id: number, body: CustomerIn) => sendJSON<Customer>(`/api/customers/${id}`, "PUT", body);
 export const deleteCustomer = (id: number) => sendJSON<void>(`/api/customers/${id}`, "DELETE");
+
+// Kunden-Portal (1.3.0, ADR 0050): Kunden des Front-Proxys, Werkzeuge, Kacheln und Realm je Kunde
+export interface PortalLink {
+  title: string;
+  url: string;
+  text: string;
+}
+export interface PortalCustomer {
+  id: number;
+  short_name: string;
+  name: string;
+  doc: boolean;
+  um: boolean;
+  cmdb: boolean;
+  links: PortalLink[];
+  realm: string | null;
+  tenant_id: number | null;
+  customer_ids: number[];
+  default_role: string;
+  addresses: Record<string, string>; // start, netbox, doc, um, cmdb (mit Domain)
+  updated_by: string | null;
+  updated_at: string | null;
+  note?: string | null; // Hinweis, wenn der Soll-Stand nicht geschrieben wurde
+}
+export type PortalCustomerIn = Omit<PortalCustomer, "id" | "addresses" | "updated_by" | "updated_at" | "note">;
+export interface PortalAgent {
+  configured: boolean;
+  writable: boolean;
+  pending: boolean | null;
+  status: { ok: boolean; zeit?: string; meldung?: string; kunden?: string[] } | null;
+}
+export interface PortalListing {
+  customers: PortalCustomer[];
+  agent: PortalAgent;
+  domain: string;
+  keycloak: { base: string; main_realm: string };
+}
+export const fetchPortal = () => getJSON<PortalListing>("/api/portal/customers");
+export const createPortalCustomer = (body: PortalCustomerIn) => sendJSON<PortalCustomer>("/api/portal/customers", "POST", body);
+export const updatePortalCustomer = (id: number, body: PortalCustomerIn) =>
+  sendJSON<PortalCustomer>(`/api/portal/customers/${id}`, "PUT", body);
+export const deletePortalCustomer = (id: number) =>
+  sendJSON<{ deleted: number; note: string | null }>(`/api/portal/customers/${id}`, "DELETE");
 export const previewCustomer = (tenantId: number, selectors: CustomerSelector[], customerId?: number) =>
   sendJSON<CustomerPreview>("/api/customers/preview", "POST", { tenant_id: tenantId, selectors, customer_id: customerId ?? null });
 export const fetchCustomerSuggestions = (tenantId: number) =>

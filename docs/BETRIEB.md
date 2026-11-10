@@ -2345,6 +2345,11 @@ an (`deploy/agent-gateway`, Port 8443).
   Proxy von Automato. Kunden pflegen mit `sudo deploy/front/front.sh kunde|link|entfernen|liste`,
   prüfen mit `front.sh pruefen`; Einstellungen `AUTOMATO_FRONT_*` in `.env`, danach
   `front.sh erzeugen`. Kunden-Adressen nur von der WAF und aus dem Management-Netz.
+- **Kunden-Portal** (1.3.0, ADR 0050): Administration → Kunden-Portal (Admin) – Kunden anlegen,
+  ändern, entfernen; der Host-Agent (`front.sh agent`, systemd) übernimmt sie in den Front-Proxy.
+  Ein **eigener Realm** je Kunde: Anmeldung unter `<kurzname>-doc.<domain>` an diesem Realm; seine
+  Benutzer sind immer Kunden-Benutzer mit Mandant, Kunden und Rolle aus dem Portal (nie Admin, nie
+  aus dem Token). Realm leer bzw. Realm von Automato = bisherige Anmeldung.
 - Agent-Tokens werden nur gehasht gespeichert und einmalig angezeigt. Produktiv sprechen
   Agenten nur über das **mTLS-Agent-Gateway** (`deploy/agent-gateway`, Modus `bind`:
   Zertifikat und Token gehören zum selben Agenten); Port 8000 nicht in Agent-Netze freigeben.
