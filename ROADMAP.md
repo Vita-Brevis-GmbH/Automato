@@ -569,8 +569,8 @@ Anwender: „Es funktioniert bisher alles wie gewünscht … Bitte den Stand fer
 | Nr. | Inhalt |
 |---|---|
 | 1 | ~~Umbenennen des Tools~~ – **entschieden 2026-11-11: der Name Automato bleibt** („da wir keinen Namen gefunden haben, welcher besser passt“) |
-| 2 | Einbinden in ein neues Cockpit (Orchestrator für die Produkte; ADR 0014). **Entscheid 2026-11-11:** eigenes Repo, eng mit Magister verbunden; es löst das bestehende Cockpit in Magister (`cockpit/`) ab |
-| 3 | Magister im Cockpit |
+| 2 | Einbinden in ein neues Cockpit (Orchestrator für die Produkte; ADR 0014). **Entscheid 2026-11-11:** eigenes Repo, eng mit Magister verbunden; es löst das bestehende Cockpit in Magister (`cockpit/`) ab. **Repo `Vita-Brevis-GmbH/vitabrevis-cockpit`** (privat, Verlauf aus Magister, 0.1.0 = P0). Betrieb, Plattform und Abgrenzung zum Kundenpfad in dessen ADR 0002 (E1–E8): Host-Agent statt SSH, nur Container, Port 4444 nur intern, Automato als Image, Kundenportal bleibt auf dem Kundenpfad, Cockpit unter `/opt/cockpit` auf dem Magister-Host. Phasen P1–P4 mit Abnahme im Cockpit-Repo (`ROADMAP.md`) |
+| 3 | Magister wie Automato **hinter dem Kundenportal** (`<kunde>-um` über das Anmelde-Tor, Anmeldung über den Realm des Kunden mit Entra; Entscheid E6 2026-11-11) – im Cockpit nur als Instanz (Zustand, Updates) |
 | 4 | Module nach Netzwerkschichten (Layer 1, Layer 2, Layer 3, Layer 4–7) und ein Modul, das die Wege miteinander vergleicht und abgleicht |
 | 5 | Statisches Routing in der Dokumentation |
 | 6 | Verkabelung mit Details (Modul, Geschwindigkeit, Kabelnummer usw.) |
