@@ -155,3 +155,37 @@ Collector übergeht sie seit 1.7.0 und zählt sie im Lauf. Der Sync zählt sie a
 
 Der Schreibweg bleibt derselbe: nur NetBox (ADR 0010). VLANs und VLAN-Gruppen schreibt der
 Sync-Benutzer schon für das Netzinventar.
+
+## Nachtrag 1.8.0 – Firewall-Objekte nach NetBox, wenn NetBox das IPAM ist
+
+Anwender 2026-11-11: „Bei den Befunden kommt viele Meldungen, dass ein Objekt nicht im IPAM ist,
+da wir kein Infoblox bei dem Kunden haben, sollte das IPAM die Netbox übernehmen und mit dem Sync
+sollte das IPAM auch befüllt werden.“
+
+Neuer Abschnitt *Firewall-Objekte* (`firewall_objects`):
+
+- Er schreibt die Werte der Adressobjekte der Firewalls nach NetBox: Hosts als IP-Adresse (mit
+  der Präfixlänge des umgebenden Netzes und dem DNS-Namen aus den Referenzen), Netze als Prefix
+  (`active`), Bereiche als IP-Range. Beschreibung `FW-Objekt <Objektname(n)>`, Tag `automato`,
+  Mandant wie die übrigen Abschnitte.
+- Bewusst externe Objekte (Abgleich „erwartet extern“/„nicht anwendbar“, bzw. Name `…-EXT_`)
+  bleiben draussen. `0.0.0.0/0` ebenso.
+- Was ein anderer Abschnitt schon will (z. B. dieselbe IP aus dem Netzinventar), kommt nicht
+  doppelt. Der andere Abschnitt bleibt Eigentümer.
+- **Nur wenn diese NetBox das führende IPAM ist.** Ist ein anderes System führend (Infoblox,
+  andere NetBox), gehören die Werte dorthin: Die Vorschau zeigt „Firewall-Objekte: führendes
+  IPAM ist „…“ – die Werte gehören dorthin, nicht übernommen“ und schreibt nichts. Die Oberfläche
+  wählt den Abschnitt vor, wenn die Ziel-NetBox führend ist.
+- **Eigentum über die Beschreibung:** Einträge mit `FW-Objekt …` gehören nur diesem Abschnitt.
+  - Ein Sync ohne ihn führt sie nie als veraltet und löscht sie nie.
+  - Ein Sync mit ihm führt entfernte Objekte als veraltet bzw. löscht sie mit „Löschen
+    zulassen“, auch wenn die anderen Abschnitte nicht gewählt sind.
+  - Die übrigen Netze, Ranges und IPs bleiben bei ihren Abschnitten (`KIND_SECTIONS`, 1.7.0).
+
+Der Befund „nicht im IPAM“ (`unmatched_object`) nennt den Weg. Ist das führende IPAM eine
+beschreibbare NetBox, heisst er „… fehlt noch in der NetBox „…“ – sie ist das IPAM und wird von
+Automato befüllt“. Ist noch keine führend, der Mandant hat aber genau eine beschreibbare NetBox,
+sagt er, dass sie als führend einzutragen ist. Nach Sync und neuem Einlesen der NetBox entfällt
+der Befund von selbst.
+
+Der Schreibweg bleibt derselbe: nur NetBox, Vorschau → Übernehmen (ADR 0010).

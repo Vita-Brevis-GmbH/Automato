@@ -96,8 +96,8 @@ const SECTIONS: { key: SyncSection; label: string; hint: string; more?: ReactNod
     key: "cabling",
     label: L("Verkabelung", "Cabling"),
     hint: L(
-      "gelesene Switches und Router mit Ports und die Kabel zwischen zwei Ports, die beide Seiten per CDP/LLDP melden",
-      "collected switches and routers with ports and the cables between two ports that both sides report via CDP/LLDP",
+      "gelesene Switches, Router und ESXi-Hosts mit Ports und die Kabel, die CDP/LLDP bestätigt",
+      "collected switches, routers and ESXi hosts with ports and the cables confirmed by CDP/LLDP",
     ),
     more: L(
       <>
@@ -108,7 +108,9 @@ const SECTIONS: { key: SyncSection; label: string; hint: string; more?: ReactNod
         nimmt er. <b>Modus und VLANs</b> am Port, wenn alle VLANs des Ports eindeutig sind (VLAN-Gruppe des
         Quellsystems, am Standort oder global) – nicht eindeutige nennt der Hinweis. <b>Kabel</b> nur zwischen zwei
         gelesenen Ports, die es in NetBox gibt oder die der Sync anlegt (Ports der ACI-Leafs: Abschnitt
-        Netzinventar mitwählen); einseitige Verbindungen und Gegenstellen ohne CDP/LLDP nur als Hinweis. Ein
+        Netzinventar mitwählen); einseitige Verbindungen und Gegenstellen ohne CDP/LLDP nur als Hinweis.{" "}
+        <b>ESXi-Hosts</b> des vCenters (seit 1.8.0) mit Hersteller und Modell der Hardware und ihren vmnics; das Kabel
+        zum Switch-Port gilt als bestätigt, wenn der Host es per CDP/LLDP meldet (ESXi hört standardmässig nur zu). Ein
         umgesteckter Port: mit „Löschen zulassen“ wird das alte Kabel zuerst entfernt.
       </>,
       <>
@@ -119,8 +121,10 @@ const SECTIONS: { key: SyncSection; label: string; hint: string; more?: ReactNod
         existing ones are used. <b>Mode and VLANs</b> on the port if all VLANs of the port are unique (VLAN group of the
         source system, at the site or global) – the hint names VLANs that are not unique. <b>Cables</b> only between two
         collected ports that exist in NetBox or are created by the sync (ports of the ACI leafs: also choose the
-        network inventory section); links reported by one side and peers without CDP/LLDP only as a hint. A re-patched
-        port: with “Allow deletion” the old cable is removed first.
+        network inventory section); links reported by one side and peers without CDP/LLDP only as a hint.{" "}
+        <b>ESXi hosts</b> of the vCenter (since 1.8.0) with hardware manufacturer and model and their vmnics; the cable to
+        the switch port counts as confirmed if the host reports it via CDP/LLDP (ESXi only listens by default). A
+        re-patched port: with “Allow deletion” the old cable is removed first.
       </>,
     ),
   },

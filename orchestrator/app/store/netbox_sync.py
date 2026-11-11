@@ -77,6 +77,10 @@ FW_MARK = "FW-Objekt"
 _EXTERNAL_NAME = re.compile(r"^[A-Z]+-EXT_", re.I)  # H-EXT_, N-EXT_, R-EXT_ (Namenskonvention)
 INVENTORY_PLATFORMS = (Platform.FORTIGATE, Platform.CISCO_ACI)
 CABLING_PLATFORMS = (Platform.CISCO_SWITCH,)  # Switches & Router (ADR 0025)
+# ESXi-Hosts des vCenters mit ihren vmnics (1.8.0): Geraete im Abschnitt Verkabelung, damit die
+# Kabel Switch-Port <-> vmnic in NetBox ankommen; VMs bleiben im Abschnitt Virtualisierung
+HOST_PLATFORMS = (Platform.VMWARE,)
+HOST_ROLE = "esxi"
 # Applikations-Tags (ADR 0031): `automato-app-<Mandant>-<Kuerzel bzw. Name>`; das Praefix gehoert
 # Automato - nur solche Tags setzt bzw. entfernt der Sync, fremde Tags bleiben
 APP_TAG_PREFIX = "automato-app-"
@@ -200,6 +204,7 @@ KIND_SECTIONS = {
     "ip_range": frozenset({"mirror"}),
     "ip_address": frozenset({"inventory", "mirror", "virtualization"}),
 }
+FW_KINDS = frozenset({"prefix", "ip_range", "ip_address"})  # Arten des Abschnitts Firewall-Objekte
 TERMINATIONS = ("a_terminations", "b_terminations")  # Enden eines Kabels (je ein Port)
 
 Ref = tuple[str, str]  # (Art, Schluessel)
@@ -1190,7 +1195,7 @@ def _cabling_wants(
             select(SourceSystem)
             .where(
                 SourceSystem.tenant_id == tenant.id,
-                SourceSystem.platform.in_(CABLING_PLATFORMS),
+                SourceSystem.platform.in_(CABLING_PLATFORMS + HOST_PLATFORMS),
             )
             .order_by(SourceSystem.id)
         )
@@ -1198,7 +1203,10 @@ def _cabling_wants(
     only_site = _default_site(sites)
     for src in sources:
         site = sites.get(src.site_id) if src.site_id else only_site
+        hosts = src.platform in HOST_PLATFORMS
         devices = _rows(session, InvDevice, src)
+        if hosts:
+            devices = [d for d in devices if d.role == HOST_ROLE]
         if devices and site is None:
             _no_site_warning(w, src, len(devices))
             continue
@@ -1214,10 +1222,17 @@ def _cabling_wants(
                 )
                 continue
             model = d.model.strip()
-            _device_want(w, d, src, site, switch_manufacturer(model), model, tenant_ref)
+            if hosts and not (d.vendor or "").strip():
+                w.warnings.append(
+                    f"ESXi-Host {d.name} ({src.name}): Hersteller nicht gelesen – ohne Gerätetyp"
+                    " mit Ports und Kabeln nicht übernommen."
+                )
+                continue
+            maker = d.vendor.strip() if hosts else switch_manufacturer(model)
+            _device_want(w, d, src, site, maker, model, tenant_ref)
             names.add(d.name)
         gslug = group_slug(tenant, src)
-        vlans = _rows(session, InvVlan, src)
+        vlans = [] if hosts else _rows(session, InvVlan, src)
         switch_vlans = {v.vid for v in vlans}
         if vlans and names:  # VLANs der Switches: welche fehlen, steht erst nach dem Lesen fest
             _vlan_group_want(w, tenant, src, gslug)
@@ -1981,10 +1996,11 @@ _FROM_SOURCE = re.compile(r"^Automato: gelesen aus (.+?)\s*$", re.M)
 
 def _device_section(obj: dict, platforms: dict[str, Platform]) -> str:
     """Abschnitt eines von Automato angelegten Geraets - aus dem Kommentar „Automato: gelesen
-    aus <Quellsystem>“: Switches & Router -> `cabling`, sonst (auch unbekannt) `inventory`."""
+    aus <Quellsystem>“: Switches & Router und ESXi-Hosts (vCenter, 1.8.0) -> `cabling`, sonst
+    (auch unbekannt) `inventory`."""
     m = _FROM_SOURCE.search(obj.get("comments") or "")
     platform = platforms.get(m.group(1)) if m else None
-    return "cabling" if platform in CABLING_PLATFORMS else "inventory"
+    return "cabling" if platform in CABLING_PLATFORMS + HOST_PLATFORMS else "inventory"
 
 
 def _fw_owned(have: Have) -> bool:
@@ -2068,14 +2084,18 @@ def diff(
     for kind in KINDS:
         if kind.name in ASSIGN or (kind.name in VIRTUAL_KINDS and "virtualization" not in chosen):
             continue  # VMs ohne den Abschnitt nur fuer die Applikations-Tags gelesen
-        if not KIND_SECTIONS.get(kind.name, frozenset()) <= chosen:
+        all_sections = KIND_SECTIONS.get(kind.name, frozenset()) <= chosen
+        fw_kind = kind.name in FW_KINDS and "firewall_objects" in chosen
+        if not all_sections and not fw_kind:
             continue  # koennte einem nicht gewaehlten Abschnitt gehoeren
         wanted = wants.keys_of(kind.name)
         for key, have in sorted(state[kind.name].items()):
             if key in wanted or not _in_scope(kind, have, state, tslug, gprefix, foreign, groups):
                 continue
-            if "firewall_objects" not in chosen and _fw_owned(have):
-                continue  # Wert eines Firewall-Objekts, Abschnitt nicht gewaehlt (1.8.0)
+            # Werte der Firewall-Objekte gehoeren nur ihrem Abschnitt, die uebrigen den anderen
+            # (1.8.0): so fuehrt auch ein Sync nur mit „Firewall-Objekte“ entfernte Objekte
+            if not (fw_kind if _fw_owned(have) else all_sections):
+                continue
             items.append(
                 _item(
                     kind.name,

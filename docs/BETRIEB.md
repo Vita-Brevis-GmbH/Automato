@@ -266,7 +266,8 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   Verwendung in Regeln/Gruppen und Befunden. **Klick auf ein Objekt** öffnet das Detail wie
   bei NAT: Attribute, Werte, Mitglieder, Befunde und die Firewall-Regeln, die es nutzen (auch
   über Gruppen), mit „In Regeln anzeigen“. „Objekt öffnen“ (z. B. aus NAT / VIPs) filtert
-  seit 0.36.0 auch die Liste dahinter auf genau dieses Objekt („nur „…“ ✕“ hebt es auf).
+  seit 0.36.0 auch die Liste dahinter auf genau dieses Objekt („nur „…“ ✕“ hebt es auf,
+  seit 1.8.0 auch jeder Reiterwechsel).
   **Präfix der Namenskonvention** (0.117.0): Filter nach dem Präfix des Namens aus dem
   Namensprofil des Mandanten (`V-EXT_`, `H_`, `N_` … und eigene wie `CVS_`), mit Anzahl je
   Präfix und „ohne Präfix“ – zusätzlich zum Typ wie auf dem Gerät (IP, FQDN, Geo …).
@@ -1359,7 +1360,10 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     Browser; die Kategorien sind zu Beginn zu. Die Tabelle **Systeme** zeigt nur System,
     Zustand, IPs, EPG und Regeln – Klick öffnet das Detail (Mitgliedschaft, Betriebssystem,
     DNS, Portgruppe je NIC mit EPG, Cluster/Host, Standort, Firewall-Objekte mit Namensprüfung
-    und Link) mit „Regeln dieses Systems zeigen“.
+    und Link) mit „Regeln dieses Systems zeigen“. Ohne ACI-Quellsystem (1.8.0) steht statt der
+    EPG das **Netz**: das engste Subnetz aus dem Netzinventar mit Interface, VLAN und Gerät
+    (z. B. „10.20.0.0/24 · srv-vl20 · VLAN 20 (fw-01)“); Bereich und Filter der EPGs entfallen,
+    die Kennzahl heisst „Netze“, der Word-Export ebenso.
   - **Export / Drucken (0.73.0):** der Knopf oben öffnet einen Dialog mit den Abschnitten
     (Übersicht, Systeme, EPGs, Verbindungen Ende zu Ende, Netzwerkplan, Regeln & Contracts,
     Findings, Doku nach Kategorien, ausgeblendete Regeln; der Kopf mit dem Steckbrief steht
@@ -2136,7 +2140,12 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   und IP-Adressen ihrer Systeme (nur Objekte mit Tag `automato`, die es in NetBox gibt bzw. die
   der Sync anlegt – Virtualisierung/DDI-Spiegel mitwählen); fremde Tags bleiben, von Hand
   gepflegte Objekte sind ein Konflikt, Tags gelöschter Applikationen nur mit „Löschen
-  zulassen“ entfernt. Objekte eines nicht gewählten Abschnitts bleiben unangetastet (auch nicht
+  zulassen“ entfernt. Seit 1.8.0 *Firewall-Objekte* (ADR 0031 Nachtrag) – Hosts, Netze und
+  Bereiche der Adressobjekte der Firewalls als IP-Adresse, Prefix bzw. IP-Range mit der
+  Beschreibung `FW-Objekt <Name>`; nur wenn die Ziel-NetBox das führende IPAM ist (dann
+  vorgewählt), bewusst externe Objekte nicht. Damit füllt Automato die NetBox als IPAM, wo es
+  kein DDI gibt; nach dem Sync die NetBox neu einlesen, dann entfallen die Befunde „nicht im
+  IPAM“. Objekte eines nicht gewählten Abschnitts bleiben unangetastet (auch nicht
   „veraltet“). Für Kabel braucht der Sync-Benutzer `dcim.cable` – `sync-user.sh` erneut
   ausführen. **Vorschau
   erstellen** liest NetBox nur und zeigt je Art: anlegen / ändern / unverändert / Konflikt

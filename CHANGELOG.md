@@ -7,6 +7,41 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 1.8.0 – 2026-11-11
+
+Rückmeldung zum Test von 1.7.0 (Anwender 2026-11-11).
+
+<!-- ESXI -->
+- **Befund „nicht im IPAM“ ohne DDI verständlich** („da wir kein Infoblox bei dem Kunden haben,
+  sollte das IPAM die Netbox übernehmen … daher ist der Fehler irgendwie verwirrend“).
+  - Ist das führende IPAM die NetBox, die Automato befüllt, heisst der Befund jetzt „10.20.0.5
+    fehlt noch in der NetBox „…“ – sie ist das IPAM und wird von Automato befüllt“. Der Hinweis
+    nennt den Weg: NetBox-Sync mit dem Abschnitt *Firewall-Objekte* übernehmen, danach liest
+    Automato die NetBox neu ein und der Befund entfällt.
+  - Ist noch keine NetBox als führend eingetragen, der Mandant hat aber genau eine beschreibbare
+    NetBox, sagt der Befund das und nennt den Schritt unter **Quellsysteme**.
+- **NetBox-Sync: neuer Abschnitt „Firewall-Objekte“.** Er schreibt die Hosts, Netze und Bereiche
+  der Adressobjekte der Firewalls als IP-Adresse, Prefix bzw. IP-Range nach NetBox, mit der
+  Beschreibung „FW-Objekt <Objektname>“ und dem Automato-Tag.
+  - Bewusst externe Objekte (`…-EXT_`, als extern markiert) bleiben draussen.
+  - Was NetBox schon hat (z. B. aus dem Netzinventar), kommt nicht doppelt.
+  - Nur wenn diese NetBox das führende IPAM ist: Ist ein anderes System führend (z. B. Infoblox),
+    zeigt die Vorschau einen Hinweis und schreibt nichts.
+  - Die Seite wählt den Abschnitt vor, wenn die Ziel-NetBox das führende IPAM ist.
+  - Ein Sync ohne den Abschnitt fasst diese Einträge nicht an, auch mit „Löschen zulassen“.
+  - ADR 0031 hat dazu einen Nachtrag.
+- **Objekte: Services wieder sichtbar.** Nach dem Öffnen eines Adressobjekts blieb der Filter
+  „nur <Objekt>“ beim Wechsel auf *Services* stehen („hatte noch einen Filter drin, welcher
+  festgehangen ist“). Der Reiterwechsel hebt den Filter auf das geöffnete Objekt und den
+  Präfix-Filter jetzt auf. Eine leere Liste sagt bei jedem gesetzten Filter „Keine Treffer“
+  statt „Noch keine Objekte“.
+- **Applikationen ohne ACI: Netz statt EPG** („hier sollte besser das Netzwerk stehen, wo wir
+  connected sind“). Ohne ACI-Quellsystem zeigt die Doku je System das Netz, in dem es hängt: das
+  engste Subnetz aus dem Netzinventar mit Interface, VLAN und Gerät (z. B. „10.20.0.0/24 ·
+  srv-vl20 · VLAN 20 (fw-01)“), dazu wie bisher die Portgruppe. Die Spalte heisst „Netz“, die
+  Kennzahl „Netze“. Bereich und Filter der EPGs fallen weg. Der Word-Export macht es gleich. Mit
+  ACI bleibt alles wie bisher.
+
 ## 1.7.0 – 2026-11-11
 
 Anwender 2026-11-11: „Wenn ich den internen Worker verwende, kann ich die Verbindung prüfen, beim

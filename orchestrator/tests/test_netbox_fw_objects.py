@@ -38,13 +38,16 @@ def netbox(monkeypatch):
     return fake_netbox(monkeypatch)
 
 
-def _firewall(client, tid) -> None:
-    fw = _system(client, tid, name="fw-01", platform="fortigate", base_url="https://fw")
-    body = {"platform": "fortigate", "tenant_id": tid, "source_system_id": fw["id"]}
+def _firewall(client, tid, objects=OBJECTS, fw_id=None) -> int:
+    if fw_id is None:
+        fw = _system(client, tid, name="fw-01", platform="fortigate", base_url="https://fw")
+        fw_id = fw["id"]
+    body = {"platform": "fortigate", "tenant_id": tid, "source_system_id": fw_id}
     run_id = client.post("/jobs/collect", json=body).json()["run_id"]
-    result = {"status": "completed", "rules": RULES, "objects": OBJECTS, "inventory": INVENTORY}
+    result = {"status": "completed", "rules": RULES, "objects": objects, "inventory": INVENTORY}
     r = client.post(f"/internal/collector-runs/{run_id}/result", headers=TOKEN, json=result)
     assert r.json()["status"] == "completed", r.text
+    return fw_id
 
 
 def _seed(client) -> dict:
@@ -52,8 +55,8 @@ def _seed(client) -> dict:
     nb = _system(client, tid, name="netbox", platform="netbox", base_url="http://netbox:8080",
                  token="nb-lesen", write_token="nb-schreiben", ref_role="primary")  # fmt: skip
     _run(client, tid, nb["id"], "netbox", [])  # NetBox eingelesen, noch leer
-    _firewall(client, tid)
-    return {"tid": tid, "nb": nb["id"]}
+    fw_id = _firewall(client, tid)
+    return {"tid": tid, "nb": nb["id"], "fw": fw_id}
 
 
 def test_befund_sagt_kommt_mit_dem_sync(client):
@@ -103,6 +106,14 @@ def test_sync_schreibt_die_firewall_objekte(client, netbox):
                   allow_delete=True)  # fmt: skip
     gone = _items(client, other["id"], action="delete")
     assert not [i for i in gone if i["kind"] in ("ip_address", "prefix", "ip_range")], gone
+    # Objekt auf der Firewall entfernt: ein Sync nur mit dem Abschnitt fuehrt seinen Wert als
+    # veraltet, die uebrigen Werte und fremde Netze bleiben
+    tenant = netbox.find("ipam/prefixes", prefix="10.9.0.0/16")["tenant"]["id"]
+    netbox.add("ipam/prefixes", {"prefix": "10.77.0.0/16", "tenant": tenant,
+                                 "tags": [{"slug": "automato"}]})  # Netzinventar  # fmt: skip
+    _firewall(client, ids["tid"], [o for o in OBJECTS if o["name"] != "N_clients"], ids["fw"])
+    stale = _items(client, _plan(client, ids, **body)["id"], action="obsolete")
+    assert [(i["kind"], i["key"]) for i in stale] == [("prefix", "10.9.0.0/16")], stale
 
 
 def test_anderes_fuehrendes_ipam_nur_hinweis(client, netbox):
