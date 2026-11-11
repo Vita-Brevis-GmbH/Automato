@@ -406,6 +406,24 @@ def test_fehler_von_netbox_wird_am_plan_gemeldet(client, netbox, session_factory
     assert client.dispatched[-1][0] == "netbox"  # Teilstand -> neu einlesen
 
 
+def test_nicht_gewaehlte_abschnitte_bleiben(client, netbox):
+    """1.7.0: Objekte eines nicht gewaehlten Abschnitts sind weder veraltet noch werden sie
+    geloescht - vorher loeschte „nur Verkabelung“ mit „Löschen zulassen“ Netze, Ranges, IPs und
+    VRFs von Netzinventar und DDI-Spiegel (Netz/IP: nur wenn alle fuellenden Abschnitte
+    gewaehlt sind)."""
+    ids = _setup(client)
+    assert _apply(client, _plan(client, ids)["id"])["status"] == "applied"
+    for sections in (["cabling"], ["inventory"], ["mirror"], ["inventory", "virtualization"]):
+        plan = _plan(client, ids, sections=sections, allow_delete=True)
+        gone = _items(client, plan["id"], action="delete,obsolete", limit=2000)
+        assert not gone, (sections, gone)
+    # alle Abschnitte, die sie fuellen: weiterhin veraltet bzw. geloescht, wenn nicht mehr gewollt
+    netbox.add("ipam/prefixes", {"prefix": "10.99.0.0/24", "tenant": netbox.find(
+        "tenancy/tenants", slug="kunde-a")["id"], "tags": [{"slug": "automato"}]})  # fmt: skip
+    plan = _plan(client, ids, allow_delete=True)
+    assert [i["key"] for i in _items(client, plan["id"], action="delete")] == ["10.99.0.0/24"]
+
+
 def test_nur_admin_und_nur_mit_schreib_token(client, netbox):
     ids = _setup(client, write_token=None)
     body = {"tenant_id": ids["tid"], "source_system_id": ids["nb"]}

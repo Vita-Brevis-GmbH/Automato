@@ -24,6 +24,34 @@ collector Agent nicht, können wir dies mit einbringen?“
 - **Altlasten:** zwei Hinweise auf die „lokale Konfiguration“ des Workers entfernt (Lauf-Dialog,
   Collector) – sie gibt es seit 1.6.0 nicht mehr.
 
+Weitere Rückmeldung zu 1.6.1 (2026-11-11), in dieselbe Version aufgenommen:
+
+- **NetBox-Sync bricht nicht mehr an Ports ohne Namen ab** („Übernahme abgebrochen: POST
+  dcim/interfaces: HTTP 400 … {'name': ['This field is required.']}“, nach dem Einfügen der
+  Switches). Einzelne Zeilen der Switch-Ausgabe ohne Port kamen als Port mit leerem Namen an.
+  Der Collector übergeht sie jetzt und zählt sie im Lauf. Der Sync schickt sie nie nach NetBox,
+  auch wenn ein älterer Agent sie noch liefert, und zeigt in der Vorschau „… Ports ohne Namen
+  nicht übernommen (Gerät …)“.
+- **NetBox-Sync legt die fehlenden VLANs der Switches an** („Er warnt, dass die VLANs nicht in
+  Netbox sind, diese sollten aber eigentlich damit angelegt werden“). Abschnitt *Verkabelung*:
+  - Jedes VLAN aus `show vlan`, das NetBox am Standort der Switches nicht hat, kommt in die
+    VLAN-Gruppe des Quellsystems (`<Mandant>-<Quellsystem>`, wie beim Netzinventar).
+  - Danach erhalten die Ports Modus und VLANs.
+  - Vorhandene VLANs (eigene Gruppe, am Standort, global) nimmt der Port wie bisher, ohne Doppel.
+  - Nicht eindeutige VLANs bleiben ein Hinweis.
+  - Ein Sync ohne *Verkabelung* führt die Switch-VLANs nicht als veraltet und löscht sie nie.
+    Umgekehrt gilt das auch für die VLAN-Gruppen von FortiGate/ACI ohne *Netzinventar*.
+  - ADR 0031 hat dazu einen Nachtrag.
+- **NetBox-Sync löscht nichts mehr aus nicht gewählten Abschnitten** (beim Prüfen gefunden). Ein
+  Sync nur mit *Verkabelung* und „Löschen zulassen“ hätte Netze, Ranges, IP-Adressen und VRFs von
+  *Netzinventar* und *DDI-Spiegel* gelöscht. Das widersprach der Regel „Objekte der anderen
+  Abschnitte werden weder gelöscht noch als veraltet geführt“. Diese Arten gelten jetzt nur als
+  veraltet, wenn alle Abschnitte gewählt sind, die sie anlegen können. Mit den Standard-Abschnitten
+  ändert sich nichts.
+- **AD-DNS:** Das Feld heisst „DNS-Zonen“ (statt „Zonen“). Die Liste der Quellsysteme zeigt die
+  Zonen kurz („3 DNS-Zonen“, die ganze Liste im Tooltip) und wird nicht mehr breit. Ebenso viele
+  ACI-/Avi-Tenants („5 Tenants“).
+
 ## 1.6.1 – 2026-11-11
 
 Anwender 2026-11-11 beim Update auf 1.6.0: „WARN[0000] Docker Compose is configured to build using

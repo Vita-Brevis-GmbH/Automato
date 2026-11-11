@@ -1369,11 +1369,11 @@ function SystemDialog({
             <div className="hint">
               {L(
                 <>
-                  Liest die Zonen des DNS-Servers per Zonentransfer und ergänzt jede IP um ihre DNS-Namen (A/AAAA, CNAME,
+                  Liest die DNS-Zonen des DNS-Servers per Zonentransfer und ergänzt jede IP um ihre DNS-Namen (A/AAAA, CNAME,
                   PTR) – in Objekten, Weg-Suche, Doku und im Vergleich mit dem führenden IPAM. Nur lesend, ohne Konto.
                 </>,
                 <>
-                  Reads the zones of the DNS server via zone transfer and adds the DNS names (A/AAAA, CNAME, PTR) to each
+                  Reads the DNS zones of the DNS server via zone transfer and adds the DNS names (A/AAAA, CNAME, PTR) to each
                   IP – in objects, path search, documentation and in the comparison with the primary IPAM. Read-only,
                   without an account.
                 </>,
@@ -1640,8 +1640,8 @@ function SystemDialog({
           <div className="hint">
             {isAdDns
               ? L(
-                  "Name oder IP eines DNS-Servers mit den Zonen (z. B. ein Domain Controller), optional mit :Port – der Zonentransfer läuft über TCP 53.",
-                  "Name or IP of a DNS server holding the zones (e.g. a domain controller), optionally with :port – the zone transfer uses TCP 53.",
+                  "Name oder IP eines DNS-Servers mit den DNS-Zonen (z. B. ein Domain Controller), optional mit :Port – der Zonentransfer läuft über TCP 53.",
+                  "Name or IP of a DNS server holding the DNS zones (e.g. a domain controller), optionally with :port – the zone transfer uses TCP 53.",
                 )
               : L(
                   "So, wie der Agent das Gerät erreicht (vom Agent-Rechner aus gesehen).",
@@ -1763,7 +1763,7 @@ function SystemDialog({
         </div>
         {isAdDns ? (
           <div className="field">
-            <label htmlFor="ss-zones">{L("Zonen", "Zones")}</label>
+            <label htmlFor="ss-zones">{L("DNS-Zonen", "DNS zones")}</label>
             <textarea
               id="ss-zones"
               className="input mono"
@@ -1775,13 +1775,13 @@ function SystemDialog({
             <div className="hint">
               {L(
                 <>
-                  Je Zeile eine Zone – Forward-Zonen (Namen → IP) und Reverse-Zonen (<code>…in-addr.arpa</code>, IP → Name).
+                  Je Zeile eine DNS-Zone – Forward-Zonen (Namen → IP) und Reverse-Zonen (<code>…in-addr.arpa</code>, IP → Name).
                   Keine Zugangsdaten: auf dem DNS-Server je Zone den Zonentransfer nur für die Adresse von Automato bzw. des
                   Agenten erlauben (AD: DNS-Manager → Zone → Eigenschaften → Zonenübertragungen → „Nur an folgende
                   Server“). Dienst-Einträge des AD (<code>_msdcs</code>, <code>_tcp</code> …) werden übergangen.
                 </>,
                 <>
-                  One zone per line – forward zones (names → IP) and reverse zones (<code>…in-addr.arpa</code>, IP →
+                  One DNS zone per line – forward zones (names → IP) and reverse zones (<code>…in-addr.arpa</code>, IP →
                   name). No credentials: on the DNS server allow the zone transfer per zone only for the address of
                   Automato or the agent (AD: DNS Manager → zone → Properties → Zone Transfers → “Only to the following
                   servers”). Service records of the AD (<code>_msdcs</code>, <code>_tcp</code> …) are skipped.
@@ -2222,6 +2222,23 @@ function SystemDialog({
   );
 }
 
+// Gelesener Umfang unter der Adresse (1.7.0, Anwender 2026-11-11: „Die Liste der Quellsysteme wird extrem verbreitet,
+// wenn ich einige DNS Zonen dem AD DNS zufüge“): kurz als Zahl bzw. wenige Namen, die ganze Liste im Tooltip.
+function ScopeLine({ s }: { s: System }) {
+  const items = (s.read_scope || "").split(/[\s,;]+/).filter(Boolean);
+  if (!items.length) return null;
+  const n = items.length;
+  let text: string;
+  if (s.platform === "cisco_switch") text = `${n} Switches`;
+  else if (s.platform === "ad_dns") text = n === 1 ? items[0] : L(`${n} DNS-Zonen`, `${n} DNS zones`);
+  else text = n <= 2 ? `Tenants: ${items.join(", ")}` : L(`${n} Tenants`, `${n} tenants`);
+  return (
+    <div className="faint" style={{ fontSize: 11, whiteSpace: "normal", overflowWrap: "anywhere" }} title={items.join("\n")}>
+      {text}
+    </div>
+  );
+}
+
 function SystemTable({
   systems,
   actions,
@@ -2273,17 +2290,7 @@ function SystemTable({
             </td>
             <td className="mono nowrap">
               {s.base_url || <span className="faint">–</span>}
-              {s.read_scope && s.platform === "cisco_switch" ? (
-                <div className="faint" style={{ fontSize: 11 }} title={s.read_scope}>
-                  {s.read_scope.split(/\s+/).length} Switches
-                </div>
-              ) : (
-                s.read_scope && (
-                  <div className="faint" style={{ fontSize: 11 }} title={L("gelesene ACI-Tenants", "ACI tenants read")}>
-                    Tenants: {s.read_scope}
-                  </div>
-                )
-              )}
+              <ScopeLine s={s} />
             </td>
             <td className="nowrap">
               {s.agent_id != null ? (

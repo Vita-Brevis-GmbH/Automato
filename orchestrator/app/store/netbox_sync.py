@@ -182,6 +182,15 @@ VIRTUAL_KINDS = frozenset(
     {"cluster_type", "cluster_group", "cluster", "virtual_machine", "vm_interface"}
 )
 ASSIGN = {"app_tag_vm": "virtual_machine", "app_tag_ip": "ip_address"}  # Zuordnung -> Ziel-Art
+# Arten, die mehrere Abschnitte fuellen: veraltet bzw. geloescht nur, wenn alle diese Abschnitte
+# gewaehlt sind - sonst gehoert das Objekt vielleicht einem anderen (1.7.0; vorher loeschte z. B.
+# „nur Verkabelung“ mit „Löschen zulassen“ die Netze des Netzinventars und des DDI-Spiegels)
+KIND_SECTIONS = {
+    "vrf": frozenset({"inventory"}),
+    "prefix": frozenset({"inventory", "mirror"}),
+    "ip_range": frozenset({"mirror"}),
+    "ip_address": frozenset({"inventory", "mirror", "virtualization"}),
+}
 TERMINATIONS = ("a_terminations", "b_terminations")  # Enden eines Kabels (je ein Port)
 
 Ref = tuple[str, str]  # (Art, Schluessel)
@@ -283,10 +292,23 @@ class PortVlans:
 
 
 @dataclass
+class SwitchVlans:
+    """VLANs der Switches eines Quellsystems (Verkabelung, 1.7.0): angelegt in der VLAN-Gruppe
+    des Quellsystems, soweit NetBox am Standort kein passendes VLAN hat (`resolve_after_read`)."""
+
+    source: str  # Name des Quellsystems
+    group: str  # VLAN-Gruppe des Quellsystems (Slug)
+    site: str  # Slug des Standorts der Switches
+    vlans: list  # InvVlan (`show vlan`)
+    tenant: Ref  # Mandant der VLANs
+
+
+@dataclass
 class Wants:
     items: dict[tuple[str, str], Want] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
     ports: list[PortVlans] = field(default_factory=list)  # Verkabelung: VLANs nach dem Lesen
+    switch_vlans: list[SwitchVlans] = field(default_factory=list)  # Verkabelung (1.7.0)
     cable_ends: set[str] = field(default_factory=set)  # Geraete an Kabeln: Ports in NetBox lesen
 
     def add(self, want: Want) -> Want:
@@ -532,37 +554,10 @@ def _inventory_wants(
         vlans = rows(InvVlan, src)
         vids: set[int] = set()
         if vlans:
-            w.add(
-                Want(
-                    "vlan_group",
-                    gslug,
-                    f"VLAN-Gruppe {src.name}",
-                    {
-                        "name": _cut(f"{src.name} ({tenant.name})", 100),
-                        "slug": gslug,
-                        "description": _cut(f"Automato: VLANs von {src.name}", 200),
-                    },
-                )
-            )
+            _vlan_group_want(w, tenant, src, gslug)
         for v in vlans:
             vids.add(v.vid)
-            w.add(
-                Want(
-                    "vlan",
-                    f"{gslug}/{v.vid}",
-                    f"VLAN {v.vid} {v.name} ({src.name})",
-                    {
-                        "vid": v.vid,
-                        "name": _cut(v.name or f"VLAN{v.vid}", 64),
-                        "status": "active",
-                        "description": _cut(
-                            _join(v.description, f"EPG {', '.join(v.epgs)}" if v.epgs else None),
-                            200,
-                        ),
-                    },
-                    {"group": ("vlan_group", gslug), "tenant": tenant_ref},
-                )
-            )
+            _vlan_want(w, src.name, gslug, v, tenant_ref)
 
         def vlan_ref(vid: int | None, _g=gslug, _v=vids) -> Ref | None:
             return ("vlan", f"{_g}/{vid}") if vid is not None and vid in _v else None
@@ -617,7 +612,7 @@ def _inventory_wants(
             model = d.model or f"{manufacturer} {d.role or 'device'}"
             _device_want(w, d, src, site, manufacturer, model, tenant_ref)
         names = {d.name for d in devices}
-        ifaces = [i for i in rows(InvInterface, src) if i.device in names]
+        ifaces = _named_ports(w, src, [i for i in rows(InvInterface, src) if i.device in names])
         by_device: dict[str, set[str]] = defaultdict(set)
         for i in ifaces:
             by_device[i.device].add(i.name)
@@ -686,6 +681,55 @@ def _inventory_wants(
                         {"assigned_object_id": ("interface", key), "tenant": tenant_ref},
                     )
                 )
+
+
+def _vlan_group_want(w: Wants, tenant: Tenant, src: SourceSystem, gslug: str) -> Want:
+    """VLAN-Gruppe eines Quellsystems (`<Mandant>-<Quellsystem>`) - Netzinventar und Switches."""
+    return w.add(
+        Want(
+            "vlan_group",
+            gslug,
+            f"VLAN-Gruppe {src.name}",
+            {
+                "name": _cut(f"{src.name} ({tenant.name})", 100),
+                "slug": gslug,
+                "description": _cut(f"Automato: VLANs von {src.name}", 200),
+            },
+        )
+    )
+
+
+def _vlan_want(w: Wants, source: str, gslug: str, v: InvVlan, tenant_ref: Ref) -> None:
+    w.add(
+        Want(
+            "vlan",
+            f"{gslug}/{v.vid}",
+            f"VLAN {v.vid} {v.name} ({source})",
+            {
+                "vid": v.vid,
+                "name": _cut(v.name or f"VLAN{v.vid}", 64),
+                "status": "active",
+                "description": _cut(
+                    _join(v.description, f"EPG {', '.join(v.epgs)}" if v.epgs else None), 200
+                ),
+            },
+            {"group": ("vlan_group", gslug), "tenant": tenant_ref},
+        )
+    )
+
+
+def _named_ports(w: Wants, src: SourceSystem, ifaces: list[InvInterface]) -> list[InvInterface]:
+    """Ports ohne Namen (Zeile der Geraeteausgabe ohne Port) gehen nicht nach NetBox - NetBox
+    verlangt einen Namen (1.7.0, Anwender: „POST dcim/interfaces: HTTP 400 … name: This field is
+    required“); gezaehlt als Hinweis statt still."""
+    named = [i for i in ifaces if (i.name or "").strip()]
+    if len(named) < len(ifaces):
+        devices = sorted({i.device for i in ifaces if not (i.name or "").strip()})
+        w.warnings.append(
+            f"{src.name}: {len(ifaces) - len(named)} Ports ohne Namen nicht übernommen"
+            f" (Gerät {_examples(devices)})."
+        )
+    return named
 
 
 def _vrf_want(w: Wants, name: str, tenant_ref: Ref) -> None:
@@ -1082,8 +1126,16 @@ def _cabling_wants(
             _device_want(w, d, src, site, switch_manufacturer(model), model, tenant_ref)
             names.add(d.name)
         gslug = group_slug(tenant, src)
-        switch_vlans = {v.vid for v in _rows(session, InvVlan, src)}
-        ifaces = [i for i in _rows(session, InvInterface, src) if i.device in names]
+        vlans = _rows(session, InvVlan, src)
+        switch_vlans = {v.vid for v in vlans}
+        if vlans and names:  # VLANs der Switches: welche fehlen, steht erst nach dem Lesen fest
+            _vlan_group_want(w, tenant, src, gslug)
+            w.switch_vlans.append(
+                SwitchVlans(src.name, gslug, slugify(site.code), vlans, tenant_ref)
+            )
+        ifaces = _named_ports(
+            w, src, [i for i in _rows(session, InvInterface, src) if i.device in names]
+        )
         by_device: dict[str, set[str]] = defaultdict(set)
         for i in ifaces:
             by_device[i.device].add(i.name)
@@ -1428,12 +1480,42 @@ def _vlan_ref_key(obj: dict) -> str:
 
 
 def resolve_after_read(wants: Wants, state: State) -> None:
-    """Was erst mit dem Ist von NetBox feststeht: VLANs der Switch-Ports (nur vorhandene,
-    eindeutige), Kabel nur zwischen Ports, die es in NetBox gibt bzw. die der Sync anlegt, und
-    Applikations-Tags nur an solchen VMs/IPs - der Rest als Hinweis."""
+    """Was erst mit dem Ist von NetBox feststeht: fehlende VLANs der Switches (1.7.0), VLANs der
+    Switch-Ports (nur vorhandene bzw. angelegte, eindeutige), Kabel nur zwischen Ports, die es in
+    NetBox gibt bzw. die der Sync anlegt, und Applikations-Tags nur an solchen VMs/IPs - der Rest
+    als Hinweis."""
+    _add_switch_vlans(wants, state)
     _resolve_port_vlans(wants, state)
     _drop_cables_without_ports(wants, state)
     _drop_tags_without_target(wants, state)
+
+
+def _add_switch_vlans(wants: Wants, state: State) -> None:
+    """VLANs der Switches (1.7.0, Nachtrag ADR 0031; Anwender 2026-11-11: „Er warnt, dass die
+    VLANs nicht in Netbox sind, diese sollten aber eigentlich damit angelegt werden“): je VLAN aus
+    `show vlan`, für das NetBox am Standort der Switches keines hat, ein VLAN in der Gruppe des
+    Quellsystems. Vorhandene (eigene Gruppe, am Standort, global) nimmt der Port wie bisher;
+    nicht eindeutige bleiben ein Hinweis. Schon angelegte der Gruppe bleiben gewollt - sonst
+    waeren sie beim naechsten Sync veraltet."""
+    if not wants.switch_vlans:
+        return
+    cands = _vlan_candidates(wants, state)
+    for sv in wants.switch_vlans:
+        site = state["site"].get(sv.site)
+        probe = PortVlans("", "", sv.site, sv.group, "access", None)
+        added = 0
+        for v in sv.vlans:
+            have = state["vlan"].get(f"{sv.group}/{v.vid}")
+            if have is not None and not have.tagged:
+                continue  # von Hand gepflegt: nur referenziert
+            site_id = site.id if site else None
+            if have is not None or _pick_vlan(cands, v.vid, probe, site_id) == "missing":
+                _vlan_want(wants, sv.source, sv.group, v, sv.tenant)
+                added += 1
+        group = state["vlan_group"].get(sv.group)
+        if (group is None and not added) or (group is not None and not group.tagged):
+            # leere Gruppe nicht anlegen; eine von Hand gepflegte nur referenzieren
+            wants.items.pop(("vlan_group", sv.group), None)
 
 
 def _vlan_candidates(wants: Wants, state: State) -> dict[int, list[tuple]]:
@@ -1773,10 +1855,11 @@ _PARENT = {"device": "device", "vm": "virtual_machine"}  # Scope -> Art des Elte
 
 def _in_scope(
     kind: Kind, have: Have, state: State, tslug: str, gprefix: str,
-    foreign: frozenset[str] = frozenset(),
+    foreign: frozenset[str] = frozenset(), groups: frozenset[str] = frozenset(),
 ) -> bool:  # fmt: skip
     """Darf der Sync das Objekt loeschen bzw. als veraltet fuehren? `foreign` = Geraete eines
-    nicht gewaehlten Abschnitts (Netzinventar bzw. Verkabelung) - sie und ihre Ports bleiben."""
+    nicht gewaehlten Abschnitts (Netzinventar bzw. Verkabelung) - sie und ihre Ports bleiben;
+    `groups` = VLAN-Gruppen solcher Quellsysteme - sie und ihre VLANs bleiben (1.7.0)."""
     if not have.tagged or not kind.scope:
         return False
     our = _id(state["tenant"].get(tslug))
@@ -1785,8 +1868,12 @@ def _in_scope(
     if kind.scope == "tenant":
         if kind.name == "device" and have.key in foreign:
             return False
+        if kind.name == "vlan" and have.key.rsplit("/", 1)[0] in groups:
+            return False
         return our is not None and _tenant_id(have.obj) == our
     if kind.scope == "group":
+        if kind.name == "vlan_group" and have.key in groups:
+            return False
         return have.key.startswith(gprefix)
     if kind.scope in _PARENT:
         parent = _PARENT[kind.scope]
@@ -1809,6 +1896,18 @@ def _device_section(obj: dict, platforms: dict[str, Platform]) -> str:
     return "cabling" if platform in CABLING_PLATFORMS else "inventory"
 
 
+def _foreign_groups(tslug: str, platforms: dict[str, Platform], chosen: set[str]) -> frozenset:
+    """VLAN-Gruppen der Quellsysteme eines nicht gewaehlten Abschnitts: Netzinventar (FortiGate,
+    ACI) bzw. Verkabelung (Switches, seit 1.7.0 mit VLANs) - bleiben unangetastet."""
+    section = {**dict.fromkeys(INVENTORY_PLATFORMS, "inventory"),
+               **dict.fromkeys(CABLING_PLATFORMS, "cabling")}  # fmt: skip
+    return frozenset(
+        slugify(f"{tslug}-{name}")
+        for name, platform in platforms.items()
+        if platform in section and section[platform] not in chosen
+    )
+
+
 def diff(
     wants: Wants,
     state: State,
@@ -1826,6 +1925,7 @@ def diff(
         for key, have in state["device"].items()
         if have.tagged and _device_section(have.obj, platforms or {}) not in chosen
     )
+    groups = _foreign_groups(tslug, platforms or {}, chosen)
     wanted_cables = wants.keys_of("cable")
     removed_cables = {  # werden vor dem Anlegen der neuen Kabel geloescht (`apply`)
         have.id
@@ -1872,9 +1972,11 @@ def diff(
     for kind in KINDS:
         if kind.name in ASSIGN or (kind.name in VIRTUAL_KINDS and "virtualization" not in chosen):
             continue  # VMs ohne den Abschnitt nur fuer die Applikations-Tags gelesen
+        if not KIND_SECTIONS.get(kind.name, frozenset()) <= chosen:
+            continue  # koennte einem nicht gewaehlten Abschnitt gehoeren
         wanted = wants.keys_of(kind.name)
         for key, have in sorted(state[kind.name].items()):
-            if key in wanted or not _in_scope(kind, have, state, tslug, gprefix, foreign):
+            if key in wanted or not _in_scope(kind, have, state, tslug, gprefix, foreign, groups):
                 continue
             items.append(
                 _item(
@@ -2272,6 +2374,10 @@ WARNINGS_EN = (
         "übernommen.",
         "Device {name} ({src}): model not read – without device type not applied, nor its ports "
         "and cables.",
+    ),
+    (
+        "{src}: {n} Ports ohne Namen nicht übernommen (Gerät {examples}).",
+        "{src}: {n} ports without a name not applied (device {examples}).",
     ),
     (
         "{device}: Modus/VLANs an {n} Ports weggelassen – VLAN {vids} nicht in NetBox.",

@@ -2127,7 +2127,9 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   nach dem Update erneut ausführen (idempotent). Seit 0.93.0 zwei weitere Abschnitte (ADR 0031,
   nur ausdrücklich gewählt, Vorgabe aus): *Verkabelung* – gelesene Switches & Router mit Ports
   und Kabeln zwischen zwei Ports, die beide Seiten per CDP/LLDP melden; Modus/VLANs nur, wenn die
-  VLANs in NetBox eindeutig vorhanden sind (sonst Hinweis, Automato legt dafür keine VLANs an);
+  VLANs in NetBox eindeutig vorhanden sind – fehlende VLANs der Switches legt der Sync seit 1.7.0
+  in der VLAN-Gruppe des Quellsystems an, nicht eindeutige bleiben ein Hinweis; Ports ohne Namen
+  werden übergangen (Hinweis);
   Kabel zu ACI-Leafs brauchen deren Ports (Abschnitt Netzinventar mitwählen); ohne Standort bzw.
   Modell kein Gerät (Hinweis); belegter Port = Konflikt, umgesteckter Port mit „Löschen
   zulassen“ in einem Durchgang. *Applikationen* – je Applikation ein Tag `automato-app-…` an VMs

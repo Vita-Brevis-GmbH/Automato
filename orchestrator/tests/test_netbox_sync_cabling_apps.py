@@ -7,7 +7,8 @@ mit Kabel nimmt kein zweites (HTTP 400 wie NetBox). Tags an Objekten muessen als
 Verkabelung: sw-acc-01 und sw-core-01 (Switches & Router) und leaf-101 (ACI, Netzinventar).
 Gi1/0/47 <-> Eth1/1 und Eth1/10 <-> leaf-101 eth1/10 melden beide Seiten (Kabel), Eth1/3 ->
 Gi1/0/5 nur sw-core-01 (einseitig), Te1/1/1 -> fw-08 (nicht gelesen). sw-old-01 ohne Modell.
-VLANs in NetBox: 10 global, 20 am Standort ZRH, 30 in zwei Gruppen (nicht eindeutig), 99 fehlt.
+VLANs in NetBox: 10 global, 20 am Standort ZRH, 30 in zwei Gruppen (nicht eindeutig), 1 und 99
+fehlen - seit 1.7.0 legt der Sync sie in der VLAN-Gruppe des Quellsystems an.
 """
 
 import copy
@@ -16,7 +17,7 @@ import json
 import httpx
 import pytest
 from app.api import netbox_sync as api
-from app.models import AuditLog, InvInterface
+from app.models import AuditLog, InvInterface, Platform
 from app.store import netbox_sync
 from sot_gateway.adapters.netbox_writer import NetBoxWriter
 from tests.test_netbox_sync import FakeNetBox, _apply, _reader, _tagged
@@ -30,7 +31,8 @@ TOKEN = {"X-Internal-Token": "dev-only-token"}
 
 
 class CableNetBox(FakeNetBox):
-    """Fake-NetBox mit Kabeln und Pruefung der Tags."""
+    """Fake-NetBox mit Kabeln und Pruefung der Tags; ein Port ohne Namen gibt HTTP 400 wie
+    NetBox (1.7.0)."""
 
     def _check_tags(self, body: list[dict]) -> str | None:
         known = {t["slug"] for t in self.objects("extras/tags")}
@@ -52,6 +54,11 @@ class CableNetBox(FakeNetBox):
             error = self._check_tags(body)
             if error:
                 return httpx.Response(400, json={"tags": [error]})
+            if request.method == "POST" and path == "dcim/interfaces":
+                errors = [{} if o.get("name") else {"name": ["This field is required."]}
+                          for o in body]  # fmt: skip
+                if any(errors):
+                    return httpx.Response(400, json=errors)
         if path != "dcim/cables":
             return super().handler(request)
         if request.method == "GET":
@@ -126,7 +133,7 @@ SWITCHES = {
             _port("sw-acc-01", "Po1", kind="lag", mode="tagged", native_vlan=1,
                   trunk_vlans="1,10,20,40"),
             _port("sw-acc-01", "Gi1/0/5", mode="access", untagged_vlan=20),
-            _port("sw-acc-01", "Gi1/0/6", mode="access", untagged_vlan=99),  # fehlt in NetBox
+            _port("sw-acc-01", "Gi1/0/6", mode="access", untagged_vlan=99),  # fehlt: angelegt
             _port("sw-acc-01", "Gi1/0/7", mode="access", untagged_vlan=30),  # nicht eindeutig
             _port("sw-acc-01", "Te1/1/1", mode="access", untagged_vlan=10, speed="10G",
                   attrs={"media": "SFP-10GBase-SR"}),
@@ -253,7 +260,7 @@ def test_verkabelung_ports_und_kabel(client, netbox, session_factory):
     assert not netbox.writes  # Vorschau liest nur
     warnings = plan["warnings"]
     assert any(w.startswith("Gerät sw-old-01 (Switches A): Modell nicht gelesen") for w in warnings)
-    assert "sw-acc-01: Modus/VLANs an 1 Ports weggelassen – VLAN 99 nicht in NetBox." in warnings
+    assert not any("nicht in NetBox." in w for w in warnings)  # fehlende VLANs: angelegt (1.7.0)
     assert (
         "sw-acc-01: Modus/VLANs an 1 Ports weggelassen – VLAN 30 in NetBox nicht eindeutig."
         in warnings
@@ -266,6 +273,12 @@ def test_verkabelung_ports_und_kabel(client, netbox, session_factory):
     assert cables[CABLE_UPLINK]["fields"]["a_terminations"] == ["sw-acc-01/Gi1/0/47"]
     devices = {i["key"] for i in _items(client, plan["id"], kind="device")}
     assert devices == {"sw-acc-01", "sw-core-01", "mx-01", "leaf-101"}  # sw-old-01 ohne Modell
+    # 1.7.0: nur die VLANs der Switches, die NetBox nicht hat (10 global, 20 am Standort, 30
+    # nicht eindeutig) - in der VLAN-Gruppe des Quellsystems
+    vlans = {i["key"] for i in _items(client, plan["id"], kind="vlan", action="create")}
+    assert vlans == {"kunde-a-switches-a/1", "kunde-a-switches-a/99"}
+    groups = _items(client, plan["id"], kind="vlan_group", action="create")
+    assert [g["key"] for g in groups] == ["kunde-a-switches-a"]
 
     done = _apply(client, plan["id"])
     assert done["status"] == "applied", done
@@ -282,13 +295,18 @@ def test_verkabelung_ports_und_kabel(client, netbox, session_factory):
     assert (up["type"]["value"], up["mode"]["value"], _vids(up)) == ("1000base-t", "tagged",
                                                                       [10, 20])  # fmt: skip
     assert up["lag"]["name"] == "Po1" and up["description"] == "Uplink core"
-    assert not up.get("untagged_vlan")  # Native VLAN 1 fehlt in NetBox: weggelassen
+    native = netbox.db["ipam/vlans"][up["untagged_vlan"]["id"]]  # VLAN 1 fehlte: angelegt
+    assert native["vid"] == 1 and native["group"]["slug"] == "kunde-a-switches-a"
     assert _port_of(netbox, "sw-acc-01", "Po1")["type"]["value"] == "lag"
     access = _port_of(netbox, "sw-acc-01", "Gi1/0/5")
     assert access["mode"]["value"] == "access" and access["untagged_vlan"]["vid"] == 20
-    for name in ("Gi1/0/6", "Gi1/0/7"):  # VLAN fehlt bzw. nicht eindeutig: ohne Modus/VLAN
-        port = _port_of(netbox, "sw-acc-01", name)
-        assert not port.get("mode") and not port.get("untagged_vlan")
+    alt = _port_of(netbox, "sw-acc-01", "Gi1/0/6")  # VLAN 99 fehlte: angelegt
+    assert alt["mode"]["value"] == "access" and alt["untagged_vlan"]["vid"] == 99
+    vlan99 = netbox.db["ipam/vlans"][alt["untagged_vlan"]["id"]]
+    assert vlan99["name"] == "Alt" and _tagged(vlan99) and vlan99["tenant"]["slug"] == "kunde-a"
+    port = _port_of(netbox, "sw-acc-01", "Gi1/0/7")  # VLAN 30 nicht eindeutig: ohne Modus/VLAN
+    assert not port.get("mode") and not port.get("untagged_vlan")
+    assert len([v for v in netbox.objects("ipam/vlans") if v["vid"] == 10]) == 1  # kein Doppel
     sfp = _port_of(netbox, "sw-acc-01", "Te1/1/1")
     assert sfp["type"]["value"] == "10gbase-x-sfpp" and sfp["untagged_vlan"]["vid"] == 10
     assert _port_of(netbox, "sw-acc-01", "Vlan10")["type"]["value"] == "virtual"
@@ -313,10 +331,11 @@ def test_verkabelung_ports_und_kabel(client, netbox, session_factory):
     assert again["totals"]["create"] == again["totals"]["update"] == 0, _items(
         client, again["id"], action="create,update"
     )
-    # ohne den Abschnitt bleiben Switches, ihre Ports und Kabel (nicht veraltet)
+    # ohne den Abschnitt bleiben Switches, ihre Ports, VLANs und Kabel (nicht veraltet)
     other = _plan(client, ids, sections=["inventory"], allow_delete=True)
     gone = _items(client, other["id"], action="delete", limit=2000)
-    assert not [i for i in gone if i["kind"] in ("device", "interface", "cable")], gone
+    kinds = ("device", "interface", "cable", "vlan", "vlan_group")
+    assert not [i for i in gone if i["kind"] in kinds], gone
 
 
 def test_umgesteckter_port_und_belegter_port(client, netbox, session_factory):
@@ -367,6 +386,42 @@ def test_vlan_aus_der_gruppe_des_quellsystems(client, netbox):
     assert _apply(client, plan["id"])["status"] == "applied"
     port = _port_of(netbox, "sw-acc-01", "Gi1/0/7")
     assert port["mode"]["value"] == "access" and port["untagged_vlan"]["id"] == vlan["id"]
+
+
+def test_vlan_gruppe_von_hand_nur_referenziert(client, netbox):
+    """1.7.0: Gibt es die Gruppe des Quellsystems schon von Hand (ohne Tag), kommen fehlende VLANs
+    hinein - die Gruppe selbst bleibt unangetastet; der zweite Sync aendert nichts."""
+    ids = _setup_cabling(client, netbox)
+    own = netbox.add("ipam/vlan-groups", {"name": "Switches A", "slug": "kunde-a-switches-a"})
+    plan = _plan(client, ids, sections=["inventory", "cabling"])
+    assert not _items(client, plan["id"], kind="vlan_group")  # weder anlegen noch Konflikt
+    assert _apply(client, plan["id"])["status"] == "applied"
+    vlan99 = netbox.find("ipam/vlans", vid=99)
+    assert vlan99["group"]["id"] == own["id"] and _tagged(vlan99)
+    assert netbox.db["ipam/vlan-groups"][own["id"]]["name"] == "Switches A"
+    again = _plan(client, ids, sections=["inventory", "cabling"], allow_delete=True)
+    assert again["totals"]["create"] == again["totals"]["update"] == 0
+    assert not _items(client, again["id"], action="delete")
+
+
+def test_ports_ohne_namen_nicht_nach_netbox(client, netbox):
+    """1.7.0 (Anwender 2026-11-11: „Übernahme abgebrochen: POST dcim/interfaces: HTTP 400 …
+    {'name': ['This field is required.']}“): Ports ohne Namen - z. B. von einem Agenten vor 1.7.0
+    gelesen - gehen nicht nach NetBox; die Vorschau zaehlt sie als Hinweis."""
+    ids = _setup_cabling(client, netbox)
+    blank = copy.deepcopy(SWITCHES)
+    blank["inventory"]["interfaces"] += [_port("sw-acc-01", ""), _port("sw-core-01", " ")]
+    _deliver(client, ids["tid"], ids["sw"], "cisco_switch", blank)
+    plan = _plan(client, ids, sections=["inventory", "cabling"])
+    hint = "Switches A: 2 Ports ohne Namen nicht übernommen (Gerät sw-acc-01, sw-core-01)."
+    assert hint in plan["warnings"]
+    keys = {i["key"] for i in _items(client, plan["id"], kind="interface")}
+    assert "sw-acc-01/" not in keys and "sw-core-01/ " not in keys
+    done = _apply(client, plan["id"])
+    assert done["status"] == "applied", done
+    assert all(p["name"].strip() for p in netbox.objects("dcim/interfaces"))
+    en = _plan(client, ids, headers=ADMIN_EN, sections=["cabling"])["warnings"]
+    assert "Switches A: 2 ports without a name not applied (device sw-acc-01, sw-core-01)." in en
 
 
 def test_von_hand_gepflegtes_kabel_bleibt(client, netbox):
@@ -506,7 +561,6 @@ def test_verkabelung_hinweise_englisch(client, netbox):
     ids = _setup_cabling(client, netbox)
     plan = _plan(client, ids, headers=ADMIN_EN, sections=["cabling"])
     w = plan["warnings"]
-    assert "sw-acc-01: mode/VLANs left out on 1 ports – VLAN 99 not in NetBox." in w
     assert "sw-acc-01: mode/VLANs left out on 1 ports – VLAN 30 not unique in NetBox." in w
     assert any(x.startswith("Device sw-old-01 (Switches A): model not read") for x in w)
     assert any(x.startswith("Cabling: 1 links reported by one side only") for x in w)
@@ -517,6 +571,14 @@ def test_verkabelung_hinweise_englisch(client, netbox):
 
 
 def test_hilfen():
+    # VLAN-Gruppen eines nicht gewaehlten Abschnitts bleiben (1.7.0)
+    platforms = {"Switches A": Platform.CISCO_SWITCH, "fw-01": Platform.FORTIGATE,
+                 "netbox": Platform.NETBOX}  # fmt: skip
+    assert netbox_sync._foreign_groups("kunde-a", platforms, {"inventory"}) == {
+        "kunde-a-switches-a"
+    }
+    assert netbox_sync._foreign_groups("kunde-a", platforms, {"cabling"}) == {"kunde-a-fw-01"}
+    assert netbox_sync._foreign_groups("kunde-a", platforms, {"inventory", "cabling"}) == set()
     assert netbox_sync.app_tag_owner("automato-app-kunde-a-b-x", ["kunde-a", "kunde-a-b"]) == (
         "kunde-a-b"
     )
