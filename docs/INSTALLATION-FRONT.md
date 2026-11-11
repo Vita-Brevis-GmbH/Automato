@@ -254,9 +254,11 @@ warnt, wenn Orchestrator und Worker verschieden auflösen.
 
 ## 9. Betrieb
 
-- **Collector-Agenten über die WAF** (Port 8443): nur als reine TCP-Durchleitung, ohne TLS
-  aufzubrechen – das Agent-Gateway prüft das Client-Zertifikat des Agenten selbst. Absender ist
-  dann die WAF; in `DOCKER-USER` muss 8443 von ihr erlaubt sein.
+- **Collector-Agenten über die WAF bzw. FortiGate** (Port des Agent-Gateways, Vorgabe 8443,
+  `AUTOMATO_AGENT_GATEWAY_PORT`): nur als reine TCP-Durchleitung, ohne TLS aufzubrechen – das
+  Agent-Gateway prüft das Client-Zertifikat des Agenten selbst. In `DOCKER-USER` muss dieser Port
+  vom Absender erlaubt sein (WAF bzw. bei einer VIP die Netze der Agenten). Die Agenten zeigen
+  auf `https://<AUTOMATO_AGENT_GATEWAY_HOST>:<Port>`, nie auf eine Kunden-Adresse und nie auf 8000.
 - `front.sh pruefen` und `aufbau.sh pruefen` warnen, wenn `DOCKER-USER` keine Sperre enthält
   (veröffentlichte Ports sonst aus jedem Netz erreichbar).
 - Nach einem Update bleiben Kunden und erzeugte Dateien erhalten (`deploy/front/kunden/`,

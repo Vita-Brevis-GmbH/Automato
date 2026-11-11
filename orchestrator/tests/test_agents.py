@@ -198,7 +198,8 @@ def test_agent_paket_mit_ca_bei_tls_intern(client, tmp_path):
 
     settings()  # ohne TLS intern: keine CA
     assert client.get("/agents/package/info", headers=admin).json() == {
-        "internal_tls": False, "ca": False, "ca_name": "automato-ca.crt"}  # fmt: skip
+        "internal_tls": False, "ca": False, "ca_name": "automato-ca.crt",
+        "gateway_url": ""}  # fmt: skip
     assert client.get("/agents/package/ca", headers=admin).status_code == 404
     names = zipfile.ZipFile(io.BytesIO(client.get("/agents/package", headers=admin).content))
     assert not any(n.endswith(".crt") for n in names.namelist())
@@ -214,4 +215,32 @@ def test_agent_paket_mit_ca_bei_tls_intern(client, tmp_path):
     z = zipfile.ZipFile(io.BytesIO(client.get("/agents/package", headers=admin).content))
     assert z.read("automato-collector-agent/automato-ca.crt").startswith(b"-----BEGIN")
     assert not any(n.endswith(".key") for n in z.namelist())  # nur das Zertifikat
+    del client.app.dependency_overrides[get_settings]
+
+
+def test_einrichtung_kennt_das_agent_gateway(client):
+    """1.5.1 (Anwender: Agent erreicht den Server nicht - agent.env zeigte auf :8000, obwohl nur
+    das mTLS-Gateway Agenten annimmt; Port frei waehlbar, z. B. 46100): die Einrichtung bekommt
+    die Adresse des Gateways, sobald der Modus an und der Name gesetzt ist."""
+    from app.config import Settings, get_settings
+
+    admin = {"X-Dev-Roles": "admin"}
+
+    def url(**extra) -> str:
+        client.app.dependency_overrides[get_settings] = lambda: Settings(**extra)
+        return client.get("/agents/package/info", headers=admin).json()["gateway_url"]
+
+    host = {"agent_gateway_host": "automato.example.ch"}
+    assert url(**host) == ""  # Modus off: Agenten direkt auf :8000
+    assert url(internal_mtls_mode="bind") == ""  # ohne Namen keine Vorgabe
+    assert url(internal_mtls_mode="bind", agent_gateway_host="localhost") == ""
+    assert url(internal_mtls_mode="bind", **host) == "https://automato.example.ch:8443"
+    assert (url(internal_mtls_mode="require", agent_gateway_port=46100, **host)
+            == "https://automato.example.ch:46100")  # fmt: skip
+    assert url(internal_mtls_mode="bind", agent_gateway_port=443, **host) == (
+        "https://automato.example.ch"
+    )
+    assert url(internal_mtls_mode="bind", agent_gateway_host="2001:db8::5") == (
+        "https://[2001:db8::5]:8443"
+    )
     del client.app.dependency_overrides[get_settings]

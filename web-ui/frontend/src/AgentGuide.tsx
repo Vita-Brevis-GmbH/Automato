@@ -35,9 +35,43 @@ function Cmd({ children }: { children: string }) {
 // Direkt auf Port 8000 mit TLS intern (0.78.2): https:// und die CA aus dem Agent-Paket
 const CA_PATH = `${INSTALL_DIR}\\automato-ca.crt`;
 const directTls = (url: string) => /^https:\/\/[^/\s]+:8000\/?$/.test(url.trim());
+const direct = (url: string) => /^https?:\/\/[^/\s]+:8000\/?$/.test(url.trim());
 
-export function buildAgentEnv(v: { orchestratorUrl: string; agentToken: string; ca?: boolean }): string {
+// mTLS-Agent-Gateway (1.5.1): Zertifikate von der Automato-VM (make-certs.sh agent <Name>)
+const PKI_DIR = "C:\\Automato\\pki";
+export const CERT_NAME = /^[A-Za-z0-9._-]+$/;
+
+export function buildAgentEnv(v: {
+  orchestratorUrl: string;
+  agentToken: string;
+  ca?: boolean;
+  gateway?: boolean; // Adresse zeigt auf das Gateway: CA der Agenten + Client-Zertifikat
+  agentName?: string;
+}): string {
   const withCa = !!v.ca && directTls(v.orchestratorUrl);
+  const viaGateway = !!v.gateway && !direct(v.orchestratorUrl);
+  const name = (v.agentName ?? "").trim() || "<name>";
+  const tls = viaGateway
+    ? [
+        L(
+          "# --- mTLS-Agent-Gateway: Dateien von der Automato-VM (deploy/agent-gateway/pki) ---",
+          "# --- mTLS agent gateway: files from the Automato VM (deploy/agent-gateway/pki) ---",
+        ),
+        `AUTOMATO_ORCHESTRATOR_CA_BUNDLE=${PKI_DIR}\\agents-ca.crt`,
+        `AUTOMATO_CLIENT_CERT=${PKI_DIR}\\agent-${name}.crt`,
+        `AUTOMATO_CLIENT_KEY=${PKI_DIR}\\agent-${name}.key`,
+      ]
+    : [
+        L(
+          "# --- TLS zum Orchestrator (produktiv) - nur einkommentieren, wenn die Dateien existieren ---",
+          "# --- TLS to the orchestrator (production) - only uncomment if the files exist ---",
+        ),
+        withCa
+          ? `AUTOMATO_ORCHESTRATOR_CA_BUNDLE=${CA_PATH}`
+          : "# AUTOMATO_ORCHESTRATOR_CA_BUNDLE=C:\\Automato\\pki\\orch-ca.pem",
+        "# AUTOMATO_CLIENT_CERT=C:\\Automato\\pki\\agent.crt",
+        "# AUTOMATO_CLIENT_KEY=C:\\Automato\\pki\\agent.key",
+      ];
   return [
     L(
       "# Automato Collector-Agent - erzeugt im Web-UI (Collector-Agenten -> Einrichtung).",
@@ -52,22 +86,19 @@ export function buildAgentEnv(v: { orchestratorUrl: string; agentToken: string; 
       "# Devices + credentials come from the orchestrator (web UI: Tenants -> Source systems).",
     ),
     "",
-    L(
-      "# --- Orchestrator (direkt, nicht ueber den Web-UI-Proxy) ---",
-      "# --- Orchestrator (direct, not via the web UI proxy) ---",
-    ),
+    viaGateway
+      ? L(
+          "# --- Orchestrator ueber das mTLS-Agent-Gateway (Port 8000 nimmt keine Agenten an) ---",
+          "# --- Orchestrator via the mTLS agent gateway (port 8000 does not accept agents) ---",
+        )
+      : L(
+          "# --- Orchestrator (direkt, nicht ueber den Web-UI-Proxy) ---",
+          "# --- Orchestrator (direct, not via the web UI proxy) ---",
+        ),
     `AUTOMATO_ORCHESTRATOR_URL=${v.orchestratorUrl.trim() || "http://<orchestrator-host>:8000"}`,
     `AUTOMATO_AGENT_TOKEN=${v.agentToken.trim() || "<AGENT_TOKEN>"}`,
     "",
-    L(
-      "# --- TLS zum Orchestrator (produktiv) - nur einkommentieren, wenn die Dateien existieren ---",
-      "# --- TLS to the orchestrator (production) - only uncomment if the files exist ---",
-    ),
-    withCa
-      ? `AUTOMATO_ORCHESTRATOR_CA_BUNDLE=${CA_PATH}`
-      : "# AUTOMATO_ORCHESTRATOR_CA_BUNDLE=C:\\Automato\\pki\\orch-ca.pem",
-    "# AUTOMATO_CLIENT_CERT=C:\\Automato\\pki\\agent.crt",
-    "# AUTOMATO_CLIENT_KEY=C:\\Automato\\pki\\agent.key",
+    ...tls,
     "",
     // Sprache der Konsole (0.90.0, ADR 0028 Schritt 4) - Vorgabe = Sprache der Oberflaeche
     L(
@@ -111,12 +142,16 @@ export default function AgentGuide({
   const [orchestratorUrl, setOrchestratorUrl] = useState(`http://${window.location.hostname}:8000`);
   const [info, setInfo] = useState<AgentPackageInfo | null>(null);
   const [agentToken, setAgentToken] = useState("");
+  // Name im Client-Zertifikat (CN = Agent-Name, Modus bind): neu angelegter bzw. einziger Agent
+  const [certName, setCertName] = useState("");
   // TLS intern (0.78.2): Port 8000 spricht nur HTTPS - die Vorgabe der Adresse folgt
   useEffect(() => {
     fetchAgentPackageInfo()
       .then((i) => {
         setInfo(i);
-        if (i.internal_tls) setOrchestratorUrl((u) => u.replace(/^http:\/\//, "https://"));
+        // mTLS-Gateway (1.5.1): Agenten nur darüber - dessen Adresse ist die Vorgabe
+        if (i.gateway_url) setOrchestratorUrl(i.gateway_url);
+        else if (i.internal_tls) setOrchestratorUrl((u) => u.replace(/^http:\/\//, "https://"));
       })
       .catch(() => setInfo(null));
   }, []);
@@ -132,8 +167,11 @@ export default function AgentGuide({
 
   // Token des soeben angelegten Agenten übernehmen (nur solange es angezeigt wird)
   const token = agentToken || created?.token || "";
-  const env = buildAgentEnv({ orchestratorUrl, agentToken: token, ca: !!info?.ca });
-  const plainToTls = !!info?.internal_tls && /^http:\/\//.test(orchestratorUrl.trim());
+  const gateway = info?.gateway_url ?? "";
+  const agentName = certName || created?.name || (agents.length === 1 ? agents[0].name : "");
+  const viaGateway = !!gateway && !direct(orchestratorUrl);
+  const env = buildAgentEnv({ orchestratorUrl, agentToken: token, ca: !!info?.ca, gateway: !!gateway, agentName });
+  const plainToTls = !gateway && !!info?.internal_tls && /^http:\/\//.test(orchestratorUrl.trim());
   const getCa = async () => {
     try {
       download(info?.ca_name ?? "automato-ca.crt", await downloadAgentCa());
@@ -197,12 +235,12 @@ export default function AgentGuide({
             <li>
               {L(
                 <>
-                  Der Rechner erreicht den Orchestrator ausgehend (Standard Port 8000) – Test in PowerShell:{" "}
-                  <code>Test-NetConnection {target}</code>
+                  Der Rechner erreicht den Orchestrator ausgehend ({gateway ? "Port des Agent-Gateways" : "Standard Port 8000"})
+                  – Test in PowerShell: <code>Test-NetConnection {target}</code>
                 </>,
                 <>
-                  The machine reaches the orchestrator outbound (default port 8000) – test in PowerShell:{" "}
-                  <code>Test-NetConnection {target}</code>
+                  The machine reaches the orchestrator outbound ({gateway ? "port of the agent gateway" : "default port 8000"})
+                  – test in PowerShell: <code>Test-NetConnection {target}</code>
                 </>,
               )}
             </li>
@@ -321,6 +359,18 @@ export default function AgentGuide({
                 onChange={(e) => setOrchestratorUrl(e.target.value)}
               />
             </div>
+            {gateway && (
+              <div className="field">
+                <label htmlFor="ag-name">{L("Agent-Name (Zertifikat)", "Agent name (certificate)")}</label>
+                <input
+                  id="ag-name"
+                  className="input mono"
+                  value={agentName}
+                  placeholder="<name>"
+                  onChange={(e) => setCertName(e.target.value)}
+                />
+              </div>
+            )}
             <div className="field">
               <label htmlFor="ag-token">{L("Agent-Token", "Agent token")}</label>
               <SecretInput
@@ -331,7 +381,40 @@ export default function AgentGuide({
               />
             </div>
           </div>
-          {info?.internal_tls && (
+          {gateway && (
+            <Note warn={!viaGateway}>
+              <span id="ag-gateway">
+                {L(
+                  <>
+                    Agenten nur über das <b>mTLS-Agent-Gateway</b> <code>{gateway}</code> – Port 8000 nimmt keine Agenten
+                    an („agent channel requires the mTLS gateway“). Zertifikat je Agent auf der Automato-VM:{" "}
+                    <code>cd deploy/agent-gateway &amp;&amp; sudo ./make-certs.sh agent {agentName || "<name>"}</code> (Name genau
+                    wie der Agent hier). Danach <code>pki/agents-ca.crt</code>, <code>agent-{agentName || "<name>"}.crt</code> und{" "}
+                    <code>.key</code> nach <code>{PKI_DIR}</code> auf den Agent-Rechner kopieren – den Schlüssel nur dorthin.
+                  </>,
+                  <>
+                    Agents only via the <b>mTLS agent gateway</b> <code>{gateway}</code> – port 8000 does not accept agents
+                    (“agent channel requires the mTLS gateway”). Certificate per agent on the Automato VM:{" "}
+                    <code>cd deploy/agent-gateway &amp;&amp; sudo ./make-certs.sh agent {agentName || "<name>"}</code> (name exactly
+                    as the agent here). Then copy <code>pki/agents-ca.crt</code>, <code>agent-{agentName || "<name>"}.crt</code>{" "}
+                    and <code>.key</code> to <code>{PKI_DIR}</code> on the agent machine – the key only there.
+                  </>,
+                )}
+                {agentName && !CERT_NAME.test(agentName) && (
+                  <>
+                    {" "}
+                    <b>
+                      {L(
+                        "Der Name enthält Zeichen, die make-certs.sh nicht annimmt (nur A-Z a-z 0-9 . _ -).",
+                        "The name contains characters make-certs.sh does not accept (only A-Z a-z 0-9 . _ -).",
+                      )}
+                    </b>
+                  </>
+                )}
+              </span>
+            </Note>
+          )}
+          {info?.internal_tls && !viaGateway && (
             <Note>
               <span id="ag-tls">
                 {L(

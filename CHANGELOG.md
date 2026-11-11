@@ -7,6 +7,23 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 1.5.1 – 2026-11-10
+
+Anwender 2026-11-10: Collector-Agent erreicht den Server nicht („die Firewall ist offen …, aber
+der Server nimmt sie nicht an“) – die `agent.env` zeigte auf Port 8000, obwohl mit
+`AUTOMATO_INTERNAL_MTLS_MODE=bind` nur das mTLS-Agent-Gateway Agenten annimmt; „ich würde gerne
+einen Random Port nehmen: 46100“.
+
+- **Port des Agent-Gateways einstellbar:** `AUTOMATO_AGENT_GATEWAY_PORT` (Vorgabe 8443) – Port auf
+  der VM; im Container bleibt 8443, die Zertifikate bleiben gültig.
+- **Einrichtung der Agenten kennt das Gateway:** ist der Modus an und
+  `AUTOMATO_AGENT_GATEWAY_HOST` gesetzt, schlägt die Seite `https://<Host>:<Port>` vor, trägt
+  `agents-ca.crt` und das Client-Zertifikat des Agenten (`agent-<Name>.crt/.key`) in die
+  `agent.env` ein und zeigt den Befehl `make-certs.sh agent <Name>`; Warnung bei Namen, die das
+  Skript nicht annimmt. Ohne Gateway bleibt alles wie bisher.
+- **Anleitungen:** Port in `DOCKER-USER` und auf der Firewall davor, Pfade der Zertifikate auf der
+  Station (`C:\Automato\pki`), `.env.example` mit den Gateway-Werten.
+
 ## 1.5.0 – 2026-11-10
 
 Anwender 2026-11-10 bei der Einrichtung von 1.4.0 (LDAPS, Anmelde-Tor, NetBox über den Realm,

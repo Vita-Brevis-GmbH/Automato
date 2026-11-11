@@ -2185,7 +2185,9 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
 
 Agent-Aufrufe (`/internal/agent/*`, Ergebnis-/Referenz-Upload mit `X-Agent-Token`) nimmt der
 Orchestrator mit `AUTOMATO_INTERNAL_MTLS_MODE=require|bind` nur über das mTLS-Agent-Gateway
-an (`deploy/agent-gateway`, Port 8443).
+an (`deploy/agent-gateway`, Port 8443 bzw. `AUTOMATO_AGENT_GATEWAY_PORT`). Die Einrichtung
+(Collector-Agenten) schlägt dann die Adresse des Gateways und die Zertifikatszeilen der
+`agent.env` vor (1.5.1).
 
 ## 4b. Versionen und Updates
 

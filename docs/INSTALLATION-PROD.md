@@ -34,7 +34,7 @@ NetBox (ADR 0010).
   |---|---|---|
   | Admin-Netz → VM | 22/tcp | SSH (Passwort, nur Gruppe `automato-admins`) |
   | Client-Netze → VM | 443/tcp | Oberfläche über den Proxy |
-  | Agent-Stationen → VM | 8443/tcp | Agent-Gateway (Client-Zertifikat Pflicht) |
+  | Agent-Stationen → VM | 8443/tcp | Agent-Gateway (Client-Zertifikat Pflicht; anderer Port mit `AUTOMATO_AGENT_GATEWAY_PORT`) |
   | VM → Geräte | 443/tcp, 22/tcp, 161/udp | FortiGate, APIC, Infoblox, vCenter, NSX ALB (HTTPS); Switches (SSH bzw. SNMPv3) – nur lesend |
   | VM → NetBox | 443/tcp | Lesen und NetBox-Sync (einziger Schreibweg) |
   | VM → Keycloak | 443/tcp | Anmeldung (OIDC, JWKS) |
@@ -359,6 +359,7 @@ COMMIT
 sudo ufw reload && sudo iptables -L DOCKER-USER -n -v --line-numbers
 ```
 
+Mit `AUTOMATO_AGENT_GATEWAY_PORT` (z. B. 46100) steht in der Agent-Zeile dieser Port statt 8443.
 Gilt für das iptables-Backend von Docker (Vorgabe). Mit IPv6 dasselbe in `after6.rules`.
 Beim Aufruf der Oberfläche muss der Zähler der `443`-Zeile steigen.
 
@@ -585,6 +586,7 @@ AUTOMATO_ALLOW_UNAUTHENTICATED_READ_API=false
 AUTOMATO_AGENT_GATEWAY_HOST=automato.int.example.ch
 AUTOMATO_AGENT_GATEWAY_SECRET=<hex>
 AUTOMATO_INTERNAL_MTLS_MODE=bind
+# AUTOMATO_AGENT_GATEWAY_PORT=8443   # anderer Port auf der VM (1.5.1)
 
 # Docker bei jedem Automato-Update mit aktualisieren; Zertifikate der Gegenstellen prüfen
 AUTOMATO_DOCKER_UPDATE=1
