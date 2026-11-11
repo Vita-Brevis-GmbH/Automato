@@ -153,6 +153,7 @@ MODULES: tuple[Module, ...] = (
         store=(
             "agents",
             "agent_access",
+            "agent_checks",
             "agent_package",
             "ingest",
             "runs",

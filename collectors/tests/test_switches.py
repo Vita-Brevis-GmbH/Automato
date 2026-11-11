@@ -22,7 +22,7 @@ from collectors.cisco_switch.normalize import (
     vlan_set,
 )
 from collectors.common import diagnose
-from collectors.common.dto import Target
+from collectors.common.dto import NormalizedInterface, Target
 
 SAMPLE = tasks._sample()
 
@@ -147,6 +147,23 @@ def test_mac_tabelle_gekappt(monkeypatch):
     inv = normalize(raw)
     assert len([m for m in inv.macs if m.device == "sw-acc-01"]) == 3
     assert raw["switches"][0]["notes"] == ["MAC-Tabelle: 3 Eintraege ueber 3 nicht uebernommen"]
+
+
+def test_ports_ohne_namen_nicht_uebernommen(monkeypatch):
+    """1.7.0 (Anwender 2026-11-11: NetBox „name: This field is required“): eine Zeile der Ausgabe
+    ohne Port ist kein Port - gezaehlt als Hinweis im Lauf."""
+    real = sn.switch_inventory
+
+    def with_blank(host, platform, outputs, notes=None):
+        part = real(host, platform, outputs, notes)
+        part.interfaces.append(NormalizedInterface(device=part.devices[0].name, name=" "))
+        return part
+
+    monkeypatch.setattr(sn, "switch_inventory", with_blank)
+    raw = {"switches": [dict(sw, notes=[]) for sw in SAMPLE["switches"]]}
+    inv = normalize(raw)
+    assert inv.interfaces and all(i.name.strip() for i in inv.interfaces)
+    assert "1 Ports ohne Namen nicht uebernommen" in raw["switches"][0]["notes"]
 
 
 def test_hilfen():

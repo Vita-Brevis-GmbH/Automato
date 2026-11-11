@@ -266,7 +266,8 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   Verwendung in Regeln/Gruppen und Befunden. **Klick auf ein Objekt** öffnet das Detail wie
   bei NAT: Attribute, Werte, Mitglieder, Befunde und die Firewall-Regeln, die es nutzen (auch
   über Gruppen), mit „In Regeln anzeigen“. „Objekt öffnen“ (z. B. aus NAT / VIPs) filtert
-  seit 0.36.0 auch die Liste dahinter auf genau dieses Objekt („nur „…“ ✕“ hebt es auf).
+  seit 0.36.0 auch die Liste dahinter auf genau dieses Objekt („nur „…“ ✕“ hebt es auf,
+  seit 1.8.0 auch jeder Reiterwechsel).
   **Präfix der Namenskonvention** (0.117.0): Filter nach dem Präfix des Namens aus dem
   Namensprofil des Mandanten (`V-EXT_`, `H_`, `N_` … und eigene wie `CVS_`), mit Anzahl je
   Präfix und „ohne Präfix“ – zusätzlich zum Typ wie auf dem Gerät (IP, FQDN, Geo …).
@@ -882,7 +883,13 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     Abweichungen zuerst.
   - **Geräte:** gelesene Geräte und die nur von Nachbarn gemeldeten, mit Ports (verbunden),
     Verbindungen und Abweichungen; ein Klick öffnet die Verbindungen bzw. Ports des Geräts.
-    ESXi-Hosts aus dem vCenter erscheinen, wenn ein Switch sie meldet.
+    ESXi-Hosts aus dem vCenter erscheinen, wenn ein Switch sie meldet. Seit 1.8.0 liest der
+    vCenter-Lauf die Hosts selbst (Hersteller, Modell, Version, vmnics und was jede vmnic per
+    CDP/LLDP hört, ADR 0017 Nachtrag): Verbindungen Switch-Port ↔ vmnic gelten als
+    **beidseitig**, auch wenn der Switch den Host nicht sieht (ESXi hört CDP standardmässig nur
+    zu); der Hinweis am Zustand sagt „über den ESXi-Host bestätigt“. Darf das Konto die Nachbarn
+    eines Hosts nicht lesen bzw. ist der Host getrennt, steht das als Hinweis im Lauf – der Rest
+    wird eingelesen.
   - **Ports:** alle Ports der gelesenen Switches (Status, Speed, Duplex, Modus, VLAN bzw.
     Native VLAN und erlaubte VLANs, Port-Channel, vPC, Beschreibung, Gegenstelle); Filter
     Gerät, Status (up/down/abgeschaltet), VLAN, Suche. Seit 0.63.0 die Anzahl **Endpunkte**
@@ -1359,7 +1366,10 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     Browser; die Kategorien sind zu Beginn zu. Die Tabelle **Systeme** zeigt nur System,
     Zustand, IPs, EPG und Regeln – Klick öffnet das Detail (Mitgliedschaft, Betriebssystem,
     DNS, Portgruppe je NIC mit EPG, Cluster/Host, Standort, Firewall-Objekte mit Namensprüfung
-    und Link) mit „Regeln dieses Systems zeigen“.
+    und Link) mit „Regeln dieses Systems zeigen“. Ohne ACI-Quellsystem (1.8.0) steht statt der
+    EPG das **Netz**: das engste Subnetz aus dem Netzinventar mit Interface, VLAN und Gerät
+    (z. B. „10.20.0.0/24 · srv-vl20 · VLAN 20 (fw-01)“); Bereich und Filter der EPGs entfallen,
+    die Kennzahl heisst „Netze“, der Word-Export ebenso.
   - **Export / Drucken (0.73.0):** der Knopf oben öffnet einen Dialog mit den Abschnitten
     (Übersicht, Systeme, EPGs, Verbindungen Ende zu Ende, Netzwerkplan, Regeln & Contracts,
     Findings, Doku nach Kategorien, ausgeblendete Regeln; der Kopf mit dem Steckbrief steht
@@ -2127,14 +2137,21 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   nach dem Update erneut ausführen (idempotent). Seit 0.93.0 zwei weitere Abschnitte (ADR 0031,
   nur ausdrücklich gewählt, Vorgabe aus): *Verkabelung* – gelesene Switches & Router mit Ports
   und Kabeln zwischen zwei Ports, die beide Seiten per CDP/LLDP melden; Modus/VLANs nur, wenn die
-  VLANs in NetBox eindeutig vorhanden sind (sonst Hinweis, Automato legt dafür keine VLANs an);
+  VLANs in NetBox eindeutig vorhanden sind – fehlende VLANs der Switches legt der Sync seit 1.7.0
+  in der VLAN-Gruppe des Quellsystems an, nicht eindeutige bleiben ein Hinweis; Ports ohne Namen
+  werden übergangen (Hinweis);
   Kabel zu ACI-Leafs brauchen deren Ports (Abschnitt Netzinventar mitwählen); ohne Standort bzw.
   Modell kein Gerät (Hinweis); belegter Port = Konflikt, umgesteckter Port mit „Löschen
   zulassen“ in einem Durchgang. *Applikationen* – je Applikation ein Tag `automato-app-…` an VMs
   und IP-Adressen ihrer Systeme (nur Objekte mit Tag `automato`, die es in NetBox gibt bzw. die
   der Sync anlegt – Virtualisierung/DDI-Spiegel mitwählen); fremde Tags bleiben, von Hand
   gepflegte Objekte sind ein Konflikt, Tags gelöschter Applikationen nur mit „Löschen
-  zulassen“ entfernt. Objekte eines nicht gewählten Abschnitts bleiben unangetastet (auch nicht
+  zulassen“ entfernt. Seit 1.8.0 *Firewall-Objekte* (ADR 0031 Nachtrag) – Hosts, Netze und
+  Bereiche der Adressobjekte der Firewalls als IP-Adresse, Prefix bzw. IP-Range mit der
+  Beschreibung `FW-Objekt <Name>`; nur wenn die Ziel-NetBox das führende IPAM ist (dann
+  vorgewählt), bewusst externe Objekte nicht. Damit füllt Automato die NetBox als IPAM, wo es
+  kein DDI gibt; nach dem Sync die NetBox neu einlesen, dann entfallen die Befunde „nicht im
+  IPAM“. Objekte eines nicht gewählten Abschnitts bleiben unangetastet (auch nicht
   „veraltet“). Für Kabel braucht der Sync-Benutzer `dcim.cable` – `sync-user.sh` erneut
   ausführen. **Vorschau
   erstellen** liest NetBox nur und zeigt je Art: anlegen / ändern / unverändert / Konflikt
@@ -2175,7 +2192,7 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
 | `GET /cabling/devices`, `GET /cabling/links` (`device`, `state` both/one_sided/unread, `q`, `issues`, `limit`, `offset`), `GET /cabling/ports` (`device`, `status` up/down/disabled, `vlan`, `q`, `limit`, `offset`), `GET /cabling/vlans`, `GET /cabling/sources` (je `tenant_id`); seit 0.63.0 `GET /cabling/endpoints` (`device`, `port`, `vlan`, `q`, `uplinks`, `limit`, `offset`) und `GET /cabling/locate?q=`; seit 0.64.0 `GET /cabling/plan` (`ends`, `vlan`) und `GET /cabling/failure` (`device` bzw. `link`, seit 0.65.0 je mehrfach); seit 0.65.0 `GET /cabling/plan/export` (`format` svg/drawio, `ends`, `vlan`) | Verkabelung (0.62.0, ADR 0025; viewer, nicht für Kunden-Benutzer): Geräte mit `summary` (devices, switches, links, `states`, issues, unread, seit 0.63.0 `endpoints`) und je Gerät `read`, `kind`, Ports/verbunden, Verbindungen, Abweichungen; Verbindungen mit `a`/`b` (Gerät, Port, Schnittstelle), `state`, `protocols`, `issues`; Ports der Switches mit `peer`, `link_state`, `issues`, `endpoints`; VLANs mit Namen und je Switch Access-Ports/Trunks; Quellsysteme der Switches; Endpunkte mit `summary` (macs, ports, vms, with_ip) und je MAC-Eintrag `mac`, `vlan`, `device`, `port`, `uplink`, `via` (Gegenstelle am Port), `vm`, `ips`, `names`, `epgs`, `first_seen`/`last_seen`; Suche mit `kind` (mac/ip/name), `ips` und je MAC `reason`, `locations`, `behind`, `earlier`, `seen_on`; Plan mit `nodes` (`layer`, `x`, `y`, `switching`, `vlan_present`), `edges` (`ids`, `links`, `state`, `issues`, `lags`, `ports`, `vlan` yes/no/partial/unknown, seit 0.65.0 `standby` und `stp`), `pairs` (vPC: `a`, `b`, `domain`), `width`/`height`, `vlan` (`present`, `islands`); Ausfall mit `devices`, `links`, `parts`, `main`, `cut_off`, `cut_off_keys` (422 ohne Gerät/Kabel bzw. mehr als 50 Angaben, 404 unbekannt); Ports seit 0.65.0 mit `vpc_peer_link`, `stp_blocked`, `stp_root`; Export als Datei (`Content-Disposition`) |
 | `GET /auth/me`, `GET/POST /customer-users`, `PATCH/DELETE /customer-users/{id}` | Wer bin ich laut Orchestrator (Rollen, Mandanten, Kunden, `customer_source` claim/automato) – die Oberfläche richtet sich danach; Zuordnung Benutzer → Kunde (0.53.0, Admin): `login`, `customer_id`, `role` viewer/operator, `note` |
 | `GET/POST /tenants/{id}/sites`, `PATCH/DELETE /tenants/{id}/sites/{sid}` | Standorte (`kind` virtual/physical, `physical_site_ids` bzw. `virtual_site_ids`) |
-| `POST /systems/{id}/check` | Erreichbarkeit eines zentral gelesenen Quellsystems vom Orchestrator aus (operator): Schritte `dns`, `tcp`, bei NetBox `http` (`/api/status/` mit dem Lese-Token) je mit `ok`/`detail`, dazu `hint`; Agent-Systeme 409 (`run-agent.ps1 -Check`), 0.34.0 |
+| `POST /systems/{id}/check`, seit 1.7.0 `GET /systems/{id}/check/{check_id}` | Verbindung prüfen (operator). Zentral gelesene Quellsysteme vom Orchestrator aus: Schritte `dns`, `tcp`, bei NetBox `http` (`/api/status/` mit dem Lese-Token) je mit `ok`/`detail`, dazu `hint` (0.34.0). Geräte hinter einem Agenten (1.7.0): Prüfauftrag (`from: agent`, `check_id`, `status` queued → running → done bzw. expired) – der Agent bekommt ihn mit `next-run` samt Zugangsdaten, prüft read-only Name, Verbindung und Anmeldung (`dns`, `tcp`, `login`) und meldet über `POST /internal/agent/checks/{id}`; ohne Abholung nach 3 min bzw. ohne Antwort nach 5 min `expired` mit Hinweis; ein offener Auftrag je Gerät; deaktivierter Agent 409; Audit `agent_check.claimed` |
 | `GET /systems/labels?tenant_id=` | Bezeichnungen der Quellsysteme (`id`, `name`, `platform`, `vdoms`, `parallel_group`) ohne Konfiguration; Kunden-Benutzer nur die Systeme ihrer Regeln, NAT bzw. Objekte (0.33.0), seit 0.58.0 mit neutralen Namen („Firewall 1“, VDOM-Nummern) wie alle Antworten an Kunden-Benutzer |
 | `GET /systems/parallel?tenant_id=` | Verbünde paralleler Firewalls (0.72.0): Mitglieder (führend zuerst) und je Bereich `rules`, `objects`, `policy_routes`, `routes`, `nat` die Zahlen `same`/`differs`/`missing`; viewer, nicht Kunden-Benutzer |
 | `GET /systems?tenant_id=`, `POST /systems`, `PATCH/DELETE /systems/{id}` | Quellsysteme (je Mandant; `agent_id`, `site_id`, `read_scope`, `ref_role`, `schedule` → `next_run_at`; Switches: `read_scope` = Adressen, `host_keys` (Adresse, Art, Fingerabdruck), `forget_host_keys` beim PATCH; `token` bzw. `username`/`password`, NetBox `write_token` nur schreibbar → `has_credentials`/`has_write_token`; Referenzquellen mit `reference_count`/`reference_at`) |
@@ -2672,7 +2689,8 @@ Client-Zertifikat und die passenden Zeilen der `agent.env`.
     `sudo deploy/aufbau.sh firewall --anwenden` (setzt nur die schmale Regel) bzw. die Regel
     aus System → Verbindungen. **Nicht** `172.16.0.0/12` und nicht `8080/tcp` für alle
     freigeben – das LAN kann im selben Bereich liegen.
-  1. **Quellsysteme → Prüfen** (ab 0.34.0) bzw. **System → Verbindungen** (0.40.0) zeigt in
+  1. **Quellsysteme → Prüfen** (ab 0.34.0; seit 1.7.0 auch bei Geräten hinter einem Agenten –
+     dann prüft der Agent beim nächsten Abruf) bzw. **System → Verbindungen** (0.40.0) zeigt in
      Sekunden, wo es hängt:
      - Name nicht auflösbar: `extra_hosts` fehlt bzw. der Container wurde nicht neu
        erstellt.

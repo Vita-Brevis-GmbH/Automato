@@ -19,6 +19,8 @@ test("Quellsystem AD-DNS: DNS-Server und Zonen, ohne Zugangsdaten (0.123.0)", as
   await expect(modal).not.toContainText("TLS-Zertifikat des Geräts prüfen");
   await expect(modal).toContainText("Zonenübertragungen");
 
+  // 1.7.0 (Anwender 2026-11-11: „bitte die Zonen umbenennen auf DNS Zonen“)
+  await expect(modal.locator("label[for='ss-zones']")).toHaveText("DNS-Zonen");
   await modal.locator("#ss-url").fill("DC01.example.ch");
   await modal.locator("#ss-zones").fill("Example.CH.\n10.in-addr.arpa");
   const sent = page.waitForRequest((r) => r.url().endsWith("/api/systems") && r.method() === "POST");
@@ -39,6 +41,9 @@ test("Quellsystem AD-DNS: DNS-Server und Zonen, ohne Zugangsdaten (0.123.0)", as
     await expect(row).toContainText("dns://dc01.example.ch");
     await expect(row.locator(".chip", { hasText: "keine nötig" })).toBeVisible();
     await expect(row).toContainText("noch nicht eingelesen");
+    // 1.7.0: Zonen kurz als Zahl (ganze Liste im Tooltip) – die Liste der Quellsysteme bleibt schmal
+    await expect(row).toContainText("2 DNS-Zonen");
+    await expect(row).not.toContainText("in-addr.arpa");
     // Bearbeiten: Zonen je Zeile
     await row.locator("button:has-text('Bearbeiten')").click();
     await expect(modal.locator("#ss-zones")).toHaveValue("example.ch\n10.in-addr.arpa");
@@ -57,7 +62,7 @@ test("Englisch: AD-DNS im Quellsystem-Dialog", async ({ page }) => {
   const modal = page.locator(".modal");
   await modal.locator("#ss-platform").selectOption("ad_dns");
   await expect(modal.locator("label[for='ss-url']")).toHaveText("DNS server");
-  await expect(modal.locator("label[for='ss-zones']")).toHaveText("Zones");
+  await expect(modal.locator("label[for='ss-zones']")).toHaveText("DNS zones");
   await expect(modal).toContainText("Only to the following servers");
   await modal.locator("button:has-text('Cancel')").click();
 });

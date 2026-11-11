@@ -64,7 +64,10 @@ Installation eines Pakets, das das Selbst-Update schon enthält.
 ## Erreichbarkeit vorab prüfen
 
 Vor dem ersten echten Lauf im Kundennetz die Verbindung/Authentisierung zu **allen
-zugewiesenen Geräten** testen (read-only, kein Ingest):
+zugewiesenen Geräten** testen (read-only, kein Ingest). Ein einzelnes Gerät geht seit 1.7.0
+auch aus dem Web-UI (**Quellsysteme → Prüfen**): der Agent bekommt den Auftrag mit `next-run`
+und meldet Name, Verbindung und Anmeldung über `POST /internal/agent/checks/{id}`. Auf der
+Station:
 
 ```bash
 automato-collector --check                 # optional: --platform fortigate

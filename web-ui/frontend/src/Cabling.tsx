@@ -28,6 +28,7 @@ import {
   L2Failure,
   L2Plan,
   L2PlanEdge,
+  LinkConfirmed,
   LinkState,
   locateEndpoint,
 } from "./api";
@@ -72,8 +73,15 @@ const KIND: Record<string, string> = {
   unknown: L("nicht gelesen", "not read"),
 };
 
-function StateChip({ state }: { state: LinkState }) {
-  const [cls, label, title] = STATE[state];
+// 1.8.0: beidseitig über einen gelesenen ESXi-Host bestätigt – er hört den Switch (bzw. der Switch ihn)
+const ESXI_CONFIRMED = L(
+  "über den ESXi-Host bestätigt: eine Seite kennt die andere aus deren CDP/LLDP – ESXi spricht CDP/LLDP meist nur in eine Richtung (Vorgabe: zuhören)",
+  "confirmed via the ESXi host: one side knows the other from its CDP/LLDP – ESXi usually speaks CDP/LLDP in one direction only (default: listen)",
+);
+
+function StateChip({ state, confirmed }: { state: LinkState; confirmed?: LinkConfirmed }) {
+  const [cls, label, plain] = STATE[state];
+  const title = state === "both" && confirmed === "esxi" ? ESXI_CONFIRMED : plain;
   return (
     <span className={`chip ${cls}`} title={title}>
       {label}
@@ -289,7 +297,7 @@ function LinksTab({ tenantId, devices, device, onDevice }: {
                     {l.b.port ?? <Dash />}
                   </td>
                   <td className="nowrap">
-                    <StateChip state={l.state} /> <span className="faint">{l.protocols.join("/").toUpperCase()}</span>
+                    <StateChip state={l.state} confirmed={l.confirmed} /> <span className="faint">{l.protocols.join("/").toUpperCase()}</span>
                   </td>
                   <td>
                     {l.issues.map((i) => (
@@ -447,7 +455,7 @@ function PortsTab({ tenantId, devices, device, onDevice, onEndpoints }: {
                     {p.peer ? (
                       <>
                         {p.peer.device} <span className="mono">{p.peer.port}</span>{" "}
-                        {p.link_state && <StateChip state={p.link_state} />}
+                        {p.link_state && <StateChip state={p.link_state} confirmed={p.link_confirmed} />}
                         {p.issues.map((i) => (
                           <div key={i} className="crit">
                             {i}
@@ -1281,7 +1289,7 @@ function PatchRow({ l, onPick, onEndpoints }: {
         </td>
         <td className="faint">{l.b.read ? endText(l.b) || <Dash /> : <span>{L("nicht gelesen", "not read")}</span>}</td>
         <td className="nowrap">
-          <StateChip state={l.state} /> <span className="faint">{l.protocols.join("/").toUpperCase()}</span>
+          <StateChip state={l.state} confirmed={l.confirmed} /> <span className="faint">{l.protocols.join("/").toUpperCase()}</span>
         </td>
         <td className="nowrap">
           {l.a.endpoints > 0 && l.a.port && onEndpoints ? (

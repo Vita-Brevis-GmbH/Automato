@@ -6,6 +6,7 @@ Die ACI-Tabellen (epg*) und nat_rule folgen mit ihrer Phase.
 """
 
 from app.models.agent import Agent
+from app.models.agent_check import AgentCheck
 from app.models.application import (
     CRITICALITIES,
     MEMBER_KINDS,
@@ -122,6 +123,7 @@ __all__ = [
     "SERVICE_CATEGORIES",
     "TOPOLOGY_MODELS",
     "Agent",
+    "AgentCheck",
     "Application",
     "ArpEntry",
     "ApplicationMember",

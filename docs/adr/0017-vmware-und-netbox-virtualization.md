@@ -79,3 +79,46 @@ vervollständigen.
 - Eine primäre IP der VM wird nicht gesetzt (erfordert einen zweiten Schritt nach dem
   Anlegen der IPs).
 - Proxmox folgt später mit demselben Modell (VM, Portgruppe/Bridge).
+
+## Nachtrag 1.8.0 – ESXi-Hosts mit vmnics und Nachbarn (CDP/LLDP)
+
+Anwender: „Wird in VMware die Ports und Nachbarschaft nicht ausgelesen von den Hosts?“ – und
+„Nur wegen den Verbindungen“. Der Kunde hat Switches und ein vCenter, aber kein ACI; in der
+Verkabelung fehlten die Verbindungen Switch-Port ↔ vmnic. ESXi hört CDP standardmässig nur zu
+(sendet nicht): der Switch sieht den Host meist nicht, der Host aber den Switch.
+
+- **Gelesen wird zusätzlich je Host** (PropertyCollector, wie bisher nur Eigenschaften):
+  Hardware (`hardware.systemInfo`: Hersteller, Modell, Seriennummer – ab vSphere 6.7
+  `serialNumber`, sonst Service-Tag aus den Kennungen), Version (`config.product.version`),
+  Verwaltungs-Adresse (IPv4 der VMkernel-NIC an „Management …“, sonst `vmk0`; die
+  Management-Rolle selbst wird nicht abgefragt), Zustand der Verbindung
+  (`runtime.connectionState`), die physischen NICs (`config.network.pnic`: vmnic, MAC, Speed,
+  Duplex) und die Referenz `configManager.networkSystem`.
+- **Nachbarn je vmnic**: je verbundenem Host einmal `HostNetworkSystem.QueryNetworkHint()` ohne
+  Argument (alle vmnics). Ergebnis je vmnic: CDP (`connectedSwitchPort`: Geräte-ID, Port,
+  Management-Adresse, Plattform, Fähigkeiten) bzw. LLDP (`lldpInfo`: Chassis-ID, Port-ID,
+  Parameter wie „System Name“, „Management Address“, „System Description“). CDP geht vor; ist
+  die LLDP-Port-ID eine MAC, gilt die Port-Beschreibung.
+- **Warum lesend**: Die Methode liefert, was der Host je vmnic an CDP/LLDP-Paketen und Netzen
+  beobachtet hat; sie ändert nichts am Host. Laut vSphere-API (in pyVmomi `privId` der Methode)
+  braucht sie nur das Recht **System.Read** – Teil der Rolle **Read-only**. Sie steht deshalb in
+  der Liste der erlaubten Methoden (`READ_METHODS`); jede andere Methode des Netzwerk-Systems
+  (z. B. `UpdateNetworkConfig`, `RefreshNetworkSystem`) bleibt vor dem Senden blockiert.
+- **Ohne Recht bzw. bei Fehlern** bricht der Lauf nicht ab: Der Host kommt ohne Nachbarn ins
+  Inventar, der Lauf meldet „Hinweise: <Host>: CDP/LLDP nicht lesbar (<Grund>)“ (z. B.
+  `NoPermission`, `disconnected`, `TimeoutError`). Getrennte Hosts werden nicht gefragt. Nach
+  drei Verbindungsfehlern in Folge (keine vSphere-Meldung, z. B. Zeitüberschreitung) fragt der
+  Lauf die übrigen Hosts nicht mehr („CDP/LLDP von n weiteren Hosts nicht abgefragt“) – sonst
+  wartete er bei einem hängenden vCenter je Host bis zum Timeout.
+- **Übergabe**: `VirtualInventory.hosts` (Name, Hersteller, Modell, Seriennummer, Version,
+  Verwaltungs-Adresse, vmnics mit Speed im Stil der Switches – „1000“, „10G“ – und Nachbar).
+  Fehlt das Feld (älterer Agent), bleiben die Hosts im Inventar unangetastet; eine leere Liste
+  heisst „keine Hosts mehr“.
+- **Speicherung im Netzinventar des vCenters** (wie die Switches, ADR 0010/0025): Host =
+  `inv_device` mit Rolle `esxi` und neuer Spalte `vendor` (Migration 0080, für den Gerätetyp im
+  NetBox-Sync), vmnic = `inv_interface` (physisch, Speed, Status, MAC in `attrs`), Nachbar =
+  `inv_neighbor`. Ersetzt werden nur die Hosts des vCenters mit ihren Ports und Nachbarn – VMs,
+  Portgruppen und anderes Inventar bleiben. Für den Datenstand (ADR 0049) ist der Teil
+  `virtual.hosts` ohne Wirkung auf Doku und Wege.
+- **Verkabelung**: siehe ADR 0025 (Nachtrag 1.8.0). Geschrieben wird weiterhin nur nach NetBox,
+  nie ins vCenter und nie auf einen Host.

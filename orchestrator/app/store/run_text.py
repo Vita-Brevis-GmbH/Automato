@@ -249,6 +249,12 @@ PHRASES: tuple[tuple[str, str], ...] = (
     (" Einträge (VIP × Port)", " entries (VIP × port)"),
     ("pyvmomi fehlt - Agent neu installieren bzw. Selbst-Update abwarten",
      "pyvmomi missing - reinstall the agent or wait for the self-update"),
+    # vCenter: ESXi-Hosts mit Nachbarn aus CDP/LLDP (vmware/tasks.py `summary`, 1.8.0)
+    ("^ESXi-Hosts: {n} gelesen, {m} vmnics mit Nachbarn (CDP/LLDP)",
+     "ESXi hosts: {n} read, {m} vmnics with neighbors (CDP/LLDP)"),
+    (": CDP/LLDP nicht lesbar (", ": CDP/LLDP not readable ("),
+    ("CDP/LLDP von {n} weiteren Hosts nicht abgefragt (vCenter antwortet nicht)",
+     "CDP/LLDP of {n} further hosts not queried (vCenter does not respond)"),
     ("nur lesend: vSphere-Methode {method} blockiert",
      "read-only: vSphere method {method} blocked"),
     # Routing nicht lesbar (fortigate/tasks.py, cisco_aci/tasks.py, avi/tasks.py, Clients)

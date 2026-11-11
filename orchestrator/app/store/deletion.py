@@ -14,6 +14,7 @@ from app.models import (
     L2_MODELS,
     TOPOLOGY_MODELS,
     Agent,
+    AgentCheck,
     Application,
     ApplicationMember,
     CollectorRun,
@@ -119,6 +120,7 @@ def delete_source_system(session: Session, source: SourceSystem) -> dict[str, in
     """Quellsystem mit seinen Regeln, NAT-Einträgen und den dadurch verwaisten Findings
     löschen; Läufe bleiben als Historie."""
     session.execute(delete(SyncPlan).where(SyncPlan.source_system_id == source.id))
+    session.execute(delete(AgentCheck).where(AgentCheck.source_system_id == source.id))
     counts = {"rules": _delete_rules(session, Rule.source_system_id == source.id)}
     counts["nat_rules"] = _count(
         session, delete(NatRule).where(NatRule.source_system_id == source.id)
@@ -246,6 +248,7 @@ def delete_tenant(session: Session, tenant: Tenant) -> dict[str, int]:
     counts["sites"] = _count(session, delete(Site).where(Site.tenant_id == tid))
 
     source_ids = select(SourceSystem.id).where(SourceSystem.tenant_id == tid)
+    session.execute(delete(AgentCheck).where(AgentCheck.source_system_id.in_(source_ids)))
     session.execute(
         update(CollectorRun)
         .where(CollectorRun.source_system_id.in_(source_ids))
@@ -256,6 +259,7 @@ def delete_tenant(session: Session, tenant: Tenant) -> dict[str, int]:
     )
     counts["runs"] = _count(session, delete(CollectorRun).where(CollectorRun.tenant_id == tid))
     agent_ids = select(Agent.id).where(Agent.tenant_id == tid)
+    session.execute(delete(AgentCheck).where(AgentCheck.agent_id.in_(agent_ids)))
     session.execute(
         update(SourceSystem).where(SourceSystem.agent_id.in_(agent_ids)).values(agent_id=None)
     )

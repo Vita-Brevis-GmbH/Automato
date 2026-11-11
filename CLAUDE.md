@@ -46,7 +46,7 @@ und wird erweitert. Details: `README.md`, `ARCHITECTURE.md`, `docs/adr/`.
 
 - **Abnahme:** Der Anwender testet jede freigegebene Version sofort. Eine Version gilt als
   abgenommen, sobald seine nächste Rückmeldung keinen Einwand dazu enthält – in `ROADMAP.md`
-  („Abgenommen“) nachführen. Abgenommen bis **1.5.0** (2026-11-10).
+  („Abgenommen“) nachführen. Abgenommen bis **1.7.0** (2026-11-11).
 - **Klärung vor dem Bauen:** ändert sich Bedienung oder Bedeutung und ist der Wunsch mehrdeutig,
   zuerst 3–5 Zeilen Vorschlag mit einer Rückfrage, dann bauen.
 - **Sammeln:** Anpassungen einer Rückmeldungsrunde in **einer** Version (Patch = Korrektur,
@@ -115,7 +115,7 @@ und wird erweitert. Details: `README.md`, `ARCHITECTURE.md`, `docs/adr/`.
 
 ## Aktueller Stand
 
-1.6.1 – buildx in `aufbau.sh` geprüft und nachinstalliert; 1.6.0 Zugang des Agenten (agent.env, Token, Zertifikat) aus der Oberfläche (ADR 0052), `.env` prüfen/ordnen, nur `COMPOSE_PROFILES`, Altlasten entfernt; 1.5.1 Port des Agent-Gateways einstellbar; 1.5.0 Zugriff je Kunde (überall, intern, Netze) und Korrekturen aus der Einrichtung; 1.4.0 Anmelde-Tor im Front-Proxy, eine Anmeldung je Realm, NetBox über den Realm (ADR 0051); 1.3.0 Kunden-Portal mit Host-Agent und Realm je Kunde (ADR 0050), Front-Proxy auf der Automato-VM, NetBox-Host als Backend (ADR 0044 Nachtrag); **Version 1 abgeschlossen**
+1.8.0 – ESXi-Hosts mit vmnics und CDP/LLDP in Verkabelung und NetBox-Sync, NetBox-Sync-Abschnitt „Firewall-Objekte“ (NetBox als IPAM ohne DDI), Netz statt EPG ohne ACI; 1.7.0 – Verbindung prüfen auch über den Agenten (Prüfauftrag beim nächsten Abruf), NetBox-Sync legt fehlende Switch-VLANs an (ADR 0031 Nachtrag), Ports ohne Namen nur als Hinweis, AD-DNS „DNS-Zonen“; 1.6.1 buildx in `aufbau.sh`; 1.6.0 Zugang des Agenten (agent.env, Token, Zertifikat) aus der Oberfläche (ADR 0052), `.env` prüfen/ordnen, nur `COMPOSE_PROFILES`, Altlasten entfernt; 1.5.1 Port des Agent-Gateways einstellbar; 1.5.0 Zugriff je Kunde (überall, intern, Netze) und Korrekturen aus der Einrichtung; 1.4.0 Anmelde-Tor im Front-Proxy, eine Anmeldung je Realm, NetBox über den Realm (ADR 0051); 1.3.0 Kunden-Portal mit Host-Agent und Realm je Kunde (ADR 0050), Front-Proxy auf der Automato-VM, NetBox-Host als Backend (ADR 0044 Nachtrag); **Version 1 abgeschlossen**
 mit 1.0.0 (Produktivschaltung DC, R14). Einzelheiten je Bereich in
 `docs/STAND.md`, Produktiv-Installation in `docs/INSTALLATION-PROD.md`, NetBox je Kunde in
 `docs/INSTALLATION-NETBOX-HOST.md`, Front-Proxy in `docs/INSTALLATION-FRONT.md`. Bekannte Einschränkungen von 1.0.0 und nächste Arbeiten in

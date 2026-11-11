@@ -3,9 +3,16 @@
 Liest mit dem PropertyCollector in wenigen Aufrufen alle VMs, Hosts, Cluster, Datacenter,
 Ordner und Portgruppen und gibt sie als einfache Dicts zurueck (`normalize` braucht kein
 pyVmomi). vSphere spricht SOAP (nur POST) - der Nur-Lese-Schutz sitzt deshalb an den
-Methoden: erlaubt sind Anmelden/Abmelden, Service-Content, Container-View anlegen/entfernen
-und Eigenschaften abrufen; jeder andere Aufruf bricht vor dem Senden ab (`ReadOnlyViolation`).
-Das Konto braucht im vCenter nur die Rolle Read-only.
+Methoden: erlaubt sind Anmelden/Abmelden, Service-Content, Container-View anlegen/entfernen,
+Eigenschaften abrufen und (1.8.0) die Netzwerk-Hinweise eines Hosts; jeder andere Aufruf bricht
+vor dem Senden ab (`ReadOnlyViolation`). Das Konto braucht im vCenter nur die Rolle Read-only.
+
+ESXi-Hosts (1.8.0, Anwender: „Wird in VMware die Ports und Nachbarschaft nicht ausgelesen von
+den Hosts?“): Hardware (Hersteller, Modell, Seriennummer), Version, Verwaltungs-Adresse, die
+physischen NICs (vmnic, MAC, Speed) und je vmnic der Nachbar, den der Host per CDP bzw. LLDP
+hoert (`HostNetworkSystem.QueryNetworkHint`). Scheitert diese Abfrage fuer einen Host (Recht,
+Host getrennt, Zeitueberschreitung), bekommt er keine Nachbarn (`neighbors_error`) - der Lauf
+geht weiter.
 """
 
 import ssl
@@ -30,8 +37,27 @@ READ_METHODS = frozenset(
         "ContinueRetrievePropertiesEx",
         "CancelRetrievePropertiesEx",
         "RetrieveProperties",
+        # 1.8.0: lesende Abfrage - was der Host je vmnic per CDP/LLDP hoert (und welche Netze er
+        # dort sieht); aendert nichts am Host. Laut vSphere-API braucht sie nur das Recht
+        # System.Read, das die Rolle Read-only enthaelt (pyVmomi: `privId` der Methode)
+        "QueryNetworkHint",
     }
 )
+# Hosts in Folge, deren Abfrage an der Verbindung scheitert (keine vSphere-Meldung, z. B.
+# Zeitueberschreitung), bevor die uebrigen nicht mehr abgefragt werden - sonst wartete der Lauf
+# bei einem haengenden vCenter je Host bis zum Timeout
+MAX_TRANSPORT_ERRORS = 3
+NOT_QUERIED = "not queried"  # Hosts nach MAX_TRANSPORT_ERRORS (`neighbors_error`)
+_CDP_CAPS = (
+    ("networkSwitch", "switch"),
+    ("router", "router"),
+    ("transparentBridge", "trans-bridge"),
+    ("sourceRouteBridge", "source-route-bridge"),
+    ("host", "host"),
+    ("repeater", "repeater"),
+)
+# Seriennummer im Hardware-Inventar aelterer vSphere-Versionen (ohne `serialNumber`)
+_SERIAL_TAGS = ("SerialNumberTag", "ServiceTag", "EnclosureSerialNumberTag")
 
 # Eigenschaften je Objektart (PropertyCollector)
 PROPS: dict[str, list[str]] = {
@@ -49,7 +75,19 @@ PROPS: dict[str, list[str]] = {
         "guest.hostName",
         "guest.net",
     ],
-    "HostSystem": ["name", "parent", "config.network.portgroup"],
+    "HostSystem": [
+        "name",
+        "parent",
+        "config.network.portgroup",
+        # 1.8.0: Hardware, Version, physische NICs, VMkernel-NICs (Verwaltungs-Adresse), Zustand
+        # der Verbindung und die Referenz fuer die Netzwerk-Hinweise (CDP/LLDP)
+        "runtime.connectionState",
+        "hardware.systemInfo",
+        "config.product.version",
+        "config.network.pnic",
+        "config.network.vnic",
+        "configManager.networkSystem",
+    ],
     "ComputeResource": ["name", "parent"],
     "Folder": ["name", "parent"],
     "Datacenter": ["name", "parent"],
@@ -140,6 +178,99 @@ def _guest_net(nets) -> list[dict]:
     ]
 
 
+def _serial(info) -> str | None:
+    """Seriennummer des Hosts: `serialNumber` (ab vSphere 6.7), sonst aus den Kennungen."""
+    if getattr(info, "serialNumber", None):
+        return info.serialNumber
+    tags = {}
+    for i in getattr(info, "otherIdentifyingInfo", None) or []:
+        key = getattr(getattr(i, "identifierType", None), "key", None)
+        tags[key] = getattr(i, "identifierValue", None)
+    return next((tags[t] for t in _SERIAL_TAGS if tags.get(t)), None)
+
+
+def _mgmt_ip(vnics) -> str | None:
+    """Verwaltungs-Adresse: IPv4 der VMkernel-NIC an der Portgruppe „Management …“, sonst vmk0,
+    sonst die erste VMkernel-NIC mit Adresse (die Rolle „Management“ fragt der Collector nicht
+    ab - das waere eine weitere Methode)."""
+    found = []
+    for v in vnics or []:
+        ip = getattr(getattr(getattr(v, "spec", None), "ip", None), "ipAddress", None)
+        if ip:
+            found.append((getattr(v, "portgroup", None) or "", getattr(v, "device", None), ip))
+    for check in (lambda pg, dev: "management" in pg.lower(), lambda pg, dev: dev == "vmk0"):
+        hit = next((ip for pg, dev, ip in found if check(pg, dev)), None)
+        if hit:
+            return hit
+    return found[0][2] if found else None
+
+
+def _pnic(p) -> dict:
+    """Physische NIC: Name (vmnic), MAC, Speed in Mbit/s und Duplex (ohne Link: leer)."""
+    link = getattr(p, "linkSpeed", None)
+    return {
+        "name": getattr(p, "device", None),
+        "mac": getattr(p, "mac", None),
+        "speed_mb": getattr(link, "speedMb", None) if link is not None else None,
+        "duplex": getattr(link, "duplex", None) if link is not None else None,
+    }
+
+
+def _text(value) -> str | None:
+    """Wert eines LLDP-Parameters als Text (nur einfache Werte)."""
+    if isinstance(value, bool) or not isinstance(value, str | int | float):
+        return None
+    return str(value).strip() or None
+
+
+def _cdp(info) -> dict | None:
+    """CDP-Daten des Switches an einer vmnic (`PhysicalNicCdpInfo`) - ohne Geraete-ID keine."""
+    if info is None or not getattr(info, "devId", None):
+        return None
+    caps = getattr(info, "deviceCapability", None)
+    return {
+        "dev_id": info.devId,
+        "port_id": getattr(info, "portId", None),
+        "address": getattr(info, "address", None),
+        "mgmt_addr": getattr(info, "mgmtAddr", None),
+        "platform": getattr(info, "hardwarePlatform", None),
+        "system_name": getattr(info, "systemName", None),
+        "caps": [name for attr, name in _CDP_CAPS if getattr(caps, attr, False) is True],
+    }
+
+
+def _lldp(info) -> dict | None:
+    """LLDP-Daten an einer vmnic (`LinkLayerDiscoveryProtocolInfo`): Chassis, Port, Parameter
+    wie „System Name“, „Management Address“, „System Description“."""
+    if info is None:
+        return None
+    params = {
+        str(p.key): _text(getattr(p, "value", None))
+        for p in getattr(info, "parameter", None) or []
+        if getattr(p, "key", None)
+    }
+    out = {
+        "chassis_id": getattr(info, "chassisId", None),
+        "port_id": getattr(info, "portId", None),
+        "params": {k: v for k, v in params.items() if v is not None},
+    }
+    return out if out["chassis_id"] or out["port_id"] or out["params"] else None
+
+
+def hint_plain(hint) -> dict:
+    """Netzwerk-Hinweis einer vmnic (`PhysicalNicHintInfo`) -> einfaches Dict."""
+    return {
+        "device": getattr(hint, "device", None),
+        "cdp": _cdp(getattr(hint, "connectedSwitchPort", None)),
+        "lldp": _lldp(getattr(hint, "lldpInfo", None)),
+    }
+
+
+def _reason(exc: Exception) -> str:
+    """Kurzer Grund fuer den Hinweis im Lauf: Art der vSphere-Meldung bzw. Ausnahme."""
+    return type(exc).__name__.rsplit(".", 1)[-1]
+
+
 def to_plain(kind: str, moid: str, props: dict[str, Any]) -> dict:
     """pyVmomi-Eigenschaften -> einfaches Dict (fuer `normalize`)."""
     if kind == "VirtualMachine":
@@ -164,6 +295,8 @@ def to_plain(kind: str, moid: str, props: dict[str, Any]) -> dict:
         }
     if kind == "HostSystem":
         pgs = props.get("config.network.portgroup") or []
+        info = props.get("hardware.systemInfo")
+        state = props.get("runtime.connectionState")
         return {
             "moid": moid,
             "name": props.get("name"),
@@ -176,6 +309,15 @@ def to_plain(kind: str, moid: str, props: dict[str, Any]) -> dict:
                 }
                 for p in pgs
             ],
+            # 1.8.0: Hardware, Version, Verwaltungs-Adresse, vmnics (Nachbarn: `gather`)
+            "vendor": getattr(info, "vendor", None),
+            "model": getattr(info, "model", None),
+            "serial": _serial(info),
+            "version": props.get("config.product.version"),
+            "mgmt_ip": _mgmt_ip(props.get("config.network.vnic")),
+            "connection": str(state) if state is not None else None,
+            "network_system": _moid(props.get("configManager.networkSystem")),
+            "pnics": [_pnic(p) for p in props.get("config.network.pnic") or []],
         }
     if kind == "DistributedVirtualPortgroup":
         vlan, ranges = _vlan(props.get("config.defaultPortConfig"))
@@ -239,8 +381,45 @@ class VCenterClient:
         return str(self._si.CurrentTime())
 
     def gather(self) -> dict[str, list[dict]]:
-        """Alle Objekte der Arten in PROPS als einfache Dicts, je Art eine Liste."""
-        return self._retrieve(PROPS)
+        """Alle Objekte der Arten in PROPS als einfache Dicts, je Art eine Liste; an den vmnics
+        der Hosts die Nachbarn aus CDP/LLDP (1.8.0)."""
+        data = self._retrieve(PROPS)
+        self.neighbors(data.get("HostSystem") or [])
+        return data
+
+    def neighbors(self, hosts: list[dict]) -> None:
+        """Je verbundenem Host `QueryNetworkHint` (ohne Argument: alle vmnics) - die vmnics
+        bekommen `cdp`/`lldp`. Scheitert die Abfrage, steht der Grund in `neighbors_error`
+        und der Host bleibt ohne Nachbarn; der Lauf geht weiter. Nach MAX_TRANSPORT_ERRORS
+        Verbindungsfehlern in Folge werden die uebrigen Hosts nicht mehr abgefragt."""
+        from pyVmomi import vim, vmodl
+
+        failed = 0
+        for host in hosts:
+            if failed >= MAX_TRANSPORT_ERRORS:
+                host["neighbors_error"] = NOT_QUERIED
+                continue
+            state = host.get("connection")
+            if state not in (None, "connected"):  # getrennt bzw. antwortet nicht
+                host["neighbors_error"] = state
+                continue
+            if not host.get("network_system"):
+                continue
+            system = vim.host.NetworkSystem(host["network_system"], self._si._stub)
+            try:
+                hints = system.QueryNetworkHint()
+            except ReadOnlyViolation:
+                raise  # Fehler im Code, nicht im vCenter - nie still uebergehen
+            except Exception as exc:  # noqa: BLE001 - je Host: Hinweis statt Abbruch
+                host["neighbors_error"] = _reason(exc)
+                failed = 0 if isinstance(exc, vmodl.MethodFault) else failed + 1
+                continue
+            failed = 0
+            by_device = {h["device"]: h for h in map(hint_plain, hints or []) if h["device"]}
+            for nic in host.get("pnics") or []:
+                hint = by_device.get(nic.get("name"))
+                if hint is not None:
+                    nic["cdp"], nic["lldp"] = hint["cdp"], hint["lldp"]
 
     def probe(self) -> int:
         """Leserecht im Inventar pruefen wie beim Lauf (Container-View ab dem Wurzelordner,

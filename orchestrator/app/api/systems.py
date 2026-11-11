@@ -54,7 +54,7 @@ from app.models import (
     TopoContext,
 )
 from app.models.source_system import Platform
-from app.store import app_refresh, deletion, reachability, sites
+from app.store import agent_checks, app_refresh, deletion, reachability, sites
 from app.store import naming_profiles as profile_store
 
 router = APIRouter(prefix="/systems", tags=["systems"])
@@ -627,23 +627,66 @@ def system_labels(
     ]
 
 
+def _agent_hint(check, agent: Agent | None) -> str | None:
+    """Hinweis, wenn der Agent nicht geantwortet hat (Auftrag verfallen)."""
+    if check.status != "expired":
+        return None
+    name = agent.name if agent is not None else "?"
+    seen = agent.last_seen if agent is not None else None
+    when = seen.strftime("%Y-%m-%d %H:%M UTC") if seen else L("nie", "never")
+    return L(
+        f"Der Agent „{name}“ hat sich nicht gemeldet (zuletzt gesehen: {when}). Läuft die "
+        "geplante Aufgabe „Automato Collector Agent“ auf der Station? Ein Agent älter als 1.7.0 "
+        "kennt die Prüfung noch nicht und aktualisiert sich beim nächsten Start selbst; von Hand "
+        "auf der Station: .\\run-agent.ps1 -Check.",
+        f"The agent “{name}” did not report back (last seen: {when}). Is the scheduled task "
+        "“Automato Collector Agent” running on the station? An agent older than 1.7.0 does not "
+        "know the check yet and updates itself on its next start; by hand on the station: "
+        ".\\run-agent.ps1 -Check.",
+    )
+
+
+def _agent_check_out(s: SourceSystem, check, agent: Agent | None) -> dict:
+    result = check.result or {}
+    return {
+        "system_id": s.id,
+        "name": s.name,
+        "from": "agent",
+        "agent": agent.name if agent is not None else None,
+        "check_id": check.id,
+        "status": check.status,  # queued | running | done | expired
+        "ok": bool(check.ok) if check.status == "done" else False,
+        "steps": result.get("steps") or [],
+        "hint": result.get("hint") or _agent_hint(check, agent),
+    }
+
+
 @router.post("/{system_id}/check")
 def check_system(
     system_id: int,
     principal: Principal = Depends(require_operator),
     session: Session = Depends(get_session, scope="function"),
 ) -> dict:
-    """Erreichbarkeit eines zentral gelesenen Quellsystems vom Orchestrator aus: Name, TCP,
-    bei NetBox `GET /api/status/` mit dem Lese-Token (nur lesend). Agent-Systeme prüft der
-    Agent selbst (`run-agent.ps1 -Check`)."""
+    """Verbindung prüfen. Zentral gelesene Quellsysteme vom Orchestrator aus: Name, TCP, bei
+    NetBox `GET /api/status/` mit dem Lese-Token (nur lesend). Geräte hinter einem Agenten
+    (1.7.0): Prüfauftrag für den Agenten - er prüft beim nächsten Abruf read-only (Name,
+    Verbindung, Anmeldung); Ergebnis über `GET …/check/{check_id}`."""
     s = session.get(SourceSystem, system_id)
     if s is None:
         raise HTTPException(status_code=404, detail="source system not found")
     tenant_scope(principal, s.tenant_id)
     if s.agent_id is not None:
-        raise HTTPException(
-            status_code=409, detail="read by an agent - check on the agent (run-agent.ps1 -Check)"
-        )
+        agent = session.get(Agent, s.agent_id)
+        if agent is None or not agent.enabled:
+            raise HTTPException(
+                status_code=409,
+                detail=L(
+                    "Der Agent dieses Geräts ist deaktiviert – unter Collector-Agenten aktivieren",
+                    "The agent of this device is disabled – enable it under Collector agents",
+                ),
+            )
+        check = agent_checks.request(session, s, principal.subject)
+        return _agent_check_out(s, check, agent)
     try:
         secrets = credentials.decrypt(s.credentials) if s.credentials else {}
     except credentials.CredentialsUnavailable:
@@ -656,6 +699,24 @@ def check_system(
         zones=s.read_scope.split() if s.platform == Platform.AD_DNS else None,
     )
     return {"system_id": s.id, "name": s.name, "from": "orchestrator", **result.out()}
+
+
+@router.get("/{system_id}/check/{check_id}")
+def agent_check_result(
+    system_id: int,
+    check_id: int,
+    principal: Principal = Depends(require_operator),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Stand eines Prüfauftrags an den Agenten (1.7.0): queued, running, done oder expired."""
+    s = session.get(SourceSystem, system_id)
+    if s is None:
+        raise HTTPException(status_code=404, detail="source system not found")
+    tenant_scope(principal, s.tenant_id)
+    check = agent_checks.latest(session, s, check_id)
+    if check is None:
+        raise HTTPException(status_code=404, detail="check not found")
+    return _agent_check_out(s, check, session.get(Agent, check.agent_id))
 
 
 @router.post("", response_model=SystemOut, status_code=201)

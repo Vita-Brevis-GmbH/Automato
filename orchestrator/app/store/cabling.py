@@ -1,14 +1,18 @@
 """Verkabelung (0.62.0, ADR 0025): Verbindungen zwischen Geraeten aus CDP/LLDP aller Quellen.
 
-Jede Angabe „an meinem Port P sitzt Geraet G, Port Q“ (Switches `inv_neighbor`, ACI-Leafs und
-andere ueber `inv_interface.neighbor`) wird zu einer Verbindung zwischen zwei Enden. Ein Ende ist
-ein gelesenes Geraet (`inv_device`, Name bzw. Management-IP), ein ESXi-Host aus dem vCenter oder
-ein Geraet, das Automato nicht liest. Meldet die Gegenseite die Verbindung ebenfalls, ist sie
-**beidseitig**; liest Automato die Gegenseite, ohne dass sie sie meldet, ist sie **einseitig**.
+Jede Angabe „an meinem Port P sitzt Geraet G, Port Q“ (Switches und seit 1.8.0 die ESXi-Hosts
+eines vCenters `inv_neighbor`, ACI-Leafs und andere ueber `inv_interface.neighbor`) wird zu einer
+Verbindung zwischen zwei Enden. Ein Ende ist ein gelesenes Geraet (`inv_device`, Name bzw.
+Management-IP), ein ESXi-Host aus dem vCenter (gelesen mit vmnics bzw. nur als Host seiner VMs)
+oder ein Geraet, das Automato nicht liest. Meldet die Gegenseite die Verbindung ebenfalls, ist
+sie **beidseitig**; liest Automato die Gegenseite, ohne dass sie sie meldet, ist sie
+**einseitig**. Eine Verbindung an einem gelesenen ESXi-Host gilt ebenfalls als beidseitig
+(`Link.confirmed`, 1.8.0) - ESXi spricht CDP/LLDP meist nur in eine Richtung.
 
-Geprueft wird nur zwischen zwei gelesenen Switches (deren Ports Status, Speed, Duplex und VLANs
+Geprueft wird zwischen zwei gelesenen Switches (deren Ports Status, Speed, Duplex und VLANs
 tragen): Speed, Duplex, Modus/VLANs (Access-VLAN, Native VLAN, erlaubte VLANs) und Port-Channel
-nur auf einer Seite. Daraus werden Befunde (`checks`). Rein lesend; nur Daten der Plattform.
+nur auf einer Seite; zwischen Switch-Port und vmnic eines gelesenen ESXi-Hosts nur der Speed.
+Daraus werden Befunde (`checks`). Rein lesend; nur Daten der Plattform.
 """
 
 import ipaddress
@@ -109,8 +113,9 @@ class Device:
     model: str | None = None
     version: str | None = None
     mgmt_ip: str | None = None
-    read: bool = False  # Automato liest das Geraet (Ports bekannt)
-    reports: bool = False  # liefert Nachbarn aus CDP/LLDP (Switches, ACI-Leafs/-Spines)
+    read: bool = False  # Automato liest das Geraet (Ports bekannt; ESXi seit 1.8.0 die vmnics)
+    # liefert Nachbarn aus CDP/LLDP (Switches, ACI-Leafs/-Spines, seit 1.8.0 ESXi-Hosts)
+    reports: bool = False
     # wie der Nachbar sich meldet (CDP/LLDP): Plattform und Faehigkeiten (Switch, Router, Phone)
     remote_platform: str | None = None
     caps: set[str] = field(default_factory=set)
@@ -187,11 +192,39 @@ class Link:
     issues: list[dict] = field(default_factory=list)
 
     @property
-    def state(self) -> str:
-        """beidseitig (`both`); die Gegenstelle liefert sonst Nachbarn, meldet diese Verbindung
-        aber nicht (`one_sided`); die Gegenstelle liefert keine Nachbar-Daten - nicht gelesen,
-        Firewall, Server (`unread`)."""
+    def confirmed(self) -> str | None:
+        """Warum die Verbindung als beidseitig gilt: `both` = beide Seiten melden sie; `esxi`
+        (1.8.0) = ein gelesener ESXi-Host bestaetigt sie; None = nicht bestaetigt.
+
+        ESXi spricht CDP/LLDP meist nur in eine Richtung: Vorgabe am vSwitch ist „Zuhören“ (der
+        Host hoert den Switch, sendet aber nicht), seltener „Senden“. Der Switch sieht den Host
+        dann nicht - die Verbindung ist trotzdem belegt, denn jede Seite kennt die andere nur aus
+        deren eigenen CDP/LLDP-Paketen an genau diesem Kabel:
+        - meldet der Host sie, kennt er Switch und Port aus den Paketen des Switches, seine vmnic
+          aus dem eigenen Inventar;
+        - meldet nur der Switch sie, kennt er Host und vmnic aus den Paketen des Hosts - bestaetigt,
+          wenn der gelesene Host diese vmnic hat.
+        Anwender 1.8.0: „Wird in VMware die Ports und Nachbarschaft nicht ausgelesen von den
+        Hosts?“ - „Nur wegen den Verbindungen“: eine solche Verbindung darf nicht als einseitig
+        bzw. „Gegenstelle ohne CDP/LLDP“ enden, nur weil ESXi in eine Richtung schweigt."""
         if {self.a.device.key, self.b.device.key} <= self.reported_by:
+            return "both"
+        for end, other in ((self.a, self.b), (self.b, self.a)):
+            if end.device.kind != "esxi" or not end.device.read:
+                continue  # ESXi-Host nur aus den VMs (nicht gelesen): wie bisher
+            if end.device.key in self.reported_by:
+                return "esxi"  # der Host hoert den Switch
+            if other.device.key in self.reported_by and end.iface is not None:
+                return "esxi"  # der Switch hoert den Host an einer vmnic, die der Host hat
+        return None
+
+    @property
+    def state(self) -> str:
+        """beidseitig (`both`, auch bestaetigt ueber einen gelesenen ESXi-Host - `confirmed`);
+        die Gegenstelle liefert sonst Nachbarn, meldet diese Verbindung aber nicht
+        (`one_sided`); die Gegenstelle liefert keine Nachbar-Daten - nicht gelesen, Firewall,
+        Server (`unread`)."""
+        if self.confirmed:
             return "both"
         silent = self.b if self.a.device.key in self.reported_by else self.a
         return "one_sided" if silent.device.reports else "unread"
@@ -203,11 +236,13 @@ class Link:
             "b": self.b.out(),
             "protocols": sorted(self.protocols),
             "state": self.state,
+            "confirmed": self.confirmed,  # both | esxi | None (1.8.0)
             "issues": self.issues,
         }
 
 
-_NEIGHBOR_PLATFORMS = (Platform.CISCO_SWITCH, Platform.CISCO_ACI)
+# Quellen, deren Geraete Nachbarn aus CDP/LLDP liefern - seit 1.8.0 auch das vCenter (Hosts)
+_NEIGHBOR_PLATFORMS = (Platform.CISCO_SWITCH, Platform.CISCO_ACI, Platform.VMWARE)
 
 
 class Cabling:
@@ -254,6 +289,10 @@ class Cabling:
             link.issues = self._check(link)
 
     def _esxi(self, session: Session, tenant_id: int) -> None:
+        """ESXi-Hosts nur aus den VMs (Host der VM, nicht gelesen). Seit 1.8.0 steht ein Host
+        meist schon gelesen im Netzinventar (`inv_device` Rolle `esxi` -> Art `esxi`, gleicher
+        Name wie `vm.host`, also gleicher Schluessel) - der gilt dann; nur ohne ihn (aelterer
+        Agent) bleibt dieser Eintrag."""
         from app.models import Vm
 
         hosts = session.scalars(
@@ -295,16 +334,16 @@ class Cabling:
         a, b = link.a.iface, link.b.iface
         if a is None or b is None:
             return []
-        if (
-            a.source_system_id not in self.switch_sources
-            or b.source_system_id not in self.switch_sources
-        ):
+        on_switch = (a.source_system_id in self.switch_sources,
+                     b.source_system_id in self.switch_sources)  # fmt: skip
+        if not all(on_switch):
+            # Switch-Port <-> vmnic eines gelesenen ESXi-Hosts (1.8.0): nur der Speed - Modus,
+            # VLANs und Port-Channel kennt der Host an der vmnic nicht wie ein Switch
+            host = link.b if on_switch[0] else link.a
+            if any(on_switch) and host.device.kind == "esxi" and host.device.read:
+                return self._speed(a, b)
             return []
-        issues: list[dict] = []
-        sa, sb = speed_mbps(a.speed), speed_mbps(b.speed)
-        if sa and sb and sa != sb:
-            issues.append({"type": "link_speed_mismatch",
-                           "text": f"Speed {a.speed} ↔ {b.speed}"})  # fmt: skip
+        issues = self._speed(a, b)
         da, db = duplex_of(a.duplex), duplex_of(b.duplex)
         if da and db and da != db:
             issues.append({"type": "link_duplex_mismatch",
@@ -318,6 +357,13 @@ class Cabling:
                      f"Port-Channel only on {side.device.name} ({side.iface.lag})")  # fmt: skip
             issues.append({"type": "link_lag_mismatch", "text": text})
         return issues
+
+    @staticmethod
+    def _speed(a: InvInterface, b: InvInterface) -> list[dict]:
+        sa, sb = speed_mbps(a.speed), speed_mbps(b.speed)
+        if sa and sb and sa != sb:
+            return [{"type": "link_speed_mismatch", "text": f"Speed {a.speed} ↔ {b.speed}"}]
+        return []
 
     @staticmethod
     def _vlans(a: InvInterface, b: InvInterface) -> str | None:
@@ -359,8 +405,9 @@ _FINDINGS = {
 
 
 def checks(session: Session, tenant_id: int, cab: Cabling | None = None) -> list[dict]:
-    """Befunde der Verkabelung: Abweichungen zwischen zwei gelesenen Switches und Verbindungen,
-    die nur eine von zwei gelesenen Seiten meldet. Je Verbindung und Art ein Eintrag. Texte in
+    """Befunde der Verkabelung: Abweichungen zwischen zwei gelesenen Switches (zwischen Switch
+    und vmnic eines ESXi-Hosts nur der Speed, 1.8.0) und Verbindungen, die nur eine von zwei
+    gelesenen Seiten meldet. Je Verbindung und Art ein Eintrag. Texte in
     der Sprache der Anfrage - der Abgleich (speichert) laeuft immer deutsch (ADR 0028)."""
     cab = cab or build(session, tenant_id)
     out: list[dict] = []

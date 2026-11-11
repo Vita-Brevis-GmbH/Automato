@@ -37,9 +37,11 @@ from app.models import (
     Finding,
     FindingStatus,
     FindingType,
+    InvSubnet,
     NetworkObject,
     ObjectCategory,
     ObjectClass,
+    Platform,
     Rule,
     RuleDomain,
     RuleIndex,
@@ -843,6 +845,43 @@ def _object_groups(objs: list[DeviceObject], dns: list[str], prefixes) -> list[d
     return sorted(out, key=lambda g: (g["name_ok"] is not True, g["name"]))
 
 
+class _Subnets:
+    """Netz, an dem eine IP haengt (1.8.0, Anwender 2026-11-11: „Bei den Applikationen kommt die
+    EPG, obwohl ich kein ACI verbunden habe, hier sollte besser das Netzwerk stehen, wo wir
+    connected sind“): das engste Subnetz des Netzinventars (FortiGate-Interface, BD/EPG) mit
+    Name, VLAN und Geraet - je Mandant einmal geladen."""
+
+    def __init__(self, session: Session, tenant_id: int) -> None:
+        names = dict(session.execute(
+            select(SourceSystem.id, SourceSystem.name).where(SourceSystem.tenant_id == tenant_id)
+        ).all())  # fmt: skip
+        self.nets: list[tuple] = []
+        for s in session.scalars(select(InvSubnet).where(InvSubnet.tenant_id == tenant_id)):
+            try:
+                net = ipaddress.ip_network(s.prefix, strict=False)
+            except ValueError:
+                continue
+            where = s.context_name if s.context == "interface" else (s.bd or s.context_name)
+            parts = [str(net), where, f"VLAN {s.vlan}" if s.vlan else None]
+            label = " · ".join(p for p in parts if p)
+            device = names.get(s.source_system_id)
+            self.nets.append((net, f"{label} ({device})" if device else label))
+        self.nets.sort(key=lambda x: -x[0].prefixlen)
+
+    def of(self, ips: list[str]) -> list[str]:
+        out: list[str] = []
+        for ip in ips:
+            try:
+                addr = ipaddress.ip_address(ip)
+            except ValueError:
+                continue
+            hit = next((label for net, label in self.nets
+                        if net.version == addr.version and addr in net), None)  # fmt: skip
+            if hit and hit not in out:
+                out.append(hit)
+        return out
+
+
 def _hosts_with_ips(session: Session, tenant_id: int, ips: list[str]) -> list[NetworkObject]:
     if not ips:
         return []
@@ -893,6 +932,9 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
     site_index = sites.SiteIndex(session, tid)
     portgroups = virtual.PortgroupIndex.load(session, tid)
     vms = _app_vms(session, tid, epgs, hosts, portgroups, direct_vms(app, res))
+    subnets = vars(data).get("_subnets")  # je Mandant einmal (Vorrechnen aller Applikationen)
+    if subnets is None:
+        subnets = data._subnets = _Subnets(session, tid)
 
     # VRFs der Applikation: fuer Systeme ohne Portgruppe zaehlen gleiche IPs in anderen
     # ACI-Tenants/VRFs nicht (Dev-Befund 0.42.2, appdoc.fabric_epgs)
@@ -962,6 +1004,7 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
                 "servers": sorted(h.name for h in servers.values()),
                 "epgs": sorted(inventory_label(data.epgs_by_id[i]) for i in shown),
                 "portgroups": nets,
+                "networks": subnets.of(ips),  # 1.8.0: Netz ohne ACI
                 "nics": nics,
                 "hints": list(dict.fromkeys(hints)),
                 "vm_id": vm.id,
@@ -991,6 +1034,7 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
                     inventory_label(x) for x in appdoc.host_epgs(session, data, h, prefer=prefer)
                 ),
                 "portgroups": [],
+                "networks": subnets.of([ip] if ip else []),
                 "nics": [],
                 "hints": [],
                 "vm_id": None,
@@ -1151,8 +1195,12 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
     # Zonen und ohne Spalte „Zone“ (Netze der Infrastruktur)
     zone_heads(data, tables, restricted)
     tenant = session.get(Tenant, tid)
+    # 1.8.0: ohne ACI beim Mandanten zeigt die Doku das Netz statt der EPG (keine leeren EPG-Teile)
+    has_aci = bool(session.scalar(select(func.count()).select_from(SourceSystem).where(
+        SourceSystem.tenant_id == tid, SourceSystem.platform == Platform.CISCO_ACI)))  # fmt: skip
     out = {
         "tenant_code": tenant.code if tenant else None,
+        "aci": has_aci or bool(epg_out),
         "summary": {
             "vms": sum(1 for x in systems if x["kind"] == "vm"),
             "servers": sum(1 for x in systems if x["kind"] == "host"),

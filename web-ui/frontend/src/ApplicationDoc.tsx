@@ -316,6 +316,7 @@ export default function ApplicationDocView({
   // bei seinem Kunden liegt (Server: `editable`, feinere Rollen ADR 0018)
   const maintain = me.isOperator || !!a.editable;
   const s = doc.summary;
+  const aci = doc.aci !== false; // 1.8.0: ohne ACI Netz statt EPG
   const sourceName = (sid: number) => systems.find((x) => x.id === sid)?.name ?? `#${sid}`;
   // Firewall mit VDOM, wenn sie mehrere hat (0.43.2) – wie in Regeln & Contracts
   const ruleSource = (r: Rule) => sourceName(r.source_system_id) + (vdomShown(r.source_system_id, r.vdom) ? ` · VDOM ${r.vdom}` : "");
@@ -529,8 +530,8 @@ export default function ApplicationDocView({
           sub={s.servers ? L(`+ ${s.servers} Server ohne VM`, `+ ${s.servers} servers without VM`) : L("aus dem vCenter", "from the vCenter")}
         />
         <Kpi
-          label={L("EPGs im ACI", "EPGs in the ACI")}
-          value={s.epgs}
+          label={aci ? L("EPGs im ACI", "EPGs in the ACI") : L("Netze", "Networks")}
+          value={aci ? s.epgs : new Set(doc.systems.flatMap((x) => netOf(x))).size}
           sub={L(
             `${s.rules} Regeln · ${s.firewall} Firewall · ${s.aci} ACI${s.impossible ? ` · ${s.impossible} nicht möglich` : ""}`,
             `${s.rules} rules · ${s.firewall} firewall · ${s.aci} ACI${s.impossible ? ` · ${s.impossible} not possible` : ""}`,
@@ -571,11 +572,13 @@ export default function ApplicationDocView({
       </div>
 
       <div className={off("systems").trim()}>
-        <SystemsCard items={doc.systems} fold={fold("systems")} onOpen={setSystemKey} />
+        <SystemsCard items={doc.systems} fold={fold("systems")} onOpen={setSystemKey} aci={aci} />
       </div>
-      <div className={off("epgs").trim()}>
-        <EpgsCard items={doc.epgs} fold={fold("epgs")} onPick={setEpgKey} />
-      </div>
+      {aci && (
+        <div className={off("epgs").trim()}>
+          <EpgsCard items={doc.epgs} fold={fold("epgs")} onPick={setEpgKey} />
+        </div>
+      )}
 
       {/* Verbindungen Ende zu Ende (0.45.0) – zeigt die Infrastruktur, nicht für Kunden-Benutzer; Modul Wegsucher (0.107.0) */}
       {!me.isCustomer && wegeOn && (
@@ -695,19 +698,21 @@ export default function ApplicationDocView({
                 </option>
               ))}
             </select>
-            <select
-              className="sel"
-              value={f.epg}
-              onChange={(e) => set({ epg: e.target.value })}
-              title={L("Regeln einer EPG und der Systeme in ihr", "Rules of an EPG and the systems in it")}
-            >
-              <option value="">{L("EPG: alle", "EPG: all")}</option>
-              {doc.epgs.map((x) => (
-                <option key={x.key} value={x.key}>
-                  {x.label}
-                </option>
-              ))}
-            </select>
+            {aci && (
+              <select
+                className="sel"
+                value={f.epg}
+                onChange={(e) => set({ epg: e.target.value })}
+                title={L("Regeln einer EPG und der Systeme in ihr", "Rules of an EPG and the systems in it")}
+              >
+                <option value="">{L("EPG: alle", "EPG: all")}</option>
+                {doc.epgs.map((x) => (
+                  <option key={x.key} value={x.key}>
+                    {x.label}
+                  </option>
+                ))}
+              </select>
+            )}
             <select
               className="sel"
               value={f.direction}
@@ -934,6 +939,7 @@ export default function ApplicationDocView({
       {readOpen && <ReadRulesDialog appId={id} onClose={() => setReadOpen(false)} onDone={() => void refreshDoc(false)} />}
       {systemKey && (
         <SystemDrawer
+          aci={aci}
           x={doc.systems.find((x) => x.key === systemKey)}
           sourceName={sourceName}
           onGo={onGo}
@@ -1413,7 +1419,21 @@ function WhyBlock({
 }
 
 // Systeme kompakt (0.73.0, Anwender: weniger Details in der Übersicht) – Klick öffnet das Detail
-function SystemsCard({ items, fold, onOpen }: { items: AppDocSystem2[]; fold: Fold; onOpen: (key: string) => void }) {
+// Netz eines Systems ohne ACI (1.8.0, Anwender: „hier sollte besser das Netzwerk stehen, wo wir connected sind“):
+// Portgruppe mit VLAN und das Subnetz der IPs
+const netOf = (x: AppDocSystem2) => [...x.portgroups, ...(x.networks ?? [])];
+
+function SystemsCard({
+  items,
+  fold,
+  onOpen,
+  aci = true,
+}: {
+  items: AppDocSystem2[];
+  fold: Fold;
+  onOpen: (key: string) => void;
+  aci?: boolean;
+}) {
   return (
     <div className="card" id="app-systems" style={{ marginTop: 14 }}>
       <div className="card-head">
@@ -1438,7 +1458,7 @@ function SystemsCard({ items, fold, onOpen }: { items: AppDocSystem2[]; fold: Fo
                 <tr>
                   <th>System</th>
                   <th>IPs</th>
-                  <th>EPG</th>
+                  <th>{aci ? "EPG" : L("Netz", "Network")}</th>
                   <th>{L("Regeln", "Rules")}</th>
                 </tr>
               </thead>
@@ -1465,8 +1485,8 @@ function SystemsCard({ items, fold, onOpen }: { items: AppDocSystem2[]; fold: Fo
                       <td className="mono">
                         <List items={x.ips} max={2} inline />
                       </td>
-                      <td className="mono">
-                        <List items={x.epgs} max={2} inline />
+                      <td className="mono app-system-net">
+                        <List items={aci ? x.epgs : netOf(x)} max={2} inline />
                       </td>
                       <td className="nowrap">
                         <span className="chip ok" title={L("spezifische Regeln", "specific rules")}>
@@ -1494,6 +1514,7 @@ function SystemsCard({ items, fold, onOpen }: { items: AppDocSystem2[]; fold: Fo
 // Detail eines Systems (0.73.0): alles, was die Übersicht früher zeigte – wie die Detailansichten
 // der anderen Menüs; Knopf zeigt die Regeln des Systems
 function SystemDrawer({
+  aci = true,
   x,
   sourceName,
   onGo,
@@ -1503,6 +1524,7 @@ function SystemDrawer({
   onEpg,
   onObject,
 }: {
+  aci?: boolean;
   x: AppDocSystem2 | undefined;
   sourceName: (id: number) => string;
   onGo?: Go;
@@ -1555,7 +1577,20 @@ function SystemDrawer({
           {row("IPs", x.ips.length ? <span className="mono">{x.ips.join(", ")}</span> : <Dash />)}
           {row("DNS", x.dns.length ? <span className="mono">{x.dns.join(", ")}</span> : <Dash />)}
           {x.servers.length > 0 && row("Server (IPAM)", <span className="mono">{x.servers.join(", ")}</span>)}
-          {row(
+          {!aci &&
+            row(
+              L("Netz", "Network"),
+              (x.networks ?? []).length ? (
+                (x.networks ?? []).map((n) => (
+                  <div key={n} className="mono">
+                    {n}
+                  </div>
+                ))
+              ) : (
+                <Dash />
+              ),
+            )}
+          {aci && row(
             "EPG",
             x.epgs.length ? (
               x.epgs.map((e) => {

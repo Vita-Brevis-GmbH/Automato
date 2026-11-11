@@ -7,6 +7,109 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 1.8.0 – 2026-11-11
+
+Rückmeldung zum Test von 1.7.0 (Anwender 2026-11-11).
+
+- **ESXi-Hosts mit Ports und Nachbarn** („Wird in VMware die Ports und Nachbarschaft nicht
+  ausgelesen von den Hosts?“ – „Nur wegen den Verbindungen“).
+  - Der vCenter-Lauf liest je Host Hersteller, Modell, Seriennummer, Version, Management-Adresse
+    und die vmnics mit dem Nachbarn, den jede vmnic per CDP/LLDP hört
+    (`QueryNetworkHint`, eine reine Leseabfrage; die Read-only-Rolle reicht).
+  - Die Hosts stehen im Netzinventar des vCenters (Rolle `esxi`, neue Spalte `vendor`,
+    Migration `0080`). VMs und Portgruppen bleiben, wie sie sind. Ein älterer Agent ohne Hosts
+    ändert nichts.
+  - **Verkabelung:** Die Verbindung Switch-Port ↔ vmnic gilt als **bestätigt**, auch wenn der
+    Switch den Host nicht sieht. ESXi hört CDP standardmässig nur zu und sendet nicht. Der
+    Tooltip sagt „über den ESXi-Host bestätigt“. Weicht der Speed zwischen Switch-Port und vmnic
+    ab, gibt es einen Befund.
+  - Darf das Konto die Nachbarn eines Hosts nicht lesen oder ist der Host getrennt, bricht der
+    Lauf nicht ab. Der Host kommt ohne Nachbarn ins Inventar, und der Lauf nennt ihn als Hinweis.
+  - **NetBox-Sync, Abschnitt Verkabelung:**
+    - Die Hosts kommen als Geräte mit dem Hersteller und Modell der Hardware (Rolle `esxi`).
+    - Die vmnics kommen als Ports.
+    - Die bestätigten Kabel zum Switch-Port erhalten die Beschreibung „Automato: CDP über den
+      ESXi-Host bestätigt“.
+    - Ohne gelesenen Hersteller oder ohne Modell wird nichts geraten; die Vorschau zeigt einen
+      Hinweis.
+    - ADR 0017, 0025 und 0031 haben dazu einen Nachtrag.
+  - Nach dem Update rechnet jede Quelle beim ersten Lauf einmal alle Applikationen neu: Der
+    Fingerabdruck der Geräte hat das neue Feld `vendor`.
+- **Befund „nicht im IPAM“ ohne DDI verständlich** („da wir kein Infoblox bei dem Kunden haben,
+  sollte das IPAM die Netbox übernehmen … daher ist der Fehler irgendwie verwirrend“).
+  - Ist das führende IPAM die NetBox, die Automato befüllt, heisst der Befund jetzt „10.20.0.5
+    fehlt noch in der NetBox „…“ – sie ist das IPAM und wird von Automato befüllt“. Der Hinweis
+    nennt den Weg: NetBox-Sync mit dem Abschnitt *Firewall-Objekte* übernehmen, danach liest
+    Automato die NetBox neu ein und der Befund entfällt.
+  - Ist noch keine NetBox als führend eingetragen, der Mandant hat aber genau eine beschreibbare
+    NetBox, sagt der Befund das und nennt den Schritt unter **Quellsysteme**.
+- **NetBox-Sync: neuer Abschnitt „Firewall-Objekte“.** Er schreibt die Hosts, Netze und Bereiche
+  der Adressobjekte der Firewalls als IP-Adresse, Prefix bzw. IP-Range nach NetBox, mit der
+  Beschreibung „FW-Objekt <Objektname>“ und dem Automato-Tag.
+  - Bewusst externe Objekte (`…-EXT_`, als extern markiert) bleiben draussen.
+  - Was NetBox schon hat (z. B. aus dem Netzinventar), kommt nicht doppelt.
+  - Nur wenn diese NetBox das führende IPAM ist: Ist ein anderes System führend (z. B. Infoblox),
+    zeigt die Vorschau einen Hinweis und schreibt nichts.
+  - Die Seite wählt den Abschnitt vor, wenn die Ziel-NetBox das führende IPAM ist.
+  - Ein Sync ohne den Abschnitt fasst diese Einträge nicht an, auch mit „Löschen zulassen“.
+  - ADR 0031 hat dazu einen Nachtrag.
+- **Objekte: Services wieder sichtbar.** Nach dem Öffnen eines Adressobjekts blieb der Filter
+  „nur <Objekt>“ beim Wechsel auf *Services* stehen („hatte noch einen Filter drin, welcher
+  festgehangen ist“). Der Reiterwechsel hebt den Filter auf das geöffnete Objekt und den
+  Präfix-Filter jetzt auf. Eine leere Liste sagt bei jedem gesetzten Filter „Keine Treffer“
+  statt „Noch keine Objekte“.
+- **Applikationen ohne ACI: Netz statt EPG** („hier sollte besser das Netzwerk stehen, wo wir
+  connected sind“). Ohne ACI-Quellsystem zeigt die Doku je System das Netz, in dem es hängt: das
+  engste Subnetz aus dem Netzinventar mit Interface, VLAN und Gerät (z. B. „10.20.0.0/24 ·
+  srv-vl20 · VLAN 20 (fw-01)“), dazu wie bisher die Portgruppe. Die Spalte heisst „Netz“, die
+  Kennzahl „Netze“. Bereich und Filter der EPGs fallen weg. Der Word-Export macht es gleich. Mit
+  ACI bleibt alles wie bisher.
+
+## 1.7.0 – 2026-11-11
+
+Anwender 2026-11-11: „Wenn ich den internen Worker verwende, kann ich die Verbindung prüfen, beim
+collector Agent nicht, können wir dies mit einbringen?“
+
+- **Verbindung prüfen auch bei Geräten hinter einem Agenten:** **Quellsysteme → Prüfen** legt
+  einen Prüfauftrag an; der Agent bekommt ihn beim nächsten Abruf (im Wach-Modus spätestens nach
+  20 s) samt Zugangsdaten, prüft read-only **Name, Verbindung und Anmeldung** (dieselbe Prüfung
+  wie `run-agent.ps1 -Check`) und meldet das Ergebnis. Die Seite zeigt „Der Agent … prüft beim
+  nächsten Abruf“ und danach die Schritte wie beim zentralen Worker, mit „(geprüft vom Agenten
+  …)“. Meldet sich der Agent nicht (geplante Aufgabe aus, Agent älter als 1.7.0), verfällt der
+  Auftrag nach drei Minuten sichtbar mit Hinweis. Doppelt klicken prüft nicht doppelt;
+  deaktivierter Agent: klare Meldung. Audit `agent_check.claimed`, Migration `0079`
+  (`agent_check`). Der Agent aktualisiert sich wie gewohnt selbst.
+- **Altlasten:** zwei Hinweise auf die „lokale Konfiguration“ des Workers entfernt (Lauf-Dialog,
+  Collector) – sie gibt es seit 1.6.0 nicht mehr.
+
+Weitere Rückmeldung zu 1.6.1 (2026-11-11), in dieselbe Version aufgenommen:
+
+- **NetBox-Sync bricht nicht mehr an Ports ohne Namen ab** („Übernahme abgebrochen: POST
+  dcim/interfaces: HTTP 400 … {'name': ['This field is required.']}“, nach dem Einfügen der
+  Switches). Einzelne Zeilen der Switch-Ausgabe ohne Port kamen als Port mit leerem Namen an.
+  Der Collector übergeht sie jetzt und zählt sie im Lauf. Der Sync schickt sie nie nach NetBox,
+  auch wenn ein älterer Agent sie noch liefert, und zeigt in der Vorschau „… Ports ohne Namen
+  nicht übernommen (Gerät …)“.
+- **NetBox-Sync legt die fehlenden VLANs der Switches an** („Er warnt, dass die VLANs nicht in
+  Netbox sind, diese sollten aber eigentlich damit angelegt werden“). Abschnitt *Verkabelung*:
+  - Jedes VLAN aus `show vlan`, das NetBox am Standort der Switches nicht hat, kommt in die
+    VLAN-Gruppe des Quellsystems (`<Mandant>-<Quellsystem>`, wie beim Netzinventar).
+  - Danach erhalten die Ports Modus und VLANs.
+  - Vorhandene VLANs (eigene Gruppe, am Standort, global) nimmt der Port wie bisher, ohne Doppel.
+  - Nicht eindeutige VLANs bleiben ein Hinweis.
+  - Ein Sync ohne *Verkabelung* führt die Switch-VLANs nicht als veraltet und löscht sie nie.
+    Umgekehrt gilt das auch für die VLAN-Gruppen von FortiGate/ACI ohne *Netzinventar*.
+  - ADR 0031 hat dazu einen Nachtrag.
+- **NetBox-Sync löscht nichts mehr aus nicht gewählten Abschnitten** (beim Prüfen gefunden). Ein
+  Sync nur mit *Verkabelung* und „Löschen zulassen“ hätte Netze, Ranges, IP-Adressen und VRFs von
+  *Netzinventar* und *DDI-Spiegel* gelöscht. Das widersprach der Regel „Objekte der anderen
+  Abschnitte werden weder gelöscht noch als veraltet geführt“. Diese Arten gelten jetzt nur als
+  veraltet, wenn alle Abschnitte gewählt sind, die sie anlegen können. Mit den Standard-Abschnitten
+  ändert sich nichts.
+- **AD-DNS:** Das Feld heisst „DNS-Zonen“ (statt „Zonen“). Die Liste der Quellsysteme zeigt die
+  Zonen kurz („3 DNS-Zonen“, die ganze Liste im Tooltip) und wird nicht mehr breit. Ebenso viele
+  ACI-/Avi-Tenants („5 Tenants“).
+
 ## 1.6.1 – 2026-11-11
 
 Anwender 2026-11-11 beim Update auf 1.6.0: „WARN[0000] Docker Compose is configured to build using

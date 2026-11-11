@@ -84,5 +84,7 @@ def test_api_prueft_nur_zentral_gelesene_systeme(client, monkeypatch):
     assert client.post(f"/systems/{sid}/check", headers=viewer).status_code == 403
     agent = client.post("/agents", json={"tenant_id": tid, "name": "ag"}, headers=ADMIN).json()
     client.patch(f"/systems/{sid}", json={"agent_id": agent["id"]}, headers=ADMIN)
-    assert client.post(f"/systems/{sid}/check", headers=ADMIN).status_code == 409
+    # 1.7.0: Geräte hinter einem Agenten prüft der Agent (Auftrag, test_agent_checks.py)
+    r = client.post(f"/systems/{sid}/check", headers=ADMIN)
+    assert r.status_code == 200 and r.json()["from"] == "agent" and r.json()["status"] == "queued"
     assert client.post("/systems/99999/check", headers=ADMIN).status_code == 404

@@ -271,3 +271,234 @@ def test_lauf_und_pruefung_mit_zugangsdaten(monkeypatch):
     assert not ok and msg
     result = tasks.collect_once("r2", _target(), via_agent=True)
     assert result.status == "failed" and result.virtual is None
+
+
+# -- ESXi-Hosts: vmnics und Nachbarn aus CDP/LLDP (1.8.0) -------------------------------------
+
+
+def test_hosts_mit_vmnics_und_nachbarn_aus_den_beispieldaten():
+    """Anwender: „Wird in VMware die Ports und Nachbarschaft nicht ausgelesen von den Hosts?“"""
+    inv = normalize(tasks._sample())
+    hosts = {h.name: h for h in inv.hosts}
+    assert set(hosts) == {"esx01-chzrh1.example.ch", "esx02.example.ch"}
+    esx01 = hosts["esx01-chzrh1.example.ch"]
+    assert (esx01.vendor, esx01.model, esx01.serial, esx01.version, esx01.mgmt_ip) == (
+        "Dell Inc.", "PowerEdge R650", "SN-ESX01-A", "8.0.2", "10.0.10.11")  # fmt: skip
+    nics = {p.name: p for p in esx01.pnics}
+    vmnic0 = nics["vmnic0"]
+    assert (vmnic0.mac, vmnic0.speed, vmnic0.duplex, vmnic0.status) == (
+        "b4:96:91:00:11:00", "1000", "full", "up")  # fmt: skip
+    nb = vmnic0.neighbor
+    assert (nb.protocol, nb.remote_name, nb.remote_port, nb.remote_ip, nb.remote_caps) == (
+        "cdp", "sw-acc-02.example.ch", "GigabitEthernet1/0/5", "10.0.0.12", ["switch"])  # fmt: skip
+    assert nics["vmnic2"].status == "down" and nics["vmnic2"].neighbor is None  # ohne Link
+    lldp = {p.name: p for p in hosts["esx02.example.ch"].pnics}["vmnic0"]
+    assert lldp.speed == "10G"  # wie die Switches (NX-OS)
+    assert (lldp.neighbor.protocol, lldp.neighbor.remote_name, lldp.neighbor.remote_port) == (
+        "lldp", "sw-core-01", "Ethernet1/3")  # fmt: skip
+    # Systembeschreibung nur die erste Zeile
+    assert lldp.neighbor.remote_platform == "Cisco Nexus Operating System (NX-OS) Software 10.3(4a)"
+    assert tasks.summary(tasks._sample(), inv) == (
+        "ESXi-Hosts: 2 gelesen, 3 vmnics mit Nachbarn (CDP/LLDP)"
+    )
+
+
+def test_nachbar_cdp_vor_lldp_und_lldp_port_als_mac():
+    from collectors.vmware.normalize import hosts_of
+
+    cdp = {"dev_id": "sw-acc-01(FOC123)", "port_id": "Gi1/0/1", "address": "10.0.0.99",
+           "mgmt_addr": None, "platform": "cisco C9300", "caps": ["switch", "router"]}  # fmt: skip
+    lldp = {
+        "chassis_id": "00:11:22:33:44:55",
+        "port_id": "00:11:22:33:44:66",
+        "params": {"Port Description": "Ethernet1/7", "System Capabilities": "Bridge, Router"},
+    }
+    host = {"name": "10.0.10.21", "pnics": [
+        {"name": "vmnic0", "speed_mb": 25000, "duplex": True, "cdp": cdp, "lldp": lldp},
+        {"name": "vmnic1", "speed_mb": 2500, "duplex": False, "cdp": {"dev_id": None},
+         "lldp": lldp},
+        {"name": "vmnic2", "speed_mb": 1000, "lldp": {"chassis_id": None, "port_id": None,
+                                                      "params": {}}},
+    ]}  # fmt: skip
+    (h,) = hosts_of({"HostSystem": [host]})
+    assert h.mgmt_ip == "10.0.10.21"  # Host per IP im vCenter: Name als Verwaltungs-Adresse
+    n0, n1, n2 = (p.neighbor for p in h.pnics)
+    assert (n0.protocol, n0.remote_name, n0.remote_ip, n0.remote_caps) == (
+        "cdp", "sw-acc-01(FOC123)", "10.0.0.99", ["switch", "router"])  # fmt: skip
+    # LLDP ohne Systemname: Chassis-ID; Port-ID ist die MAC des Ports -> Port-Beschreibung
+    assert (n1.protocol, n1.remote_name, n1.remote_port, n1.remote_caps) == (
+        "lldp", "00:11:22:33:44:55", "Ethernet1/7", ["bridge", "router"])  # fmt: skip
+    assert n2 is None
+    assert [(p.speed, p.duplex) for p in h.pnics] == [("25G", "full"), ("2500", "half"),
+                                                     ("1000", None)]  # fmt: skip
+
+
+def test_lesende_abfrage_query_network_hint_erlaubt():
+    """QueryNetworkHint ist lesend und braucht laut vSphere-API nur System.Read (Rolle
+    Read-only) - der Nur-Lese-Schutz laesst sie durch, Schreibendes am Netz nicht."""
+    from pyVmomi import vim
+
+    assert "QueryNetworkHint" in vc.READ_METHODS
+    ns = vim.host.NetworkSystem("networkSystem-11")
+    assert ns._GetMethodInfo("QueryNetworkHint").privId == "System.Read"
+    for method in ("UpdateNetworkConfig", "UpdatePhysicalNicLinkSpeed", "RefreshNetworkSystem"):
+        assert method not in vc.READ_METHODS
+    stub = _Stub()
+    vc.guard(stub)
+    with pytest.raises(ReadOnlyViolation):
+        vim.host.NetworkSystem("networkSystem-11", stub).RefreshNetworkSystem()
+    assert vim.host.NetworkSystem("networkSystem-11", stub).QueryNetworkHint() == "ok"
+    assert stub.calls == ["QueryNetworkHint"]
+
+
+def test_host_eigenschaften_als_einfaches_dict():
+    from pyVmomi import vim
+
+    info = SimpleNamespace(vendor="Dell Inc.", model="PowerEdge R650", serialNumber=None,
+                           otherIdentifyingInfo=[SimpleNamespace(
+                               identifierType=SimpleNamespace(key="ServiceTag"),
+                               identifierValue="ABC1234")])  # fmt: skip
+
+    def vnic(dev, pg, ip):
+        return SimpleNamespace(device=dev, portgroup=pg,
+                               spec=SimpleNamespace(ip=SimpleNamespace(ipAddress=ip)))  # fmt: skip
+
+    props = {
+        "name": "esx01.example.ch",
+        "hardware.systemInfo": info,
+        "config.product.version": "8.0.2",
+        "config.network.vnic": [vnic("vmk1", "vMotion", "10.0.20.11"),
+                                vnic("vmk0", "Management Network", "10.0.10.11")],
+        "config.network.pnic": [
+            SimpleNamespace(device="vmnic0", mac="b4:96:91:00:11:00",
+                            linkSpeed=SimpleNamespace(speedMb=10000, duplex=True)),
+            SimpleNamespace(device="vmnic1", mac="b4:96:91:00:11:01", linkSpeed=None),
+        ],
+        "runtime.connectionState": "connected",
+        "configManager.networkSystem": vim.host.NetworkSystem("networkSystem-11"),
+    }  # fmt: skip
+    host = vc.to_plain("HostSystem", "host-11", props)
+    assert (host["vendor"], host["serial"], host["version"], host["mgmt_ip"]) == (
+        "Dell Inc.", "ABC1234", "8.0.2", "10.0.10.11")  # fmt: skip
+    assert host["network_system"] == "networkSystem-11" and host["connection"] == "connected"
+    assert host["pnics"] == [
+        {"name": "vmnic0", "mac": "b4:96:91:00:11:00", "speed_mb": 10000, "duplex": True},
+        {"name": "vmnic1", "mac": "b4:96:91:00:11:01", "speed_mb": None, "duplex": None},
+    ]
+
+
+class _HintStub:
+    """Verbindung mit Netzwerk-Hinweisen je Host: Liste = Antwort, Ausnahme = Fehler."""
+
+    def __init__(self, answers):
+        self.answers = answers
+        self.calls = []
+
+    def InvokeMethod(self, mo, info, args, outerStub=None):  # noqa: N802 - pyVmomi-Schnittstelle
+        self.calls.append((info.wsdlName, mo._moId))
+        answer = self.answers[mo._moId]
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+
+def _plain_host(n, state="connected"):
+    return {"moid": f"host-{n}", "name": f"esx{n:02d}.example.ch", "connection": state,
+            "network_system": f"networkSystem-{n}",
+            "pnics": [{"name": "vmnic0"}, {"name": "vmnic1"}]}  # fmt: skip
+
+
+def test_abfrage_der_nachbarn_scheitert_je_host_ohne_abbruch():
+    from pyVmomi import vim, vmodl
+
+    nic = vim.host.PhysicalNic
+    hint = nic.NetworkHint(
+        device="vmnic0",
+        connectedSwitchPort=nic.CdpInfo(
+            devId="sw-acc-01", portId="GigabitEthernet1/0/10", mgmtAddr="10.0.0.11",
+            hardwarePlatform="cisco C9300-48P",
+            deviceCapability=nic.CdpDeviceCapability(networkSwitch=True, router=False)),
+    )  # fmt: skip
+    lldp = nic.NetworkHint(
+        device="vmnic1",
+        lldpInfo=nic.LldpInfo(chassisId="00:11:22:33:44:55", portId="Ethernet1/3",
+                              timeToLive=120, parameter=[
+                                  vmodl.KeyAnyValue(key="System Name", value="sw-core-01"),
+                                  vmodl.KeyAnyValue(key="Management Address", value="10.0.0.2")]),
+    )  # fmt: skip
+    stub = _HintStub(
+        {
+            "networkSystem-1": [hint, lldp],
+            "networkSystem-2": vim.fault.NoPermission(privilegeId="System.Read"),
+        }
+    )
+    vc.guard(stub)
+    client = vc.VCenterClient("https://vcenter.example.ch", "ro", "x")
+    client._si = SimpleNamespace(_stub=stub)
+    hosts = [_plain_host(1), _plain_host(2), _plain_host(3, "disconnected")]
+    client.neighbors(hosts)
+    assert stub.calls == [
+        ("QueryNetworkHint", "networkSystem-1"),
+        ("QueryNetworkHint", "networkSystem-2"),
+    ]  # getrennt: nicht gefragt
+    ok, denied, gone = hosts
+    assert ok["pnics"][0]["cdp"]["dev_id"] == "sw-acc-01" and ok["pnics"][0]["lldp"] is None
+    assert ok["pnics"][0]["cdp"]["caps"] == ["switch"]
+    assert ok["pnics"][1]["lldp"]["params"] == {"System Name": "sw-core-01",
+                                                "Management Address": "10.0.0.2"}  # fmt: skip
+    assert "neighbors_error" not in ok
+    assert denied["neighbors_error"] == "NoPermission" and "cdp" not in denied["pnics"][0]
+    assert gone["neighbors_error"] == "disconnected"
+    inv = normalize({"HostSystem": hosts})
+    assert [h.name for h in inv.hosts] == [h["name"] for h in hosts]  # alle Hosts, auch ohne
+    nbs = {(h.name, p.name): p.neighbor for h in inv.hosts for p in h.pnics}
+    assert nbs[("esx01.example.ch", "vmnic1")].remote_ip == "10.0.0.2"
+    assert nbs[("esx02.example.ch", "vmnic0")] is None
+    assert tasks.summary({"HostSystem": hosts}, inv) == (
+        "ESXi-Hosts: 3 gelesen, 2 vmnics mit Nachbarn (CDP/LLDP) · Hinweise: "
+        "esx02.example.ch: CDP/LLDP nicht lesbar (NoPermission); "
+        "esx03.example.ch: CDP/LLDP nicht lesbar (disconnected)"
+    )
+
+
+def test_haengt_das_vcenter_werden_die_uebrigen_hosts_nicht_mehr_gefragt():
+    stub = _HintStub({f"networkSystem-{n}": TimeoutError("timed out") for n in range(1, 6)})
+    vc.guard(stub)
+    client = vc.VCenterClient("https://vcenter.example.ch", "ro", "x")
+    client._si = SimpleNamespace(_stub=stub)
+    hosts = [_plain_host(n) for n in range(1, 6)]
+    client.neighbors(hosts)
+    assert len(stub.calls) == vc.MAX_TRANSPORT_ERRORS
+    assert [h["neighbors_error"] for h in hosts] == ["TimeoutError"] * 3 + [vc.NOT_QUERIED] * 2
+    summary = tasks.summary({"HostSystem": hosts}, normalize({"HostSystem": hosts}))
+    assert summary.endswith("CDP/LLDP von 2 weiteren Hosts nicht abgefragt (vCenter antwortet "
+                            "nicht)")  # fmt: skip
+
+
+def test_nur_lesen_auch_beim_abfragen_der_nachbarn(monkeypatch):
+    """Ein blockierter Aufruf ist ein Fehler im Code - er bricht den Lauf ab statt Hinweis."""
+    stub = _HintStub({"networkSystem-1": []})
+    monkeypatch.setattr(vc, "READ_METHODS", vc.READ_METHODS - {"QueryNetworkHint"})
+    vc.guard(stub)
+    client = vc.VCenterClient("https://vcenter.example.ch", "ro", "x")
+    client._si = SimpleNamespace(_stub=stub)
+    with pytest.raises(ReadOnlyViolation):
+        client.neighbors([_plain_host(1)])
+    assert stub.calls == []
+
+
+def test_lauf_meldet_hinweise_und_hosts(monkeypatch):
+    sample = tasks._sample()
+    sample["HostSystem"][1]["neighbors_error"] = "NoPermission"
+    for nic in sample["HostSystem"][1]["pnics"]:
+        nic["cdp"] = nic["lldp"] = None
+    monkeypatch.setattr(tasks, "gather", lambda target: sample)
+    monkeypatch.setattr(tasks, "submit_result", lambda run_id, result, via_agent=False: None)
+    result = tasks.collect_once("r1", _target(), via_agent=True)
+    assert result.status == "completed"  # Hinweis statt Abbruch
+    assert result.message == (
+        "ESXi-Hosts: 2 gelesen, 2 vmnics mit Nachbarn (CDP/LLDP) · Hinweise: "
+        "esx02.example.ch: CDP/LLDP nicht lesbar (NoPermission)"
+    )
+    assert {h.name for h in result.virtual.hosts} == {"esx01-chzrh1.example.ch",
+                                                      "esx02.example.ch"}  # fmt: skip

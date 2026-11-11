@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   Agent,
   checkSystem,
+  fetchSystemCheck,
   createSite,
   createSystem,
   createTenant,
@@ -931,7 +932,8 @@ function SourceSystems({ me, tenant }: { me: Me; tenant: Tenant }) {
   const [editing, setEditing] = useState<System | "new" | null>(null);
   const [err, setErr] = useState<unknown>(null);
   const [toDelete, setToDelete] = useState<System | null>(null);
-  // Verbindung prüfen (zentral gelesene Systeme, vom Orchestrator aus)
+  // Verbindung prüfen: zentral gelesene Systeme vom Orchestrator aus, Geräte hinter einem Agenten
+  // (1.7.0) als Auftrag - der Agent prüft beim nächsten Abruf, die Seite fragt alle 2 s nach
   const [check, setCheck] = useState<SystemCheck | "busy" | null>(null);
   const runCheck = (s: System) => {
     setCheck("busy");
@@ -942,6 +944,20 @@ function SourceSystems({ me, tenant }: { me: Me; tenant: Tenant }) {
         setErr(e);
       });
   };
+  const waiting = check && check !== "busy" && (check.status === "queued" || check.status === "running");
+  useEffect(() => {
+    if (!waiting || check.check_id == null) return;
+    const { system_id, check_id } = check;
+    const timer = window.setTimeout(() => {
+      fetchSystemCheck(system_id, check_id)
+        .then((next) => setCheck((cur) => (cur && cur !== "busy" && cur.check_id === check_id ? next : cur)))
+        .catch((e) => {
+          setCheck(null);
+          setErr(e);
+        });
+    }, 2000);
+    return () => window.clearTimeout(timer);
+  }, [check, waiting]);
 
   const load = () =>
     fetchSystems(tenant.id)
@@ -985,19 +1001,53 @@ function SourceSystems({ me, tenant }: { me: Me; tenant: Tenant }) {
           </div>
         ) : null}
         {check === "busy" && <Note>{L("Verbindung wird geprüft…", "Checking connection…")}</Note>}
-        {check && check !== "busy" && (
+        {check && check !== "busy" && waiting && (
+          <div style={{ padding: "10px 16px 0" }} id="system-check">
+            <Note>
+              <b>{check.name}:</b>{" "}
+              {L(
+                <>
+                  Der Agent „{check.agent}“ prüft{check.status === "running" ? " gerade" : " beim nächsten Abruf"} –
+                  meist unter 30 Sekunden (im Wach-Modus fragt er alle 20 s nach).
+                </>,
+                <>
+                  The agent “{check.agent}” checks{check.status === "running" ? " right now" : " on its next poll"} –
+                  usually within 30 seconds (in watch mode it polls every 20 s).
+                </>,
+              )}{" "}
+              <button className="linkbtn" onClick={() => setCheck(null)}>
+                {L("schliessen", "close")}
+              </button>
+            </Note>
+          </div>
+        )}
+        {check && check !== "busy" && !waiting && (
           <div style={{ padding: "10px 16px 0" }} id="system-check">
             <Note warn={!check.ok}>
               <b>
-                {check.name}: {check.ok ? L("erreichbar", "reachable") : L("nicht erreichbar", "not reachable")}
+                {check.name}:{" "}
+                {check.status === "expired"
+                  ? L("keine Antwort vom Agenten", "no answer from the agent")
+                  : check.ok
+                    ? L("erreichbar", "reachable")
+                    : L("nicht erreichbar", "not reachable")}
               </b>{" "}
-              {L("(geprüft vom Orchestrator)", "(checked by the orchestrator)")}
+              {check.from === "agent"
+                ? L(`(geprüft vom Agenten „${check.agent}“)`, `(checked by the agent “${check.agent}”)`)
+                : L("(geprüft vom Orchestrator)", "(checked by the orchestrator)")}
               <ul style={{ margin: "4px 0" }}>
                 {check.steps.map((st, i) => (
                   <li key={i}>
                     {st.ok ? "✓" : "✗"}{" "}
-                    {{ dns: "Name", tcp: L("Verbindung", "Connection"), http: "NetBox-API" }[st.step]}:{" "}
-                    {st.detail}
+                    {
+                      {
+                        dns: "Name",
+                        tcp: L("Verbindung", "Connection"),
+                        http: "NetBox-API",
+                        login: L("Anmeldung", "Sign-in"),
+                      }[st.step]
+                    }
+                    : {st.detail}
                   </li>
                 ))}
               </ul>
@@ -1032,14 +1082,21 @@ function SourceSystems({ me, tenant }: { me: Me; tenant: Tenant }) {
               me.isAdmin
                 ? (s) => (
                     <>
-                      {s.agent_id == null && s.base_url && (
+                      {s.base_url && (
                         <button
                           className="btn btn-ghost btn-sm"
-                          disabled={check === "busy"}
-                          title={L(
-                            "Erreichbarkeit vom Orchestrator aus prüfen (Name, Verbindung, bei NetBox die API)",
-                            "Check reachability from the orchestrator (name, connection, for NetBox the API)",
-                          )}
+                          disabled={check === "busy" || !!waiting}
+                          title={
+                            s.agent_id == null
+                              ? L(
+                                  "Erreichbarkeit vom Orchestrator aus prüfen (Name, Verbindung, bei NetBox die API)",
+                                  "Check reachability from the orchestrator (name, connection, for NetBox the API)",
+                                )
+                              : L(
+                                  "Vom Agenten aus prüfen (Name, Verbindung, Anmeldung) – beim nächsten Abruf des Agenten",
+                                  "Check from the agent (name, connection, sign-in) – on the agent's next poll",
+                                )
+                          }
                           onClick={() => runCheck(s)}
                         >
                           {L("Prüfen", "Check")}
@@ -1312,11 +1369,11 @@ function SystemDialog({
             <div className="hint">
               {L(
                 <>
-                  Liest die Zonen des DNS-Servers per Zonentransfer und ergänzt jede IP um ihre DNS-Namen (A/AAAA, CNAME,
+                  Liest die DNS-Zonen des DNS-Servers per Zonentransfer und ergänzt jede IP um ihre DNS-Namen (A/AAAA, CNAME,
                   PTR) – in Objekten, Weg-Suche, Doku und im Vergleich mit dem führenden IPAM. Nur lesend, ohne Konto.
                 </>,
                 <>
-                  Reads the zones of the DNS server via zone transfer and adds the DNS names (A/AAAA, CNAME, PTR) to each
+                  Reads the DNS zones of the DNS server via zone transfer and adds the DNS names (A/AAAA, CNAME, PTR) to each
                   IP – in objects, path search, documentation and in the comparison with the primary IPAM. Read-only,
                   without an account.
                 </>,
@@ -1583,8 +1640,8 @@ function SystemDialog({
           <div className="hint">
             {isAdDns
               ? L(
-                  "Name oder IP eines DNS-Servers mit den Zonen (z. B. ein Domain Controller), optional mit :Port – der Zonentransfer läuft über TCP 53.",
-                  "Name or IP of a DNS server holding the zones (e.g. a domain controller), optionally with :port – the zone transfer uses TCP 53.",
+                  "Name oder IP eines DNS-Servers mit den DNS-Zonen (z. B. ein Domain Controller), optional mit :Port – der Zonentransfer läuft über TCP 53.",
+                  "Name or IP of a DNS server holding the DNS zones (e.g. a domain controller), optionally with :port – the zone transfer uses TCP 53.",
                 )
               : L(
                   "So, wie der Agent das Gerät erreicht (vom Agent-Rechner aus gesehen).",
@@ -1706,7 +1763,7 @@ function SystemDialog({
         </div>
         {isAdDns ? (
           <div className="field">
-            <label htmlFor="ss-zones">{L("Zonen", "Zones")}</label>
+            <label htmlFor="ss-zones">{L("DNS-Zonen", "DNS zones")}</label>
             <textarea
               id="ss-zones"
               className="input mono"
@@ -1718,13 +1775,13 @@ function SystemDialog({
             <div className="hint">
               {L(
                 <>
-                  Je Zeile eine Zone – Forward-Zonen (Namen → IP) und Reverse-Zonen (<code>…in-addr.arpa</code>, IP → Name).
+                  Je Zeile eine DNS-Zone – Forward-Zonen (Namen → IP) und Reverse-Zonen (<code>…in-addr.arpa</code>, IP → Name).
                   Keine Zugangsdaten: auf dem DNS-Server je Zone den Zonentransfer nur für die Adresse von Automato bzw. des
                   Agenten erlauben (AD: DNS-Manager → Zone → Eigenschaften → Zonenübertragungen → „Nur an folgende
                   Server“). Dienst-Einträge des AD (<code>_msdcs</code>, <code>_tcp</code> …) werden übergangen.
                 </>,
                 <>
-                  One zone per line – forward zones (names → IP) and reverse zones (<code>…in-addr.arpa</code>, IP →
+                  One DNS zone per line – forward zones (names → IP) and reverse zones (<code>…in-addr.arpa</code>, IP →
                   name). No credentials: on the DNS server allow the zone transfer per zone only for the address of
                   Automato or the agent (AD: DNS Manager → zone → Properties → Zone Transfers → “Only to the following
                   servers”). Service records of the AD (<code>_msdcs</code>, <code>_tcp</code> …) are skipped.
@@ -2165,6 +2222,23 @@ function SystemDialog({
   );
 }
 
+// Gelesener Umfang unter der Adresse (1.7.0, Anwender 2026-11-11: „Die Liste der Quellsysteme wird extrem verbreitet,
+// wenn ich einige DNS Zonen dem AD DNS zufüge“): kurz als Zahl bzw. wenige Namen, die ganze Liste im Tooltip.
+function ScopeLine({ s }: { s: System }) {
+  const items = (s.read_scope || "").split(/[\s,;]+/).filter(Boolean);
+  if (!items.length) return null;
+  const n = items.length;
+  let text: string;
+  if (s.platform === "cisco_switch") text = `${n} Switches`;
+  else if (s.platform === "ad_dns") text = n === 1 ? items[0] : L(`${n} DNS-Zonen`, `${n} DNS zones`);
+  else text = n <= 2 ? `Tenants: ${items.join(", ")}` : L(`${n} Tenants`, `${n} tenants`);
+  return (
+    <div className="faint" style={{ fontSize: 11, whiteSpace: "normal", overflowWrap: "anywhere" }} title={items.join("\n")}>
+      {text}
+    </div>
+  );
+}
+
 function SystemTable({
   systems,
   actions,
@@ -2216,17 +2290,7 @@ function SystemTable({
             </td>
             <td className="mono nowrap">
               {s.base_url || <span className="faint">–</span>}
-              {s.read_scope && s.platform === "cisco_switch" ? (
-                <div className="faint" style={{ fontSize: 11 }} title={s.read_scope}>
-                  {s.read_scope.split(/\s+/).length} Switches
-                </div>
-              ) : (
-                s.read_scope && (
-                  <div className="faint" style={{ fontSize: 11 }} title={L("gelesene ACI-Tenants", "ACI tenants read")}>
-                    Tenants: {s.read_scope}
-                  </div>
-                )
-              )}
+              <ScopeLine s={s} />
             </td>
             <td className="nowrap">
               {s.agent_id != null ? (

@@ -787,6 +787,7 @@ export interface AppDocSystem2 {
   }[];
   epgs: string[]; // Tenant/AP/EPG
   portgroups: string[];
+  networks?: string[]; // 1.8.0: Netz, an dem die IPs hängen (Subnetz mit Interface/VLAN und Gerät)
   // je NIC (0.43.1): Portgruppe → EPG und wie die Zuordnung zustande kam (name | vlan)
   nics?: { name: string; portgroup: string | null; vlan: number | null; ips: string[]; epg: string | null; match: string | null }[];
   hints?: string[]; // z. B. VM-Name nennt ein anderes Projekt als das AP der Portgruppe
@@ -860,6 +861,7 @@ export interface AppDocFinding {
 export interface ApplicationDoc {
   application: Application;
   tenant_code: string | null;
+  aci?: boolean; // 1.8.0: Mandant mit ACI – sonst Netz statt EPG (fehlt bei älteren Ständen = ACI)
   summary: {
     vms: number;
     servers: number;
@@ -1087,7 +1089,7 @@ export interface IpamCompare extends Paged<IpamRow> {
 
 // NetBox-Sync (ADR 0010): Vorschau -> Übernahme per Klick (admin)
 // Abschnitte; Verkabelung und Applikationen (ADR 0031) nur ausdrücklich gewählt
-export type SyncSection = "inventory" | "mirror" | "virtualization" | "cabling" | "applications";
+export type SyncSection = "inventory" | "mirror" | "virtualization" | "cabling" | "firewall_objects" | "applications";
 export interface SyncTarget {
   id: number;
   name: string;
@@ -1474,15 +1476,22 @@ export const patchSystem = (
   } & SystemCredentials,
 ) => sendJSON<System>(`/api/systems/${id}`, "PATCH", body);
 export const deleteSystem = (id: number) => sendJSON<DeleteCounts>(`/api/systems/${id}`, "DELETE");
-// Erreichbarkeit vom Orchestrator aus (zentral gelesene Systeme): Name, TCP, NetBox-Status
+// Verbindung prüfen: zentral gelesene Systeme vom Orchestrator aus (Name, TCP, NetBox-Status),
+// Geräte hinter einem Agenten (1.7.0) als Auftrag an den Agenten (Name, Verbindung, Anmeldung)
 export interface SystemCheck {
   system_id: number;
   name: string;
   ok: boolean;
   hint: string | null;
-  steps: { step: "dns" | "tcp" | "http"; ok: boolean; detail: string }[];
+  steps: { step: "dns" | "tcp" | "http" | "login"; ok: boolean; detail: string }[];
+  from?: "orchestrator" | "agent";
+  agent?: string | null;
+  check_id?: number;
+  status?: "queued" | "running" | "done" | "expired";
 }
 export const checkSystem = (id: number) => sendJSON<SystemCheck>(`/api/systems/${id}/check`, "POST");
+export const fetchSystemCheck = (id: number, checkId: number) =>
+  getJSON<SystemCheck>(`/api/systems/${id}/check/${checkId}`);
 
 // Läufe
 // Alle Läufe seitenweise mit Gesamtzahl (0.13.0); status: open | queued | running | completed | failed
@@ -4465,12 +4474,16 @@ export interface CablingEnd {
   vpc: string | null;
   description: string | null;
 }
+// warum eine Verbindung als beidseitig gilt (1.8.0): beide melden sie bzw. ein gelesener ESXi-Host
+// bestätigt sie (ESXi spricht CDP/LLDP meist nur in eine Richtung)
+export type LinkConfirmed = "both" | "esxi" | null;
 export interface CablingLink {
   id: string;
   a: CablingEnd;
   b: CablingEnd;
   protocols: string[];
   state: LinkState;
+  confirmed?: LinkConfirmed;
   issues: { type: string; text: string }[];
 }
 export interface CablingPort {
@@ -4495,6 +4508,7 @@ export interface CablingPort {
   stp_root?: string | null;
   peer: { device: string; port: string | null; read: boolean; kind: string } | null;
   link_state: LinkState | null;
+  link_confirmed?: LinkConfirmed; // 1.8.0
   issues: string[];
   endpoints?: number; // MACs am Port (0.63.0)
 }
@@ -4531,6 +4545,7 @@ export interface CablingPatch {
   a: CablingPatchEnd;
   b: CablingPatchEnd;
   state: LinkState;
+  confirmed?: LinkConfirmed;
   protocols: string[];
   issues: { type: string; text: string }[];
 }

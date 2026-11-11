@@ -40,7 +40,7 @@ import httpx
 # Selbst-Update zuerst und ohne weitere Abhaengigkeiten laden: so kann sich auch eine
 # unvollstaendige Installation (z. B. fehlendes sot_gateway) selbst reparieren (ADR 0011).
 from collectors.common import agentlog, http, selfupdate
-from collectors.common.i18n import L, both
+from collectors.common.i18n import L, both, german_only
 from collectors.config import get_settings
 
 try:
@@ -49,6 +49,7 @@ try:
     from collectors.cisco_aci.tasks import collect_once as _aci_collect
     from collectors.cisco_switch import tasks as _switch
     from collectors.common import agent as agent_api
+    from collectors.common import reach
     from collectors.common.dto import CollectorResult, Target
     from collectors.common.upload import confirmed, submit_result
     from collectors.fortigate.tasks import check as _fgt_check
@@ -237,16 +238,44 @@ UPDATE_EVERY_SECONDS = 300  # im Wach-Modus so oft auf eine neue Agent-Version p
 
 
 def _poll_once(platform: str | None) -> tuple[bool, int]:
-    """Pull-Modell: alle offenen Laeufe der zugewiesenen Geraete nacheinander abarbeiten."""
+    """Pull-Modell: alle offenen Laeufe der zugewiesenen Geraete nacheinander abarbeiten -
+    vorher die mitgelieferten Pruefauftraege aus der Oberflaeche (1.7.0, kurz)."""
     ok, done = True, 0
     while done < MAX_RUNS_PER_POLL:
         run = agent_api.next_run(platform)  # --platform optional als Filter
+        _run_checks()
         if not run:
             break
         target = Target(**run["target"]) if run.get("target") else None
         ok = _execute(run["platform"], run["run_id"], target, via_agent=True) and ok
         done += 1
     return ok, done
+
+
+@german_only  # das Ergebnis speichert der Orchestrator - deutsch (ADR 0028)
+def _probe(job: dict) -> tuple[str, bool, list[dict], str | None]:
+    try:
+        target = Target(**job["target"])
+    except (KeyError, TypeError, ValueError) as exc:
+        return "?", False, [], f"Pruefauftrag unvollstaendig: {exc}"
+    label = f"{target.name} ({target.platform})"
+    try:
+        ok, steps, hint = reach.probe(target, CHECKERS.get(target.platform))
+    except Exception as exc:  # noqa: BLE001 - Pruefung meldet jeden Fehler zurueck
+        ok, steps, hint = False, [], f"{type(exc).__name__}: {exc}"
+    return label, ok, steps, hint
+
+
+def _run_checks() -> None:
+    """Pruefauftraege (1.7.0): Geraet read-only pruefen (Name, Verbindung, Anmeldung) und das
+    Ergebnis melden - wie `--check`, aber fuer ein Geraet aus der Oberflaeche."""
+    for job in agent_api.take_checks():
+        label, ok, steps, hint = _probe(job)
+        print(f"{label} check ({L('Web-UI', 'web UI')}): {_verdict(ok)}")
+        try:
+            agent_api.report_check(job.get("check_id", 0), ok, steps, hint)
+        except httpx.HTTPError as exc:
+            print(_call_failed(exc), file=sys.stderr)
 
 
 def _watch(

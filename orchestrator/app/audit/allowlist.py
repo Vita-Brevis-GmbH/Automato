@@ -26,6 +26,7 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "collector_run.completed": frozenset({"rule_count", "persisted"}),
     "collector_run.failed": frozenset({"rule_count", "persisted"}),
     "collector_run.claimed": frozenset({"run_id", "platform"}),
+    "agent_check.claimed": frozenset({"check_id", "source_system_id", "platform"}),
     "collector_run.cancelled": frozenset({"platform", "source_system_id"}),
     "agent.created": frozenset({"agent_id", "name", "tenant_id"}),
     "agent.updated": frozenset({"agent_id", "enabled", "auto_update"}),

@@ -10,6 +10,8 @@ Anfrage (`L`); feste Tabellen halten Paare (de, en). Werte aus dem gespeicherten
 (Begruendungen, `text`, Kategorien, Namen) bleiben, wie sie gespeichert sind.
 """
 
+import re
+
 from app.i18n import L
 
 _CATEGORY = {
@@ -56,8 +58,37 @@ def _ipam(d: dict) -> str:
     return L(f"im IPAM ({ref})", f"in the IPAM ({ref})") if ref else L("im IPAM", "in the IPAM")
 
 
+_RANGE = re.compile(r"[0-9A-Fa-f:.]+-[0-9A-Fa-f:.]+")
+_SYNC_HINT = (
+    "NetBox-Sync mit dem Abschnitt „Firewall-Objekte“ übernehmen – danach liest Automato die "
+    "NetBox neu ein und der Befund entfällt. Ist das Ziel bewusst extern, das Objekt mit "
+    "H-EXT_/N-EXT_ benennen.",
+    "Apply the NetBox sync with the section “Firewall objects” – Automato then collects the "
+    "NetBox again and the finding no longer applies. If the destination is intentionally "
+    "external, name the object H-EXT_/N-EXT_.",
+)
+
+
 def _unmatched(subject: str, d: dict) -> tuple[str, str]:
     value = d.get("value")
+    box = d.get("sync_target")  # 1.8.0: NetBox = IPAM, von Automato befuellt
+    if box and not value and _RANGE.fullmatch(subject or ""):
+        value = subject  # Bereich a-b: auch ihn legt der Sync an
+    if not d.get("reference") and d.get("no_reference") and box:
+        return (
+            L(
+                f"{subject} konnte nicht abgeglichen werden - die NetBox „{box}“ ist noch nicht "
+                "als führendes IPAM eingetragen bzw. eingelesen.",
+                f"{subject} could not be reconciled - the NetBox “{box}” is not yet set up as "
+                "the primary IPAM or has not been collected.",
+            ),
+            L(
+                f"Unter Quellsysteme die NetBox „{box}“ als führend eintragen und einlesen; "
+                "danach den NetBox-Sync mit dem Abschnitt „Firewall-Objekte“ übernehmen.",
+                f"Under source systems set the NetBox “{box}” as primary and collect it; then "
+                "apply the NetBox sync with the section “Firewall objects”.",
+            ),
+        )
     if not d.get("reference") and d.get("no_reference"):
         return (
             L(
@@ -72,7 +103,15 @@ def _unmatched(subject: str, d: dict) -> tuple[str, str]:
             ),
         )
     ipam = _ipam(d)
-    if value:
+    if value and box:
+        # 1.8.0: kein Fehler im IPAM, sondern noch nicht vom Sync angelegt
+        msg = L(
+            f"{value} fehlt noch in der NetBox „{box}“ – sie ist das IPAM und wird von "
+            "Automato befüllt.",
+            f"{value} is not yet in the NetBox “{box}” – it is the IPAM and is filled by "
+            "Automato.",
+        )
+    elif value:
         # Abgleich: eine IP gilt als bekannt, sobald sie in einem Netz des IPAMs liegt
         net = "/" in value and not value.endswith(("/32", "/128"))
         what = L("als Netz", "as a network") if net else L("als IP", "as an IP")
@@ -118,6 +157,8 @@ def _unmatched(subject: str, d: dict) -> tuple[str, str]:
         "destination is intentionally external, name the object H-EXT_/N-EXT_ - then the "
         "finding no longer applies.",
     )
+    if value and box and not d.get("ipam_elsewhere"):
+        hint = L(*_SYNC_HINT)
     if d.get("ipam_elsewhere"):
         hint = L(
             "IP auf der Firewall bzw. im IPAM angleichen - eine von beiden ist veraltet.",

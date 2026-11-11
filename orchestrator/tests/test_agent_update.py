@@ -146,7 +146,7 @@ def test_veralteter_agent_bekommt_neue_laeufe_erst_nach_dem_update(
 
         old = {**headers, "X-Agent-Version": "0.0.1+alt", "X-Agent-Update": "ok"}
         r = client.get("/internal/agent/next-run", headers=old).json()
-        assert r == {"run": None, "update": True}
+        assert r == {"run": None, "update": True, "checks": []}
         # Update-Pruefung schlug fehl bzw. Agent ohne Selbst-Update: Lauf trotzdem abholen
         failed = {**old, "X-Agent-Update": "Selbst-Update fehlgeschlagen: x"}
         assert client.get("/internal/agent/next-run", headers=failed).json()["update"] is False

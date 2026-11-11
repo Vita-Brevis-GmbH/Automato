@@ -277,3 +277,17 @@ Secrets, Open Source bevorzugt.
   - ~~Weitere Hersteller~~ – Juniper in 0.68.0 (Nr. 11), Arista EOS und Aruba CX in 0.94.0
     (Nr. 13). Offen: MLAG der Arista als ein Paar (wie vPC), ArubaOS-Switch/ProCurve (nur mit
     Terminal-Emulation bzw. über die REST-API des Switches).
+
+## Nachtrag 1.8.0 – ESXi-Hosts melden ihre Nachbarn
+
+- Die ESXi-Hosts eines vCenters stehen gelesen im Netzinventar (ADR 0017 Nachtrag 1.8.0: Rolle
+  `esxi`, vmnics, Nachbarn aus CDP/LLDP) und liefern Nachbarn wie die Switches. Ein gelesener
+  Host ersetzt den Eintrag „ESXi-Host aus den VMs“ (gleicher Name, gleicher Schlüssel).
+- **Zustand**: ESXi spricht CDP/LLDP meist nur in eine Richtung (Vorgabe „Zuhören“). Eine
+  Verbindung an einem gelesenen Host gilt deshalb als **beidseitig** (`confirmed` = `esxi`),
+  wenn der Host sie meldet (er kennt Switch und Port nur aus den Paketen des Switches) bzw. wenn
+  der Switch sie an einer vmnic meldet, die der Host hat. Sie endet nicht als „einseitig“ bzw.
+  „Gegenstelle ohne CDP/LLDP“, nur weil eine Seite schweigt. Hosts nur aus den VMs bleiben wie
+  bisher „ohne CDP/LLDP“.
+- **Prüfung** zwischen Switch-Port und vmnic nur der Speed (`link_speed_mismatch`); Duplex,
+  VLANs und Port-Channel prüft Automato weiter nur zwischen zwei Switches.

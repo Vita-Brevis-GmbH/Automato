@@ -3,7 +3,8 @@
 Geraete (Firewall, ACI-Leaf/-Spine/-Controller), Ports/Interfaces mit VLAN-Konfiguration
 (Access/Trunk, LAG/vPC, Gegenstelle), VLANs (inkl. der EPG-VLANs), reale Subnetze (FortiGate-
 Interfaces, ACI-BD-/EPG-Subnetze) und VRFs. Wird je Lauf des Quellsystems ersetzt und ist die
-Quelle fuer die Ablage in NetBox (NetBox-Sync).
+Quelle fuer die Ablage in NetBox (NetBox-Sync). Seit 1.8.0 auch die ESXi-Hosts eines vCenters
+(Rolle `esxi`, vmnics, Nachbarn aus CDP/LLDP; `store/ingest._replace_hosts`).
 """
 
 from sqlalchemy import JSON, Boolean, ForeignKey, Integer, String, Text
@@ -22,12 +23,15 @@ class InvDevice(_InventoryRow, Base):
     __tablename__ = "inv_device"
 
     name: Mapped[str] = mapped_column(String(200))
-    role: Mapped[str] = mapped_column(String(32))  # firewall | leaf | spine | controller | switch
+    # firewall | leaf | spine | controller | switch | router | esxi (1.8.0, aus dem vCenter)
+    role: Mapped[str] = mapped_column(String(32))
     model: Mapped[str | None] = mapped_column(String(100), nullable=True)
     serial: Mapped[str | None] = mapped_column(String(100), nullable=True)
     node_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     mgmt_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
     version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Hersteller (1.8.0, Migration 0080): Hardware der ESXi-Hosts - fuer den NetBox-Sync
+    vendor: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
 
 class InvInterface(_InventoryRow, Base):

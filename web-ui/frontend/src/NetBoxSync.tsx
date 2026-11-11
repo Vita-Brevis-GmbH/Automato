@@ -96,29 +96,61 @@ const SECTIONS: { key: SyncSection; label: string; hint: string; more?: ReactNod
     key: "cabling",
     label: L("Verkabelung", "Cabling"),
     hint: L(
-      "gelesene Switches und Router mit Ports und die Kabel zwischen zwei Ports, die beide Seiten per CDP/LLDP melden",
-      "collected switches and routers with ports and the cables between two ports that both sides report via CDP/LLDP",
+      "gelesene Switches, Router und ESXi-Hosts mit Ports und die Kabel, die CDP/LLDP bestätigt",
+      "collected switches, routers and ESXi hosts with ports and the cables confirmed by CDP/LLDP",
     ),
     more: L(
       <>
         Geräte wie im Netzinventar (Standort des Quellsystems, Rolle, Hersteller); ohne Standort oder gelesenes Modell
         wird nichts geraten – Hinweis in der Vorschau. Ports mit Name, Typ (soweit aus Name, Speed und Medium
-        ableitbar), Beschreibung, aktiviert und Port-Channel. <b>Modus und VLANs</b> nur, wenn alle VLANs des Ports in
-        NetBox eindeutig vorhanden sind (VLAN-Gruppe des Quellsystems, am Standort oder global) – sonst bleiben sie
-        weg und der Hinweis nennt die VLANs; Automato legt dafür keine VLANs an. <b>Kabel</b> nur zwischen zwei
+        ableitbar), Beschreibung, aktiviert und Port-Channel; Ports ohne Namen nur als Hinweis. <b>VLANs der
+        Switches</b>, die NetBox am Standort nicht hat, legt der Sync in der VLAN-Gruppe des Quellsystems an; vorhandene
+        nimmt er. <b>Modus und VLANs</b> am Port, wenn alle VLANs des Ports eindeutig sind (VLAN-Gruppe des
+        Quellsystems, am Standort oder global) – nicht eindeutige nennt der Hinweis. <b>Kabel</b> nur zwischen zwei
         gelesenen Ports, die es in NetBox gibt oder die der Sync anlegt (Ports der ACI-Leafs: Abschnitt
-        Netzinventar mitwählen); einseitige Verbindungen und Gegenstellen ohne CDP/LLDP nur als Hinweis. Ein
+        Netzinventar mitwählen); einseitige Verbindungen und Gegenstellen ohne CDP/LLDP nur als Hinweis.{" "}
+        <b>ESXi-Hosts</b> des vCenters (seit 1.8.0) mit Hersteller und Modell der Hardware und ihren vmnics; das Kabel
+        zum Switch-Port gilt als bestätigt, wenn der Host es per CDP/LLDP meldet (ESXi hört standardmässig nur zu). Ein
         umgesteckter Port: mit „Löschen zulassen“ wird das alte Kabel zuerst entfernt.
       </>,
       <>
         Devices as in the network inventory (site of the source system, role, manufacturer); without site or
         collected model nothing is guessed – hint in the preview. Ports with name, type (as far as derivable from name,
-        speed and medium), description, enabled and port channel. <b>Mode and VLANs</b> only if all VLANs of the port
-        exist uniquely in NetBox (VLAN group of the source system, at the site or global) – otherwise they are left
-        out and the hint names the VLANs; Automato does not create VLANs for this. <b>Cables</b> only between two
+        speed and medium), description, enabled and port channel; ports without a name only as a hint. <b>VLANs of
+        the switches</b> that NetBox does not have at the site are created in the VLAN group of the source system;
+        existing ones are used. <b>Mode and VLANs</b> on the port if all VLANs of the port are unique (VLAN group of the
+        source system, at the site or global) – the hint names VLANs that are not unique. <b>Cables</b> only between two
         collected ports that exist in NetBox or are created by the sync (ports of the ACI leafs: also choose the
-        network inventory section); links reported by one side and peers without CDP/LLDP only as a hint. A re-patched
-        port: with “Allow deletion” the old cable is removed first.
+        network inventory section); links reported by one side and peers without CDP/LLDP only as a hint.{" "}
+        <b>ESXi hosts</b> of the vCenter (since 1.8.0) with hardware manufacturer and model and their vmnics; the cable to
+        the switch port counts as confirmed if the host reports it via CDP/LLDP (ESXi only listens by default). A
+        re-patched port: with “Allow deletion” the old cable is removed first.
+      </>,
+    ),
+  },
+  {
+    // 1.8.0 (Anwender: „sollte das IPAM die Netbox übernehmen und mit dem Sync sollte das IPAM auch befüllt werden“)
+    key: "firewall_objects",
+    label: L("Firewall-Objekte", "Firewall objects"),
+    hint: L(
+      "Hosts, Netze und Bereiche der Firewall-Objekte als IP-Adresse, Netz bzw. Range – wenn diese NetBox das IPAM ist",
+      "Hosts, networks and ranges of the firewall objects as IP address, prefix or range – if this NetBox is the IPAM",
+    ),
+    more: L(
+      <>
+        Nur wenn diese NetBox das führende IPAM ist (bzw. keines eingelesen ist) – sonst gehören die Werte ins führende
+        IPAM, die Vorschau sagt es. Beschreibung „FW-Objekt“ mit dem Objektnamen, DNS-Name aus dem DNS, Länge der IP aus
+        dem Netz darum. Bewusst externe Ziele (H-EXT_/N-EXT_, öffentlich ausserhalb der eigenen Netze) nicht; was ein
+        anderer Abschnitt anlegt (Interface-, VM-IP, DDI-Spiegel), bleibt dessen. Ohne diesen Abschnitt bleiben solche
+        Objekte in NetBox unangetastet. Danach liest Automato die NetBox neu ein – die Befunde „fehlt in NetBox“ entfallen.
+      </>,
+      <>
+        Only if this NetBox is the primary IPAM (or none has been collected) – otherwise the values belong to the
+        primary IPAM, the preview says so. Description “FW-Objekt” with the object name, DNS name from the DNS, length of
+        the IP from the surrounding network. Intentionally external destinations (H-EXT_/N-EXT_, public outside own
+        networks) not; what another section creates (interface, VM IP, DDI mirror) stays with it. Without this section
+        such objects in NetBox stay untouched. Afterwards Automato collects the NetBox again – the findings “not in
+        NetBox” no longer apply.
       </>,
     ),
   },
@@ -199,6 +231,8 @@ export default function NetBoxSync({
         setTargets(list);
         const usable = list.find((t) => t.has_write_token) ?? list[0];
         setTargetId(usable?.id ?? null);
+        // 1.8.0: ist die Ziel-NetBox das IPAM, die Werte der Firewall-Objekte gleich mit
+        setSections(usable?.ref_role === "primary" ? [...DEFAULT_SECTIONS, "firewall_objects"] : DEFAULT_SECTIONS);
       })
       .catch((e) => {
         setError(e);

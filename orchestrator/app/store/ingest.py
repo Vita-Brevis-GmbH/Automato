@@ -66,6 +66,7 @@ from app.naming import PrefixList
 from app.schemas.collector import (
     CollectorResult,
     NetworkInventory,
+    NormalizedHost,
     NormalizedNat,
     NormalizedObject,
     NormalizedRule,
@@ -172,6 +173,8 @@ def persist_result(session: Session, run, result: CollectorResult, sot) -> None:
         _pin_host_keys(session, run, result.host_keys)
     if result.virtual is not None:  # vCenter: VMs und Portgruppen (ADR 0017)
         virtual.replace(session, run, result.virtual)
+        if result.virtual.hosts is not None:  # 1.8.0 - aeltere Agenten liefern keine Hosts
+            _replace_hosts(session, run, result.virtual.hosts)
     if result.routing is not None:  # Routing, BGP, HA, L3Out (ADR 0019 Stufe 2)
         topology.replace(session, run, result.routing)
     session.flush()
@@ -555,6 +558,77 @@ def _replace_inventory(session: Session, run, inv: NetworkInventory) -> None:
         InvNeighbor(**base, **{**n.model_dump(), "remote_caps": n.remote_caps or None})
         for n in inv.neighbors
     ]
+    session.add_all(rows)
+    session.flush()
+
+
+ESXI = "esxi"  # Rolle der ESXi-Hosts im Netzinventar (1.8.0)
+
+
+def _cut(value: str | None, size: int) -> str | None:
+    return value[:size] if value else None
+
+
+def _replace_hosts(session: Session, run, hosts: list[NormalizedHost]) -> None:
+    """ESXi-Hosts des vCenters ins Netzinventar (1.8.0): je Host ein Geraet (Rolle `esxi`), je
+    vmnic ein physischer Port und - wo der Host per CDP/LLDP einen Nachbarn hoert - ein Nachbar.
+    Die Verkabelung (`store/cabling`) nimmt sie damit wie die Switches auf. Ersetzt werden nur
+    die Hosts dieses Quellsystems mit ihren Ports und Nachbarn - andere Daten des vCenters (VMs,
+    Portgruppen, weiteres Inventar) bleiben. Laengen wie die Spalten (Texte der Geraete)."""
+    sid = run.source_system_id
+    if sid is None or run.tenant_id is None:
+        return
+    esxi = select(InvDevice.name).where(InvDevice.source_system_id == sid, InvDevice.role == ESXI)
+    for model in (InvNeighbor, InvInterface):
+        session.execute(
+            delete(model)
+            .where(model.source_system_id == sid, model.device.in_(esxi))
+            .execution_options(synchronize_session=False)
+        )
+    session.execute(
+        delete(InvDevice)
+        .where(InvDevice.source_system_id == sid, InvDevice.role == ESXI)
+        .execution_options(synchronize_session=False)
+    )
+    base = {"tenant_id": run.tenant_id, "source_system_id": sid}
+    rows: list = []
+    seen: set[str] = set()
+    for h in hosts:
+        name = _cut(h.name, 200)
+        if not name or name in seen:  # gleicher Name zweimal: der erste gilt
+            continue
+        seen.add(name)
+        rows.append(
+            InvDevice(
+                **base,
+                name=name,
+                role=ESXI,
+                vendor=_cut(h.vendor, 100),
+                model=_cut(h.model, 100),
+                serial=_cut(h.serial, 100),
+                version=_cut(h.version, 64),
+                mgmt_ip=_cut(h.mgmt_ip, 64),
+            )
+        )
+        ports: set[str] = set()
+        for p in h.pnics:
+            port = _cut(p.name, 200)
+            if not port or port in ports:
+                continue
+            ports.add(port)
+            rows.append(InvInterface(**base, device=name, name=port, kind="physical",
+                                     status=_cut(p.status, 32), speed=_cut(p.speed, 32),
+                                     duplex=_cut(p.duplex, 16),
+                                     attrs={"mac": p.mac} if p.mac else None))  # fmt: skip
+            nb = p.neighbor
+            if nb is not None and nb.remote_name.strip():
+                rows.append(InvNeighbor(**base, device=name, port=port,
+                                        protocol=_cut(nb.protocol, 8) or "cdp",
+                                        remote_name=_cut(nb.remote_name.strip(), 300),
+                                        remote_port=_cut(nb.remote_port, 200),
+                                        remote_ip=_cut(nb.remote_ip, 64),
+                                        remote_platform=_cut(nb.remote_platform, 200),
+                                        remote_caps=nb.remote_caps or None))  # fmt: skip
     session.add_all(rows)
     session.flush()
 

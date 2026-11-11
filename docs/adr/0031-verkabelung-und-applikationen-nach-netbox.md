@@ -49,7 +49,8 @@ die Abschnitte stehen wie bisher in `sync_plan.options`.
   Typ, soweit ableitbar (`port_type`): Port-Channel `lag`, SVI/Loopback/Unit `virtual`, physisch
   nach Speed (Kurzform des Namens bzw. gelesener Speed) und Medium (`attrs.media`: Kupfer bzw.
   SFP/optisch; ohne Angabe bis 5G Kupfer, darüber optisch), sonst `other`.
-- **Modus und VLANs nur mit vorhandenen VLANs.** Automato legt für die Switches keine VLANs an.
+- **Modus und VLANs nur mit vorhandenen VLANs.** Automato legt für die Switches keine VLANs an
+  (seit 1.7.0 die fehlenden doch – siehe Nachtrag unten).
   Nach dem Lesen von NetBox (`resolve_after_read`) sucht der Sync je VLAN-ID das VLAN in dieser
   Reihenfolge: VLAN-Gruppe des Quellsystems (`<Mandant>-<Quellsystem>`), am Standort des Geräts
   (VLAN mit diesem Standort bzw. Gruppe mit Geltungsbereich Standort), global (ohne Standort, Gruppe
@@ -113,10 +114,93 @@ deutsch (`compute_job`/`apply_job` `@german_only`); die Anzeige übersetzt Arten
   (`source-of-truth/netbox/sync-user.sh`); Tags (`extras.tag`) und Geräte/Ports hatte er schon.
 - Mit dem Abschnitt Applikationen liest der Sync alle Tags und alle VMs der NetBox, mit der
   Verkabelung alle VLANs und die Kabel der betroffenen Geräte – nur lesend.
-- Bewusst nicht (später bei Bedarf): VLANs der Switches anlegen; IP-Adressen der Switch- und
+- Bewusst nicht (später bei Bedarf): IP-Adressen der Switch- und
   Router-Interfaces (Junos); Kabel zu Geräten ohne CDP/LLDP (Firewalls, ESXi-Hosts) bzw. aus
   einseitigen Meldungen; Applikations-Tags an von Hand gepflegten Objekten (NetBox als führendes
   IPAM) – bräuchte eine eigene Freigabe, weil fremde Objekte geändert würden; Tags an Geräten,
   Netzen oder EPG-VLANs der Applikation.
 - Am Grundsatz ändert sich nichts: geschrieben wird nur nach NetBox, nie auf Switches, Router,
   Firewalls, APIC oder vCenter.
+
+## Nachtrag 1.7.0 – fehlende VLANs der Switches anlegen
+
+Anwender 2026-11-11: „Er warnt auch, dass die VLANs nicht in Netbox sind, diese sollten aber
+eigentlich damit angelegt werden.“ Der Abschnitt *Verkabelung* legt deshalb die VLANs der Switches
+an, die NetBox am Standort der Switches nicht hat:
+
+- Grundlage sind die VLANs aus `show vlan` (bzw. der VLAN-Tabelle über SNMP) des Quellsystems.
+- Für jede VLAN-ID sucht der Sync wie oben (eigene Gruppe, Standort, global). Fehlt sie, legt er
+  das VLAN in der VLAN-Gruppe des Quellsystems an (`<Mandant>-<Quellsystem>`, wie beim
+  Netzinventar). Name und Status kommen vom Switch, dazu Tag `automato` und der Mandant.
+- Vorhandene VLANs nimmt der Port wie bisher. Kein Doppel: ein VLAN global oder am Standort
+  bleibt das VLAN des Ports.
+- Nicht eindeutige VLANs (mehrere auf derselben Stufe) bleiben ein Hinweis. Ein neues VLAN würde
+  hier nur raten.
+- Schon angelegte VLANs der eigenen Gruppe bleiben gewollt, auch wenn später ein passendes am
+  Standort dazukommt (stabil, kein Wechsel zwischen Syncs).
+- Eine von Hand gepflegte Gruppe gleichen Namens (ohne Tag) wird nur referenziert. Fehlende VLANs
+  kommen hinein, die Gruppe selbst bleibt unangetastet.
+- Eine leere Gruppe wird nicht angelegt.
+- VLAN-Gruppen und VLANs gehören zum Abschnitt ihres Quellsystems. Ein Sync ohne *Verkabelung*
+  (bzw. ohne *Netzinventar*) führt die Gruppen der Switches (bzw. von FortiGate/ACI) und ihre VLANs
+  nicht als veraltet und löscht sie nie (`_foreign_groups`).
+- Netze, Ranges, IP-Adressen und VRFs füllen mehrere Abschnitte (`KIND_SECTIONS`). Sie gelten nur
+  als veraltet bzw. werden nur gelöscht, wenn alle diese Abschnitte gewählt sind. Vorher löschte
+  „nur Verkabelung“ mit „Löschen zulassen“ die Netze von Netzinventar und DDI-Spiegel.
+
+Ports ohne Namen (eine Zeile der Geräteausgabe ohne Port) gehen nicht nach NetBox, denn NetBox
+verlangt einen Namen: HTTP 400 „name: This field is required“ brach die Übernahme ab. Der
+Collector übergeht sie seit 1.7.0 und zählt sie im Lauf. Der Sync zählt sie als Hinweis, falls ein
+älterer Agent sie noch liefert.
+
+Der Schreibweg bleibt derselbe: nur NetBox (ADR 0010). VLANs und VLAN-Gruppen schreibt der
+Sync-Benutzer schon für das Netzinventar.
+
+## Nachtrag 1.8.0 – Firewall-Objekte nach NetBox, wenn NetBox das IPAM ist
+
+Anwender 2026-11-11: „Bei den Befunden kommt viele Meldungen, dass ein Objekt nicht im IPAM ist,
+da wir kein Infoblox bei dem Kunden haben, sollte das IPAM die Netbox übernehmen und mit dem Sync
+sollte das IPAM auch befüllt werden.“
+
+Neuer Abschnitt *Firewall-Objekte* (`firewall_objects`):
+
+- Er schreibt die Werte der Adressobjekte der Firewalls nach NetBox: Hosts als IP-Adresse (mit
+  der Präfixlänge des umgebenden Netzes und dem DNS-Namen aus den Referenzen), Netze als Prefix
+  (`active`), Bereiche als IP-Range. Beschreibung `FW-Objekt <Objektname(n)>`, Tag `automato`,
+  Mandant wie die übrigen Abschnitte.
+- Bewusst externe Objekte (Abgleich „erwartet extern“/„nicht anwendbar“, bzw. Name `…-EXT_`)
+  bleiben draussen. `0.0.0.0/0` ebenso.
+- Was ein anderer Abschnitt schon will (z. B. dieselbe IP aus dem Netzinventar), kommt nicht
+  doppelt. Der andere Abschnitt bleibt Eigentümer.
+- **Nur wenn diese NetBox das führende IPAM ist.** Ist ein anderes System führend (Infoblox,
+  andere NetBox), gehören die Werte dorthin: Die Vorschau zeigt „Firewall-Objekte: führendes
+  IPAM ist „…“ – die Werte gehören dorthin, nicht übernommen“ und schreibt nichts. Die Oberfläche
+  wählt den Abschnitt vor, wenn die Ziel-NetBox führend ist.
+- **Eigentum über die Beschreibung:** Einträge mit `FW-Objekt …` gehören nur diesem Abschnitt.
+  - Ein Sync ohne ihn führt sie nie als veraltet und löscht sie nie.
+  - Ein Sync mit ihm führt entfernte Objekte als veraltet bzw. löscht sie mit „Löschen
+    zulassen“, auch wenn die anderen Abschnitte nicht gewählt sind.
+  - Die übrigen Netze, Ranges und IPs bleiben bei ihren Abschnitten (`KIND_SECTIONS`, 1.7.0).
+
+Der Befund „nicht im IPAM“ (`unmatched_object`) nennt den Weg. Ist das führende IPAM eine
+beschreibbare NetBox, heisst er „… fehlt noch in der NetBox „…“ – sie ist das IPAM und wird von
+Automato befüllt“. Ist noch keine führend, der Mandant hat aber genau eine beschreibbare NetBox,
+sagt er, dass sie als führend einzutragen ist. Nach Sync und neuem Einlesen der NetBox entfällt
+der Befund von selbst.
+
+Der Schreibweg bleibt derselbe: nur NetBox, Vorschau → Übernehmen (ADR 0010).
+
+### ESXi-Hosts im Abschnitt Verkabelung (1.8.0)
+
+Die gelesenen ESXi-Hosts eines vCenters (ADR 0017 Nachtrag 1.8.0) kommen in den Abschnitt
+*Verkabelung*, denn sie gehören zu den Kabeln. Die VMs bleiben im Abschnitt *Virtualisierung*.
+
+- **Gerät:** Hersteller und Modell der Hardware (z. B. „Dell Inc.“, „PowerEdge R650“),
+  Seriennummer, Rolle `esxi`, Standort des vCenters, Kommentar „Automato: gelesen aus <vCenter>“.
+  Ohne gelesenen Hersteller oder ohne Modell wird nichts geraten; es gibt einen Hinweis.
+- **Ports:** Die vmnics kommen als physische Ports, der Typ ergibt sich aus dem Speed.
+- **Kabel:** Bestätigt ein gelesener Host die Verbindung (`confirmed` = `esxi`, ADR 0025
+  Nachtrag 1.8.0), entsteht ein Kabel wie bei „beidseitig“, mit der Beschreibung „Automato:
+  CDP über den ESXi-Host bestätigt“.
+- Hosts, die Automato nur als Host einer VM kennt, kommen nicht nach NetBox.
+- Ein Sync ohne *Verkabelung* fasst die Hosts nicht an (`_device_section`).

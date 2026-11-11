@@ -530,7 +530,13 @@ def normalize(raw: dict) -> NetworkInventory:
         if part.devices:  # Name fuer die Routing-Kontexte (routing.normalize, ADR 0032)
             sw["name"] = part.devices[0].name
         inv.devices += part.devices
-        inv.interfaces += part.interfaces
+        # Zeile ohne Port (Ausgabe/Vorlage) ist kein Port - NetBox verlangt einen Namen (1.7.0)
+        named = [i for i in part.interfaces if i.name.strip()]
+        if len(named) < len(part.interfaces):
+            sw["notes"].append(
+                f"{len(part.interfaces) - len(named)} Ports ohne Namen nicht uebernommen"
+            )
+        inv.interfaces += named
         inv.neighbors += part.neighbors
         inv.macs += part.macs
         inv.arps += part.arps

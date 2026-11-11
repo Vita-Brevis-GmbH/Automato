@@ -171,6 +171,7 @@ class DocSystemOut(BaseModel):
     objects: list[dict] = []
     epgs: list[str] = []  # EPGs mit ganzem ACI-Pfad Tenant/AP/EPG
     portgroups: list[str] = []
+    networks: list[str] = []  # 1.8.0: Netz der IPs (Subnetz mit Interface/VLAN und Geraet)
     # je NIC (0.43.1): name, portgroup, vlan, ips, epg (Tenant/AP/EPG), match (name | vlan)
     nics: list[dict] = []
     hints: list[str] = []  # z. B. VM-Name nennt ein anderes Projekt als das AP der Portgruppe
@@ -297,6 +298,7 @@ class SnapshotOut(BaseModel):
 class ApplicationDocOut(BaseModel):
     application: ApplicationOut
     tenant_code: str | None
+    aci: bool = True  # 1.8.0: ohne ACI zeigt die Oberflaeche das Netz statt der EPG
     summary: DocSummaryOut
     systems: list[DocSystemOut]
     epgs: list[DocEpgOut]
