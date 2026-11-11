@@ -183,7 +183,8 @@ entschieden (Entscheide E1–E8, Stand 2026-11-11):
 
 - zu 4: Host-Agent („die sicherere und stabilere Variante“);
 - zu 5: nur Container, keine VMs. Der Wechsel auf Proxmox folgt, VMs anlegen erst in Version 4;
-- zu 6: nur der Betrieb von Vita Brevis über Port 4444, nur intern;
+- zu 6: nur der Betrieb von Vita Brevis über Port 4444, nur intern. Vorerst gibt es kein
+  Self-Service-Portal; die Kunden richtet der Betrieb am Anfang ein;
 - zu 7: Automato als Image;
 - zu 8: erst planen, dann nach Phasen.
 
