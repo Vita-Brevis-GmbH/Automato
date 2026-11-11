@@ -16,6 +16,9 @@ Bake, but buildx isn't installed – Warning im Installationsprozess.“
   `deploy/aufbau.sh docker-update` installiert es nach (`docker-buildx-plugin` aus dem
   Docker-Repository bzw. `docker-buildx` von Ubuntu). Ohne buildx baut Compose weiter mit dem
   alten Builder – die Warnung war harmlos, der Bau lief.
+- **`.env ordnen` schreibt Sicherung und neue Datei von Anfang an nur für den Besitzer lesbar**
+  (0600, danach die Rechte der alten `.env`) – vorher entstanden beide kurz mit den
+  Standardrechten, bevor die Rechte gesetzt wurden.
 
 ## 1.6.0 – 2026-11-11
 
