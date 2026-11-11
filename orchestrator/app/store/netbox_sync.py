@@ -126,7 +126,15 @@ KINDS = (
         owned=("type", "group", "status", "description"),
     ),
     Kind("vrf", "ipam/vrfs", "VRF", ("tenant",), "tenant"),
-    Kind("vlan_group", "ipam/vlan-groups", "VLAN-Gruppe", ("name", "description"), "group"),
+    # Geltungsbereich = Standort des Quellsystems (1.9.0): VLAN 50 an Standort A und an Standort B
+    # sind zwei VLANs - ohne Standort galten die Gruppen global und waren „nicht eindeutig“
+    Kind(
+        "vlan_group",
+        "ipam/vlan-groups",
+        "VLAN-Gruppe",
+        ("name", "description", "scope_type", "scope_id"),
+        "group",
+    ),  # fmt: skip
     Kind("vlan", "ipam/vlans", "VLAN", ("name", "tenant", "description", "status"), "tenant"),
     Kind(
         "prefix",
@@ -318,11 +326,24 @@ class SwitchVlans:
 
 
 @dataclass
+class PrefixVlan:
+    """Netz eines Interfaces ohne eigenes VLAN (FortiGate-Port mit IP) - VLAN des Switch-Ports,
+    an dem es haengt (1.9.0); zugeordnet erst nach dem Lesen, wie die VLANs der Ports."""
+
+    prefix: str  # Schluessel des Netzes
+    vid: int
+    group: str  # VLAN-Gruppe des Switch-Quellsystems (Slug)
+    site: str  # Slug des Standorts der Switches
+    via: str  # „sw-acc-01 Gi1/0/5 (access)“ fuer den Hinweis
+
+
+@dataclass
 class Wants:
     items: dict[tuple[str, str], Want] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
     ports: list[PortVlans] = field(default_factory=list)  # Verkabelung: VLANs nach dem Lesen
     switch_vlans: list[SwitchVlans] = field(default_factory=list)  # Verkabelung (1.7.0)
+    prefix_vlans: list[PrefixVlan] = field(default_factory=list)  # Native VLAN (1.9.0)
     cable_ends: set[str] = field(default_factory=set)  # Geraete an Kabeln: Ports in NetBox lesen
 
     def add(self, want: Want) -> Want:
@@ -565,12 +586,14 @@ def _inventory_wants(
     def rows(model, source):
         return _rows(session, model, source)
 
+    native = _NativeVlans(session, tenant, sites, only_site)
     for src in sources:
         gslug = group_slug(tenant, src)
         vlans = rows(InvVlan, src)
         vids: set[int] = set()
         if vlans:
-            _vlan_group_want(w, tenant, src, gslug)
+            _vlan_group_want(w, tenant, src, gslug,
+                             sites.get(src.site_id) if src.site_id else only_site)  # fmt: skip
         for v in vlans:
             vids.add(v.vid)
             _vlan_want(w, src.name, gslug, v, tenant_ref)
@@ -614,6 +637,8 @@ def _inventory_wants(
                     },
                 )
             )
+            if sub.vlan is None and sub.context == "interface":
+                native.need(w, net, src.id, sub.context_name)
 
         site = sites.get(src.site_id) if src.site_id else only_site
         devices = rows(InvDevice, src)
@@ -699,8 +724,45 @@ def _inventory_wants(
                 )
 
 
-def _vlan_group_want(w: Wants, tenant: Tenant, src: SourceSystem, gslug: str) -> Want:
-    """VLAN-Gruppe eines Quellsystems (`<Mandant>-<Quellsystem>`) - Netzinventar und Switches."""
+class _NativeVlans:
+    """VLAN des Switch-Ports je Firewall-Interface (`cabling.port_vlans`, 1.9.0) - erst gebaut,
+    wenn ein Netz es braucht (die Verkabelung liest alle Ports und Nachbarn)."""
+
+    def __init__(
+        self, session: Session, tenant: Tenant, sites: dict[int, Site], only_site: Site | None
+    ):
+        self.session, self.tenant, self.sites, self.only_site = session, tenant, sites, only_site
+        self._map: dict | None = None
+
+    def need(self, w: Wants, prefix: str, source_id: int, iface: str) -> None:
+        if self._map is None:
+            self._map = cabling_store.port_vlans(cabling_store.build(self.session, self.tenant.id))
+        pv = self._map.get((source_id, iface))
+        if pv is None:
+            return
+        src = self.session.get(SourceSystem, pv.switch_source_id)
+        site = (self.sites.get(src.site_id) if src.site_id else self.only_site) if src else None
+        if src is None or site is None:
+            return
+        mode = "Access" if pv.mode == "access" else "Native VLAN"
+        w.prefix_vlans.append(
+            PrefixVlan(
+                prefix,
+                pv.vid,
+                group_slug(self.tenant, src),
+                slugify(site.code),
+                f"{pv.switch} {pv.port} ({mode})",
+            )  # fmt: skip
+        )
+
+
+def _vlan_group_want(
+    w: Wants, tenant: Tenant, src: SourceSystem, gslug: str, site: Site | None
+) -> Want:
+    """VLAN-Gruppe eines Quellsystems (`<Mandant>-<Quellsystem>`) - Netzinventar und Switches.
+    Seit 1.9.0 mit dem Standort des Quellsystems als Geltungsbereich (Anwender 2026-11-11: „die
+    VLANs sind entweder physischer Standort spezifisch oder für einen virtuellen Standort
+    spezifisch“); ohne Standort global wie bisher."""
     return w.add(
         Want(
             "vlan_group",
@@ -710,7 +772,9 @@ def _vlan_group_want(w: Wants, tenant: Tenant, src: SourceSystem, gslug: str) ->
                 "name": _cut(f"{src.name} ({tenant.name})", 100),
                 "slug": gslug,
                 "description": _cut(f"Automato: VLANs von {src.name}", 200),
+                "scope_type": "dcim.site" if site is not None else None,
             },
+            {"scope_id": ("site", slugify(site.code)) if site is not None else None},
         )
     )
 
@@ -1235,7 +1299,7 @@ def _cabling_wants(
         vlans = [] if hosts else _rows(session, InvVlan, src)
         switch_vlans = {v.vid for v in vlans}
         if vlans and names:  # VLANs der Switches: welche fehlen, steht erst nach dem Lesen fest
-            _vlan_group_want(w, tenant, src, gslug)
+            _vlan_group_want(w, tenant, src, gslug, site)
             w.switch_vlans.append(
                 SwitchVlans(src.name, gslug, slugify(site.code), vlans, tenant_ref)
             )
@@ -1594,6 +1658,7 @@ def resolve_after_read(wants: Wants, state: State) -> None:
     als Hinweis."""
     _add_switch_vlans(wants, state)
     _resolve_port_vlans(wants, state)
+    _resolve_prefix_vlans(wants, state)
     _drop_cables_without_ports(wants, state)
     _drop_tags_without_target(wants, state)
 
@@ -1609,15 +1674,15 @@ def _add_switch_vlans(wants: Wants, state: State) -> None:
         return
     cands = _vlan_candidates(wants, state)
     for sv in wants.switch_vlans:
-        site = state["site"].get(sv.site)
         probe = PortVlans("", "", sv.site, sv.group, "access", None)
         added = 0
         for v in sv.vlans:
             have = state["vlan"].get(f"{sv.group}/{v.vid}")
             if have is not None and not have.tagged:
                 continue  # von Hand gepflegt: nur referenziert
-            site_id = site.id if site else None
-            if have is not None or _pick_vlan(cands, v.vid, probe, site_id) == "missing":
+            # 1.9.0: auch bei mehrdeutigen in die eigene Gruppe - sonst blieb der Port ohne VLAN
+            # („VLAN 50 in NetBox nicht eindeutig“, Anwender 2026-11-11)
+            if have is not None or _pick_vlan(cands, v.vid, probe) in ("missing", "ambiguous"):
                 _vlan_want(wants, sv.source, sv.group, v, sv.tenant)
                 added += 1
         group = state["vlan_group"].get(sv.group)
@@ -1628,51 +1693,68 @@ def _add_switch_vlans(wants: Wants, state: State) -> None:
 
 def _vlan_candidates(wants: Wants, state: State) -> dict[int, list[tuple]]:
     """VID -> (Gruppe, Standort, Geltungsbereich der Gruppe, Verweis) aller VLANs in NetBox
-    und der im selben Sync angelegten (Netzinventar: VLAN-Gruppen ohne Geltungsbereich)."""
+    und der im selben Sync angelegten. Geltungsbereich als `("site", <slug>)` (ein Standort,
+    auch einer, den der Sync erst anlegt) bzw. `(Typ, ID)` fuer andere (Region, Gruppe …)."""
+    site_slug = {have.id: slug for slug, have in state["site"].items()}
+
+    def scope_of(group: str | None) -> tuple | None:
+        if not group:
+            return None
+        want = wants.get("vlan_group", group)
+        if want is not None:  # gewollt: der Standort des Quellsystems (bzw. global)
+            ref = want.refs.get("scope_id")
+            return ("site", ref[1]) if ref else None
+        have = state["vlan_group"].get(group)
+        g = have.obj if have is not None else {}
+        kind, sid = g.get("scope_type"), g.get("scope_id")
+        if not kind:
+            return None
+        if kind == "dcim.site" and sid in site_slug:
+            return ("site", site_slug[sid])
+        return (kind, sid)
+
     out: dict[int, list[tuple]] = defaultdict(list)
     known: set[str] = set()
     for key, have in state["vlan_ref"].items():
         o = have.obj
         group = (o.get("group") or {}).get("slug")
         site = (o.get("site") or {}).get("slug")
-        scope = None
-        if group and group in state["vlan_group"]:
-            g = state["vlan_group"][group].obj
-            scope = (g.get("scope_type"), g.get("scope_id")) if g.get("scope_type") else None
         gkey = f"{group}/{o.get('vid')}" if group else None
         if gkey and (wants.has("vlan", gkey) or gkey in state["vlan"]):
             ref: Ref = ("vlan", gkey)
             known.add(gkey)
         else:
             ref = ("vlan_ref", key)
-        out[o.get("vid")].append((group, site, scope, ref))
+        out[o.get("vid")].append((group, site, scope_of(group), ref))
     for want in wants.items.values():
         if want.kind == "vlan" and want.key not in known:
             group = want.refs.get("group")
-            out[want.fields["vid"]].append((group[1] if group else None, None, None,
-                                           ("vlan", want.key)))  # fmt: skip
+            gslug = group[1] if group else None
+            out[want.fields["vid"]].append((gslug, None, scope_of(gslug), ("vlan", want.key)))
     return out
 
 
-def _vlan_level(cand: tuple, port: PortVlans, site_id: int | None) -> int | None:
+def _vlan_level(cand: tuple, port: PortVlans) -> int | None:
     """0 = VLAN-Gruppe des Quellsystems, 1 = am Standort des Geraets (VLAN bzw. Gruppe mit
     diesem Standort), 2 = global (ohne Standort, Gruppe ohne Geltungsbereich); None = an
-    diesem Geraet nicht verwendbar."""
+    diesem Geraet nicht verwendbar (anderer Standort, seit 1.9.0 auch die Gruppe eines
+    Quellsystems an einem anderen Standort)."""
     group, site, scope, _ref = cand
+    here = ("site", port.site)
     if group and group == port.group:  # Gruppe des Quellsystems - ohne bzw. mit diesem Standort
-        return 0 if not scope or scope == ("dcim.site", site_id) else None
+        return 0 if not scope or scope == here else None
     if site:
         return 1 if site == port.site else None
     if scope:
-        return 1 if scope == ("dcim.site", site_id) and site_id is not None else None
+        return 1 if scope == here else None
     return 2
 
 
-def _pick_vlan(cands: dict, vid: int, port: PortVlans, site_id: int | None) -> Ref | str:
+def _pick_vlan(cands: dict, vid: int, port: PortVlans) -> Ref | str:
     """Verweis auf das VLAN bzw. `missing` / `ambiguous` (mehrere auf der besten Ebene)."""
     levels: dict[int, list[Ref]] = defaultdict(list)
     for cand in cands.get(vid, []):
-        level = _vlan_level(cand, port, site_id)
+        level = _vlan_level(cand, port)
         if level is not None and cand[3] not in levels[level]:
             levels[level].append(cand[3])
     if not levels:
@@ -1705,13 +1787,11 @@ def _resolve_port_vlans(wants: Wants, state: State) -> None:
         want = wants.get("interface", port.key)
         if want is None:
             continue
-        site = state["site"].get(port.site)
-        site_id = site.id if site else None
         need = ([port.untagged] if port.mode == "access" else []) + port.required
         found: dict[int, Ref] = {}
         missing, ambiguous = set(), set()
         for vid in need:
-            ref = _pick_vlan(cands, vid, port, site_id)
+            ref = _pick_vlan(cands, vid, port)
             if ref == "missing":
                 missing.add(vid)
             elif ref == "ambiguous":
@@ -1726,8 +1806,8 @@ def _resolve_port_vlans(wants: Wants, state: State) -> None:
             s["n_ambiguous"] += bool(ambiguous)
             continue
 
-        def optional(vid: int | None, _p=port, _s=site_id) -> Ref | None:
-            ref = _pick_vlan(cands, vid, _p, _s) if vid is not None else None
+        def optional(vid: int | None, _p=port) -> Ref | None:
+            ref = _pick_vlan(cands, vid, _p) if vid is not None else None
             return ref if isinstance(ref, tuple) else None
 
         want.fields["mode"] = port.mode
@@ -1747,6 +1827,31 @@ def _resolve_port_vlans(wants: Wants, state: State) -> None:
                 f"{device}: Modus/VLANs an {s['n_ambiguous']} Ports weggelassen – VLAN"
                 f" {_vid_text(s['ambiguous'])} in NetBox nicht eindeutig."
             )
+
+
+def _resolve_prefix_vlans(wants: Wants, state: State) -> None:
+    """Native VLAN (1.9.0): das Netz eines Firewall-Ports bekommt das VLAN des Switch-Ports, an
+    dem er haengt - wie ein Port nur ein in NetBox eindeutiges (bzw. im selben Sync angelegtes)
+    VLAN; sonst bleibt das Netz ohne VLAN und der Hinweis nennt es."""
+    if not wants.prefix_vlans:
+        return
+    cands = _vlan_candidates(wants, state)
+    missing: list[str] = []
+    for pv in wants.prefix_vlans:
+        want = wants.get("prefix", pv.prefix)
+        if want is None or want.refs.get("vlan") is not None:
+            continue
+        probe = PortVlans("", "", pv.site, pv.group, "access", pv.vid)
+        ref = _pick_vlan(cands, pv.vid, probe)
+        if isinstance(ref, tuple):
+            want.refs["vlan"] = ref
+        else:
+            missing.append(f"{pv.prefix} (VLAN {pv.vid} von {pv.via})")
+    if missing:
+        wants.warnings.append(
+            f"Netze: {len(missing)} ohne VLAN – das VLAN des Switch-Ports ist in NetBox nicht"
+            f" eindeutig bzw. fehlt (z. B. {_examples(missing)}); Abschnitt Verkabelung mitwählen."
+        )
 
 
 def _port_available(key: str, wants: Wants, state: State) -> bool:
@@ -2511,6 +2616,12 @@ WARNINGS_EN = (
     (
         "{device}: Modus/VLANs an {n} Ports weggelassen – VLAN {vids} in NetBox nicht eindeutig.",
         "{device}: mode/VLANs left out on {n} ports – VLAN {vids} not unique in NetBox.",
+    ),
+    (
+        "Netze: {n} ohne VLAN – das VLAN des Switch-Ports ist in NetBox nicht eindeutig bzw. fehlt"
+        " (z. B. {examples}); Abschnitt Verkabelung mitwählen.",
+        "Prefixes: {n} without VLAN – the VLAN of the switch port is not unique or missing in"
+        " NetBox (e.g. {examples}); also choose the cabling section.",
     ),
     (
         "Verkabelung: {n} einseitig gemeldete Verbindungen nicht als Kabel übernommen "

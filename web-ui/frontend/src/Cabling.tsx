@@ -3,7 +3,7 @@
 // (Speed, Duplex, VLANs, Port-Channel); Geräte, Ports der Switches und VLANs. Seit 0.63.0 Endpunkte aus
 // MAC-Tabelle und ARP: „Wo hängt …“ und die MACs je Port (ohne Uplinks). Seit 0.64.0 der Plan (L2-Sicht):
 // Geräte nach Ebenen, VLAN-Wege mit Inseln, Ausfall eines Geräts bzw. Kabels simulieren. Rein lesend.
-import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, Fragment, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
   CablingDevice,
   CablingEnd,
@@ -705,17 +705,52 @@ function EndpointsTab({ tenantId, devices, at: port, onClearAt }: {
   );
 }
 
+// 1.9.0 (Anwender: „die VLANs sind entweder physischer Standort spezifisch oder für einen virtuellen Standort
+// spezifisch … pro Standort aufklappen“): je Standort des Quellsystems eine Gruppe; bei einem Standort offen.
 function VlansTab({ tenantId }: { tenantId: number }) {
   const [items, setItems] = useState<CablingVlan[] | null>(null);
   const [err, setErr] = useState<unknown>(null);
+  const [open, setOpen] = useState<Record<string, boolean>>({});
   useEffect(() => {
     fetchCablingVlans(tenantId).then(setItems).catch(setErr);
   }, [tenantId]);
   if (err) return <ErrorBox error={err} onClose={() => setErr(null)} />;
   if (items === null) return <Loading />;
   if (items.length === 0) return <Empty title={L("keine VLANs auf den Switches bzw. im ACI", "no VLANs on the switches or in the ACI")} />;
+  const groups: { key: string; site: CablingVlan["site"]; rows: CablingVlan[] }[] = [];
+  for (const v of items) {
+    const key = v.site ? String(v.site.id) : "-";
+    const last = groups[groups.length - 1];
+    if (last && last.key === key) last.rows.push(v);
+    else groups.push({ key, site: v.site, rows: [v] });
+  }
+  const isOpen = (key: string) => open[key] ?? groups.length === 1;
+  const all = (value: boolean) => setOpen(Object.fromEntries(groups.map((g) => [g.key, value])));
+  const siteLabel = (s: CablingVlan["site"]) =>
+    s
+      ? `${s.name || s.code} (${s.kind === "virtual" ? L("virtueller Standort", "virtual site") : L("physischer Standort", "physical site")})`
+      : L("ohne Standort", "without site");
   return (
     <div className="card" id="cabling-vlans">
+      {groups.length > 1 && (
+        <div className="card-head">
+          <span className="faint">
+            {L(
+              "Ein VLAN gehört zum Standort des Quellsystems, das es liest – gleiche VLAN-ID an zwei Standorten sind zwei VLANs.",
+              "A VLAN belongs to the site of the source system that reads it – the same VLAN ID at two sites are two VLANs.",
+            )}
+          </span>
+          <span style={{ marginLeft: "auto" }}>
+            <button className="linkbtn" onClick={() => all(true)}>
+              {L("alle aufklappen", "expand all")}
+            </button>{" "}
+            ·{" "}
+            <button className="linkbtn" onClick={() => all(false)}>
+              {L("alle zuklappen", "collapse all")}
+            </button>
+          </span>
+        </div>
+      )}
       <div className="card-body scroll">
         <table className="compact">
           <thead>
@@ -727,30 +762,45 @@ function VlansTab({ tenantId }: { tenantId: number }) {
             </tr>
           </thead>
           <tbody>
-            {items.map((v) => (
-              <tr key={v.vid} data-vlan={v.vid}>
-                <td className="mono">
-                  {v.vid}
-                  {(v.sources ?? []).map((s) => (
-                    <span key={s} className="chip" style={{ marginLeft: 4 }} title={s === "aci" ? L("aus dem APIC", "from the APIC") : L("von den Switches", "from the switches")}>
-                      {s === "aci" ? "ACI" : "Switch"}
-                    </span>
+            {groups.map((g) => (
+              <Fragment key={g.key}>
+                <tr
+                  className="clickable group-row"
+                  data-site={g.site?.code ?? ""}
+                  onClick={() => setOpen({ ...open, [g.key]: !isOpen(g.key) })}
+                >
+                  <td colSpan={4}>
+                    {isOpen(g.key) ? "▾" : "▸"} <b>{siteLabel(g.site)}</b>{" "}
+                    <span className="faint">· {g.rows.length} VLANs</span>
+                  </td>
+                </tr>
+                {isOpen(g.key) &&
+                  g.rows.map((v) => (
+                    <tr key={`${g.key}:${v.vid}`} data-vlan={v.vid}>
+                      <td className="mono">
+                        {v.vid}
+                        {(v.sources ?? []).map((s) => (
+                          <span key={s} className="chip" style={{ marginLeft: 4 }} title={s === "aci" ? L("aus dem APIC", "from the APIC") : L("von den Switches", "from the switches")}>
+                            {s === "aci" ? "ACI" : "Switch"}
+                          </span>
+                        ))}
+                      </td>
+                      <td>{v.names.join(" / ") || <Dash />}</td>
+                      <td className="mono">{v.epgs?.length ? v.epgs.join(", ") : <Dash />}</td>
+                      <td>
+                        {v.devices.length === 0 ? (
+                          <span className="faint">{L("an keinem Port", "on no port")}</span>
+                        ) : (
+                          v.devices.map((d) => (
+                            <span key={d.device} className="chip" style={{ marginRight: 4 }}>
+                              {d.device} · {d.access} · {d.trunks}
+                            </span>
+                          ))
+                        )}
+                      </td>
+                    </tr>
                   ))}
-                </td>
-                <td>{v.names.join(" / ") || <Dash />}</td>
-                <td className="mono">{v.epgs?.length ? v.epgs.join(", ") : <Dash />}</td>
-                <td>
-                  {v.devices.length === 0 ? (
-                    <span className="faint">{L("an keinem Port", "on no port")}</span>
-                  ) : (
-                    v.devices.map((d) => (
-                      <span key={d.device} className="chip" style={{ marginRight: 4 }}>
-                        {d.device} · {d.access} · {d.trunks}
-                      </span>
-                    ))
-                  )}
-                </td>
-              </tr>
+              </Fragment>
             ))}
           </tbody>
         </table>

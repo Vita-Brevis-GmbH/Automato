@@ -7,6 +7,38 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 1.9.0 – 2026-11-11
+
+Rückmeldung zum Test von 1.8.x (Anwender 2026-11-11).
+
+Prüfen und Lauf der Switches schneller und der CDP-Systemname der ESXi-Nachbarn folgen in 1.9.1.
+
+- **VLANs je Standort** („In der VLAN Database … haben wir die VLAN ID mit Geräten an beiden
+  Standorten, eigentlich sind die VLANs entweder physischer Standort spezifisch oder für einen
+  virtuellen Standort spezifisch … pro Standort aufklappen“).
+  - **Verkabelung → VLANs** gruppiert nach Standort und lässt sich je Standort aufklappen.
+  - Ein VLAN gehört zum Standort des Quellsystems, das es liest. Gleiche VLAN-ID an zwei
+    Standorten sind zwei VLANs, je mit den Geräten dieses Standorts.
+  - **NetBox-Sync:** Die VLAN-Gruppe eines Quellsystems gilt am Standort des Quellsystems
+    (Geltungsbereich in NetBox). Bestehende Gruppen bekommen ihn beim nächsten Sync.
+- **„VLAN 50 in NetBox nicht eindeutig“ behoben** (Frage des Anwenders, was das bedeutet).
+  - Ursache: Die VLAN-Gruppen der Firewalls galten bisher global. VLAN 50 zweier Firewalls stand
+    damit zweimal auf derselben Stufe, und der Sync liess Modus und VLANs am Port weg.
+  - Jetzt gelten die Gruppen je Standort.
+  - Ein VLAN, das trotzdem mehrdeutig ist, legt der Sync in der Gruppe des Switch-Quellsystems
+    an, und der Port nimmt dieses.
+- **Native VLAN der Firewall-Netze** („Native VLAN von dem Interface IP wird nicht übernommen,
+  obwohl dies auf dem Switch auslesbar ist. Nur das VLAN 1 ist absolut default … Im Netbox sind
+  die VLAN somit nicht zu den Subnetzen verknüpft“).
+  - Hat das Netz eines Firewall-Ports kein eigenes VLAN, gilt das VLAN des Switch-Ports, an dem
+    er laut Verkabelung hängt: das Access-VLAN bzw. das Native VLAN des Trunks, nie VLAN 1.
+  - Ein Port-Channel erbt das VLAN seiner Mitglieder.
+  - **Objekte → Subnetze** zeigt es als „(Switch)“, Gerät und Port stehen im Tooltip.
+  - Der NetBox-Sync verknüpft das Prefix mit diesem VLAN (Abschnitte *Netzinventar* und
+    *Verkabelung*). Fehlt das VLAN in NetBox oder ist es nicht eindeutig, nennt die Vorschau das
+    Netz.
+  - ADR 0031 hat dazu einen Nachtrag.
+
 ## 1.8.1 – 2026-11-11
 
 Anwender 2026-11-11 (`deploy/aufbau.sh pruefen`): AD-DNS „FEHLER … Am Quellsystem sind keine Zonen

@@ -273,7 +273,9 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   Präfix und „ohne Präfix“ – zusätzlich zum Typ wie auf dem Gerät (IP, FQDN, Geo …).
   Dazu das Netzinventar aus FortiGate/APIC:
   **Subnetze** (mit Abgleich gegen führendes IPAM und Anreicherung, VLAN-Abweichung
-  markiert), **VLANs** (inkl. EPGs), **Ports** (Modus, untagged/tagged VLANs, LAG/Parent,
+  markiert; seit 1.9.0 hat das Netz eines Firewall-Ports ohne eigenes VLAN das VLAN des
+  Switch-Ports, an dem er laut Verkabelung hängt – Access-VLAN bzw. Native VLAN des Trunks,
+  nie VLAN 1 –, markiert „(Switch)“ mit Gerät und Port im Tooltip), **VLANs** (inkl. EPGs), **Ports** (Modus, untagged/tagged VLANs, LAG/Parent,
   IPs, Zone/Policy-Gruppe, LLDP/CDP-Nachbar, EPGs), **Geräte**, **VRFs**. Filter Quelle,
   Suche (auch Mitglieder und DNS-Namen der Werte aus dem IPAM), „nur Abweichungen“.
   - Die **Regel-Zahl** je Objekt zählt die Regeln direkt und über (verschachtelte) Gruppen.
@@ -911,6 +913,10 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
       ältere bleiben als „früher“ bis zur Frist `AUTOMATO_RETENTION_L2_DAYS` (30 Tage).
   - **VLANs:** je VLAN die Namen und je Switch die Anzahl Access-Ports und Trunks; seit 0.69.1
     auch die VLANs des ACI (EPGs, je Leaf Ports und Port-Channel/vPC, Kennzeichen ACI/Switch).
+    Seit 1.9.0 **je Standort** aufklappbar: ein VLAN gehört zum Standort des Quellsystems, das
+    es liest (am Quellsystem gewählt, sonst der einzige physische Standort) – gleiche VLAN-ID an
+    zwei Standorten sind zwei VLANs, je mit den Geräten dieses Standorts; bei einem Standort
+    offen, sonst „alle aufklappen“.
   - **Patchungen im Plan** (seit 0.70.0): „Klick: Patchungen“ (Standard) zeigt unter dem Plan die
     Kabel des gewählten Geräts – je Kabel eigener Port und Gegenstelle mit Beschreibung, Speed/
     Duplex, Access/Trunk, Port-Channel/vPC, Spanning Tree, Medium, EPGs, Zustand, Abweichungen
@@ -2154,7 +2160,11 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   Beschreibung `FW-Objekt <Name>`; nur wenn die Ziel-NetBox das führende IPAM ist (dann
   vorgewählt), bewusst externe Objekte nicht. Damit füllt Automato die NetBox als IPAM, wo es
   kein DDI gibt; nach dem Sync die NetBox neu einlesen, dann entfallen die Befunde „nicht im
-  IPAM“. Objekte eines nicht gewählten Abschnitts bleiben unangetastet (auch nicht
+  IPAM“. Seit 1.9.0 gelten die VLAN-Gruppen der Quellsysteme am **Standort des Quellsystems**
+  (Geltungsbereich in NetBox); VLANs der Switches kommen auch dann in die Gruppe des
+  Quellsystems, wenn NetBox sie anderswo mehrfach hat (vorher „VLAN … nicht eindeutig“), und
+  das Netz eines Firewall-Ports bekommt das VLAN des Switch-Ports (Abschnitte Netzinventar und
+  Verkabelung). Objekte eines nicht gewählten Abschnitts bleiben unangetastet (auch nicht
   „veraltet“). Für Kabel braucht der Sync-Benutzer `dcim.cable` – `sync-user.sh` erneut
   ausführen. **Vorschau
   erstellen** liest NetBox nur und zeigt je Art: anlegen / ändern / unverändert / Konflikt

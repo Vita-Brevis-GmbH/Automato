@@ -40,6 +40,7 @@ from app.models import (
     SourceSystem,
 )
 from app.naming_defaults import DEFAULT_DICTIONARY
+from app.store import cabling as cabling_store
 from app.store import customer_infra, references, rule_index, sites
 from app.store import naming_profiles as profile_store
 from app.store import objects as objects_store
@@ -399,6 +400,7 @@ def list_inventory(
         ).all()
     )
     rows = []
+    native = None  # VLAN der Switch-Ports je Interface (1.9.0) - erst wenn gebraucht
     for r in session.scalars(stmt):
         mark = _inventory_mark(infra, kind, r) if infra is not None else None
         if infra is not None and mark is None:
@@ -416,6 +418,15 @@ def list_inventory(
                 row["site_from"] = "system" if row["site"] else None
         elif kind == "subnets":
             row["site"] = site_index.from_name(r.context_name, prefixes)
+            # 1.9.0: Netz eines Interfaces ohne eigenes VLAN (FortiGate-Port) - VLAN des
+            # Switch-Ports, an dem es haengt (Access bzw. Native VLAN, nie VLAN 1)
+            if r.vlan is None and r.context == "interface":
+                if native is None:
+                    native = cabling_store.port_vlans(cabling_store.build(session, tid))
+                pv = native.get((r.source_system_id, r.context_name))
+                if pv is not None:
+                    row["vlan_switch"] = {"vid": pv.vid, "device": pv.switch, "port": pv.port,
+                                          "mode": pv.mode}  # fmt: skip
         if ctx is not None:
             row["ipam"] = _prefix_info(ctx.primary, r.prefix)
             row["enrichment"] = _prefix_info(ctx.prefix_enrichment(), r.prefix)

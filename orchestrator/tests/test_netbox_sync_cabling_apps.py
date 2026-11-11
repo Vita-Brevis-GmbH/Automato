@@ -261,10 +261,8 @@ def test_verkabelung_ports_und_kabel(client, netbox, session_factory):
     warnings = plan["warnings"]
     assert any(w.startswith("Gerät sw-old-01 (Switches A): Modell nicht gelesen") for w in warnings)
     assert not any("nicht in NetBox." in w for w in warnings)  # fehlende VLANs: angelegt (1.7.0)
-    assert (
-        "sw-acc-01: Modus/VLANs an 1 Ports weggelassen – VLAN 30 in NetBox nicht eindeutig."
-        in warnings
-    )
+    # 1.9.0: VLAN 30 (in NetBox zweimal) kommt in die Gruppe des Quellsystems - kein Hinweis
+    assert not any("nicht eindeutig" in w for w in warnings), warnings
     assert any(w.startswith("Verkabelung: 1 einseitig gemeldete Verbindungen") for w in warnings)
     unread = "Verkabelung: 1 Verbindungen zu Geräten ohne CDP/LLDP"
     assert any(w.startswith(unread) for w in warnings)
@@ -273,10 +271,10 @@ def test_verkabelung_ports_und_kabel(client, netbox, session_factory):
     assert cables[CABLE_UPLINK]["fields"]["a_terminations"] == ["sw-acc-01/Gi1/0/47"]
     devices = {i["key"] for i in _items(client, plan["id"], kind="device")}
     assert devices == {"sw-acc-01", "sw-core-01", "mx-01", "leaf-101"}  # sw-old-01 ohne Modell
-    # 1.7.0: nur die VLANs der Switches, die NetBox nicht hat (10 global, 20 am Standort, 30
-    # nicht eindeutig) - in der VLAN-Gruppe des Quellsystems
+    # 1.7.0: nur die VLANs der Switches, die NetBox nicht hat (10 global, 20 am Standort) - in
+    # der VLAN-Gruppe des Quellsystems; seit 1.9.0 auch die nicht eindeutigen (30)
     vlans = {i["key"] for i in _items(client, plan["id"], kind="vlan", action="create")}
-    assert vlans == {"kunde-a-switches-a/1", "kunde-a-switches-a/99"}
+    assert vlans == {"kunde-a-switches-a/1", "kunde-a-switches-a/30", "kunde-a-switches-a/99"}
     groups = _items(client, plan["id"], kind="vlan_group", action="create")
     assert [g["key"] for g in groups] == ["kunde-a-switches-a"]
 
@@ -304,8 +302,13 @@ def test_verkabelung_ports_und_kabel(client, netbox, session_factory):
     assert alt["mode"]["value"] == "access" and alt["untagged_vlan"]["vid"] == 99
     vlan99 = netbox.db["ipam/vlans"][alt["untagged_vlan"]["id"]]
     assert vlan99["name"] == "Alt" and _tagged(vlan99) and vlan99["tenant"]["slug"] == "kunde-a"
-    port = _port_of(netbox, "sw-acc-01", "Gi1/0/7")  # VLAN 30 nicht eindeutig: ohne Modus/VLAN
-    assert not port.get("mode") and not port.get("untagged_vlan")
+    port = _port_of(netbox, "sw-acc-01", "Gi1/0/7")  # VLAN 30: aus der eigenen Gruppe (1.9.0)
+    vlan30 = netbox.db["ipam/vlans"][port["untagged_vlan"]["id"]]
+    assert port["mode"]["value"] == "access" and vlan30["group"]["slug"] == "kunde-a-switches-a"
+    # die Gruppe gilt am Standort des Quellsystems (1.9.0)
+    group = netbox.find("ipam/vlan-groups", slug="kunde-a-switches-a")
+    zrh = netbox.find("dcim/sites", slug="zrh")
+    assert (group["scope_type"], group["scope_id"]) == ("dcim.site", zrh["id"])
     assert len([v for v in netbox.objects("ipam/vlans") if v["vid"] == 10]) == 1  # kein Doppel
     sfp = _port_of(netbox, "sw-acc-01", "Te1/1/1")
     assert sfp["type"]["value"] == "10gbase-x-sfpp" and sfp["untagged_vlan"]["vid"] == 10
@@ -561,7 +564,7 @@ def test_verkabelung_hinweise_englisch(client, netbox):
     ids = _setup_cabling(client, netbox)
     plan = _plan(client, ids, headers=ADMIN_EN, sections=["cabling"])
     w = plan["warnings"]
-    assert "sw-acc-01: mode/VLANs left out on 1 ports – VLAN 30 not unique in NetBox." in w
+    assert not any("not unique" in x for x in w), w  # 1.9.0: VLAN 30 in der eigenen Gruppe
     assert any(x.startswith("Device sw-old-01 (Switches A): model not read") for x in w)
     assert any(x.startswith("Cabling: 1 links reported by one side only") for x in w)
     # ohne Netzinventar fehlt der Port des Leafs: Kabel nicht uebernommen, Hinweis
