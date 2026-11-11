@@ -491,6 +491,27 @@ def test_pruefung_snmp_nur_get_sysname(monkeypatch):
     assert ok and msg == "10.0.0.11: reachable (SNMPv3 authPriv, sysName sw-acc-01.example.ch)"
 
 
+def test_pruefung_snmp_parallel(monkeypatch):
+    """1.9.0: die Geraete werden gleichzeitig geprueft (wie im Lauf), Zeilen in der Reihenfolge
+    des Lesebereichs."""
+    import time
+
+    class Slow(FakeTransport):
+        def get(self, oid_list):
+            time.sleep(0.3)
+            return super().get(oid_list)
+
+    def factory(host, port, creds, timeout, retries):
+        return Slow({"1.3.6.1.2.1.1.5.0": f"sw-{host}".encode()})
+
+    monkeypatch.setattr(sc, "PysnmpTransport", factory)
+    start = time.monotonic()
+    ok, msg = tasks.check(_target(read_scope="10.0.0.11, 10.0.0.12, 10.0.0.13"))
+    assert time.monotonic() - start < 0.75  # seriell 0,9 s
+    assert ok and msg == "; ".join(f"10.0.0.{n}: erreichbar (SNMPv3 authPriv, sysName "
+                                   f"sw-10.0.0.{n})" for n in (11, 12, 13))  # fmt: skip
+
+
 def test_diagnose_snmp():
     msg = diagnose.device_error(sc.SnmpAuthError("Wrong SNMP PDU digest"), "cisco_switch")
     assert msg.startswith("Anmeldung abgelehnt (SNMPv3") and "Lese-View" in msg

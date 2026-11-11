@@ -183,12 +183,17 @@ def _lldp_caps(text: str | None) -> list[str]:
 
 def neighbor_of(nic: dict) -> NormalizedHostNeighbor | None:
     """Nachbar einer vmnic: CDP, wenn der Host ein CDP-Paket gehoert hat, sonst LLDP. Die
-    LLDP-Port-ID ist bei manchen Switches die MAC des Ports - dann die Port-Beschreibung."""
+    LLDP-Port-ID ist bei manchen Switches die MAC des Ports - dann die Port-Beschreibung.
+
+    CDP-Name (1.9.0): der Systemname vor der Geraete-ID - Anwender: „Die Gegenstelle vom VMware
+    Host wird nicht korrekt erkannt, obwohl im CDP zwar die Geräte-ID nicht den Switchnamen steht,
+    sondern eine ID. Aber im Systemname wäre der korrekte Name zu finden“."""
     cdp = nic.get("cdp") or {}
-    if cdp.get("dev_id"):
+    name = (cdp.get("system_name") or "").strip() or cdp.get("dev_id")
+    if name:
         return NormalizedHostNeighbor(
             protocol="cdp",
-            remote_name=cdp["dev_id"],
+            remote_name=name,
             remote_port=cdp.get("port_id"),
             remote_ip=cdp.get("mgmt_addr") or cdp.get("address"),
             remote_platform=cdp.get("platform"),

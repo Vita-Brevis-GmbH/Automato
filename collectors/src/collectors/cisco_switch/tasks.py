@@ -17,6 +17,7 @@ gelesen mit SNMPv3 authPriv statt SSH (`collectors/snmp/`).
 
 import json
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor
 from importlib import resources
 
@@ -77,7 +78,10 @@ def _has_credentials(target: Target | None) -> bool:
 
 
 def read_switch(entry: str, target: Target) -> dict:
-    """Ein Switch: Ausgaben aller Befehle; Befehle mit Fehlermeldung bleiben leer (`notes`)."""
+    """Ein Switch: Ausgaben aller Befehle; Befehle mit Fehlermeldung bleiben leer (`notes`).
+    `seconds` = Dauer (1.9.0: der Lauf nennt den laengsten Switch), `mode` = `shell`, wenn der
+    Switch ueber die begrenzte Sitzung gelesen wurde - auch nach einem spaeteren Wechsel."""
+    start = time.monotonic()
     client = SwitchClient(entry, target.username or "", target.password or "",
                           known_key=target.known_hosts.get(entry))  # fmt: skip
     outputs: dict[str, str] = {}
@@ -85,8 +89,7 @@ def read_switch(entry: str, target: Target) -> dict:
     with client:
         version = client.version()  # per Exec, sonst begrenzte Sitzung (Catalyst 1200/1300)
         platform = detect_platform(version)
-        mode = client.mode
-        client.prepare(platform)
+        client.prepare(platform)  # merkt die Plattform auch fuer einen spaeteren Wechsel
         outputs["show version"] = version
         for cmd in COMMANDS[platform][1:]:
             try:
@@ -108,10 +111,13 @@ def read_switch(entry: str, target: Target) -> dict:
                 continue
             if i == 0 and routing.not_routing(outputs[cmd]):
                 break  # Switch ohne Routing: die weiteren Routing-Befehle sparen
+        # erst am Ende: schliesst das Geraet die Verbindung nach dem Exec, wechselt der Client
+        # beim zweiten Befehl in die Sitzung (1.9.0)
+        mode = client.mode
     cut = sorted(set(getattr(client, "cut", ())) & routing.ALL)
     return {"host": entry, "platform": platform, "outputs": outputs, "notes": notes,
             "host_key": client.host_key, "mode": mode, "routing_errors": routing_errors,
-            "routing_cut": cut}  # fmt: skip
+            "routing_cut": cut, "seconds": round(time.monotonic() - start, 1)}  # fmt: skip
 
 
 def gather(target: Target | None = None) -> dict:
@@ -147,7 +153,9 @@ def gather(target: Target | None = None) -> dict:
 
 def check(target: Target | None = None) -> tuple[bool, str]:
     """Anmeldung und `show version` je Switch (read-only, kein Ingest); Zugang SNMPv3: ein GET
-    auf `sysName` je Geraet."""
+    auf `sysName` je Geraet. Seit 1.9.0 bis zu `PARALLEL` Switches gleichzeitig wie im Lauf
+    (Anwender: „das prüfen geht wesentlich länger … es bleibt vor allem bei den Switches lange
+    hängen“) - Zeilen in der Reihenfolge des Lesebereichs."""
     if not _has_credentials(target):
         return False, _no_credentials(target) if target else L(
             "keine Switch-Creds", "no switch credentials"
@@ -159,25 +167,27 @@ def check(target: Target | None = None) -> tuple[bool, str]:
         from collectors.snmp import tasks as snmp
 
         return snmp.check(target, entries)
-    ok, lines = True, []
-    for entry in entries:
-        client = SwitchClient(entry, target.username, target.password,
-                              known_key=target.known_hosts.get(entry))  # fmt: skip
+
+    @carry  # Threads: Meldungen in der Sprache des Aufrufers (Konsole bzw. deutsch)
+    def one(entry: str) -> tuple[bool, str]:
         try:
+            client = SwitchClient(entry, target.username, target.password,
+                                  known_key=target.known_hosts.get(entry))  # fmt: skip
             with client:
                 version = client.version()
                 mode = client.mode
         except Exception as exc:  # noqa: BLE001 - Diagnose fuer den Operator
-            ok = False
-            lines.append(f"{entry}: {diagnose.device_error(exc, 'cisco_switch', target, True)}")
-            continue
+            return False, f"{entry}: {diagnose.device_error(exc, 'cisco_switch', target, True)}"
         kind = PLATFORM_LABEL[detect_platform(version)]
         if mode == "shell":
             kind += L(", Sitzung", ", session")
         key = fingerprint(client.host_key or "")
-        lines.append(L(f"{entry}: erreichbar ({kind}, Host-Schluessel {key})",
-                       f"{entry}: reachable ({kind}, host key {key})"))  # fmt: skip
-    return ok, "; ".join(lines)
+        return True, L(f"{entry}: erreichbar ({kind}, Host-Schluessel {key})",
+                       f"{entry}: reachable ({kind}, host key {key})")  # fmt: skip
+
+    with ThreadPoolExecutor(max_workers=min(PARALLEL, len(entries))) as pool:
+        results = list(pool.map(one, entries))  # map: Reihenfolge wie im Lesebereich
+    return all(ok for ok, _ in results), "; ".join(line for _, line in results)
 
 
 def _no_hosts() -> str:
@@ -187,13 +197,39 @@ def _no_hosts() -> str:
     )
 
 
+def _span(seconds: float) -> str:
+    """Dauer lesbar: „45 s“ bzw. „2 min 10 s“."""
+    minutes, rest = divmod(round(seconds), 60)
+    if not minutes:
+        return f"{rest} s"
+    return f"{minutes} min {rest} s" if rest else f"{minutes} min"
+
+
+def durations(switches: list[dict], total: float) -> str | None:
+    """Dauer des Laufs und der laengste Switch (1.9.0, Anwender: „Der Switchrun geht auch sehr
+    lange“) - so sieht der Anwender Ausreisser, „Sitzung“ = ueber die begrenzte Sitzung gelesen.
+    Deutsch (Meldung des Laufs, gespeichert); ohne gemessene Switches (Beispieldaten) nichts."""
+    timed = [sw for sw in switches if sw.get("seconds") is not None]
+    if not timed:
+        return None
+    slow = max(timed, key=lambda sw: sw["seconds"])
+    shell = slow.get("mode") == "shell"
+    if len(timed) == 1:
+        return f"Dauer {_span(total)}" + (" (Sitzung)" if shell else "")
+    name = slow.get("name") or slow["host"]  # Name aus `show version` (normalize), sonst Adresse
+    detail = _span(slow["seconds"]) + (", Sitzung" if shell else "")
+    return f"Dauer {_span(total)}, längster Switch {name} ({detail})"
+
+
 @german_only  # Ergebnis und Meldung speichert der Orchestrator - deutsch (ADR 0028)
 def collect_once(
     run_id: str, target: Target | None = None, via_agent: bool = False
 ) -> CollectorResult:
     """Eine Erfassung ohne Celery (Worker *und* externer Standalone-Collector)."""
     try:
+        start = time.monotonic()
         raw = gather(target)
+        total = time.monotonic() - start
         switches = raw.get("switches") or []
         errors = raw.get("errors") or []
         if not switches:
@@ -208,6 +244,9 @@ def collect_once(
         message = [f"Switches: {len(switches)} gelesen ({', '.join(kinds)})"]
         if routing.summary(routed):
             message.append(routing.summary(routed))
+        took = durations(switches, total)
+        if took:
+            message.append(took)
         if errors:
             message.append(f"nicht gelesen: {'; '.join(errors)}")
         if notes:

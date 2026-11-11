@@ -3,6 +3,8 @@ ntc-Vorlagen `aruba_aoscx` (erlaubte VLANs und LAG-Mitglieder ueber die Grenze d
 aus dem Block), LLDP, MAC, ARP und IPv6-Nachbarn aller VRFs; ArubaOS-Switch (ProCurve) wird
 erkannt und nicht gelesen."""
 
+import re
+
 import pytest
 import switch_vendors as sv
 from sot_gateway.readonly import ReadOnlyViolation
@@ -157,5 +159,7 @@ def test_lauf(monkeypatch):
                     read_scope="10.0.3.1")  # fmt: skip
     result = tasks.collect_once("run-cx", target)
     assert result.status == "completed"
-    assert result.message == "Switches: 1 gelesen (Aruba CX (AOS-CX))"
+    # 1.9.0: Dauer des Laufs, ueber die begrenzte Sitzung gelesen
+    assert re.fullmatch(r"Switches: 1 gelesen \(Aruba CX \(AOS-CX\)\) · Dauer \d+ s \(Sitzung\)",
+                        result.message)  # fmt: skip
     assert {i.name for i in result.inventory.interfaces} >= {"1/1/1", "lag1"}

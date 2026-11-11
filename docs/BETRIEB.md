@@ -2436,7 +2436,11 @@ Client-Zertifikat und die passenden Zeilen der `agent.env`.
   Updates sind im Adapter nicht eingebunden. Der vCenter-Client (SOAP) lässt nur lesende vSphere-Methoden zu
   (Anmelden, Container-View, Eigenschaften abrufen; ADR 0017). Der Switch-Client (SSH) setzt je
   Befehl einen Exec-Aufruf ohne Shell und Terminal ab und lässt nur die festen `show`-Befehle
-  des Lesevertrags zu (kein `show running-config`); er verlangt den beim ersten Lauf
+  des Lesevertrags zu (kein `show running-config`). Geräte ohne Exec (Catalyst 1200/1300) und
+  seit 1.9.0 Geräte, die die Verbindung nach jedem Exec schliessen, liest er in einer begrenzten
+  Sitzung. Dort sendet er nur die Anmeldung, dieselben `show`-Befehle und das Abschalten des
+  Seitenumbruchs für diese Sitzung. Die Meldung des Laufs nennt die Dauer und den langsamsten
+  Switch; er verlangt den beim ersten Lauf
   festgehaltenen Host-Schlüssel, bevor er das Passwort sendet (ADR 0025, R22) – seit 0.100.0 auch
   bei Läufen über den Agenten. Der SNMP-Client (SNMPv3 authPriv, ADR 0033) sendet nur GET/GETBULK
   auf die Positivliste der Standard-MIBs; SET ist nicht eingebunden. Einziger Schreibweg ist der

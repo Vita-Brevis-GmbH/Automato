@@ -2,6 +2,8 @@
 Geraet, Ports (Status, Speed, Duplex, Modus, VLANs, Port-Channel), VLANs, LLDP, MAC-Tabelle, ARP
 und IPv6-Nachbarn aller VRFs; kaputtes JSON = Hinweis; Lauf ueber den Collector."""
 
+import re
+
 import pytest
 import switch_vendors as sv
 from sot_gateway.readonly import ReadOnlyViolation
@@ -128,6 +130,7 @@ def test_lauf(monkeypatch):
                     read_scope="10.0.0.21")  # fmt: skip
     result = tasks.collect_once("run-eos", target)
     assert result.status == "completed"
-    assert result.message == "Switches: 1 gelesen (Arista EOS)"
+    # 1.9.0: Dauer des Laufs in der Meldung
+    assert re.fullmatch(r"Switches: 1 gelesen \(Arista EOS\) · Dauer \d+ s", result.message)
     assert result.inventory.devices[0].name == "leaf-ar-01"
     assert any(a.ip == "2001:db8:10::21" for a in result.inventory.arps)

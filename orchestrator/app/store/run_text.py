@@ -217,6 +217,11 @@ PHRASES: tuple[tuple[str, str], ...] = (
     ("^Switches: {n} gelesen (", "Switches: {n} read ("),
     (" · nicht gelesen: ", " · not read: "),
     (" · Hinweise: ", " · Notes: "),
+    # Dauer des Laufs und laengster Switch (1.9.0, cisco_switch/tasks.durations)
+    (" · Dauer {d}, längster Switch {name} (", " · duration {d}, longest switch {name} ("),
+    (" · Dauer ", " · duration "),
+    (", Sitzung)", ", session)"),
+    (" (Sitzung)", " (session)"),
     (": Ausgabe nicht auswertbar (", ": output could not be parsed ("),
     ("MAC-Tabelle: {n} Eintraege ueber {m} nicht uebernommen",
      "MAC table: {n} entries above {m} not taken over"),

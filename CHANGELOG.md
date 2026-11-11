@@ -9,10 +9,30 @@ Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neu
 
 ## 1.9.0 – 2026-11-11
 
-Rückmeldung zum Test von 1.8.x (Anwender 2026-11-11).
+Rückmeldung zum Test von 1.8.x (Anwender 2026-11-11). Ein Teil ging zuerst ohne die Collector-
+Punkte nach `main`; der zweite Stand kam auf Wunsch des Anwenders unter derselben Version 1.9.0
+nach. Der Agent holt ihn trotzdem, weil sich der Build der Agent-Version ändert.
 
-Prüfen und Lauf der Switches schneller und der CDP-Systemname der ESXi-Nachbarn folgen in 1.9.1.
-
+- **Switches prüfen schneller** („das prüfen geht wesentlich länger … es bleibt vor allem bei den
+  Switches lange hängen“).
+  - **Quellsysteme → Prüfen** prüft wie der Lauf bis zu 8 Switches gleichzeitig, über SSH und
+    über SNMPv3. Die Zeilen bleiben in der Reihenfolge des Lesebereichs.
+  - Der erste Versuch per Exec (`show version`) wartet nur noch 7 s statt bis zu 2 × 20 s auf
+    eine Antwort. Erst danach wechselt er in die begrenzte Sitzung (Catalyst 1200/1300).
+- **Switch-Lauf schneller** („Der Switchrun geht auch sehr lange“).
+  - Viele IOS-Switches schliessen die Verbindung nach jedem Exec. Bisher meldete sich der Agent
+    darum je Befehl neu an, bis zu 17-mal je Switch.
+  - Jetzt merkt er das und liest die übrigen Befehle in **einer** Sitzung, mit Seitenumbruch
+    nur für diese Sitzung aus. Auch dort gilt nur die feste Liste der `show`-Befehle.
+  - Geht die Sitzung nicht, bleibt es beim Exec wie bisher.
+  - Ein Fehler beim Schliessen einer schon getrennten Verbindung ersetzte bisher die gelesene
+    Antwort. Ein Befehl lief dann doppelt, mit einer zusätzlichen Anmeldung. Behoben.
+  - Die Meldung des Laufs nennt die Dauer und den langsamsten Switch, z. B. „Dauer 2 min 10 s,
+    längster Switch sw-01 (45 s, Sitzung)“.
+- **Gegenstelle der ESXi-Hosts über CDP** (Einwand zu 1.8.0: „im CDP zwar die Geräte-ID nicht den
+  Switchnamen steht, sondern eine ID. Aber im Systemname wäre der korrekte Name zu finden“).
+  - Der VMware-Collector nimmt den CDP-Systemnamen vor der Geräte-ID.
+  - Damit findet die Verkabelung den Switch, und der NetBox-Sync setzt das Kabel.
 - **VLANs je Standort** („In der VLAN Database … haben wir die VLAN ID mit Geräten an beiden
   Standorten, eigentlich sind die VLANs entweder physischer Standort spezifisch oder für einen
   virtuellen Standort spezifisch … pro Standort aufklappen“).
