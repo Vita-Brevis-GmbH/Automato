@@ -1,20 +1,28 @@
-"""vCenter-Rohdaten (einfache Dicts aus `client.gather`) -> VMs und Portgruppen (ADR 0017).
+"""vCenter-Rohdaten (einfache Dicts aus `client.gather`) -> VMs, Portgruppen und Hosts (ADR 0017).
 
 Je VM: Datacenter und Cluster (ueber die Eltern der Hosts), NICs mit MAC, Portgruppe, Switch
 und VLAN (verteilt: Portgruppe des dvSwitch; Standard: Portgruppe am Host) und den IPs aus den
 VMware Tools (je NIC ueber den Geraete-Schluessel, sonst die MAC). Link-local-Adressen fallen
-weg. Rein funktional - testbar ohne vCenter.
+weg. Je ESXi-Host (1.8.0): Hersteller, Modell, Seriennummer, Version, Verwaltungs-Adresse und die
+vmnics mit Speed und dem Nachbarn aus CDP (bevorzugt) bzw. LLDP. Rein funktional - testbar ohne
+vCenter.
 """
 
 import ipaddress
+import re
 from collections import Counter
 
 from collectors.common.dto import (
+    NormalizedHost,
+    NormalizedHostNeighbor,
+    NormalizedHostNic,
     NormalizedPortgroup,
     NormalizedVm,
     NormalizedVmNic,
     VirtualInventory,
 )
+
+_MAC = re.compile(r"^[0-9a-f]{2}([:-]?[0-9a-f]{2}){5}$|^([0-9a-f]{4}\.){2}[0-9a-f]{4}$", re.I)
 
 
 def _usable(ip: str) -> bool:
@@ -146,4 +154,96 @@ def normalize(data: dict[str, list[dict]]) -> VirtualInventory:
                     vm_count=used.get(name, 0),
                 )
             )
-    return VirtualInventory(vms=vms, portgroups=portgroups)
+    return VirtualInventory(vms=vms, portgroups=portgroups, hosts=hosts_of(data))
+
+
+def _speed(mb) -> str | None:
+    """Mbit/s im Stil der Switches (NX-OS): bis 5000 als Zahl, ab 10 Gbit/s „10G“, „25G“ …"""
+    if not isinstance(mb, int) or isinstance(mb, bool) or mb <= 0:
+        return None
+    return f"{mb // 1000}G" if mb >= 10000 and mb % 1000 == 0 else str(mb)
+
+
+def _first_line(text: str | None) -> str | None:
+    lines = (text or "").strip().splitlines()
+    return (lines[0].strip() or None) if lines else None
+
+
+def _ip_or_none(text: str | None) -> str | None:
+    try:
+        return str(ipaddress.ip_address((text or "").strip()))
+    except ValueError:
+        return None
+
+
+def _lldp_caps(text: str | None) -> list[str]:
+    """„System Capabilities“ (falls der Host sie liefert): „Bridge, Router“ -> bridge, router."""
+    return [c.lower() for c in re.split(r"[,\s]+", text or "") if c]
+
+
+def neighbor_of(nic: dict) -> NormalizedHostNeighbor | None:
+    """Nachbar einer vmnic: CDP, wenn der Host ein CDP-Paket gehoert hat, sonst LLDP. Die
+    LLDP-Port-ID ist bei manchen Switches die MAC des Ports - dann die Port-Beschreibung."""
+    cdp = nic.get("cdp") or {}
+    if cdp.get("dev_id"):
+        return NormalizedHostNeighbor(
+            protocol="cdp",
+            remote_name=cdp["dev_id"],
+            remote_port=cdp.get("port_id"),
+            remote_ip=cdp.get("mgmt_addr") or cdp.get("address"),
+            remote_platform=cdp.get("platform"),
+            remote_caps=list(cdp.get("caps") or []),
+        )
+    lldp = nic.get("lldp") or {}
+    params = lldp.get("params") or {}
+    name = params.get("System Name") or lldp.get("chassis_id")
+    if not name:
+        return None
+    port = lldp.get("port_id")
+    if (not port or _MAC.match(port)) and params.get("Port Description"):
+        port = params["Port Description"]
+    return NormalizedHostNeighbor(
+        protocol="lldp",
+        remote_name=name,
+        remote_port=port,
+        remote_ip=params.get("Management Address"),
+        remote_platform=_first_line(params.get("System Description")),
+        remote_caps=_lldp_caps(params.get("System Capabilities")),
+    )
+
+
+def hosts_of(data: dict[str, list[dict]]) -> list[NormalizedHost]:
+    """ESXi-Hosts mit vmnics und Nachbarn (1.8.0) - auch ohne Nachbarn (Abfrage gescheitert)."""
+    out: list[NormalizedHost] = []
+    for h in data.get("HostSystem", []):
+        if not h.get("name"):
+            continue
+        nics = []
+        for p in h.get("pnics") or []:
+            if not p.get("name"):
+                continue
+            speed = _speed(p.get("speed_mb"))
+            duplex = p.get("duplex")
+            nics.append(
+                NormalizedHostNic(
+                    name=p["name"],
+                    mac=p.get("mac"),
+                    speed=speed,
+                    duplex=("full" if duplex else "half") if speed and duplex is not None else None,
+                    status="up" if speed else "down",
+                    neighbor=neighbor_of(p),
+                )
+            )
+        out.append(
+            NormalizedHost(
+                name=h["name"],
+                vendor=h.get("vendor"),
+                model=h.get("model"),
+                serial=h.get("serial"),
+                version=h.get("version"),
+                # ohne VMkernel-Adresse: der Name, wenn der Host per IP im vCenter steht
+                mgmt_ip=h.get("mgmt_ip") or _ip_or_none(h["name"]),
+                pnics=nics,
+            )
+        )
+    return out

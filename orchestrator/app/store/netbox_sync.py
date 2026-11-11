@@ -1305,6 +1305,8 @@ def _cable_wants(session: Session, w: Wants, tenant: Tenant, tenant_ref: Ref) ->
             continue
         used |= {ka, kb}
         protocols = ", ".join(p.upper() for p in sorted(link.protocols))
+        # vom gelesenen ESXi-Host bestaetigt (1.8.0): ESXi spricht CDP/LLDP meist nur einseitig
+        how = "über den ESXi-Host bestätigt" if link.confirmed == "esxi" else "beidseitig"
         w.add(
             Want(
                 "cable",
@@ -1312,7 +1314,7 @@ def _cable_wants(session: Session, w: Wants, tenant: Tenant, tenant_ref: Ref) ->
                 f"Kabel {ka} ↔ {kb}",
                 {
                     "status": "connected",
-                    "description": _cut(f"Automato: {protocols} beidseitig", 200),
+                    "description": _cut(f"Automato: {protocols} {how}", 200),
                 },
                 {
                     "a_terminations": [("interface", ka)],

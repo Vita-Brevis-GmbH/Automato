@@ -271,7 +271,8 @@ def patches(
             d["model"], d["mgmt_ip"] = end.device.model, end.device.mgmt_ip
             out.append(d)
         rows.append({"id": link.id, "a": out[0], "b": out[1], "state": link.state,
-                     "protocols": sorted(link.protocols), "issues": link.issues})  # fmt: skip
+                     "confirmed": link.confirmed, "protocols": sorted(link.protocols),
+                     "issues": link.issues})  # fmt: skip
     rows.sort(key=lambda r: (r["a"]["lag"] or "~", _port_order(r["a"]["port"] or "")))
     return {
         "device": {"name": dev.name, "key": dev.key, "kind": dev.kind, "model": dev.model,
@@ -364,6 +365,7 @@ def ports(
             "peer":({"device": other.device.name, "port": other.port, "read": other.device.read,
                       "kind": other.device.kind} if other is not None else None),
             "link_state": link.state if link is not None else None,
+            "link_confirmed": link.confirmed if link is not None else None,  # 1.8.0
             "issues": [i["text"] for i in link.issues] if link is not None else [],
             "endpoints": macs.get((store.device_key(p.device), store.port_key(p.name)), 0),
         })  # fmt: skip

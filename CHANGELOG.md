@@ -11,7 +11,30 @@ Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neu
 
 Rückmeldung zum Test von 1.7.0 (Anwender 2026-11-11).
 
-<!-- ESXI -->
+- **ESXi-Hosts mit Ports und Nachbarn** („Wird in VMware die Ports und Nachbarschaft nicht
+  ausgelesen von den Hosts?“ – „Nur wegen den Verbindungen“).
+  - Der vCenter-Lauf liest je Host Hersteller, Modell, Seriennummer, Version, Management-Adresse
+    und die vmnics mit dem Nachbarn, den jede vmnic per CDP/LLDP hört
+    (`QueryNetworkHint`, eine reine Leseabfrage; die Read-only-Rolle reicht).
+  - Die Hosts stehen im Netzinventar des vCenters (Rolle `esxi`, neue Spalte `vendor`,
+    Migration `0080`). VMs und Portgruppen bleiben, wie sie sind. Ein älterer Agent ohne Hosts
+    ändert nichts.
+  - **Verkabelung:** Die Verbindung Switch-Port ↔ vmnic gilt als **bestätigt**, auch wenn der
+    Switch den Host nicht sieht. ESXi hört CDP standardmässig nur zu und sendet nicht. Der
+    Tooltip sagt „über den ESXi-Host bestätigt“. Weicht der Speed zwischen Switch-Port und vmnic
+    ab, gibt es einen Befund.
+  - Darf das Konto die Nachbarn eines Hosts nicht lesen oder ist der Host getrennt, bricht der
+    Lauf nicht ab. Der Host kommt ohne Nachbarn ins Inventar, und der Lauf nennt ihn als Hinweis.
+  - **NetBox-Sync, Abschnitt Verkabelung:**
+    - Die Hosts kommen als Geräte mit dem Hersteller und Modell der Hardware (Rolle `esxi`).
+    - Die vmnics kommen als Ports.
+    - Die bestätigten Kabel zum Switch-Port erhalten die Beschreibung „Automato: CDP über den
+      ESXi-Host bestätigt“.
+    - Ohne gelesenen Hersteller oder ohne Modell wird nichts geraten; die Vorschau zeigt einen
+      Hinweis.
+    - ADR 0017, 0025 und 0031 haben dazu einen Nachtrag.
+  - Nach dem Update rechnet jede Quelle beim ersten Lauf einmal alle Applikationen neu: Der
+    Fingerabdruck der Geräte hat das neue Feld `vendor`.
 - **Befund „nicht im IPAM“ ohne DDI verständlich** („da wir kein Infoblox bei dem Kunden haben,
   sollte das IPAM die Netbox übernehmen … daher ist der Fehler irgendwie verwirrend“).
   - Ist das führende IPAM die NetBox, die Automato befüllt, heisst der Befund jetzt „10.20.0.5

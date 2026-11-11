@@ -8,7 +8,39 @@
   "HostSystem": [
     {"moid": "host-11", "name": "esx01-chzrh1.example.ch", "parent": "domain-c10",
      "portgroups": [{"name": "VM Network", "vlan": 0, "vswitch": "vSwitch0"},
-                    {"name": "PG_backup", "vlan": 950, "vswitch": "vSwitch1"}]}
+                    {"name": "PG_backup", "vlan": 950, "vswitch": "vSwitch1"}],
+     "vendor": "Dell Inc.", "model": "PowerEdge R650", "serial": "SN-ESX01-A",
+     "version": "8.0.2", "mgmt_ip": "10.0.10.11", "connection": "connected",
+     "network_system": "networkSystem-11",
+     "pnics": [
+       {"name": "vmnic0", "mac": "b4:96:91:00:11:00", "speed_mb": 1000, "duplex": true,
+        "cdp": {"dev_id": "sw-acc-02.example.ch", "port_id": "GigabitEthernet1/0/5",
+                "address": "10.0.0.12", "mgmt_addr": "10.0.0.12",
+                "platform": "cisco C9200L-24T-4G", "system_name": "sw-acc-02",
+                "caps": ["switch"]},
+        "lldp": null},
+       {"name": "vmnic1", "mac": "b4:96:91:00:11:01", "speed_mb": 1000, "duplex": true,
+        "cdp": {"dev_id": "sw-acc-02.example.ch", "port_id": "GigabitEthernet1/0/6",
+                "address": "10.0.0.12", "mgmt_addr": "10.0.0.12",
+                "platform": "cisco C9200L-24T-4G", "system_name": "sw-acc-02",
+                "caps": ["switch"]},
+        "lldp": null},
+       {"name": "vmnic2", "mac": "b4:96:91:00:11:02", "speed_mb": null, "duplex": null}
+     ]},
+    {"moid": "host-12", "name": "esx02.example.ch", "parent": "domain-c10",
+     "portgroups": [{"name": "VM Network", "vlan": 0, "vswitch": "vSwitch0"}],
+     "vendor": "HPE", "model": "ProLiant DL380 Gen10", "serial": "SN-ESX02-A",
+     "version": "7.0.3", "mgmt_ip": "10.0.10.12", "connection": "connected",
+     "network_system": "networkSystem-12",
+     "pnics": [
+       {"name": "vmnic0", "mac": "94:40:c9:00:12:00", "speed_mb": 10000, "duplex": true,
+        "cdp": null,
+        "lldp": {"chassis_id": "00:11:22:33:44:02", "port_id": "Ethernet1/3",
+                 "params": {"System Name": "sw-core-01", "Management Address": "10.0.0.2",
+                            "System Description": "Cisco Nexus Operating System (NX-OS) Software 10.3(4a)\nTAC support: http://www.cisco.com/tac"}}},
+       {"name": "vmnic1", "mac": "94:40:c9:00:12:01", "speed_mb": 10000, "duplex": true,
+        "cdp": null, "lldp": null}
+     ]}
   ],
   "DistributedVirtualSwitch": [{"moid": "dvs-21", "name": "DVS-ACI-A", "parent": null}],
   "DistributedVirtualPortgroup": [

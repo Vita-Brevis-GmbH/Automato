@@ -189,3 +189,18 @@ sagt er, dass sie als führend einzutragen ist. Nach Sync und neuem Einlesen der
 der Befund von selbst.
 
 Der Schreibweg bleibt derselbe: nur NetBox, Vorschau → Übernehmen (ADR 0010).
+
+### ESXi-Hosts im Abschnitt Verkabelung (1.8.0)
+
+Die gelesenen ESXi-Hosts eines vCenters (ADR 0017 Nachtrag 1.8.0) kommen in den Abschnitt
+*Verkabelung*, denn sie gehören zu den Kabeln. Die VMs bleiben im Abschnitt *Virtualisierung*.
+
+- **Gerät:** Hersteller und Modell der Hardware (z. B. „Dell Inc.“, „PowerEdge R650“),
+  Seriennummer, Rolle `esxi`, Standort des vCenters, Kommentar „Automato: gelesen aus <vCenter>“.
+  Ohne gelesenen Hersteller oder ohne Modell wird nichts geraten; es gibt einen Hinweis.
+- **Ports:** Die vmnics kommen als physische Ports, der Typ ergibt sich aus dem Speed.
+- **Kabel:** Bestätigt ein gelesener Host die Verbindung (`confirmed` = `esxi`, ADR 0025
+  Nachtrag 1.8.0), entsteht ein Kabel wie bei „beidseitig“, mit der Beschreibung „Automato:
+  CDP über den ESXi-Host bestätigt“.
+- Hosts, die Automato nur als Host einer VM kennt, kommen nicht nach NetBox.
+- Ein Sync ohne *Verkabelung* fasst die Hosts nicht an (`_device_section`).

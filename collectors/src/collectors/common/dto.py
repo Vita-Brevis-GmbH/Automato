@@ -126,6 +126,7 @@ class NormalizedDevice(BaseModel):
     node_id: str | None = None
     mgmt_ip: str | None = None
     version: str | None = None
+    vendor: str | None = None  # Hersteller (1.8.0, z. B. Hardware eines ESXi-Hosts)
 
 
 class NormalizedInterface(BaseModel):
@@ -281,11 +282,47 @@ class NormalizedPortgroup(BaseModel):
     vm_count: int = 0
 
 
+class NormalizedHostNeighbor(BaseModel):
+    """Nachbar an einer vmnic, wie der ESXi-Host ihn per CDP bzw. LLDP hoert (1.8.0)."""
+
+    protocol: str = "cdp"  # cdp | lldp
+    remote_name: str
+    remote_port: str | None = None
+    remote_ip: str | None = None
+    remote_platform: str | None = None
+    remote_caps: list[str] = Field(default_factory=list)
+
+
+class NormalizedHostNic(BaseModel):
+    """Physische Netzwerkkarte (vmnic) eines ESXi-Hosts (1.8.0)."""
+
+    name: str  # vmnic0
+    mac: str | None = None
+    speed: str | None = None  # wie bei den Switches: Mbit/s bzw. „10G“; ohne Link leer
+    duplex: str | None = None  # full | half
+    status: str | None = None  # up | down
+    neighbor: NormalizedHostNeighbor | None = None
+
+
+class NormalizedHost(BaseModel):
+    """ESXi-Host aus dem vCenter (1.8.0): Hardware, Version, Verwaltungs-Adresse und vmnics."""
+
+    name: str
+    vendor: str | None = None
+    model: str | None = None
+    serial: str | None = None
+    version: str | None = None
+    mgmt_ip: str | None = None
+    pnics: list[NormalizedHostNic] = Field(default_factory=list)
+
+
 class VirtualInventory(BaseModel):
-    """vCenter-Inventar eines Laufs: VMs und Portgruppen (ADR 0017)."""
+    """vCenter-Inventar eines Laufs: VMs und Portgruppen (ADR 0017), seit 1.8.0 die Hosts."""
 
     vms: list[NormalizedVm] = Field(default_factory=list)
     portgroups: list[NormalizedPortgroup] = Field(default_factory=list)
+    # None = aelterer Collector ohne Hosts: der Orchestrator laesst sie im Inventar stehen
+    hosts: list[NormalizedHost] | None = None
 
 
 class NormalizedNextHop(BaseModel):

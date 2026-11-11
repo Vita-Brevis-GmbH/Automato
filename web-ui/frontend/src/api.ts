@@ -4474,12 +4474,16 @@ export interface CablingEnd {
   vpc: string | null;
   description: string | null;
 }
+// warum eine Verbindung als beidseitig gilt (1.8.0): beide melden sie bzw. ein gelesener ESXi-Host
+// bestätigt sie (ESXi spricht CDP/LLDP meist nur in eine Richtung)
+export type LinkConfirmed = "both" | "esxi" | null;
 export interface CablingLink {
   id: string;
   a: CablingEnd;
   b: CablingEnd;
   protocols: string[];
   state: LinkState;
+  confirmed?: LinkConfirmed;
   issues: { type: string; text: string }[];
 }
 export interface CablingPort {
@@ -4504,6 +4508,7 @@ export interface CablingPort {
   stp_root?: string | null;
   peer: { device: string; port: string | null; read: boolean; kind: string } | null;
   link_state: LinkState | null;
+  link_confirmed?: LinkConfirmed; // 1.8.0
   issues: string[];
   endpoints?: number; // MACs am Port (0.63.0)
 }
@@ -4540,6 +4545,7 @@ export interface CablingPatch {
   a: CablingPatchEnd;
   b: CablingPatchEnd;
   state: LinkState;
+  confirmed?: LinkConfirmed;
   protocols: string[];
   issues: { type: string; text: string }[];
 }

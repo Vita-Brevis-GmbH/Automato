@@ -23,7 +23,9 @@ Wirkung je Teil (`SCOPES`) - im Zweifel `all`:
   zusaetzlich ueber die Adressen;
 - angeschlossene Netze, Interfaces, Subnetze, VRFs, Kontexte, HA, L3Outs, BGP-Nachbarn und
   -Filter, Portgruppen, Referenzquellen (IPAM/DNS): `all`;
-- MAC-/ARP-Tabellen und Nachbarn (CDP/LLDP) der Switches: keine (Doku und Wege nutzen sie nicht).
+- MAC-/ARP-Tabellen und Nachbarn (CDP/LLDP) der Switches: keine (Doku und Wege nutzen sie nicht);
+  ebenso die ESXi-Hosts eines vCenters mit vmnics und Nachbarn (1.8.0, `virtual.hosts`) - sie
+  dienen nur Netzinventar, Verkabelung und NetBox-Sync, die jeweils beim Abruf rechnen.
 """
 
 import hashlib
@@ -53,6 +55,7 @@ SCOPES: dict[str, frozenset[str]] = {
     "inventory.neighbors": NONE,
     "inventory.macs": NONE,
     "inventory.arps": NONE,
+    "virtual.hosts": NONE,  # ESXi-Hosts (1.8.0): nur Inventar/Verkabelung, nicht Doku und Wege
 }
 # Teile, die Routing bzw. Inventar sind (Routing-Filter, `bgp_cache`)
 _NET_PREFIXES = ("routing.", "inventory.")
@@ -155,6 +158,8 @@ def _payload(result, platform: str) -> tuple[dict[str, str], dict[str, dict[str,
                                                  ranges(ip for n in v.nics for ip in n.ips)])
                              for v in vms))  # fmt: skip
         parts["virtual.portgroups"] = _list_digest(result.virtual.portgroups)
+        if result.virtual.hosts is not None:  # 1.8.0: aeltere Agenten ohne Hosts - Teil bleibt
+            parts["virtual.hosts"] = _list_digest(result.virtual.hosts)
     if result.inventory is not None:
         for field in type(result.inventory).model_fields:
             parts[f"inventory.{field}"] = _list_digest(getattr(result.inventory, field) or [])

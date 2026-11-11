@@ -883,7 +883,13 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     Abweichungen zuerst.
   - **Geräte:** gelesene Geräte und die nur von Nachbarn gemeldeten, mit Ports (verbunden),
     Verbindungen und Abweichungen; ein Klick öffnet die Verbindungen bzw. Ports des Geräts.
-    ESXi-Hosts aus dem vCenter erscheinen, wenn ein Switch sie meldet.
+    ESXi-Hosts aus dem vCenter erscheinen, wenn ein Switch sie meldet. Seit 1.8.0 liest der
+    vCenter-Lauf die Hosts selbst (Hersteller, Modell, Version, vmnics und was jede vmnic per
+    CDP/LLDP hört, ADR 0017 Nachtrag): Verbindungen Switch-Port ↔ vmnic gelten als
+    **beidseitig**, auch wenn der Switch den Host nicht sieht (ESXi hört CDP standardmässig nur
+    zu); der Hinweis am Zustand sagt „über den ESXi-Host bestätigt“. Darf das Konto die Nachbarn
+    eines Hosts nicht lesen bzw. ist der Host getrennt, steht das als Hinweis im Lauf – der Rest
+    wird eingelesen.
   - **Ports:** alle Ports der gelesenen Switches (Status, Speed, Duplex, Modus, VLAN bzw.
     Native VLAN und erlaubte VLANs, Port-Channel, vPC, Beschreibung, Gegenstelle); Filter
     Gerät, Status (up/down/abgeschaltet), VLAN, Suche. Seit 0.63.0 die Anzahl **Endpunkte**

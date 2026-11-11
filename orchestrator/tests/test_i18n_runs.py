@@ -215,6 +215,16 @@ def test_collector_englisch_gleich_wie_tabelle(monkeypatch):
         switch = None
     if switch is not None:
         makers += [lambda: switch._no_credentials(target), switch._no_hosts]
+    # vCenter (1.8.0): ESXi-Hosts, vmnics mit Nachbarn, Hinweise je Host bzw. nicht abgefragt
+    vmware = importlib.import_module("collectors.vmware.tasks")
+    vm_normalize = importlib.import_module("collectors.vmware.normalize")
+    hosts = [{"moid": "host-1", "name": "esx01.example.ch", "neighbors_error": "NoPermission",
+              "pnics": [{"name": "vmnic0", "speed_mb": 1000,
+                         "cdp": {"dev_id": "sw-acc-01", "port_id": "Gi1/0/1"}}]},
+             {"moid": "host-2", "name": "esx02.example.ch",
+              "neighbors_error": vmware.NOT_QUERIED}]  # fmt: skip
+    raw = {"HostSystem": hosts}
+    makers.append(lambda: vmware.summary(raw, vm_normalize.normalize(raw)))
     for make in makers:
         with ci18n.use("de"):
             de = make()
