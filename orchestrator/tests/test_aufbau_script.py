@@ -229,6 +229,35 @@ def test_docker_stand_und_docker_update(tmp_path):
     assert "Automato-Container laufen" in out.stdout
 
 
+def test_buildx_fehlt_pruefen_meldet_docker_update_installiert(tmp_path):
+    """Anwender 2026-11-11 beim Update auf 1.6.0: „Docker Compose is configured to build using
+    Bake, but buildx isn't installed“ - pruefen nennt das passende Paket, docker-update
+    installiert es (Docker-Repository: docker-buildx-plugin)."""
+    env, log = _apt(tmp_path)
+    flag = tmp_path / "buildx"
+    _stub(Path(env["PATH"].split(":")[0]) / "docker",
+          f'case "$1" in version) cat {tmp_path / "engine"} ;;\n'
+          f"  buildx) [ -f {flag} ] && echo 'github.com/docker/buildx v0.19.3 abc' || exit 1 ;;\n"
+          "  inspect) echo unless-stopped ;; *) exit 0 ;; esac\n")  # fmt: skip
+    apt_get = Path(env["APT_GET"])
+    apt_get.write_text(apt_get.read_text().replace(
+        "*install*)", f"*docker-buildx-plugin*) touch {flag} ;; *install*)"))  # fmt: skip
+    out = _run(tmp_path, "pruefen", **env)
+    assert "docker buildx fehlt – Compose baut ohne Bake" in out.stdout
+    assert "sudo deploy/aufbau.sh docker-update (Paket docker-buildx-plugin)" in out.stdout
+
+    out = _run(tmp_path, "docker-update", **env)
+    assert out.returncode == 0, out.stdout + out.stderr
+    calls = log.read_text().splitlines()
+    assert calls[:2] == [
+        "update -qq",
+        "install -y -qq -o Dpkg::Options::=--force-confold docker-buildx-plugin",
+    ]
+    assert "docker buildx nachinstalliert (docker-buildx-plugin)" in out.stdout
+    out = _run(tmp_path, "pruefen", **env)
+    assert "docker buildx v0.19.3" in out.stdout and "buildx fehlt" not in out.stdout
+
+
 def test_container_ausserhalb_der_update_profile(tmp_path):
     """0.42.2: der Collector lief, war aber nicht in AUTOMATO_COMPOSE_PROFILES - update.sh
     baute und startete ihn nie neu (alter Stand, ohne Neustart-Regel)."""

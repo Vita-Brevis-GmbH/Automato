@@ -2259,6 +2259,11 @@ Client-Zertifikat und die passenden Zeilen der `agent.env`.
       (`apt-get install --only-upgrade`, `/etc/docker/daemon.json` bleibt). Der Docker-Dienst
       startet neu. Die Container kommen über ihre Neustart-Regel zurück, das Skript startet
       Automato und die lokale NetBox sicherheitshalber.
+    - **buildx** (1.6.1): neuere Compose-Versionen bauen über Bake und warnen ohne das Plugin
+      („configured to build using Bake, but buildx isn't installed“; der Bau läuft trotzdem mit
+      dem alten Builder). `pruefen` meldet das fehlende Plugin, `docker-update` installiert das
+      passende Paket nach (`docker-buildx-plugin` aus dem Docker-Repository bzw. `docker-buildx`
+      von Ubuntu).
     - Bei jedem Update mit: `AUTOMATO_DOCKER_UPDATE=1` in `.env`. `deploy/update.sh`
       aktualisiert Docker dann nach der Sicherung und vor dem Bau.
     - Docker aus snap aktualisiert snap selbst. Das Ubuntu-Paket `docker.io` hinkt hinterher;
