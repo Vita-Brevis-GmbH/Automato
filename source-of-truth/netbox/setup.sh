@@ -189,10 +189,6 @@ In Automato als Quellsystem "NetBox" (Mandanten & Standorte -> Quellsysteme):
   Lese-Token:    Collector-Token
   Schreib-Token: Sync-Token   (nur fuer den NetBox-Sync, nicht den Admin-Token verwenden)
 
-Fuer Automato in die .env (Model-2-Mandant):
-  AUTOMATO_NETBOX_URL=http://localhost:${NETBOX_PORT}
-  AUTOMATO_NETBOX_TOKEN=${COLLECTOR_TOKEN}
-
 Optional Lab-Daten seeden:
   NETBOX_URL=http://localhost:${NETBOX_PORT} NETBOX_TOKEN=${ADMIN_TOKEN} python3 ../seed_lab.py
 EOF

@@ -8,8 +8,8 @@ nur der Agent spricht ausgehend HTTPS zum Orchestrator.
 Konfiguration ueber `AUTOMATO_*`-Env (collectors.config):
   AUTOMATO_ORCHESTRATOR_URL     Basis-URL des Orchestrators (intern erreichbar)
   AUTOMATO_AGENT_TOKEN          Agent-Token (Pull-Modell): Laeufe abholen + Ergebnis abliefern
-  AUTOMATO_FORTIGATE_URL/_TOKEN  nur noch Rueckfall - die Zugangsdaten der Geraete kommen
-                                vom Orchestrator (im Web-UI beim Quellsystem erfasst, ADR 0009)
+Beides steht in der agent.env aus dem Web-UI (Collector-Agenten -> Zugang, ADR 0052). Die
+Zugangsdaten der Geraete kommen nur vom Orchestrator (Quellsystem im Web-UI, ADR 0009).
 
 Aufruf:
   automato-collector --poll        naechsten Lauf eines zugewiesenen Geraets holen + ausfuehren
@@ -358,39 +358,39 @@ def _verdict(ok: bool) -> str:
 
 
 def _check(platform: str | None, strict: bool = False) -> int:
-    """Agent: alle zugewiesenen Geraete pruefen; ohne Agent-Token: lokale Konfiguration."""
+    """Agent: alle zugewiesenen Geraete pruefen (Zugangsdaten vom Orchestrator, ADR 0009)."""
     print(f"{L('Agent-Version', 'Agent version')}: {selfupdate.current_label()}")
-    if get_settings().agent_token:
-        devices = [t for t in agent_api.targets() if not platform or t.platform == platform]
-        if devices:
-            failed = 0
-            for t in devices:
-                checker = CHECKERS.get(t.platform)
-                ok, msg = checker(t) if checker else (False, _unsupported(t.platform))
-                label = f"{t.name} ({t.platform})"
-                print(f"{label} check: {_verdict(ok)} - {msg}")
-                if ok and strict:
-                    ok = _strict(t.platform, t, label)
-                failed += 0 if ok else 1
-            return 0 if failed == 0 else 2
+    if not get_settings().agent_token:
         print(
             L(
-                "diesem Agenten sind keine Geraete zugewiesen (Web-UI: Mandanten & Standorte ->",
-                "no devices are assigned to this agent (web UI: Tenants & sites ->",
+                "ohne Agent-Token nichts zu pruefen - Verbindungen des zentralen Workers: Web-UI "
+                "System -> Verbindungen bzw. deploy/aufbau.sh pruefen",
+                "nothing to check without an agent token - connections of the central worker: web "
+                "UI System -> Connections or deploy/aufbau.sh pruefen",
             )
         )
+        return 2
+    devices = [t for t in agent_api.targets() if not platform or t.platform == platform]
+    if not devices:
         print(
             L(
-                "Quellsystem -> Agent); pruefe lokale Konfiguration",
-                "source system -> agent); checking the local configuration",
+                "diesem Agenten sind keine Geraete zugewiesen (Web-UI: Mandanten & Standorte -> "
+                "Quellsystem -> Agent)",
+                "no devices are assigned to this agent (web UI: Tenants & sites -> source system "
+                "-> agent)",
             )
         )
-    plat = platform or "fortigate"
-    ok, msg = CHECKERS[plat](None)
-    print(f"{plat} check: {_verdict(ok)} - {msg}")
-    if ok and strict:
-        ok = _strict(plat, None, plat)
-    return 0 if ok else 2
+        return 2
+    failed = 0
+    for t in devices:
+        checker = CHECKERS.get(t.platform)
+        ok, msg = checker(t) if checker else (False, _unsupported(t.platform))
+        label = f"{t.name} ({t.platform})"
+        print(f"{label} check: {_verdict(ok)} - {msg}")
+        if ok and strict:
+            ok = _strict(t.platform, t, label)
+        failed += 0 if ok else 1
+    return 0 if failed == 0 else 2
 
 
 if __name__ == "__main__":  # pragma: no cover

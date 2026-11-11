@@ -23,10 +23,17 @@ Der zentrale Worker (internes Token) spricht weiter direkt mit dem Orchestrator.
 
    ```bash
    cd deploy/agent-gateway
-   ./make-certs.sh ca                    # einmalig; pki/agents-ca.key sicher verwahren
-   ./make-certs.sh server 10.0.12.12   # Adresse, unter der die Agenten das Gateway erreichen
-   ./make-certs.sh agent <agent-name>    # je Agent, Name wie im UI ("Collector-Agenten")
+   sudo ./make-certs.sh ca                    # einmalig; gibt die CA für die Oberfläche frei
+   sudo ./make-certs.sh server 10.0.12.12     # Adresse, unter der die Agenten das Gateway erreichen
    ```
+
+   Die Client-Zertifikate je Agent stellt seit 1.6.0 die Oberfläche aus (ADR 0052, Schritt 3).
+   Dafür liest der Orchestrator `pki/agents-ca.key` (nur lesend eingebunden unter
+   `/etc/automato/agent-ca`); `make-certs.sh ca` macht die Datei für ihn lesbar (Besitzer
+   uid 1001, Modus 0400, Ordner 0711 – `gateway.key` bleibt root). Für eine CA aus einer
+   Version vor 1.6.0 einmal `sudo ./make-certs.sh oberflaeche`, danach
+   `sudo docker compose up -d`. Wer das nicht will: `sudo ./make-certs.sh oberflaeche aus` –
+   dann Zertifikate nur von Hand (`./make-certs.sh agent <agent-name>`).
 
    Das Server-Zertifikat darf auch von der eigenen CA kommen (`pki/gateway.crt` + `.key`
    ersetzen); dann pinnen die Agenten diese CA statt `agents-ca.crt`.
@@ -40,26 +47,20 @@ Der zentrale Worker (internes Token) spricht weiter direkt mit dem Orchestrator.
    # AUTOMATO_AGENT_GATEWAY_PORT=46100   # Port auf der VM, Vorgabe 8443 (1.5.1)
    ```
 
-   Starten: `docker compose --profile core --profile agent-gateway up -d` (steht
-   `COMPOSE_PROFILES` in `.env`: nur `docker compose up -d`). Der Orchestrator startet nicht,
-   wenn der Modus aktiv ist und das Secret fehlt. Name und Port kennt auch die Einrichtung im
-   Web-UI (Collector-Agenten → Einrichtung): sie schlägt die Gateway-Adresse samt
-   Zertifikatszeilen für die `agent.env` vor. Im Container lauscht Caddy immer auf 8443; der
-   Port ändert nur die Veröffentlichung auf der VM, die Zertifikate bleiben gültig.
+   Starten: `docker compose up -d` (Profile aus `COMPOSE_PROFILES` in `.env`, z. B.
+   `core,collectors,agent-gateway`). Der Orchestrator startet nicht, wenn der Modus aktiv ist
+   und das Secret fehlt. Im Container lauscht Caddy immer auf 8443; der Port ändert nur die
+   Veröffentlichung auf der VM, die Zertifikate bleiben gültig. `sudo deploy/aufbau.sh env`
+   prüft, ob Name und Secret gesetzt sind.
 
-3. **Agent** (`agent.env` auf der Station): Orchestrator-Adresse auf das Gateway umstellen und
-   Zertifikate eintragen:
-
-   ```ini
-   AUTOMATO_ORCHESTRATOR_URL=https://10.0.12.12:8443
-   AUTOMATO_ORCHESTRATOR_CA_BUNDLE=C:\Automato\pki\agents-ca.crt
-   AUTOMATO_CLIENT_CERT=C:\Automato\pki\agent-<name>.crt
-   AUTOMATO_CLIENT_KEY=C:\Automato\pki\agent-<name>.key
-   ```
-
-   Die drei Dateien aus `pki/` auf die Station kopieren (den Schlüssel nur dorthin). Die Adresse
-   muss zum Server-Zertifikat passen (Name bzw. IP aus `make-certs.sh server`), der Port zu
-   `AUTOMATO_AGENT_GATEWAY_PORT`. `.\run-agent.ps1 -Check` muss danach „OK“ melden.
+3. **Agent:** im Web-UI unter **Collector-Agenten** beim Agenten **Zugang** →
+   **Zugang herunterladen**. Das ZIP enthält `agent.env` (Gateway-Adresse samt Port, neues
+   Agent-Token, Zertifikatszeilen), `agent.crt`/`agent.key` (CN = Agent-Name, passt zu `bind`),
+   `agents-ca.crt` und eine Anleitung. Inhalt nach `C:\Automato\collector` kopieren (bzw. neben
+   `install.ps1` legen – das Skript übernimmt die Dateien); `.\run-agent.ps1 -Check` muss danach
+   „OK“ melden. Jeder Download erneuert Token und Zertifikat; das alte Token gilt sofort nicht
+   mehr, das alte Zertifikat bis zu seinem Ablauf (Modus `bind` verlangt aber Name und Token
+   zusammen).
 
 4. **Netz:** Port 8000 des Orchestrators nicht in die Agent-Netze freigeben – nur den Port des
    Gateways (Vorgabe 8443). In `DOCKER-USER` gilt der Port auf der VM
@@ -78,6 +79,7 @@ Der zentrale Worker (internes Token) spricht weiter direkt mit dem Orchestrator.
   this agent`,
 - direkt an Port 8000 mit Agent-Token: `403 agent channel requires the mTLS gateway`.
 
-Zertifikat sperren: Agent im UI deaktivieren (Token ungültig) und neues Zertifikat ausstellen;
-eine CRL prüft Caddy nicht – kurze Laufzeiten (825 Tage Standard, bei Bedarf kürzer) und
-Rotation je Agent.
+Zertifikat sperren: Agent im UI deaktivieren (Token ungültig) bzw. neuen Zugang herunterladen;
+eine CRL prüft Caddy nicht – Laufzeit 825 Tage (höchstens bis zum Ablauf der CA), Rotation je
+Agent über einen neuen Zugang. Jede Ausgabe steht im Audit (`agent.access_issued` mit
+Seriennummer und Ablauf).

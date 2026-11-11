@@ -88,34 +88,36 @@ keine Treffer.
 
 ## 3. Automato-Stack hochfahren + verdrahten
 
-Ein Skript schreibt die `.env` (frischer interner Token, NetBox- und FortiGate-Zugang)
-und startet den Stack:
+Ein Skript schreibt die `.env` (frischer interner Token, Profile `core,collectors`) und
+startet den Stack. Zugangsdaten zu FortiGate und NetBox stehen seit 1.6.0 nicht mehr in der
+`.env`, sondern als Quellsysteme in der Oberfläche:
 
 ```bash
-NETBOX_TOKEN=<collector-token-read-only> \
-FORTIGATE_URL=https://<fortigate-lan-ip> \
-FORTIGATE_TOKEN=<fortigate-api-token> \
-  bash lab/up-automato.sh
+FORTIGATE_URL=https://<fortigate-lan-ip> bash lab/up-automato.sh
 ```
 
 Das Skript:
 1. sichert eine vorhandene `.env` nach `.env.bak`,
-2. erzeugt eine `.env` (interner Service-Token via `openssl`, NetBox via
-   `host.docker.internal:8080`, FortiGate per LAN-IP, TLS-Verify aus — Lab-Zertifikate),
-3. `docker compose --profile core --profile collectors up -d --build`,
+2. erzeugt eine `.env` (interner Service-Token via `openssl`, `AUTOMATO_ENVIRONMENT=dev`,
+   `COMPOSE_PROFILES`), übernimmt eigene Einträge der alten und entfernt nicht mehr gelesene
+   (`deploy/env_check.py --ordnen`),
+3. `docker compose up -d --build` (Profile aus `COMPOSE_PROFILES`),
 4. wartet auf `http://localhost:8000/health`.
 
 > **Netzwerk:** Aus den Containern erreicht der Orchestrator NetBox über
 > `host.docker.internal` (in der compose als `host-gateway` gesetzt). Die FortiGate
-> ist eine LAN-IP und direkt erreichbar. Falls `host.docker.internal` auf deiner
-> VM nicht auflöst, in der `.env` stattdessen die LAN-IP der VM eintragen:
-> `AUTOMATO_NETBOX_URL=http://<vm-lan-ip>:8080`.
+> ist eine LAN-IP und direkt erreichbar. NetBox als Referenzquelle in der Oberfläche anlegen
+> (Mandanten & Standorte → Quellsysteme → NetBox, Adresse
+> `http://host.docker.internal:8080`, Lese-Token aus `setup.sh`); löst
+> `host.docker.internal` auf deiner VM nicht auf, dort die LAN-IP der VM eintragen.
 
 ## 4. Durchstich auslösen (rein lesend)
 
 ```bash
-# Legt Mandant (NetBox/AD) + Quellsystem (FortiGate) an und startet einen Lauf:
-docker compose exec orchestrator automato lab --base-url https://<fortigate-lan-ip>
+# Legt Mandant (NetBox/AD) + Quellsystem (FortiGate, Token verschlüsselt) an und startet
+# einen Lauf; --insecure nur bei selbstsigniertem Zertifikat im Lab:
+docker compose exec orchestrator automato lab --base-url https://<fortigate-lan-ip> \
+  --token <fortigate-api-token> --insecure
 
 # Status des Laufs (completed/failed, Regelzahl, Meldung):
 docker compose exec orchestrator automato status --run-id <run-id-aus-obiger-Ausgabe>

@@ -31,7 +31,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import audit
+from app import audit, credentials
 from app.config import get_settings
 from app.db import get_sessionmaker
 from app.i18n import LANGS, L, german, german_only, use
@@ -197,6 +197,9 @@ def _cmd_lab(session: Session, args: argparse.Namespace) -> int:
     """Model-2-Happy-Path: NetBox-Mandant + FortiGate-Quelle + ein Collect-Lauf."""
     tenant = ensure_tenant(session, args.tenant, "netbox", "active_directory")
     source = ensure_source(session, tenant, args.source, "fortigate", args.base_url)
+    if args.token:  # 1.6.0: Zugangsdaten nur am Quellsystem (verschluesselt), nie in der .env
+        source.credentials = credentials.encrypt({"token": args.token})
+        source.verify_tls = not args.insecure
     session.flush()
     run = queue_collect(session, "fortigate", tenant, source)
     print(
@@ -461,10 +464,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--base-url",
         default="",
+        help=L("FortiGate-URL (leer = Beispieldaten)", "FortiGate URL (empty = sample data)"),
+    )
+    p.add_argument(
+        "--token",
+        default="",
         help=L(
-            "FortiGate-URL (Doku; Creds liest der Collector)",
-            "FortiGate URL (documentation; the collector reads the credentials)",
+            "REST-API-Token (read-only) - verschluesselt am Quellsystem gespeichert",
+            "REST API token (read-only) - stored encrypted at the source system",
         ),
+    )
+    p.add_argument(
+        "--insecure",
+        action="store_true",
+        help=L("Zertifikat nicht pruefen (Labor)", "do not verify the certificate (lab)"),
     )
     p.set_defaults(func=_cmd_lab)
 

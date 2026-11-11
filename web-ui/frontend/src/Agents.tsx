@@ -30,7 +30,8 @@ export default function Agents({
   const [agents, setAgents] = useState<Agent[] | null>(null);
   const [newOpen, setNewOpen] = useState(false);
   const [created, setCreated] = useState<AgentCreated | null>(null);
-  const [copied, setCopied] = useState(false);
+  // „Zugang“ in der Liste (1.6.0): Agent in der Einrichtung wählen und hinscrollen
+  const [accessFor, setAccessFor] = useState<number | null>(null);
   const [err, setErr] = useState<unknown>(null);
 
   const load = () =>
@@ -78,14 +79,9 @@ export default function Agents({
     }
   };
 
-  const copy = async () => {
-    if (!created) return;
-    try {
-      await navigator.clipboard.writeText(created.token);
-      setCopied(true);
-    } catch {
-      setCopied(false); // Zwischenablage nicht verfügbar (z. B. ohne HTTPS) -> manuell kopieren
-    }
+  const access = (a: Agent) => {
+    setAccessFor(a.id);
+    document.getElementById("ag-access")?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
   return (
@@ -107,33 +103,23 @@ export default function Agents({
       <ErrorBox error={err} onClose={() => setErr(null)} />
 
       {created && (
-        <div className="secret">
-          {L(
-            <>
-              <b>Agent-Token für „{created.name}“ – wird nur jetzt angezeigt.</b> Ist unten in der Einrichtung
-              bereits in die <code>agent.env</code> übernommen (Schritt 3) – oder hier kopieren.
-            </>,
-            <>
-              <b>Agent token for “{created.name}” – shown only now.</b> Already entered into <code>agent.env</code>{" "}
-              in the setup below (step 3) – or copy it here.
-            </>,
-          )}
-          <code className="token">{created.token}</code>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button className="btn btn-ghost btn-sm" onClick={copy}>
-              {copied ? L("Kopiert ✓", "Copied ✓") : L("In Zwischenablage kopieren", "Copy to clipboard")}
+        <Note>
+          <span id="agent-created">
+            {L(
+              <>
+                Agent „{created.name}“ angelegt. Weiter unten in der Einrichtung die Geräte zuweisen und den{" "}
+                <b>Zugang</b> herunterladen (agent.env mit Token und – mit Agent-Gateway – Zertifikat).
+              </>,
+              <>
+                Agent “{created.name}” created. Further down in the setup assign the devices and download the{" "}
+                <b>access</b> (agent.env with token and – with agent gateway – certificate).
+              </>,
+            )}{" "}
+            <button className="linkbtn" onClick={() => access(created)}>
+              {L("Zum Zugang", "Go to access")}
             </button>
-            <button
-              className="btn btn-primary btn-sm"
-              onClick={() => {
-                setCreated(null);
-                setCopied(false);
-              }}
-            >
-              {L("Gespeichert – ausblenden", "Saved – hide")}
-            </button>
-          </div>
-        </div>
+          </span>
+        </Note>
       )}
 
       <div className="card">
@@ -259,6 +245,16 @@ export default function Agents({
                         </label>
                       </td>
                       <td className="actions">
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          onClick={() => access(a)}
+                          title={L(
+                            "agent.env und Zertifikat für diesen Agenten herunterladen (neues Token)",
+                            "Download agent.env and certificate for this agent (new token)",
+                          )}
+                        >
+                          {L("Zugang", "Access")}
+                        </button>{" "}
                         <button className={`btn btn-sm ${a.enabled ? "btn-danger" : "btn-ghost"}`} onClick={() => toggle(a)}>
                           {a.enabled ? L("Deaktivieren", "Disable") : L("Aktivieren", "Enable")}
                         </button>
@@ -275,6 +271,7 @@ export default function Agents({
       <AgentGuide
         agents={agents ?? []}
         created={created}
+        accessFor={accessFor}
         onNewAgent={() => setNewOpen(true)}
         onGoTenants={() => onGo("tenants")}
       />
@@ -287,7 +284,6 @@ export default function Agents({
           onCreated={async (a) => {
             setNewOpen(false);
             setCreated(a);
-            setCopied(false);
             await load();
           }}
         />
@@ -334,7 +330,7 @@ function NewAgentDialog({
             {L("Abbrechen", "Cancel")}
           </button>
           <button className="btn btn-primary" onClick={submit} disabled={busy || !name.trim()}>
-            {busy ? L("Lege an…", "Creating…") : L("Anlegen & Token erzeugen", "Create & generate token")}
+            {busy ? L("Lege an…", "Creating…") : L("Anlegen", "Create")}
           </button>
         </>
       }
@@ -378,8 +374,8 @@ function NewAgentDialog({
         <span>
           <Icon name="lock" size={13} />{" "}
           {L(
-            "Das Token wird nur einmal angezeigt; gespeichert wird nur ein Hash.",
-            "The token is shown only once; only a hash is stored.",
+            "Token und Zertifikat kommen mit dem Zugang (Einrichtung, Schritt 4); gespeichert wird nur ein Hash des Tokens.",
+            "Token and certificate come with the access (setup, step 4); only a hash of the token is stored.",
           )}
         </span>
       </Note>

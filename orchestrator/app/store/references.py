@@ -461,7 +461,7 @@ def snapshot_sot(session: Session, tenant_id: int | None) -> SnapshotSoT | None:
 def rematch(session: Session, tenant_id: int, ctx: Context, prefixes=None) -> None:
     """Werte-Objekte des Mandanten gegen das fuehrende IPAM (+ Anreicherung) neu abgleichen.
 
-    Ohne Referenzquelle bleibt der Stand des Ingests (Live-Adapter, Rueckfall) unveraendert.
+    Ohne Referenzquelle bleibt der Stand des Ingests unveraendert.
     Objekte ohne Wert werden ueber den Namen gesucht - ohne Konventions-Praefix (`prefixes`
     aus dem Namensprofil), so wie der Server im IPAM steht."""
     if ctx.primary is None and not ctx.enrichments:

@@ -118,7 +118,7 @@ Aufruf als `Accept-Language` mit.
   gespeicherte Meldungen, die noch nicht in `orchestrator/app/store/run_text.py` stehen,
   erscheinen auch auf Englisch deutsch.
 - **Agent und CLI (0.90.0):** Konsole und Log des Agenten folgen `AUTOMATO_LANG` in
-  `C:\Automato\collector\agent.env` (`de` Standard, `en`; die Einrichtung der Oberfläche setzt
+  `C:\Automato\collector\agent.env` (`de` Standard, `en`; der Zugang aus der Oberfläche setzt
   `en` bei englischer Oberfläche). Was der Agent meldet, speichert Automato deutsch und zeigt es
   in der gewählten Sprache. CLI im Container: `docker compose exec orchestrator automato --lang en
   status --run-id <id>` (oder `AUTOMATO_LANG=en`); speichernde Befehle laufen deutsch.
@@ -2073,12 +2073,20 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
       ordnet beim nächsten Laden neu; **Auf Vorgaben zurücksetzen** entfernt die Anpassungen.
       Zonen mit einem nicht mehr angebotenen Bereich zählen wie ohne Bereich (die Auswahl zeigt
       „nicht mehr angeboten“). Audit `appdoc_catalog.saved` bzw. `appdoc_catalog.reset`.
-- **Collector-Agenten (nur Admin):** **+ Agent** erzeugt das Token einmalig; Spalte
+- **Collector-Agenten (nur Admin):** **+ Agent** → **Anlegen** legt den Agenten an; Spalte
   **Geräte** (zugewiesene Quellsysteme); Status online/keine Meldung aus dem Heartbeat;
-  Aktivieren/Deaktivieren. **Einrichtung Schritt für Schritt** direkt in der Ansicht: Geräte
-  zuweisen, `agent.env`-Generator (nur Orchestrator-Adresse + Agent-Token, bleibt im Browser), Download des
-  Agent-Pakets (`GET /agents/package`, ZIP ohne Zugangsdaten), PowerShell-Befehle zum
-  Kopieren, Test und erster Lauf, Fehlerbehebung. Die geplante Aufgabe startet den Agenten
+  Aktivieren/Deaktivieren; je Zeile **Zugang**. **Einrichtung Schritt für Schritt** direkt in
+  der Ansicht: Geräte zuweisen, Download des Agent-Pakets (`GET /agents/package`, ZIP ohne
+  Zugangsdaten), **Zugang herunterladen** (1.6.0, ADR 0052, `POST /agents/{id}/access`: ZIP mit
+  fertiger `agent.env` samt neuem Agent-Token, mit Agent-Gateway dazu `agent.crt`, `agent.key`
+  und `agents-ca.crt`, mit TLS intern ohne Gateway `automato-ca.crt`, und einer Anleitung),
+  PowerShell-Befehle zum Kopieren, Test und erster Lauf, Fehlerbehebung. Jeder Download
+  erneuert das Token (das alte gilt sofort nicht mehr) und – mit Gateway – das Zertifikat
+  (CN = Agent-Name, 825 Tage, höchstens bis zum Ende der CA); Audit `agent.access_issued` mit
+  Seriennummer und Ablauf. Kann die Oberfläche kein Zertifikat ausstellen, nennt sie den Grund
+  (Agent-CA fehlt, nicht lesbar → `sudo deploy/agent-gateway/make-certs.sh oberflaeche`, ungültig
+  bzw. abgelaufen, Name mit Zeichen ausserhalb `A–Z a–z 0–9 . _ - ( )` und Leerzeichen,
+  `AUTOMATO_AGENT_GATEWAY_HOST` fehlt) und gibt keinen halben Zugang aus. Die geplante Aufgabe startet den Agenten
   alle 15 min (inkl. Selbst-Update-Prüfung); dazwischen bleibt er wach und fragt alle 20 s
   nach Läufen (`run-agent.ps1 -WatchSeconds`, von Hand einmal: `-Once`). Spalte **Version** mit Schalter
   **Auto-Update** (ADR 0011): Agenten aktualisieren sich vor jedem Lauf selbst, sobald das
@@ -2185,9 +2193,9 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
 
 Agent-Aufrufe (`/internal/agent/*`, Ergebnis-/Referenz-Upload mit `X-Agent-Token`) nimmt der
 Orchestrator mit `AUTOMATO_INTERNAL_MTLS_MODE=require|bind` nur über das mTLS-Agent-Gateway
-an (`deploy/agent-gateway`, Port 8443 bzw. `AUTOMATO_AGENT_GATEWAY_PORT`). Die Einrichtung
-(Collector-Agenten) schlägt dann die Adresse des Gateways und die Zertifikatszeilen der
-`agent.env` vor (1.5.1).
+an (`deploy/agent-gateway`, Port 8443 bzw. `AUTOMATO_AGENT_GATEWAY_PORT`). Der Zugang aus der
+Oberfläche (Collector-Agenten → Zugang, 1.6.0) enthält dann die Adresse des Gateways, das
+Client-Zertifikat und die passenden Zeilen der `agent.env`.
 
 ## 4b. Versionen und Updates
 
@@ -2210,11 +2218,24 @@ an (`deploy/agent-gateway`, Port 8443 bzw. `AUTOMATO_AGENT_GATEWAY_PORT`). Die E
     sie (root) und prüft danach erneut. Beispiel:
     `ufw allow proto tcp from 172.20.0.0/16 to 172.17.0.1 port 8080 comment 'Automato -> netbox'`.
   - `deploy/aufbau.sh status` – Container und Health kurz.
-  - **Profile:** `deploy/update.sh` baut und startet nur die Profile aus
-    `AUTOMATO_COMPOSE_PROFILES` (Standard `--profile core`). Laufen weitere Dienste (zentraler
-    Collector, Proxy), gehören sie dazu – einmal in `.env`:
-    `AUTOMATO_COMPOSE_PROFILES=--profile core --profile collectors --profile proxy`. Seit
-    0.42.2 meldet `pruefen` Container ausserhalb dieser Profile (sie blieben auf altem Stand).
+  - **Profile:** `deploy/update.sh` baut und startet nur die Profile aus `COMPOSE_PROFILES`
+    in `.env` (Standard nur `core`). Seit 1.6.0 ist das die **einzige** Angabe – dieselbe, die
+    `docker compose` selbst liest, also gilt auch ein einfaches `docker compose up -d`. Laufen
+    weitere Dienste (zentraler Collector, Proxy, Agent-Gateway), gehören sie dazu, z. B.
+    `COMPOSE_PROFILES=core,collectors,proxy,agent-gateway`. Die frühere
+    `AUTOMATO_COMPOSE_PROFILES` liest kein Skript mehr (es bricht mit Hinweis ab);
+    `deploy/aufbau.sh env ordnen` stellt sie um. Seit 0.42.2 meldet `pruefen` Container
+    ausserhalb dieser Profile (sie blieben auf altem Stand).
+  - **`.env` prüfen und ordnen** (1.6.0): `sudo deploy/aufbau.sh env` zeigt fehlende Pflichtwerte
+    (Profile, Token ausserhalb `dev`, Name und Secret des Agent-Gateways, Adresse der Oberfläche
+    mit dem Proxy, Datenbank-Passwort), nicht mehr gelesene, unbekannte und doppelte Einträge –
+    **nur Namen, nie Werte**. `sudo deploy/aufbau.sh env ordnen` sortiert nach den Abschnitten
+    von `.env.example`, entfernt nicht mehr gelesene Einträge, stellt die alten Profile um,
+    kommentiert Unbekanntes aus und sichert vorher (`.env.vorher-<zeit>`, Rechte bleiben).
+    `pruefen` führt die Prüfung mit aus.
+  - **Update auf einen Branch** (1.6.0): `deploy/update.sh main` hängt den Stand wieder an den
+    Branch an (auch nach einem Rückfall, der einen festen Stand ausgecheckt hat); ohne Angabe
+    folgt es dem ausgecheckten Branch.
   - `deploy/aufbau.sh backup-schluessel` (0.42.0) – legt den age-Schlüssel für die Sicherung an
     (bzw. nimmt den vorhandenen) und trägt Empfänger und Pfad in `.env` ein. `deploy/update.sh`
     bricht ohne Empfänger bei der Sicherung ab; seit 0.42.0 liest es ihn aus `.env`, ein
@@ -2596,10 +2617,9 @@ an (`deploy/agent-gateway`, Port 8443 bzw. `AUTOMATO_AGENT_GATEWAY_PORT`). Die E
     Orchestrator spricht auf Port 8000 nur noch HTTPS und beendet eine Klartext-Anfrage ohne
     Antwort. In `C:\Automato\collector\agent.env` `AUTOMATO_ORCHESTRATOR_URL=https://<VM>:8000`
     setzen und `AUTOMATO_ORCHESTRATOR_CA_BUNDLE=C:\Automato\collector\automato-ca.crt`
-    ergänzen; die CA (nur das öffentliche Zertifikat) gibt es im Web-UI unter Collector-Agenten
-    → Einrichtung („CA-Zertifikat“) bzw. auf dem Server unter `deploy/tls/pki/client/ca.crt`.
-    Seit 0.78.2 nennt der Agent das in der Meldung, das Agent-Paket bringt die CA mit und
-    `install.ps1` stellt die Adresse selbst um. Danach `run-agent.ps1 -Check`.
+    ergänzen. Seit 1.6.0 einfacher: im Web-UI unter Collector-Agenten → **Zugang
+    herunterladen** – die `agent.env` darin hat die `https://`-Adresse und die CA liegt bei;
+    Inhalt nach `C:\Automato\collector` kopieren. Danach `run-agent.ps1 -Check`.
   - Sonst heisst „Server disconnected …“ meist: der Orchestrator-Container startet gerade neu
     (Docker nimmt die Verbindung an und schliesst sie). Prüfen auf dem Server:
     `docker compose ps orchestrator` (Status, Neustarts), `docker compose logs --tail 200

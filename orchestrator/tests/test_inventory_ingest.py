@@ -65,7 +65,7 @@ def _setup(session_factory, monkeypatch):
         def get_by_name(self, name):
             return None
 
-    monkeypatch.setattr("app.api.internal.build_adapter", lambda tenant, settings: NoSoT())
+    monkeypatch.setattr("app.store.references.snapshot_sot", lambda session, tenant_id: NoSoT())
     s = session_factory()
     t = Tenant(name="kunde-a", ipam_type=IpamType.NETBOX, dns_type=DnsType.ACTIVE_DIRECTORY)
     s.add(t)

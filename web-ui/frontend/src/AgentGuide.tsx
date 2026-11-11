@@ -1,15 +1,24 @@
-import { useEffect, useState } from "react";
-import { Agent, AgentCreated, AgentPackageInfo, downloadAgentCa, downloadAgentPackage, fetchAgentPackageInfo } from "./api";
-import { download, ErrorBox, Icon, Note, SecretInput } from "./ui";
+import { ReactNode, useEffect, useState } from "react";
+import {
+  Agent,
+  AgentCaState,
+  AgentCreated,
+  AgentPackageInfo,
+  ApiError,
+  downloadAgentAccess,
+  downloadAgentPackage,
+  fetchAgentPackageInfo,
+} from "./api";
+import { download, ErrorBox, Icon, Note } from "./ui";
 import { L } from "./i18n";
 
-// Einrichtung des Collector-Agenten (ADR 0008/0009) Schritt für Schritt - inkl. agent.env-Generator.
-// Die agent.env enthält nur Orchestrator-Adresse + Agent-Token; Geräte und ihre Zugangsdaten
-// werden beim Mandanten (Quellsysteme) erfasst und dem Agenten pro Lauf übergeben. Die
-// agent.env entsteht nur im Browser (Blob-Download); das Token wird weder gespeichert noch an
-// den Server geschickt.
+// Einrichtung des Collector-Agenten (ADR 0008/0009) Schritt für Schritt. agent.env, Zertifikat,
+// Schlüssel und CA kommen je Agent als „Zugang“ vom Orchestrator (1.6.0, ADR 0052): ein ZIP mit
+// neuem Token; Geräte und ihre Zugangsdaten bleiben beim Mandanten (Quellsysteme).
 
 const INSTALL_DIR = "C:\\Automato\\collector";
+// Namen, die im Subject des Zertifikats unverändert ankommen (orchestrator agent_access.CERT_NAME)
+export const CERT_NAME = /^[A-Za-z0-9][A-Za-z0-9 ._()-]*$/;
 
 function Cmd({ children }: { children: string }) {
   const [copied, setCopied] = useState(false);
@@ -32,82 +41,68 @@ function Cmd({ children }: { children: string }) {
   );
 }
 
-// Direkt auf Port 8000 mit TLS intern (0.78.2): https:// und die CA aus dem Agent-Paket
-const CA_PATH = `${INSTALL_DIR}\\automato-ca.crt`;
-const directTls = (url: string) => /^https:\/\/[^/\s]+:8000\/?$/.test(url.trim());
-const direct = (url: string) => /^https?:\/\/[^/\s]+:8000\/?$/.test(url.trim());
-
-// mTLS-Agent-Gateway (1.5.1): Zertifikate von der Automato-VM (make-certs.sh agent <Name>)
-const PKI_DIR = "C:\\Automato\\pki";
-export const CERT_NAME = /^[A-Za-z0-9._-]+$/;
-
-export function buildAgentEnv(v: {
-  orchestratorUrl: string;
-  agentToken: string;
-  ca?: boolean;
-  gateway?: boolean; // Adresse zeigt auf das Gateway: CA der Agenten + Client-Zertifikat
-  agentName?: string;
-}): string {
-  const withCa = !!v.ca && directTls(v.orchestratorUrl);
-  const viaGateway = !!v.gateway && !direct(v.orchestratorUrl);
-  const name = (v.agentName ?? "").trim() || "<name>";
-  const tls = viaGateway
-    ? [
-        L(
-          "# --- mTLS-Agent-Gateway: Dateien von der Automato-VM (deploy/agent-gateway/pki) ---",
-          "# --- mTLS agent gateway: files from the Automato VM (deploy/agent-gateway/pki) ---",
-        ),
-        `AUTOMATO_ORCHESTRATOR_CA_BUNDLE=${PKI_DIR}\\agents-ca.crt`,
-        `AUTOMATO_CLIENT_CERT=${PKI_DIR}\\agent-${name}.crt`,
-        `AUTOMATO_CLIENT_KEY=${PKI_DIR}\\agent-${name}.key`,
-      ]
-    : [
-        L(
-          "# --- TLS zum Orchestrator (produktiv) - nur einkommentieren, wenn die Dateien existieren ---",
-          "# --- TLS to the orchestrator (production) - only uncomment if the files exist ---",
-        ),
-        withCa
-          ? `AUTOMATO_ORCHESTRATOR_CA_BUNDLE=${CA_PATH}`
-          : "# AUTOMATO_ORCHESTRATOR_CA_BUNDLE=C:\\Automato\\pki\\orch-ca.pem",
-        "# AUTOMATO_CLIENT_CERT=C:\\Automato\\pki\\agent.crt",
-        "# AUTOMATO_CLIENT_KEY=C:\\Automato\\pki\\agent.key",
-      ];
-  return [
-    L(
-      "# Automato Collector-Agent - erzeugt im Web-UI (Collector-Agenten -> Einrichtung).",
-      "# Automato collector agent - generated in the web UI (Collector agents -> Setup).",
-    ),
-    L(
-      "# Enthaelt das Agent-Token: nur auf der Agent-Station ablegen, nicht weitergeben.",
-      "# Contains the agent token: store only on the agent station, do not pass on.",
-    ),
-    L(
-      "# Geraete + Zugangsdaten kommen vom Orchestrator (Web-UI: Mandanten -> Quellsysteme).",
-      "# Devices + credentials come from the orchestrator (web UI: Tenants -> Source systems).",
-    ),
-    "",
-    viaGateway
-      ? L(
-          "# --- Orchestrator ueber das mTLS-Agent-Gateway (Port 8000 nimmt keine Agenten an) ---",
-          "# --- Orchestrator via the mTLS agent gateway (port 8000 does not accept agents) ---",
-        )
-      : L(
-          "# --- Orchestrator (direkt, nicht ueber den Web-UI-Proxy) ---",
-          "# --- Orchestrator (direct, not via the web UI proxy) ---",
-        ),
-    `AUTOMATO_ORCHESTRATOR_URL=${v.orchestratorUrl.trim() || "http://<orchestrator-host>:8000"}`,
-    `AUTOMATO_AGENT_TOKEN=${v.agentToken.trim() || "<AGENT_TOKEN>"}`,
-    "",
-    ...tls,
-    "",
-    // Sprache der Konsole (0.90.0, ADR 0028 Schritt 4) - Vorgabe = Sprache der Oberflaeche
-    L(
-      "# --- Sprache der Agent-Konsole (de | en); Meldungen an den Orchestrator bleiben deutsch ---",
-      "# --- Language of the agent console (de | en); messages to the orchestrator stay German ---",
-    ),
-    L("# AUTOMATO_LANG=en", "AUTOMATO_LANG=en"),
-    "",
-  ].join("\r\n");
+// Warum kein Zugang möglich ist - aus /agents/package/info (agent_ca) bzw. der Ablehnung (409/422)
+export function accessProblem(reason: AgentCaState | string | null | undefined): ReactNode | null {
+  switch (reason) {
+    case "ca_missing":
+      return L(
+        <>
+          Die Agent-CA fehlt noch. Auf der Automato-VM einmal:{" "}
+          <code>cd deploy/agent-gateway &amp;&amp; sudo ./make-certs.sh ca</code> und{" "}
+          <code>sudo ./make-certs.sh server &lt;Name des Gateways&gt;</code>, danach <code>sudo docker compose up -d</code>.
+        </>,
+        <>
+          The agent CA is still missing. On the Automato VM once:{" "}
+          <code>cd deploy/agent-gateway &amp;&amp; sudo ./make-certs.sh ca</code> and{" "}
+          <code>sudo ./make-certs.sh server &lt;gateway name&gt;</code>, then <code>sudo docker compose up -d</code>.
+        </>,
+      );
+    case "ca_denied":
+      return L(
+        <>
+          Die Agent-CA ist für die Oberfläche noch nicht freigegeben. Auf der Automato-VM einmal:{" "}
+          <code>sudo deploy/agent-gateway/make-certs.sh oberflaeche</code> und <code>sudo docker compose up -d</code>.
+        </>,
+        <>
+          The agent CA is not yet released for the web UI. On the Automato VM once:{" "}
+          <code>sudo deploy/agent-gateway/make-certs.sh oberflaeche</code> and <code>sudo docker compose up -d</code>.
+        </>,
+      );
+    case "ca_invalid":
+      return L(
+        <>
+          Die Agent-CA ist nicht lesbar, abgelaufen oder ihr Schlüssel passt nicht zum Zertifikat (
+          <code>deploy/agent-gateway/pki</code> auf der VM prüfen).
+        </>,
+        <>
+          The agent CA cannot be read, has expired or its key does not match the certificate (check{" "}
+          <code>deploy/agent-gateway/pki</code> on the VM).
+        </>,
+      );
+    case "name":
+      return L(
+        "Der Name des Agenten eignet sich nicht für ein Zertifikat (erlaubt: A–Z, a–z, 0–9, Leerzeichen, . _ - ( ) ) – Agent unter neuem Namen anlegen.",
+        "The agent's name is not usable in a certificate (allowed: A–Z, a–z, 0–9, space, . _ - ( ) ) – create the agent under a new name.",
+      );
+    case "gateway_host":
+      return L(
+        <>
+          In der <code>.env</code> der VM fehlt <code>AUTOMATO_AGENT_GATEWAY_HOST</code> (Name im Zertifikat des
+          Gateways), danach <code>sudo docker compose up -d</code>.
+        </>,
+        <>
+          <code>AUTOMATO_AGENT_GATEWAY_HOST</code> (name in the gateway's certificate) is missing in the VM's{" "}
+          <code>.env</code>, then <code>sudo docker compose up -d</code>.
+        </>,
+      );
+    case "url":
+      return L(
+        "Die Adresse muss http(s)://Name[:Port] sein.",
+        "The address must be http(s)://name[:port].",
+      );
+    default:
+      return null;
+  }
 }
 
 // Meldung des Agenten in beiden Sprachen: seine Konsole folgt AUTOMATO_LANG in der agent.env
@@ -126,62 +121,85 @@ function AgentMsg({ de, en }: { de: string; en: string }) {
   );
 }
 
-const mask = (text: string) => text.replace(/^(AUTOMATO_AGENT_TOKEN=)(?!<)(.+)$/gm, "$1••••••••");
-
 export default function AgentGuide({
   agents,
   created,
+  accessFor,
   onNewAgent,
   onGoTenants,
 }: {
   agents: Agent[];
   created: AgentCreated | null;
+  accessFor: number | null; // „Zugang“ in der Liste gewählt
   onNewAgent: () => void;
   onGoTenants: () => void;
 }) {
   const [orchestratorUrl, setOrchestratorUrl] = useState(`http://${window.location.hostname}:8000`);
   const [info, setInfo] = useState<AgentPackageInfo | null>(null);
-  const [agentToken, setAgentToken] = useState("");
-  // Name im Client-Zertifikat (CN = Agent-Name, Modus bind): neu angelegter bzw. einziger Agent
-  const [certName, setCertName] = useState("");
+  const [chosen, setChosen] = useState<number | null>(null);
   // TLS intern (0.78.2): Port 8000 spricht nur HTTPS - die Vorgabe der Adresse folgt
   useEffect(() => {
     fetchAgentPackageInfo()
       .then((i) => {
         setInfo(i);
-        // mTLS-Gateway (1.5.1): Agenten nur darüber - dessen Adresse ist die Vorgabe
-        if (i.gateway_url) setOrchestratorUrl(i.gateway_url);
-        else if (i.internal_tls) setOrchestratorUrl((u) => u.replace(/^http:\/\//, "https://"));
+        if (i.internal_tls) setOrchestratorUrl((u) => u.replace(/^http:\/\//, "https://"));
       })
       .catch(() => setInfo(null));
   }, []);
+  useEffect(() => {
+    if (accessFor != null) setChosen(accessFor);
+  }, [accessFor]);
   const [pkgBusy, setPkgBusy] = useState(false);
   const [pkgErr, setPkgErr] = useState<unknown>(null);
+  const [accBusy, setAccBusy] = useState(false);
+  const [accErr, setAccErr] = useState<unknown>(null);
+  const [accDone, setAccDone] = useState<string | null>(null);
+
+  // mTLS-Agent-Gateway (1.5.1): Agenten nur darüber - die Adresse kommt vom Orchestrator
+  const gateway = info?.gateway_url ?? "";
+  const url = gateway || orchestratorUrl;
   let target = `${window.location.hostname} -Port 8000`;
   try {
-    const u = new URL(orchestratorUrl);
+    const u = new URL(url);
     target = `${u.hostname} -Port ${u.port || (u.protocol === "https:" ? "443" : "80")}`;
   } catch {
     /* noch keine gültige URL */
   }
-
-  // Token des soeben angelegten Agenten übernehmen (nur solange es angezeigt wird)
-  const token = agentToken || created?.token || "";
-  const gateway = info?.gateway_url ?? "";
-  const agentName = certName || created?.name || (agents.length === 1 ? agents[0].name : "");
-  const viaGateway = !!gateway && !direct(orchestratorUrl);
-  const env = buildAgentEnv({ orchestratorUrl, agentToken: token, ca: !!info?.ca, gateway: !!gateway, agentName });
+  const agentId = chosen ?? created?.id ?? (agents.length === 1 ? agents[0].id : null);
+  const agent = agents.find((a) => a.id === agentId) ?? null;
+  const caState = info?.agent_ca ?? null;
+  const nameBad = !!gateway && !!agent && !CERT_NAME.test(agent.name);
+  const blocked = (!!gateway && caState !== "ok") || nameBad;
   const plainToTls = !gateway && !!info?.internal_tls && /^http:\/\//.test(orchestratorUrl.trim());
-  const getCa = async () => {
+
+  const getAccess = async () => {
+    if (!agent) return;
+    if (
+      !window.confirm(
+        L(
+          `Zugang für „${agent.name}“ erzeugen? Das bisherige Token dieses Agenten gilt danach nicht mehr – ein laufender Agent verbindet sich erst wieder mit den neuen Dateien.`,
+          `Generate access for “${agent.name}”? The agent's previous token stops working – a running agent connects again only with the new files.`,
+        ),
+      )
+    )
+      return;
+    setAccBusy(true);
+    setAccErr(null);
+    setAccDone(null);
     try {
-      download(info?.ca_name ?? "automato-ca.crt", await downloadAgentCa());
+      const { blob, filename } = await downloadAgentAccess(agent.id, gateway ? "" : orchestratorUrl);
+      download(filename, blob);
+      setAccDone(agent.name);
     } catch (e) {
-      setPkgErr(e);
+      setAccErr(e);
+    } finally {
+      setAccBusy(false);
     }
   };
+  const accReason = accErr instanceof ApiError ? accessProblem(accErr.reason) : null;
 
-  // Zugewiesene Geräte: des soeben angelegten Agenten, sonst aller Agenten
-  const relevant = created ? agents.filter((a) => a.id === created.id) : agents;
+  // Zugewiesene Geräte: des gewählten Agenten, sonst aller Agenten
+  const relevant = agent ? [agent] : agents;
   const devices = relevant.flatMap((a) => a.systems.map((d) => ({ ...d, agent: a.name })));
   const withoutToken = devices.filter((d) => !d.has_credentials);
 
@@ -264,18 +282,18 @@ export default function AgentGuide({
           <p>
             {L(
               <>
-                Mit <b>+ Agent</b> einen Agenten für den Mandanten anlegen. Das Token erscheint nur einmal und wird
-                in Schritt 4 automatisch in die <code>agent.env</code> übernommen.
+                Mit <b>+ Agent</b> einen Agenten für den Mandanten anlegen. Token und Zertifikat kommen in Schritt 4 mit
+                dem Zugang.
               </>,
               <>
-                Use <b>+ Agent</b> to create an agent for the tenant. The token is shown only once and is
-                taken over automatically into the <code>agent.env</code> in step 4.
+                Use <b>+ Agent</b> to create an agent for the tenant. Token and certificate come with the access in
+                step 4.
               </>,
             )}
           </p>
           {created ? (
             <span className="chip ok">
-              {L(<>Token von „{created.name}“ übernommen</>, <>Token of “{created.name}” taken over</>)}
+              {L(<>„{created.name}“ angelegt</>, <>“{created.name}” created</>)}
             </span>
           ) : (
             <button className="btn btn-ghost btn-sm" onClick={onNewAgent}>
@@ -319,150 +337,129 @@ export default function AgentGuide({
           </button>
         </li>
 
-        <li>
-          <h3>{L("Konfiguration erzeugen (agent.env)", "Generate configuration (agent.env)")}</h3>
+        <li id="ag-access" className={accDone ? "done" : ""}>
+          <h3>{L("Zugang herunterladen (agent.env und Zertifikat)", "Download access (agent.env and certificate)")}</h3>
           <p>
             {L(
               <>
-                Nur Orchestrator-Adresse und Agent-Token. Die Werte bleiben in diesem Browser – nichts wird gespeichert
-                oder an den Server übertragen.
+                Ein ZIP je Agent: <code>agent.env</code> mit neuem Token
+                {gateway && (
+                  <>
+                    {" "}
+                    sowie Zertifikat <code>agent.crt</code>, Schlüssel <code>agent.key</code> und <code>agents-ca.crt</code>{" "}
+                    für das Agent-Gateway
+                  </>
+                )}
+                . Das bisherige Token des Agenten gilt danach nicht mehr; gespeichert wird davon nichts.
               </>,
               <>
-                Only the orchestrator address and agent token. The values stay in this browser – nothing is stored
-                or sent to the server.
-              </>,
-            )}
-          </p>
-          <p className="faint" id="ag-lang">
-            {L(
-              <>
-                Sprache der Agent-Konsole und des Logs: <code>AUTOMATO_LANG=de</code> (Standard) bzw.{" "}
-                <code>AUTOMATO_LANG=en</code>. Was der Agent an Automato meldet, bleibt deutsch gespeichert und
-                erscheint in der Oberfläche in der gewählten Sprache.
-              </>,
-              <>
-                Language of the agent console and log: <code>AUTOMATO_LANG=de</code> (default) or{" "}
-                <code>AUTOMATO_LANG=en</code>. What the agent reports to Automato is stored in German and shown in
-                the user interface in the chosen language.
+                One ZIP per agent: <code>agent.env</code> with a new token
+                {gateway && (
+                  <>
+                    {" "}
+                    plus certificate <code>agent.crt</code>, key <code>agent.key</code> and <code>agents-ca.crt</code> for
+                    the agent gateway
+                  </>
+                )}
+                . The agent's previous token stops working; nothing of it is stored.
               </>,
             )}
           </p>
           <div className="envgen">
             <div className="field">
-              <label htmlFor="ag-orch">
-                {L("Orchestrator-Adresse (vom Agent-Rechner aus)", "Orchestrator address (as seen from the agent machine)")}
-              </label>
-              <input
-                id="ag-orch"
-                className="input mono"
-                value={orchestratorUrl}
-                onChange={(e) => setOrchestratorUrl(e.target.value)}
-              />
+              <label htmlFor="ag-agent">Agent</label>
+              <select
+                id="ag-agent"
+                className="sel input"
+                value={agentId ?? ""}
+                onChange={(e) => setChosen(e.target.value ? Number(e.target.value) : null)}
+              >
+                <option value="">{L("– Agent wählen –", "– choose agent –")}</option>
+                {agents.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
+              </select>
             </div>
-            {gateway && (
+            {gateway ? (
               <div className="field">
-                <label htmlFor="ag-name">{L("Agent-Name (Zertifikat)", "Agent name (certificate)")}</label>
+                <label>{L("Adresse (mTLS-Agent-Gateway)", "Address (mTLS agent gateway)")}</label>
+                <code id="ag-gateway-url" className="mono">
+                  {gateway}
+                </code>
+              </div>
+            ) : (
+              <div className="field">
+                <label htmlFor="ag-orch">
+                  {L("Orchestrator-Adresse (vom Agent-Rechner aus)", "Orchestrator address (as seen from the agent machine)")}
+                </label>
                 <input
-                  id="ag-name"
+                  id="ag-orch"
                   className="input mono"
-                  value={agentName}
-                  placeholder="<name>"
-                  onChange={(e) => setCertName(e.target.value)}
+                  value={orchestratorUrl}
+                  onChange={(e) => setOrchestratorUrl(e.target.value)}
                 />
               </div>
             )}
-            <div className="field">
-              <label htmlFor="ag-token">{L("Agent-Token", "Agent token")}</label>
-              <SecretInput
-                id="ag-token"
-                value={token}
-                onChange={setAgentToken}
-                placeholder={L("aus Schritt 2 (oder einfügen)", "from step 2 (or paste)")}
-              />
-            </div>
           </div>
-          {gateway && (
-            <Note warn={!viaGateway}>
-              <span id="ag-gateway">
-                {L(
-                  <>
-                    Agenten nur über das <b>mTLS-Agent-Gateway</b> <code>{gateway}</code> – Port 8000 nimmt keine Agenten
-                    an („agent channel requires the mTLS gateway“). Zertifikat je Agent auf der Automato-VM:{" "}
-                    <code>cd deploy/agent-gateway &amp;&amp; sudo ./make-certs.sh agent {agentName || "<name>"}</code> (Name genau
-                    wie der Agent hier). Danach <code>pki/agents-ca.crt</code>, <code>agent-{agentName || "<name>"}.crt</code> und{" "}
-                    <code>.key</code> nach <code>{PKI_DIR}</code> auf den Agent-Rechner kopieren – den Schlüssel nur dorthin.
-                  </>,
-                  <>
-                    Agents only via the <b>mTLS agent gateway</b> <code>{gateway}</code> – port 8000 does not accept agents
-                    (“agent channel requires the mTLS gateway”). Certificate per agent on the Automato VM:{" "}
-                    <code>cd deploy/agent-gateway &amp;&amp; sudo ./make-certs.sh agent {agentName || "<name>"}</code> (name exactly
-                    as the agent here). Then copy <code>pki/agents-ca.crt</code>, <code>agent-{agentName || "<name>"}.crt</code>{" "}
-                    and <code>.key</code> to <code>{PKI_DIR}</code> on the agent machine – the key only there.
-                  </>,
-                )}
-                {agentName && !CERT_NAME.test(agentName) && (
-                  <>
-                    {" "}
-                    <b>
-                      {L(
-                        "Der Name enthält Zeichen, die make-certs.sh nicht annimmt (nur A-Z a-z 0-9 . _ -).",
-                        "The name contains characters make-certs.sh does not accept (only A-Z a-z 0-9 . _ -).",
-                      )}
-                    </b>
-                  </>
-                )}
-              </span>
+          {gateway && caState && caState !== "ok" && (
+            <Note warn>
+              <span id="ag-ca-state">{accessProblem(caState)}</span>
             </Note>
           )}
-          {info?.internal_tls && !viaGateway && (
-            <Note>
-              <span id="ag-tls">
-                {L(
-                  <>
-                    TLS intern ist eingeschaltet: direkt auf Port 8000 nur mit <code>https://</code> und der CA{" "}
-                    <code>{info.ca_name}</code> (liegt im Agent-Paket, <code>install.ps1</code> legt sie nach{" "}
-                    <code>{CA_PATH}</code>). Bestehende Agenten: in <code>{INSTALL_DIR}\agent.env</code> die Adresse auf{" "}
-                    <code>https://</code> ändern, <code>AUTOMATO_ORCHESTRATOR_CA_BUNDLE={CA_PATH}</code> ergänzen und die CA dorthin kopieren.{" "}
-                  </>,
-                  <>
-                    Internal TLS is switched on: directly on port 8000 only with <code>https://</code> and the CA{" "}
-                    <code>{info.ca_name}</code> (included in the agent package, <code>install.ps1</code> puts it at{" "}
-                    <code>{CA_PATH}</code>). Existing agents: in <code>{INSTALL_DIR}\agent.env</code> change the address
-                    to <code>https://</code>, add <code>AUTOMATO_ORCHESTRATOR_CA_BUNDLE={CA_PATH}</code> and copy the CA
-                    there.{" "}
-                  </>,
-                )}
-                {info.ca && (
-                  <button className="btn btn-ghost btn-sm" id="ag-ca" onClick={getCa}>
-                    <Icon name="download" size={14} /> {L("CA-Zertifikat", "CA certificate")}
-                  </button>
-                )}
-              </span>
+          {nameBad && (
+            <Note warn>
+              <span id="ag-name-bad">{accessProblem("name")}</span>
             </Note>
           )}
           {plainToTls && (
             <Note warn>
               {L(
                 <>
-                  Mit <code>http://</code> beendet der Orchestrator die Verbindung ohne Antwort („Server disconnected without sending a
-                  response“).
+                  TLS intern ist eingeschaltet: mit <code>http://</code> beendet der Orchestrator die Verbindung ohne Antwort
+                  („Server disconnected without sending a response“) – Adresse mit <code>https://</code> angeben.
                 </>,
                 <>
-                  With <code>http://</code> the orchestrator closes the connection without a reply (“Server disconnected without
-                  sending a response”).
+                  Internal TLS is switched on: with <code>http://</code> the orchestrator closes the connection without a
+                  reply (“Server disconnected without sending a response”) – use <code>https://</code>.
                 </>,
               )}
             </Note>
           )}
-          <div className="cmd">
-            <pre>{mask(env)}</pre>
-          </div>
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-            <button className="btn btn-primary btn-sm" onClick={() => download("agent.env", env, "text/plain")}>
-              <Icon name="download" size={14} /> {L("agent.env herunterladen", "Download agent.env")}
+            <button
+              id="ag-access-btn"
+              className="btn btn-primary btn-sm"
+              onClick={getAccess}
+              disabled={!agent || accBusy || blocked}
+            >
+              {accBusy ? L("Erzeuge…", "Generating…") : L("Zugang herunterladen", "Download access")}
             </button>
-            {!token && <span className="faint">{L("Noch offen: Agent-Token", "Still missing: agent token")}</span>}
+            {!agent && <span className="faint">{L("Noch offen: Agent wählen", "Still missing: choose agent")}</span>}
+            {accDone && (
+              <span className="chip ok" id="ag-access-done">
+                {L(<>Zugang für „{accDone}“ heruntergeladen</>, <>Access for “{accDone}” downloaded</>)}
+              </span>
+            )}
           </div>
+          {accErr != null && (accReason ? <Note warn>{accReason}</Note> : <ErrorBox error={accErr} prefix={L("Zugang", "Access")} />)}
+          <p>
+            {L(
+              <>
+                <b>Bestehender Agent:</b> alle Dateien aus dem ZIP nach <code>{INSTALL_DIR}</code> kopieren (ersetzt{" "}
+                <code>agent.env</code>), dann prüfen (Schritt 7). <b>Neue Installation:</b> die Dateien in den Ordner des
+                Agent-Pakets legen (Schritt 6). Die Sprache der Agent-Konsole folgt der Sprache dieser Oberfläche (
+                <code>AUTOMATO_LANG</code> in der <code>agent.env</code>).
+              </>,
+              <>
+                <b>Existing agent:</b> copy all files from the ZIP to <code>{INSTALL_DIR}</code> (replaces{" "}
+                <code>agent.env</code>), then check (step 7). <b>New installation:</b> put the files into the folder of the
+                agent package (step 6). The language of the agent console follows the language of this interface (
+                <code>AUTOMATO_LANG</code> in the <code>agent.env</code>).
+              </>,
+            )}
+          </p>
         </li>
 
         <li>
@@ -491,11 +488,11 @@ export default function AgentGuide({
           <p>
             {L(
               <>
-                ZIP entpacken, die <code>agent.env</code> in den entpackten Ordner{" "}
+                ZIP entpacken, die Dateien aus dem Zugang (Schritt 4) in den entpackten Ordner{" "}
                 <code>automato-collector-agent</code> legen, dann eine <b>PowerShell als Administrator</b> öffnen:
               </>,
               <>
-                Unpack the ZIP, put the <code>agent.env</code> into the unpacked folder{" "}
+                Unpack the ZIP, put the files from the access (step 4) into the unpacked folder{" "}
                 <code>automato-collector-agent</code>, then open a <b>PowerShell as administrator</b>:
               </>,
             )}
@@ -506,14 +503,14 @@ powershell -ExecutionPolicy Bypass -File .\\install.ps1 -IntervalMinutes 15`}</C
           <p>
             {L(
               <>
-                Installiert nach <code>{INSTALL_DIR}</code> und legt die geplante Aufgabe <b>„Automato Collector
-                Agent“</b> an: Start alle 15 Minuten (inkl. Prüfung auf ein Selbst-Update), dazwischen fragt der Agent
+                Installiert nach <code>{INSTALL_DIR}</code> (samt <code>agent.env</code> und Zertifikat) und legt die
+                geplante Aufgabe <b>„Automato Collector Agent“</b> an: Start alle 15 Minuten (inkl. Prüfung auf ein Selbst-Update), dazwischen fragt der Agent
                 alle 20 Sekunden nach neuen Läufen (<code>-WatchSeconds</code>). Ändern der Konfiguration später:{" "}
                 <code>{INSTALL_DIR}\agent.env</code>.
               </>,
               <>
-                Installs to <code>{INSTALL_DIR}</code> and creates the scheduled task <b>“Automato Collector
-                Agent”</b>: start every 15 minutes (including a check for a self-update), in between the agent asks
+                Installs to <code>{INSTALL_DIR}</code> (including <code>agent.env</code> and certificate) and creates the
+                scheduled task <b>“Automato Collector Agent”</b>: start every 15 minutes (including a check for a self-update), in between the agent asks
                 for new runs every 20 seconds (<code>-WatchSeconds</code>). To change the configuration later:{" "}
                 <code>{INSTALL_DIR}\agent.env</code>.
               </>,
@@ -608,8 +605,8 @@ powershell -ExecutionPolicy Bypass -File .\\install.ps1 -IntervalMinutes 15`}</C
                 <AgentMsg de="401 invalid agent token" en="401 invalid agent token" />
                 <td>
                   {L(
-                    "Agent-Token falsch oder Agent deaktiviert – ggf. neuen Agenten anlegen.",
-                    "Agent token wrong or agent deactivated – create a new agent if needed.",
+                    "Token nicht mehr gültig (neuer Zugang heruntergeladen) oder Agent deaktiviert – Zugang neu herunterladen (Schritt 4).",
+                    "Token no longer valid (new access downloaded) or agent deactivated – download the access again (step 4).",
                   )}
                 </td>
               </tr>
@@ -631,9 +628,38 @@ powershell -ExecutionPolicy Bypass -File .\\install.ps1 -IntervalMinutes 15`}</C
               <tr>
                 <AgentMsg de="Verbindung abgelehnt / Timeout" en="connection refused / timeout" />
                 <td>
+                  {gateway
+                    ? L(
+                        "Port des Agent-Gateways vom Agent-Rechner zur VM freigeben (Firewall davor und DOCKER-USER); der Name der Adresse muss auf die VM zeigen.",
+                        "Allow the agent gateway's port from the agent machine to the VM (firewall in front and DOCKER-USER); the address name must point to the VM.",
+                      )
+                    : L(
+                        "Port 8000 vom Agent-Rechner zum Orchestrator in der Firewall freigeben; Adresse prüfen.",
+                        "Allow port 8000 from the agent machine to the orchestrator in the firewall; check the address.",
+                      )}
+                </td>
+              </tr>
+              <tr>
+                <AgentMsg de="403 agent channel requires the mTLS gateway" en="403 agent channel requires the mTLS gateway" />
+                <td>
                   {L(
-                    "Port 8000 vom Agent-Rechner zum Orchestrator in der Firewall freigeben; Adresse prüfen.",
-                    "Allow port 8000 from the agent machine to the orchestrator in the firewall; check the address.",
+                    "Der Agent geht direkt auf Port 8000 – Zugang neu herunterladen: die agent.env zeigt dann auf das Gateway.",
+                    "The agent goes directly to port 8000 – download the access again: the agent.env then points to the gateway.",
+                  )}
+                </td>
+              </tr>
+              <tr>
+                <AgentMsg de="certificate required / unknown ca" en="certificate required / unknown ca" />
+                <td>
+                  {L(
+                    <>
+                      Zertifikat fehlt oder stammt nicht von der Agent-CA: <code>agent.crt</code>, <code>agent.key</code> und{" "}
+                      <code>agents-ca.crt</code> aus demselben Zugang nach <code>{INSTALL_DIR}</code> kopieren.
+                    </>,
+                    <>
+                      Certificate missing or not from the agent CA: copy <code>agent.crt</code>, <code>agent.key</code> and{" "}
+                      <code>agents-ca.crt</code> from the same access to <code>{INSTALL_DIR}</code>.
+                    </>,
                   )}
                 </td>
               </tr>
@@ -672,18 +698,6 @@ powershell -ExecutionPolicy Bypass -File .\\install.ps1 -IntervalMinutes 15`}</C
               </tr>
             </tbody>
           </table>
-          <Note>
-            {L(
-              <>
-                Produktiv den Orchestrator per HTTPS/mTLS ansprechen (TLS-Zeilen in der agent.env, siehe{" "}
-                <code>collectors/EXTERNAL.md</code>).
-              </>,
-              <>
-                In production, address the orchestrator via HTTPS/mTLS (TLS lines in the agent.env, see{" "}
-                <code>collectors/EXTERNAL.md</code>).
-              </>,
-            )}
-          </Note>
         </li>
       </ol>
     </div>

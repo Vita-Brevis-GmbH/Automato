@@ -152,6 +152,7 @@ MODULES: tuple[Module, ...] = (
         api=("jobs", "agents", "internal"),
         store=(
             "agents",
+            "agent_access",
             "agent_package",
             "ingest",
             "runs",

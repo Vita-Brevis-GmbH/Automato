@@ -8,7 +8,8 @@ danach die festen Befehle der Plattform (seit 0.94.0 auch die IPv6-Nachbarn) und
 das Routing (`routing.COMMANDS`: RIB, BGP; nur L3-Geraete bekommen Kontexte, ein Switch ohne
 `ip routing` nur den ersten Befehl).
 Ein Switch, der nicht antwortet, fehlt im Ergebnis und steht in der Meldung; antwortet keiner,
-schlaegt der Lauf fehl. Ohne Zugangsdaten liest nur der zentrale Worker (Lab) die Beispieldaten.
+schlaegt der Lauf fehl. Ohne Zugangsdaten liest nur der zentrale Worker im Labor die
+Beispieldaten (`samples_allowed`, 1.6.0).
 
 Zugang „SNMPv3“ (ADR 0033, `Target.access == "snmp"`): dieselben Geraete und dasselbe Ergebnis,
 gelesen mit SNMPv3 authPriv statt SSH (`collectors/snmp/`).
@@ -34,7 +35,7 @@ from collectors.common import diagnose
 from collectors.common.dto import CollectorResult, Target
 from collectors.common.i18n import L, carry, german_only
 from collectors.common.upload import confirmed, submit_result
-from collectors.config import get_settings
+from collectors.config import samples_allowed
 
 PARALLEL = 8  # Switches gleichzeitig
 
@@ -116,7 +117,7 @@ def read_switch(entry: str, target: Target) -> dict:
 def gather(target: Target | None = None) -> dict:
     """Alle Switches des Quellsystems; `errors` je Adresse, die nicht gelesen wurde."""
     if not _has_credentials(target):
-        if get_settings().agent_token:
+        if not samples_allowed():  # Agent bzw. Betrieb (1.6.0): nie Beispieldaten
             raise RuntimeError(_no_credentials(target))
         return _sample()
     entries = hosts(target.read_scope)

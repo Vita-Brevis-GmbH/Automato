@@ -5,7 +5,7 @@
 # Nur bekannte Schluessel, und `read` statt `source`: die .env wird nicht ausgefuehrt.
 # Einbinden mit `. deploy/env.sh` aus dem Repo-Verzeichnis.
 
-AUTOMATO_ENV_KEYS="AUTOMATO_BACKUP_AGE_RECIPIENT AUTOMATO_BACKUP_AGE_IDENTITY AUTOMATO_BACKUP_DIR \
+AUTOMATO_ENV_KEYS="COMPOSE_PROFILES AUTOMATO_BACKUP_AGE_RECIPIENT AUTOMATO_BACKUP_AGE_IDENTITY AUTOMATO_BACKUP_DIR \
 AUTOMATO_BACKUP_KEEP_DAYS AUTOMATO_BACKUP_PLAIN AUTOMATO_COMPOSE_PROFILES AUTOMATO_NETBOX_DIR \
 AUTOMATO_DOCKER_UPDATE AUTOMATO_PULL_IMAGES AUTOMATO_DB_USER AUTOMATO_INTERNAL_TLS \
 AUTOMATO_FRONT_DOMAIN AUTOMATO_FRONT_DOMAIN_INT AUTOMATO_FRONT_WAF AUTOMATO_FRONT_MGMT \
@@ -29,7 +29,7 @@ env_aus_datei() {  # $1 = Datei (Standard .env)
     wert="${wert#\"}"; wert="${wert%\"}"
     wert="${wert#\'}"; wert="${wert%\'}"
     export "$schluessel=$wert"
-  done < <(grep -E '^AUTOMATO_[A-Z_]+=' "$datei" || true)
+  done < <(grep -E '^(AUTOMATO_[A-Z_]+|COMPOSE_PROFILES)=' "$datei" || true)
 }
 
 setze_env() {  # $1 = Schluessel, $2 = Wert, $3 = Datei (Standard .env): ersetzen bzw. anhaengen
@@ -46,6 +46,23 @@ setze_env() {  # $1 = Schluessel, $2 = Wert, $3 = Datei (Standard .env): ersetze
 }
 
 env_aus_datei
+
+# Profile fuer docker compose (1.6.0): COMPOSE_PROFILES liest Compose selbst - die Skripte geben
+# dann kein --profile an (das ersetzte COMPOSE_PROFILES); ohne nur "core". AUTOMATO_COMPOSE_PROFILES
+# (bis 1.5) wird nicht mehr gelesen: `deploy/aufbau.sh env ordnen` stellt um.
+compose_profile() {
+  PROFILES=()
+  if [ -n "${COMPOSE_PROFILES:-}" ]; then
+    export COMPOSE_PROFILES
+    return 0
+  fi
+  if [ -n "${AUTOMATO_COMPOSE_PROFILES:-}" ]; then
+    echo "FEHLER: AUTOMATO_COMPOSE_PROFILES wird seit 1.6.0 nicht mehr gelesen - einmal:" \
+      "sudo deploy/aufbau.sh env ordnen (setzt COMPOSE_PROFILES), dann erneut" >&2
+    return 1
+  fi
+  PROFILES=(--profile core)
+}
 
 # TLS intern (0.49.0): Zertifikate je Dienst (gitignored); der Orchestrator antwortet dann per
 # HTTPS - Health-Abfrage auf der VM gegen die interne CA

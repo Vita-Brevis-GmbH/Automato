@@ -1,8 +1,9 @@
 # Automato Collector-Agent - Installation als geplante Aufgabe (Windows, ADR 0008).
 # Installiert das collectors-Wheel in ein venv und registriert einen Task, der den Agenten
 # im Pull-Modus laufen laesst. Ausfuehren in einer administrativen PowerShell.
-# Paket aus dem Web-UI (Collector-Agenten -> Agent-Paket): ZIP entpacken, die im UI erzeugte
-# agent.env daneben legen, dann:  powershell -ExecutionPolicy Bypass -File .\install.ps1
+# Paket aus dem Web-UI (Collector-Agenten -> Agent-Paket): ZIP entpacken, die Dateien aus dem
+# Zugang des Agenten (agent.env, ggf. agent.crt/agent.key/agents-ca.crt, 1.6.0) daneben legen,
+# dann:  powershell -ExecutionPolicy Bypass -File .\install.ps1
 param(
     [string]$Wheel = "",                                   # Pfad zum collectors-*.whl (Default: neben dem Skript)
     [string]$InstallDir = "C:\Automato\collector",
@@ -114,33 +115,26 @@ if (Test-Path $envNext) {
 }
 elseif (-not (Test-Path $envFile)) {
     Copy-Item "$PSScriptRoot\agent.env.example" $envFile
-    Write-Host "Bitte $envFile mit echten Werten fuellen (Agent-Token, Ziel-Creds, TLS)."
+    Write-Host ("Noch kein Zugang: im Web-UI unter Collector-Agenten -> Zugang herunterladen " +
+        "und den Inhalt nach $InstallDir kopieren (ersetzt $envFile).")
 }
 
-# TLS intern (0.78.2): das Paket bringt die CA des Orchestrators mit (nur das Zertifikat). Wer
-# direkt auf Port 8000 zugreift, braucht https:// und diese CA - sonst beendet der Orchestrator
-# die Verbindung ohne Antwort ("Server disconnected").
-$caNext = Join-Path $PSScriptRoot "automato-ca.crt"
-if ((Test-Path $caNext) -and (Test-Path $envFile)) {
-    $caFile = Join-Path $InstallDir "automato-ca.crt"
-    Copy-Item $caNext $caFile -Force
-    $lines = @(Get-Content $envFile)
-    $changed = $false
-    for ($i = 0; $i -lt $lines.Count; $i++) {
-        if ($lines[$i] -match '^\s*AUTOMATO_ORCHESTRATOR_URL\s*=\s*http://([^/\s]+:8000)\s*$') {
-            $lines[$i] = "AUTOMATO_ORCHESTRATOR_URL=https://$($Matches[1])"
-            Write-Host "agent.env: Orchestrator-URL auf https://$($Matches[1]) umgestellt (TLS intern)."
-            $changed = $true
-        }
+# Dateien aus dem Zugang (1.6.0, ADR 0052): Zertifikat, Schluessel und CA des Agent-Gateways bzw.
+# die interne CA (TLS intern, direkt auf :8000). agent.env verweist auf C:\Automato\collector -
+# mit anderem -InstallDir werden die Pfade darin angepasst.
+foreach ($name in @("agent.crt", "agent.key", "agents-ca.crt", "automato-ca.crt")) {
+    $next = Join-Path $PSScriptRoot $name
+    if (Test-Path $next) {
+        Copy-Item $next (Join-Path $InstallDir $name) -Force
+        Write-Host "$name uebernommen nach $InstallDir."
     }
-    $direct = $lines | Where-Object { $_ -match '^\s*AUTOMATO_ORCHESTRATOR_URL\s*=\s*https://[^/\s]+:8000\s*$' }
-    $hasCa = $lines | Where-Object { $_ -match '^\s*AUTOMATO_ORCHESTRATOR_CA_BUNDLE\s*=' }
-    if ($direct -and -not $hasCa) {
-        $lines += "AUTOMATO_ORCHESTRATOR_CA_BUNDLE=$caFile"
-        Write-Host "agent.env: AUTOMATO_ORCHESTRATOR_CA_BUNDLE=$caFile ergaenzt."
-        $changed = $true
-    }
-    if ($changed) { Set-Content -Path $envFile -Value $lines -Encoding ASCII }
+}
+$defaultDir = "C:\Automato\collector"
+if ((Test-Path $envFile) -and ($InstallDir.TrimEnd("\") -ne $defaultDir)) {
+    $target = $InstallDir.TrimEnd("\")
+    $lines = @(Get-Content $envFile) | ForEach-Object { $_.Replace("$defaultDir\", "$target\") }
+    Set-Content -Path $envFile -Value $lines -Encoding ASCII
+    Write-Host "agent.env: Pfade auf $target angepasst."
 }
 
 # Geplante Aufgabe (SYSTEM, Start alle N Minuten). Der Agent bleibt dazwischen wach und fragt

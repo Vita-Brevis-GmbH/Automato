@@ -69,10 +69,10 @@ def test_openbao_unkonfiguriert_ist_fehler():
 
 def test_resolve_settings_loest_nur_secret_felder(monkeypatch):
     monkeypatch.setenv("NB", "aufgeloest")
-    s = _settings(netbox_token="env:NB", netbox_url="https://netbox.example")
+    s = _settings(agent_gateway_secret="env:NB", agent_gateway_host="env:NB")
     secrets.resolve_settings(s)
-    assert s.netbox_token == "aufgeloest"  # Secret-Feld aufgeloest
-    assert s.netbox_url == "https://netbox.example"  # kein Secret-Feld, unangetastet
+    assert s.agent_gateway_secret == "aufgeloest"  # Secret-Feld aufgeloest
+    assert s.agent_gateway_host == "env:NB"  # kein Secret-Feld, unangetastet
     # idempotent: zweiter Lauf laesst den Klartext stehen
     secrets.resolve_settings(s)
-    assert s.netbox_token == "aufgeloest"
+    assert s.agent_gateway_secret == "aufgeloest"

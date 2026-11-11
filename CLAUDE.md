@@ -105,11 +105,17 @@ und wird erweitert. Details: `README.md`, `ARCHITECTURE.md`, `docs/adr/`.
   Absender immer entfernen; ohne Realm gesperrt; Client-Secrets nur auf der VM (`front.sh tor`),
   nie in Oberfläche, Datenbank oder Repo. Änderungen am Tor mit `test_front_tor_e2e.py` prüfen.
   Zugriff je Kunde (1.5.0) steht vor dem Tor; gesperrt antwortet wie eine unbekannte Adresse.
+- **Agent-Zugang und `.env`** (seit 1.6.0, ADR 0052): Zertifikate der Agenten stellt nur der
+  Orchestrator aus der Agent-CA aus (nur lesend eingebunden, `make-certs.sh oberflaeche`); jeder
+  Zugang erneuert das Token, kein halber Zugang. Zugangsdaten zu Geräten und Referenzquellen nie
+  in `.env`/Umgebung, nur am Quellsystem; Beispieldaten nur zentral mit `AUTOMATO_ENVIRONMENT=dev`.
+  Neue `.env`-Schlüssel in `.env.example` (Abschnitt) bzw. Settings, entfernte in `OBSOLETE` von
+  `deploy/env_check.py`; Profile nur `COMPOSE_PROFILES`.
 - Entscheide als ADR in `docs/adr/`, Risiken in `docs/RISKS.md`, Bedienung in `docs/BETRIEB.md`.
 
 ## Aktueller Stand
 
-1.5.1 – Port des Agent-Gateways einstellbar, Einrichtung der Agenten über das Gateway; 1.5.0 Zugriff je Kunde (überall, intern, Netze) und Korrekturen aus der Einrichtung; 1.4.0 Anmelde-Tor im Front-Proxy, eine Anmeldung je Realm, NetBox über den Realm (ADR 0051); 1.3.0 Kunden-Portal mit Host-Agent und Realm je Kunde (ADR 0050), Front-Proxy auf der Automato-VM, NetBox-Host als Backend (ADR 0044 Nachtrag); **Version 1 abgeschlossen**
+1.6.0 – Zugang des Agenten (agent.env, Token, Zertifikat) aus der Oberfläche (ADR 0052), `.env` prüfen/ordnen, nur `COMPOSE_PROFILES`, Altlasten entfernt; 1.5.1 Port des Agent-Gateways einstellbar; 1.5.0 Zugriff je Kunde (überall, intern, Netze) und Korrekturen aus der Einrichtung; 1.4.0 Anmelde-Tor im Front-Proxy, eine Anmeldung je Realm, NetBox über den Realm (ADR 0051); 1.3.0 Kunden-Portal mit Host-Agent und Realm je Kunde (ADR 0050), Front-Proxy auf der Automato-VM, NetBox-Host als Backend (ADR 0044 Nachtrag); **Version 1 abgeschlossen**
 mit 1.0.0 (Produktivschaltung DC, R14). Einzelheiten je Bereich in
 `docs/STAND.md`, Produktiv-Installation in `docs/INSTALLATION-PROD.md`, NetBox je Kunde in
 `docs/INSTALLATION-NETBOX-HOST.md`, Front-Proxy in `docs/INSTALLATION-FRONT.md`. Bekannte Einschränkungen von 1.0.0 und nächste Arbeiten in

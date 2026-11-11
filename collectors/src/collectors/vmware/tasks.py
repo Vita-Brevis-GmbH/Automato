@@ -2,7 +2,8 @@
 
 Liest VMs, Hosts, Cluster und Portgruppen per pyVmomi. Zugangsdaten vom Orchestrator fuer das
 Geraet des Laufs (`Target`: Adresse, Benutzer/Passwort; ADR 0009). Ohne Zugangsdaten liest
-nur der zentrale Worker (Lab) die Beispieldaten - ein Agent im Kundennetz nie.
+nur der zentrale Worker im Labor die Beispieldaten (`samples_allowed`, 1.6.0) - ein Agent und
+der Betrieb nie.
 """
 
 import json
@@ -14,7 +15,7 @@ from collectors.common import diagnose
 from collectors.common.dto import CollectorResult, Target
 from collectors.common.i18n import L, german_only
 from collectors.common.upload import confirmed, submit_result
-from collectors.config import get_settings
+from collectors.config import samples_allowed
 from collectors.vmware.client import VCenterClient
 from collectors.vmware.normalize import normalize
 
@@ -46,12 +47,12 @@ def _no_credentials(target: Target | None) -> str:
 
 
 def gather(target: Target | None = None) -> dict:
-    """vCenter-Objekte als einfache Dicts - echtes vCenter oder (nur zentral) Beispieldaten."""
+    """vCenter-Objekte als einfache Dicts - echtes vCenter oder (nur im Labor) Beispieldaten."""
     client = _client(target)
     if client is not None:
         with client:
             return client.gather()
-    if get_settings().agent_token:
+    if not samples_allowed():  # Agent bzw. Betrieb (1.6.0): nie Beispieldaten
         raise RuntimeError(_no_credentials(target))
     return _sample()
 

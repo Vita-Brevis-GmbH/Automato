@@ -66,6 +66,9 @@ class Settings(BaseSettings):
     # Adresse des Gateways von den Agenten aus (1.5.1): Vorgabe der agent.env in der Einrichtung
     agent_gateway_host: str = ""
     agent_gateway_port: int = 8443
+    # Agent-CA (deploy/agent-gateway/pki, nur lesend): Zugang mit Zertifikat aus dem Web-UI
+    # (1.6.0, ADR 0052); den Schluessel gibt `make-certs.sh oberflaeche` frei
+    agent_ca_dir: str = "/etc/automato/agent-ca"
 
     # Signierte Agent-Updates (Ed25519): oeffentlicher Schluessel (Base64, 32 Byte) zum Pruefen
     # der eingespielten Signatur; die Signatur liegt im Daten-Volume (siehe deploy/agent-signing).
@@ -187,16 +190,6 @@ class Settings(BaseSettings):
     openbao_token: str = ""
     openbao_kv_mount: str = "secret"
     openbao_path: str = "automato"
-
-    # SoT-Zugaenge (lesend) - je Mandant wird der passende Adapter gebaut (ADR 0004).
-    # Model 2 (NetBox) zuerst; Infoblox (Model 1) in Phase 2.
-    netbox_url: str = ""
-    netbox_token: str = ""
-    netbox_verify_tls: bool = True
-    infoblox_url: str = ""
-    infoblox_username: str = ""
-    infoblox_password: str = ""
-    infoblox_verify_tls: bool = True
 
 
 def check_security_config(settings: "Settings") -> None:

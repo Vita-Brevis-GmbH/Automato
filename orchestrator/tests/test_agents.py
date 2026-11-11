@@ -198,9 +198,7 @@ def test_agent_paket_mit_ca_bei_tls_intern(client, tmp_path):
 
     settings()  # ohne TLS intern: keine CA
     assert client.get("/agents/package/info", headers=admin).json() == {
-        "internal_tls": False, "ca": False, "ca_name": "automato-ca.crt",
-        "gateway_url": ""}  # fmt: skip
-    assert client.get("/agents/package/ca", headers=admin).status_code == 404
+        "internal_tls": False, "gateway_url": "", "agent_ca": None}  # fmt: skip
     names = zipfile.ZipFile(io.BytesIO(client.get("/agents/package", headers=admin).content))
     assert not any(n.endswith(".crt") for n in names.namelist())
 
@@ -208,10 +206,7 @@ def test_agent_paket_mit_ca_bei_tls_intern(client, tmp_path):
     assert (
         client.get("/agents/package/info", headers={"X-Dev-Roles": "operator"}).status_code == 403
     )
-    assert client.get("/agents/package/info", headers=admin).json()["ca"] is True
-    r = client.get("/agents/package/ca", headers=admin)
-    assert r.status_code == 200 and r.text.startswith("-----BEGIN CERTIFICATE-----")
-    assert 'filename="automato-ca.crt"' in r.headers["content-disposition"]
+    assert client.get("/agents/package/info", headers=admin).json()["internal_tls"] is True
     z = zipfile.ZipFile(io.BytesIO(client.get("/agents/package", headers=admin).content))
     assert z.read("automato-collector-agent/automato-ca.crt").startswith(b"-----BEGIN")
     assert not any(n.endswith(".key") for n in z.namelist())  # nur das Zertifikat

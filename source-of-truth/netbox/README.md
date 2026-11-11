@@ -66,8 +66,8 @@ cd source-of-truth/netbox
 > werden per `ADMIN_TOKEN`/`COLLECTOR_TOKEN`/`SYNC_TOKEN` mitgegeben) – danach die Tokens
 > im Automato-Quellsystem nachtragen.
 
-Älterer Weg (Fallback ohne Quellsystem, `.env`): `AUTOMATO_NETBOX_URL` +
-`AUTOMATO_NETBOX_TOKEN=<collector-token>`.
+Den früheren Weg über die `.env` (`AUTOMATO_NETBOX_URL`/`_TOKEN`) gibt es seit 1.6.0 nicht
+mehr – NetBox ist immer ein Quellsystem in der Oberfläche.
 
 ### Lab-Daten seeden (optional, empfohlen für den Durchstich)
 

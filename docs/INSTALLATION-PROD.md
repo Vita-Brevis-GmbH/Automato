@@ -541,8 +541,8 @@ sudo cp .env.example .env && sudo chmod 600 .env && sudo chown root:root .env
 
 Alle Einstellungen und Secrets stehen in `.env` im Repo-Ordner – **vor dem ersten Start** (6.4)
 setzen. Die Secrets direkt in die Datei schreiben (sie erscheinen nicht am Bildschirm); die
-Hilfsfunktion ersetzt eine vorhandene (auch auskommentierte) Zeile bzw. hängt sie an. Sie gilt –
-wie später die Variable `P` – **nur in der aktuellen Shell**: nach einer neuen Anmeldung oder
+Hilfsfunktion ersetzt eine vorhandene (auch auskommentierte) Zeile bzw. hängt sie an. Sie gilt
+**nur in der aktuellen Shell**: nach einer neuen Anmeldung oder
 `sudo -i` die Zeile `setenv() …` erneut einfügen (als eine Zeile; `type setenv` zeigt „is a
 function“); `sudo setenv` geht nicht.
 
@@ -559,7 +559,6 @@ der Beispiele:
 
 ```ini
 AUTOMATO_ENVIRONMENT=prod
-AUTOMATO_COMPOSE_PROFILES="--profile core --profile collectors --profile proxy --profile agent-gateway"
 COMPOSE_PROFILES=core,collectors,proxy,agent-gateway
 POSTGRES_PASSWORD=<hex>
 AUTOMATO_INTERNAL_API_TOKEN=<hex>
@@ -588,43 +587,42 @@ AUTOMATO_AGENT_GATEWAY_SECRET=<hex>
 AUTOMATO_INTERNAL_MTLS_MODE=bind
 # AUTOMATO_AGENT_GATEWAY_PORT=8443   # anderer Port auf der VM (1.5.1)
 
-# Docker bei jedem Automato-Update mit aktualisieren; Zertifikate der Gegenstellen prüfen
+# Docker bei jedem Automato-Update mit aktualisieren
 AUTOMATO_DOCKER_UPDATE=1
-AUTOMATO_NETBOX_VERIFY_TLS=true
-AUTOMATO_FORTIGATE_VERIFY_TLS=true
-AUTOMATO_ACI_VERIFY_TLS=true
 ```
 
 Was die Werte bedeuten:
 
 - `POSTGRES_PASSWORD` gilt nur beim **ersten** Anlegen der Datenbank – später ändern wirkt nicht
-  (ohne Daten: `sudo docker compose $P down -v` löscht die Datenbank, dann neu starten).
-- `AUTOMATO_COMPOSE_PROFILES`: `core` (Datenbank, Orchestrator, Oberfläche), `collectors`
-  (Worker), `proxy` (HTTPS 443), `agent-gateway` (8443, nur mit Agenten in anderen Netzen – sonst
-  weglassen, dann auch `AUTOMATO_AGENT_GATEWAY_*` und `AUTOMATO_INTERNAL_MTLS_MODE`).
-  Die Skripte (`aufbau.sh`, `update.sh`) lesen diese Variable.
-- `COMPOSE_PROFILES`: dieselben Profile mit Komma – Compose liest sie selbst aus `.env`. Damit
-  genügt im Repo-Ordner `sudo docker compose ps|logs|up -d …` ohne `$P`, auch in neuen
-  Sitzungen (ohne sie und ohne `$P` meldet Compose z. B. „no such service: web-ui“).
+  (ohne Daten: `sudo docker compose down -v` löscht die Datenbank, dann neu starten).
+- `COMPOSE_PROFILES` (die **einzige** Angabe der Profile, seit 1.6.0): `core` (Datenbank,
+  Orchestrator, Oberfläche), `collectors` (Worker), `proxy` (HTTPS 443), `agent-gateway` (8443,
+  nur mit Agenten in anderen Netzen – sonst weglassen, dann auch `AUTOMATO_AGENT_GATEWAY_*` und
+  `AUTOMATO_INTERNAL_MTLS_MODE`). Compose liest sie selbst aus `.env`, ebenso `aufbau.sh` und
+  `update.sh` – im Repo-Ordner genügt `sudo docker compose ps|logs|up -d …` ohne `--profile`
+  (ohne sie meldet Compose z. B. „no such service: web-ui“). Kein `--profile` auf der
+  Kommandozeile: es ersetzt die Profile aus `.env`.
 - `AUTOMATO_UI_HOST`: DNS-Name der Oberfläche (im internen DNS auf die VM, passend zum
   Zertifikat). `AUTOMATO_UI_TLS`: Pfade **im Container** – `/etc/caddy/pki` ist
   `deploy/proxy/pki/` auf der VM (6.3). `AUTOMATO_CORS_ORIGINS` = `https://` + `UI_HOST`.
 - `AUTOMATO_UI_ALLOW`: Netze, die die Oberfläche öffnen dürfen (mit Leerzeichen getrennt).
 - OIDC: Adresse der Keycloak-VM mit Realm `automato`, `AUDIENCE` = Client der API. Keycloak darf
   später fertig werden (6.5) – bis dahin startet Automato, nur die Anmeldung geht noch nicht.
-- `*_VERIFY_TLS`: Vorgaben für Quellsysteme ohne eigene Einstellung (diese je Gerät in der
-  Oberfläche).
-- Werte mit Leerzeichen (`UI_TLS`, `UI_ALLOW`, `COMPOSE_PROFILES`) in Anführungszeichen; jede
-  Variable nur einmal in `.env`.
+- Zugangsdaten und TLS-Prüfung der Geräte und Referenzquellen gehören nicht in `.env` – sie
+  stehen je Quellsystem in der Oberfläche (ADR 0009).
+- Werte mit Leerzeichen (`UI_TLS`, `UI_ALLOW`) in Anführungszeichen; jede Variable nur einmal in
+  `.env`.
 
 Prüfen (ohne Secrets anzuzeigen):
 
 ```bash
 sudo chmod 600 .env && sudo chown root:root .env
-sudo grep -E '^(AUTOMATO_|POSTGRES_)' .env | sed -E 's/((PASSWORD|TOKEN|SECRET|KEY)=).*/\1***/'
-P="--profile core --profile collectors --profile proxy --profile agent-gateway"
-sudo docker compose $P config --quiet && echo "Konfiguration ok"
+sudo deploy/aufbau.sh env                   # Pflichtwerte, Tippfehler, Doppelte - nur Namen
+sudo docker compose config --quiet && echo "Konfiguration ok"
 ```
+
+`aufbau.sh env` zeigt nie Werte. `sudo deploy/aufbau.sh env ordnen` sortiert die Datei nach den
+Abschnitten von `.env.example` und sichert sie vorher (`.env.vorher-<zeit>`).
 
 Hinweise:
 
@@ -693,20 +691,24 @@ sudo openssl x509 -in deploy/proxy/pki/$H.crt -noout -pubkey | openssl md5
 sudo openssl pkey -in deploy/proxy/pki/$H.key -pubout | openssl md5  # muss gleich sein
 ```
 
-**Agent-Gateway:** eigene Agent-CA, Server- und Agent-Zertifikate (`deploy/agent-gateway/README.md`):
+**Agent-Gateway:** eigene Agent-CA und Server-Zertifikat (`deploy/agent-gateway/README.md`):
 
 ```bash
 cd deploy/agent-gateway
-sudo ./make-certs.sh ca
+sudo ./make-certs.sh ca                               # gibt die CA für die Oberfläche frei
 sudo ./make-certs.sh server automato.int.example.ch   # = AUTOMATO_AGENT_GATEWAY_HOST
-sudo ./make-certs.sh agent <agent-name>               # je Agent, Name wie unter Collector-Agenten
 cd ../..
 ```
 
-Den Schlüssel der Agent-CA (`deploy/agent-gateway/pki/agents-ca.key`) nach dem Ausstellen in
-den Tresor übernehmen und auf der VM löschen; er wird erst für das nächste Agent-Zertifikat
-wieder gebraucht – auch für `server`, wenn sich `AUTOMATO_AGENT_GATEWAY_HOST` ändert (die
-Agent-Zertifikate bleiben dann gültig, nur die Gateway-Adresse der Agenten ändert sich).
+Die Zertifikate der Agenten stellt die Oberfläche aus (Collector-Agenten → Zugang, 1.6.0,
+ADR 0052). Dafür bleibt der Schlüssel der Agent-CA (`deploy/agent-gateway/pki/agents-ca.key`)
+auf der VM, lesbar nur für den Orchestrator (`make-certs.sh` setzt Besitzer und Rechte, R24);
+eine Kopie gehört in den Tresor. Wer den Schlüssel nicht auf der VM lassen will:
+`sudo ./make-certs.sh oberflaeche aus`, Schlüssel in den Tresor, je Agent von Hand
+`./make-certs.sh agent <agent-name>` (Name wie unter Collector-Agenten) – die Oberfläche meldet
+dann „Agent-CA nicht lesbar“ und gibt keinen Zugang aus. Ändert sich
+`AUTOMATO_AGENT_GATEWAY_HOST`, nur `server` neu ausstellen (die Agent-Zertifikate bleiben
+gültig, nur die Adresse in der `agent.env` ändert sich – neuen Zugang herunterladen).
 
 **Der eigenen CA vertrauen (VM und Container):** Stammen die Zertifikate von Keycloak, NetBox oder
 Geräten von der eigenen CA, braucht die VM deren **Root** – und Orchestrator und Worker dieselbe
@@ -755,11 +757,9 @@ collector` – die eingebundene Datei liest ein laufender Container sonst nicht 
 ### 6.4 Erster Start und Härtung des Stacks
 
 ```bash
-# P nur ohne COMPOSE_PROFILES in .env nötig – gilt nur in dieser Sitzung
-P="--profile core --profile collectors --profile proxy --profile agent-gateway"   # wie in .env
-sudo docker compose $P run --rm --no-deps proxy caddy validate --config /etc/caddy/Caddyfile
+sudo docker compose run --rm --no-deps proxy caddy validate --config /etc/caddy/Caddyfile
 sudo deploy/aufbau.sh backup-schluessel     # age-Schlüssel für die Sicherung, Eintrag in .env
-sudo docker compose $P up -d --build        # erster Start (Migrationen laufen im Dienst migrate)
+sudo docker compose up -d --build           # erster Start (Migrationen laufen im Dienst migrate)
 sudo deploy/aufbau.sh db-rollen             # Orchestrator ohne DDL-Rechte (eigene DB-Rolle)
 sudo deploy/aufbau.sh tls-intern            # TLS zwischen allen Containern (interne CA)
 sudo deploy/aufbau.sh pruefen               # alles grün, Exit 0
@@ -858,8 +858,10 @@ Umgebung; Benutzer, OTP und erlaubte Adressen bleiben getrennt.
 ### 6.6 Quellsysteme
 
 Mandant, Quellsysteme und Zugangsdaten in der Oberfläche anlegen (nur Read-only-Konten; NetBox
-mit Lese- und Schreib-Token), Agenten nach `deploy/collector-agent/README.md` mit Zertifikat aus
-6.3 (`AUTOMATO_ORCHESTRATOR_URL=https://automato.int.example.ch:8443`). Danach System →
+mit Lese- und Schreib-Token), Agenten unter **Collector-Agenten** anlegen, Geräte zuweisen,
+Agent-Paket und **Zugang** herunterladen und auf der Station installieren
+(`deploy/collector-agent/README.md`; die `agent.env` im Zugang zeigt schon auf
+`https://automato.int.example.ch:8443` und enthält die Zertifikatszeilen). Danach System →
 Verbindungen: jede Gegenstelle grün. Den Test, ob ein FortiGate-Token Schreibversuche ablehnt
 (`automato-collector --check --strict`, R16), nur bewusst und abgesprochen ausführen – er zählt
 als fehlgeschlagene Anmeldung.
