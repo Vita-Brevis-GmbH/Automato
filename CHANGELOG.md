@@ -11,7 +11,8 @@ Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neu
 
 Rückmeldung zum Test von 1.8.x (Anwender 2026-11-11).
 
-<!-- COLLECTOR -->
+Prüfen und Lauf der Switches schneller und der CDP-Systemname der ESXi-Nachbarn folgen in 1.9.1.
+
 - **VLANs je Standort** („In der VLAN Database … haben wir die VLAN ID mit Geräten an beiden
   Standorten, eigentlich sind die VLANs entweder physischer Standort spezifisch oder für einen
   virtuellen Standort spezifisch … pro Standort aufklappen“).
