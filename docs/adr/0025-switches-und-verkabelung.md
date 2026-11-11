@@ -291,3 +291,19 @@ Secrets, Open Source bevorzugt.
   bisher „ohne CDP/LLDP“.
 - **Prüfung** zwischen Switch-Port und vmnic nur der Speed (`link_speed_mismatch`); Duplex,
   VLANs und Port-Channel prüft Automato weiter nur zwischen zwei Switches.
+
+## Nachtrag 1.9.0 – eine Sitzung statt Anmeldung je Befehl
+
+- Anlass (Anwender 2026-11-11): „Der Switchrun geht auch sehr lange“ und „das prüfen geht
+  wesentlich länger … es bleibt vor allem bei den Switches lange hängen“.
+- Viele IOS-Switches schliessen die Verbindung nach jedem Exec. Bisher meldete sich der Client
+  darum je Befehl neu an. Merkt er das nach einem gelungenen Exec, liest er die übrigen Befehle
+  einmal angemeldet in der **begrenzten Sitzung**, wie bei Catalyst 1200/1300 (0.68.0). Geht die
+  Sitzung nicht, bleibt es beim Exec mit Neuverbindung.
+- **Nur lesen bleibt gleich:** In der Sitzung sendet der Client nur die Anmeldung, die Befehle
+  der Positivliste und das Abschalten des Seitenumbruchs für diese Sitzung (`SESSION`). Er
+  beantwortet keine Rückfragen und geht nie in den Konfigurationsmodus. Nach einem Fehler bzw.
+  einer gekürzten Ausgabe öffnet er für den nächsten Befehl eine neue Sitzung, damit er nie die
+  Ausgabe eines anderen Befehls liest.
+- **Prüfen** läuft wie der Lauf mit bis zu 8 Geräten gleichzeitig. Der erste Exec-Versuch wartet
+  nur noch 7 s auf erste Daten, statt bis zu 2 × 20 s.

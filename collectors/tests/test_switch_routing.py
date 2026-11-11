@@ -2,6 +2,8 @@
 Plattform (IOS-XE, NX-OS, Junos, Arista EOS) in Kontexte je VRF, Routen und BGP-Nachbarn,
 „nicht lesbar“ statt Fehler, Obergrenze fuer grosse Tabellen und der Lauf ueber den Collector."""
 
+import re
+
 import pytest
 import switch_routing as sr
 from sot_gateway.readonly import ReadOnlyViolation
@@ -276,8 +278,9 @@ def test_lauf(monkeypatch):
                     read_scope="10.0.0.1\n10.0.0.2")  # fmt: skip
     result = tasks.collect_once("run-rt", target)
     assert result.status == "completed"
-    assert result.message == ("Switches: 2 gelesen (IOS/IOS-XE) · Routing: 1 L3-Geraete, "
-                              "2 Kontexte, 27 Routen")  # fmt: skip
+    assert re.fullmatch(r"Switches: 2 gelesen \(IOS/IOS-XE\) · Routing: 1 L3-Geraete, 2 Kontexte, "
+                        r"27 Routen · Dauer \d+ s, längster Switch \S+ \(\d+ s\)",
+                        result.message)  # fmt: skip
     assert {c.context for c in result.routing.contexts} == {"rt-edge-01", "rt-edge-01:CUST-A"}
     assert {p.peer_ip for p in result.routing.peers} >= {"198.51.100.1", "198.51.100.9"}
     # Switch ohne Routing: nach dem ersten Routing-Befehl keine weiteren
@@ -287,4 +290,4 @@ def test_lauf(monkeypatch):
     # auch ohne L3-Geraet geht ein (leeres) Routing mit: der Orchestrator ersetzt den Stand
     only_l2 = tasks.collect_once("run-l2", target.model_copy(update={"read_scope": "10.0.0.2"}))
     assert only_l2.routing is not None and only_l2.routing.contexts == []
-    assert only_l2.message == "Switches: 1 gelesen (IOS/IOS-XE)"
+    assert re.fullmatch(r"Switches: 1 gelesen \(IOS/IOS-XE\) · Dauer \d+ s", only_l2.message)

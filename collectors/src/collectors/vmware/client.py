@@ -224,12 +224,15 @@ def _text(value) -> str | None:
 
 
 def _cdp(info) -> dict | None:
-    """CDP-Daten des Switches an einer vmnic (`PhysicalNicCdpInfo`) - ohne Geraete-ID keine."""
-    if info is None or not getattr(info, "devId", None):
+    """CDP-Daten des Switches an einer vmnic (`PhysicalNicCdpInfo`) - ohne Geraete-ID und ohne
+    Systemnamen keine. 1.9.0: ein Systemname allein reicht (Anwender: „im CDP zwar die
+    Geräte-ID nicht den Switchnamen steht, sondern eine ID. Aber im Systemname wäre der korrekte
+    Name zu finden“) - `normalize.neighbor_of` nimmt ihn vor der Geraete-ID."""
+    if info is None or not (getattr(info, "devId", None) or getattr(info, "systemName", None)):
         return None
     caps = getattr(info, "deviceCapability", None)
     return {
-        "dev_id": info.devId,
+        "dev_id": getattr(info, "devId", None),
         "port_id": getattr(info, "portId", None),
         "address": getattr(info, "address", None),
         "mgmt_addr": getattr(info, "mgmtAddr", None),

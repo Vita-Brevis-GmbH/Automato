@@ -289,8 +289,9 @@ def test_hosts_mit_vmnics_und_nachbarn_aus_den_beispieldaten():
     assert (vmnic0.mac, vmnic0.speed, vmnic0.duplex, vmnic0.status) == (
         "b4:96:91:00:11:00", "1000", "full", "up")  # fmt: skip
     nb = vmnic0.neighbor
+    # 1.9.0: CDP-Systemname („sw-acc-02“) vor der Geraete-ID („sw-acc-02.example.ch“)
     assert (nb.protocol, nb.remote_name, nb.remote_port, nb.remote_ip, nb.remote_caps) == (
-        "cdp", "sw-acc-02.example.ch", "GigabitEthernet1/0/5", "10.0.0.12", ["switch"])  # fmt: skip
+        "cdp", "sw-acc-02", "GigabitEthernet1/0/5", "10.0.0.12", ["switch"])  # fmt: skip
     assert nics["vmnic2"].status == "down" and nics["vmnic2"].neighbor is None  # ohne Link
     lldp = {p.name: p for p in hosts["esx02.example.ch"].pnics}["vmnic0"]
     assert lldp.speed == "10G"  # wie die Switches (NX-OS)
@@ -331,6 +332,36 @@ def test_nachbar_cdp_vor_lldp_und_lldp_port_als_mac():
     assert n2 is None
     assert [(p.speed, p.duplex) for p in h.pnics] == [("25G", "full"), ("2500", "half"),
                                                      ("1000", None)]  # fmt: skip
+
+
+def test_cdp_systemname_vor_geraete_id():
+    """Anwender: „Die Gegenstelle vom VMware Host wird nicht korrekt erkannt, obwohl im CDP zwar
+    die Geräte-ID nicht den Switchnamen steht, sondern eine ID. Aber im Systemname wäre der
+    korrekte Name zu finden“ - der Systemname gilt vor der Geraete-ID; ein Systemname allein
+    ergibt ebenfalls einen Nachbarn."""
+    from pyVmomi import vim
+
+    from collectors.vmware.normalize import neighbor_of
+
+    nic = vim.host.PhysicalNic
+    both = vc.hint_plain(nic.NetworkHint(device="vmnic0", connectedSwitchPort=nic.CdpInfo(
+        devId="ab12cd34ef56", systemName="sw-acc-01.example.ch", portId="Gi1/0/7",
+        mgmtAddr="10.0.0.11")))  # fmt: skip
+    assert both["cdp"]["dev_id"] == "ab12cd34ef56"
+    nb = neighbor_of({"name": "vmnic0", **both})
+    assert (nb.protocol, nb.remote_name, nb.remote_port, nb.remote_ip) == (
+        "cdp", "sw-acc-01.example.ch", "Gi1/0/7", "10.0.0.11")  # fmt: skip
+    only_name = vc.hint_plain(nic.NetworkHint(device="vmnic1", connectedSwitchPort=nic.CdpInfo(
+        systemName="sw-acc-01.example.ch", portId="Gi1/0/8")))  # fmt: skip
+    assert only_name["cdp"] is not None and only_name["cdp"]["dev_id"] is None
+    nb = neighbor_of({"name": "vmnic1", **only_name})
+    assert (nb.protocol, nb.remote_name, nb.remote_port) == ("cdp", "sw-acc-01.example.ch",
+                                                             "Gi1/0/8")  # fmt: skip
+    # ohne Geraete-ID und ohne Systemname kein CDP-Nachbar (dann LLDP bzw. keiner)
+    assert vc._cdp(nic.CdpInfo(portId="Gi1/0/9")) is None
+    assert neighbor_of({"cdp": {"dev_id": "ab12cd34ef56", "system_name": " "}}).remote_name == (
+        "ab12cd34ef56"
+    )
 
 
 def test_lesende_abfrage_query_network_hint_erlaubt():

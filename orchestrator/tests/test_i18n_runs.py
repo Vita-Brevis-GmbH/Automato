@@ -53,6 +53,13 @@ KNOWN = [
      "Switches: 2 read (IOS/IOS-XE, NX-OS) · not read: 10.0.0.3: not reachable: connection to "
      "port 22 refused (SSH off or path blocked) · Notes: 10.0.0.1: MAC table: 120 entries "
      "above 50000 not taken over"),
+    # Dauer und laengster Switch (1.9.0)
+    ("Switches: 3 gelesen (IOS/IOS-XE) · Dauer 2 min 10 s, längster Switch sw-01 (45 s, "
+     "Sitzung)",
+     "Switches: 3 read (IOS/IOS-XE) · duration 2 min 10 s, longest switch sw-01 (45 s, "
+     "session)"),
+    ("Switches: 1 gelesen (IOS/IOS-XE) · Dauer 12 s (Sitzung)",
+     "Switches: 1 read (IOS/IOS-XE) · duration 12 s (session)"),
     # Router und L3-Switches (ADR 0032): Routing mit Obergrenze und fehlenden Rechten
     ("Switches: 2 gelesen (IOS/IOS-XE) · Routing: 1 L3-Geraete, 2 Kontexte, 27 Routen · "
      "Hinweise: 10.0.0.1: Routing: show bgp ipv4 unicast: Authorization failed.; 10.0.0.1: "

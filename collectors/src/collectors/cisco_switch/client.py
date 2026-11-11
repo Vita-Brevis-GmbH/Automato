@@ -19,6 +19,13 @@ danach nur die Zeilen der Positivliste - die `show`-Befehle und je Plattform ein
 Seitenumbruch nur fuer diese Sitzung abschaltet (`SESSION`); bei „More“ ein Leerzeichen. Nie
 Konfigurationsmodus, nie eine Antwort auf Rueckfragen.
 
+Seit 1.9.0 (Anwender: „Der Switchrun geht auch sehr lange“): viele IOS-Switches schliessen die
+Verbindung nach jedem Exec - bisher je Befehl eine neue Anmeldung (bis zu 17 je Switch). Merkt
+der Client das (Verbindung nach einem gelungenen Exec zu), liest er die uebrigen Befehle **einmal
+angemeldet** in der begrenzten Sitzung, zuerst mit dem Befehl aus `SESSION` (Seitenumbruch aus).
+Geht die Sitzung nicht, bleibt es beim Exec mit Neuverbindung. Der Exec-Versuch fuer
+`show version` wartet nur noch `PROBE_TIMEOUT` auf die ersten Daten.
+
 Host-Schluessel: ist einer gespeichert (vom ersten Lauf, im Orchestrator je Adresse), muss der
 Switch ihn vorweisen - sonst bricht die Verbindung vor der Anmeldung ab. Ohne gespeicherten
 Schluessel wird der vorgewiesene uebernommen und mit dem Ergebnis gemeldet (der Orchestrator
@@ -26,6 +33,7 @@ haelt ihn danach fest).
 """
 
 import base64
+import codecs
 import hashlib
 import re
 import time
@@ -127,8 +135,13 @@ SESSION: dict[str, str] = {"cbs": "terminal datadump", "ios": "terminal length 0
                            "aoscx": "no page"}  # fmt: skip
 MAX_OUTPUT = 32 * 1024 * 1024  # je Befehl
 COMMAND_TIMEOUT = 120.0  # Sekunden je Befehl
-PROBE_TIMEOUT = 20.0  # erster Exec-Aufruf: antwortet er nicht, die begrenzte Sitzung versuchen
+# Erster Exec-Aufruf (`show version`): kommen so lange gar keine Daten, die begrenzte Sitzung
+# versuchen. Ein Geraet mit Exec antwortet in Sekundenbruchteilen; bis 1.8.x waren es 20 s (und
+# nach einer Neuverbindung noch einmal 20 s) - Anwender: „bleibt vor allem bei den Switches lange
+# haengen“. Kommen Daten, gilt fuer den Rest `COMMAND_TIMEOUT` (kein Abbruch mitten in der Antwort).
+PROBE_TIMEOUT = 7.0
 ROUTING_TIMEOUT = 300.0  # Routing-Befehle (ADR 0032): grosse Tabellen brauchen laenger
+SHELL_LOGIN_TIMEOUT = 20.0  # Wechsel in die Sitzung (1.9.0): bis zum Prompt, sonst Exec
 
 
 class HostKeyChanged(Exception):
@@ -188,12 +201,18 @@ class SwitchClient:
         self.host_key: str | None = known_key or None
         self.timeout = timeout
         self._ssh: paramiko.SSHClient | None = None
-        self._shell: _Shell | None = None  # begrenzte Sitzung statt Exec (Catalyst 1300)
+        self._shell: _Shell | None = None  # offene begrenzte Sitzung (None: bei Bedarf oeffnen)
+        # Befehle in der begrenzten Sitzung statt per Exec: Catalyst 1300 (kein Exec) bzw. seit
+        # 1.9.0 ein Geraet, das die Verbindung nach jedem Exec schliesst
+        self._in_session = False
+        self._session_tried = False  # Wechsel nach dem Exec einmal versucht (gescheitert: Exec)
+        self._served = 0  # gelungene Exec-Aufrufe auf der aktuellen Verbindung
+        self.platform: str | None = None  # aus `prepare` - fuer `SESSION` beim spaeteren Wechsel
         self.cut: set[str] = set()  # Routing-Ausgaben, die bei MAX_OUTPUT abgeschnitten wurden
 
     @property
     def mode(self) -> str:
-        return "shell" if self._shell is not None else "exec"
+        return "shell" if self._in_session else "exec"
 
     # -- Verbindung ------------------------------------------------------------------------
 
@@ -245,61 +264,137 @@ class SwitchClient:
         if self._ssh is not None:
             self._ssh.close()
             self._ssh = None
+        self._served = 0
 
     # -- Befehle ---------------------------------------------------------------------------
 
     def version(self) -> str:
         """`show version` - per Exec; antwortet das Geraet so nicht (kein Exec, nur Anmeldung
-        in der Sitzung), ueber die begrenzte Sitzung (0.68.0)."""
+        in der Sitzung), ueber die begrenzte Sitzung (0.68.0). Der Exec-Versuch wartet hoechstens
+        `PROBE_TIMEOUT` auf die ersten Daten und wird nicht wiederholt (1.9.0)."""
         try:
-            text = self.run("show version", timeout=PROBE_TIMEOUT)
+            text = self._run("show version", COMMAND_TIMEOUT, first=PROBE_TIMEOUT)
             if text.strip() and not LOGIN.search(text):
                 return text
-        except (paramiko.SSHException, EOFError, OSError, TimeoutError):
+        except (paramiko.SSHException, EOFError, OSError):  # auch TimeoutError: keine Daten
             pass
-        self.close()
-        self._ssh = self._connect()
-        self._shell = _Shell(self._ssh.get_transport(), self.username, self.password,
-                             self.timeout)  # fmt: skip
-        return self._shell.run("show version")
+        self._open_session(COMMAND_TIMEOUT)
+        return self._session_run("show version", COMMAND_TIMEOUT)
 
     def prepare(self, platform: str) -> None:
-        """In der begrenzten Sitzung den Seitenumbruch fuer die Sitzung abschalten."""
+        """Plattform merken; in der begrenzten Sitzung den Seitenumbruch fuer die Sitzung
+        abschalten. Wechselt der Client erst spaeter in die Sitzung (Geraet schliesst nach dem
+        Exec), schickt `_open_session` den Befehl dann selbst."""
+        self.platform = platform
         if self._shell is not None and platform in SESSION:
             self._shell.run(SESSION[platform], session=True)
 
     def run(self, command: str, timeout: float = COMMAND_TIMEOUT) -> str:
         """Erlaubten `show`-Befehl ausfuehren und die Ausgabe zurueckgeben. Manche Switches
-        beenden die Sitzung nach einem Exec-Aufruf - dann neu verbinden (gleicher Schluessel)."""
+        beenden die Verbindung nach einem Exec-Aufruf - dann die uebrigen Befehle in der
+        begrenzten Sitzung (1.9.0), geht die nicht, je Befehl neu verbinden (gleicher
+        Schluessel)."""
+        return self._run(command, timeout)
+
+    def _run(self, command: str, timeout: float, first: float | None = None) -> str:
         if command not in ALLOWED:
             raise ReadOnlyViolation(_blocked(command))
-        if self._shell is not None:
-            return self._shell.run(command)
         if command in routing.ALL:
             timeout = max(timeout, ROUTING_TIMEOUT)
-        for attempt in (1, 2):
+        if self._in_session:
+            return self._session_run(command, timeout)
+        attempts = (1,) if first is not None else (1, 2)  # Probe: nicht wiederholen
+        for attempt in attempts:
             transport = self._ssh.get_transport() if self._ssh is not None else None
             if transport is None or not transport.is_active():
+                if self._closed_after_exec():
+                    return self._session_run(command, timeout)
                 self.close()
                 self._ssh = self._connect()
                 transport = self._ssh.get_transport()
             try:
-                return self._exec(transport, command, timeout)
+                text = self._exec(transport, command, timeout, first)
+            except TimeoutError:
+                raise  # Frist ohne (vollstaendige) Antwort: nicht noch einmal so lange warten
             except (paramiko.SSHException, EOFError, OSError):
-                if attempt == 2:
+                if self._closed_after_exec():
+                    return self._session_run(command, timeout)
+                if attempt == attempts[-1]:
                     raise
                 self.close()  # Sitzung zu - einmal neu verbinden
+                continue
+            if not text and not transport.is_active() and self._closed_after_exec():
+                # leer, und die Verbindung ist weg: Kanal noch angenommen, aber die Verbindung
+                # endete vor der Antwort (Exec davor) - in der Sitzung nachholen statt leer lassen
+                return self._session_run(command, timeout)
+            self._served += 1
+            return text
         raise RuntimeError("nicht erreichbar")  # pragma: no cover
 
-    def _exec(self, transport: paramiko.Transport, command: str, timeout: float) -> str:
+    def _closed_after_exec(self) -> bool:
+        """Die Verbindung ist nach einem gelungenen Exec zu bzw. nimmt keinen Kanal mehr an -
+        das Geraet schliesst sie nach jedem Exec (viele Cisco-IOS-Switches). Dann einmal in die
+        begrenzte Sitzung wechseln: die uebrigen Befehle mit **einer** Anmeldung statt je Befehl
+        neu. Geht die Sitzung nicht (kein Terminal, kein Prompt), bleibt es beim Exec mit
+        Neuverbindung (False) - ohne weiteren Versuch."""
+        if not self._served or self._session_tried:
+            return False
+        self._session_tried = True
+        try:
+            self._open_session(SHELL_LOGIN_TIMEOUT)
+        except (HostKeyChanged, paramiko.AuthenticationException):
+            raise  # Verbindung selbst abgelehnt: nicht verschweigen
+        except Exception:  # noqa: BLE001 - keine Sitzung: beim Exec bleiben
+            self._in_session = False
+            self.close()
+            return False
+        return True
+
+    def _open_session(self, login_timeout: float) -> None:
+        """Neu verbinden und die begrenzte Sitzung oeffnen; ist die Plattform bekannt (nach
+        `prepare`), zuerst den Seitenumbruch fuer diese Sitzung abschalten (`SESSION`)."""
+        self.close()
+        self._ssh = self._connect()
+        self._in_session = True
+        self._shell = _Shell(self._ssh.get_transport(), self.username, self.password,
+                             self.timeout, login_timeout)  # fmt: skip
+        if self.platform in SESSION:
+            self._shell.run(SESSION[self.platform], session=True)
+
+    def _session_run(self, command: str, timeout: float) -> str:
+        """Befehl in der begrenzten Sitzung. Ist die Sitzung nach einem Fehler bzw. einer
+        gekuerzten Ausgabe nicht mehr im Takt (Rest der Ausgabe unterwegs), gilt sie als
+        verbraucht: der naechste Befehl oeffnet eine neue (statt fremde Ausgaben zu lesen)."""
+        if self._shell is None:
+            self._open_session(COMMAND_TIMEOUT)
+        shell = self._shell
+        try:
+            text = shell.run(command, timeout=timeout)
+        except ReadOnlyViolation:
+            raise  # nichts gesendet: Sitzung bleibt im Takt
+        except Exception:
+            self.close()
+            raise
+        if shell.cut:  # Routing-Text bei MAX_OUTPUT gekuerzt (ADR 0032) - wie per Exec
+            self.cut.add(command)
+            self.close()
+        return text
+
+    def _exec(self, transport: paramiko.Transport, command: str, timeout: float,
+              first: float | None = None) -> str:  # fmt: skip
+        """Ein Exec-Aufruf. `first` (Probe): Frist bis zu den ersten Daten - kommt bis dahin
+        nichts, `TimeoutError`; sobald Daten kommen, gilt `timeout` fuer die ganze Antwort.
+        Fragt das Geraet im Exec nach der Anmeldung („User Name:“), endet die Probe sofort."""
         chan = transport.open_session(timeout=self.timeout)
         try:
-            chan.settimeout(min(self.timeout, timeout))
+            chan.settimeout(min(self.timeout, timeout, first or timeout))
             chan.exec_command(command)  # ohne PTY: keine Seiten, kein Terminal
-            out, size = [], 0
-            deadline = time.monotonic() + timeout
+            out, size, tail = [], 0, b""
+            start = time.monotonic()
+            deadline = start + timeout
             while True:
-                if time.monotonic() > deadline:
+                now = time.monotonic()
+                if now > deadline or (first is not None and not out and now > start + first):
                     raise TimeoutError(
                         L(
                             f"„{command}“: keine vollstaendige Antwort",
@@ -316,17 +411,32 @@ class SwitchClient:
                 if size > MAX_OUTPUT:
                     if command in routing.PARTIAL:  # Text: bis hier auswerten (ADR 0032)
                         self.cut.add(command)
+                        out.append(data[: len(data) - (size - MAX_OUTPUT)])  # bis zur Grenze
                         text = b"".join(out).decode("utf-8", errors="replace")
                         return text[: text.rfind("\n") + 1]
                     raise RuntimeError(
                         L(f"„{command}“: Ausgabe zu gross", f"“{command}”: output too large")
                     )
                 out.append(data)
+                if first is not None:
+                    tail = (tail + data)[-200:]
+                    if LOGIN.search(tail.decode("utf-8", errors="replace").replace("\r", "")):
+                        break  # Anmeldung im Exec: kein Exec-Geraet - `version` nimmt die Sitzung
             while chan.recv_stderr_ready():
                 chan.recv_stderr(65536)
             return b"".join(out).decode("utf-8", errors="replace")
         finally:
-            chan.close()
+            _quiet_close(chan)
+
+
+def _quiet_close(chan) -> None:
+    """Kanal schliessen; ist die Verbindung schon zu (das Geraet schliesst sie nach dem Exec),
+    scheitert das Senden des Abschlusses - die Antwort ist dann schon gelesen bzw. der eigentliche
+    Fehler unterwegs (bis 1.8.x ersetzte dieser Fehler die gelesene Antwort: Befehl doppelt)."""
+    try:
+        chan.close()
+    except (paramiko.SSHException, EOFError, OSError):
+        pass
 
 
 def _blocked(command: str) -> str:
@@ -343,14 +453,32 @@ ANY_KEY = re.compile(r"Press any key to continue", re.I)  # ArubaOS-Switch/ProCu
 _NOISE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|[\x00-\x08\x0b\x0c\x0e-\x1f]")
 
 
+def _at_prompt(buf: str) -> re.Match | None:
+    """Prompt am Ende des Puffers. Gesucht wird nur im Ende (der Prompt steht in der letzten
+    Zeile): sonst wuerde jede empfangene Portion die ganze Ausgabe neu durchsuchen - bei grossen
+    Routing-Tabellen in der Sitzung (1.9.0) quadratisch. Ab einer Position > 0 passt `^` nicht
+    mehr, der Prompt beginnt dann hinter einem Zeilenumbruch - wie im ganzen Puffer."""
+    return PROMPT.search(buf, max(0, len(buf) - 512))
+
+
 class _Shell:
-    """Terminal-Sitzung mit Prompt fuer Geraete ohne Exec. Gesendet werden nur: Benutzername und
-    Passwort auf die Anmeldefragen, die erlaubten Befehle (`ALLOWED`, `SESSION`) und ein
-    Leerzeichen bei „More“."""
+    """Terminal-Sitzung mit Prompt fuer Geraete ohne Exec bzw. (1.9.0) fuer Geraete, die die
+    Verbindung nach jedem Exec schliessen. Gesendet werden nur: Benutzername und Passwort auf die
+    Anmeldefragen, die erlaubten Befehle (`ALLOWED`, `SESSION`) und ein Leerzeichen bei „More“.
+
+    Die Ausgaben entsprechen denen per Exec: Echo des Befehls und Prompt entfernt. Routing-Befehle
+    (ADR 0032) laufen hier mit ihrem langen Zeitlimit (der Aufrufer gibt `ROUTING_TIMEOUT`); eine
+    zu grosse Text-Ausgabe (`routing.PARTIAL`) wird bei `MAX_OUTPUT` wie per Exec bis zur letzten
+    ganzen Zeile gekuerzt (`cut`). Weil der Rest der Ausgabe dann noch unterwegs ist, schliesst der
+    Client die Sitzung danach und oeffnet fuer den naechsten Befehl eine neue - darum bleiben auch
+    die Routing-Befehle in der Sitzung statt je Befehl neu anzumelden."""
 
     def __init__(self, transport: paramiko.Transport, username: str, password: str,
-                 timeout: float) -> None:  # fmt: skip
+                 timeout: float, login_timeout: float = COMMAND_TIMEOUT) -> None:  # fmt: skip
         self.username, self.password, self.timeout = username, password, timeout
+        self.cut = False  # letzte Ausgabe bei MAX_OUTPUT gekuerzt (Rest nicht gelesen)
+        # Zeichen ueber mehrere Portionen (Umlaute in Beschreibungen) richtig zusammensetzen
+        self._decode = codecs.getincrementaldecoder("utf-8")(errors="replace").decode
         self.chan = transport.open_session(timeout=timeout)
         try:
             self.chan.get_pty(term="vt100", width=511, height=0)
@@ -359,29 +487,34 @@ class _Shell:
         self.chan.invoke_shell()
         self.chan.settimeout(0.5)
         self.prompt = ""
-        self._read(login=True)
+        self._read(login=True, timeout=login_timeout)
 
     def close(self) -> None:
-        self.chan.close()
+        _quiet_close(self.chan)
 
-    def run(self, command: str, session: bool = False) -> str:
+    def run(self, command: str, session: bool = False, timeout: float = COMMAND_TIMEOUT) -> str:
         allowed = command in SESSION.values() if session else command in ALLOWED
         if not allowed or "\n" in command or "\r" in command:
             raise ReadOnlyViolation(_blocked(command))
+        self.cut = False
         self.chan.send(command + "\n")
-        text = self._read()
+        text = self._read(timeout=timeout, partial=command in routing.PARTIAL)
         lines = text.split("\n")
         if lines and command in lines[0]:  # Echo des Befehls
             lines = lines[1:]
+        if self.cut:  # bis zur letzten ganzen Zeile (wie `_exec`); kein Prompt am Ende
+            return "\n".join(lines[:-1]).strip("\n") + "\n"
         if lines and PROMPT.search("\n" + lines[-1]):
             lines = lines[:-1]
         return "\n".join(lines).strip("\n") + "\n"
 
-    def _read(self, login: bool = False) -> str:
-        """Lesen bis zum Prompt; Anmeldung in der Sitzung nur beim Oeffnen."""
+    def _read(self, login: bool = False, timeout: float = COMMAND_TIMEOUT,
+              partial: bool = False) -> str:  # fmt: skip
+        """Lesen bis zum Prompt; Anmeldung in der Sitzung nur beim Oeffnen. `partial`: zu grosse
+        Ausgabe bis hier zurueckgeben (`cut`) statt abzubrechen."""
         buf, size = "", 0
         sent_user = sent_pass = False
-        deadline = time.monotonic() + COMMAND_TIMEOUT
+        deadline = time.monotonic() + timeout
         while True:
             if time.monotonic() > deadline:
                 raise TimeoutError(L("Sitzung: kein Prompt", "session: no prompt"))
@@ -394,8 +527,12 @@ class _Shell:
             if data:
                 size += len(data)
                 if size > MAX_OUTPUT:
+                    if partial:  # bis zur Grenze, `run` kuerzt auf die letzte ganze Zeile
+                        self.cut = True
+                        part = data[: len(data) - (size - MAX_OUTPUT)]
+                        return buf + _NOISE.sub("", self._decode(part).replace("\r", ""))
                     raise RuntimeError(L("Ausgabe zu gross", "output too large"))
-                buf += _NOISE.sub("", data.decode("utf-8", errors="replace").replace("\r", ""))
+                buf += _NOISE.sub("", self._decode(data).replace("\r", ""))
             tail = buf[-200:]
             if login and ANY_KEY.search(tail):
                 raise UnsupportedDevice(L(
@@ -420,7 +557,7 @@ class _Shell:
                 self.chan.send(self.password + "\n")
                 sent_pass, buf = True, ""
                 continue
-            m = PROMPT.search(buf)
+            m = _at_prompt(buf)
             if m and (login or m.group(1) + m.group(2) == self.prompt):
                 if login:
                     self.prompt = m.group(1) + m.group(2)

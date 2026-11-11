@@ -7,6 +7,7 @@ als Hinweis im Lauf, ein Geraet ohne Antwort als Teilfehler. Ergebnis wie per SS
 (`cisco_switch/tasks.collect_once`), Auswertung in `snmp/normalize.py`.
 """
 
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 from collectors.cisco_switch import normalize as ssh_normalize
@@ -115,13 +116,16 @@ def _entity(client: sc.SnmpClient, notes: list[str]) -> dict:
 
 
 def read_switch(entry: str, target) -> dict:
-    """Ein Geraet: gelesene Tabellen und Hinweise (wie `cisco_switch.tasks.read_switch`)."""
+    """Ein Geraet: gelesene Tabellen und Hinweise (wie `cisco_switch.tasks.read_switch`, mit
+    der Dauer `seconds` fuer den laengsten Switch in der Meldung, 1.9.0)."""
+    start = time.monotonic()
     creds = sc.credentials(target)  # nur authPriv - sonst vor dem ersten Paket abbrechen
     notes: list[str] = []
     with sc.SnmpClient(entry, creds) as client:
         raw = read(client, notes)
     return {"host": entry, "platform": "snmp", "vendor": vendor(raw["scalars"].get("sysObjectID")),
-            "outputs": raw, "notes": notes}  # fmt: skip
+            "outputs": raw, "notes": notes,
+            "seconds": round(time.monotonic() - start, 1)}  # fmt: skip
 
 
 def gather(target, entries: list[str]) -> dict:
@@ -146,21 +150,26 @@ def gather(target, entries: list[str]) -> dict:
 
 
 def check(target, entries: list[str]) -> tuple[bool, str]:
-    """Verbindung pruefen: je Geraet ein GET auf `sysName` mit SNMPv3 authPriv (kein Ingest)."""
+    """Verbindung pruefen: je Geraet ein GET auf `sysName` mit SNMPv3 authPriv (kein Ingest).
+    Seit 1.9.0 bis zu `PARALLEL` Geraete gleichzeitig wie im Lauf (ein Geraet ohne Antwort
+    wartet sonst seine Wiederholungen ab, bevor das naechste dran ist) - Zeilen in der
+    Reihenfolge des Lesebereichs."""
     try:
         creds = sc.credentials(target)
     except sc.SnmpConfigError as exc:
         return False, str(exc)
-    ok, lines = True, []
-    for entry in entries:
+
+    @carry  # Threads: Meldungen in der Sprache des Aufrufers (Konsole bzw. deutsch)
+    def one(entry: str) -> tuple[bool, str]:
         try:
             with sc.SnmpClient(entry, creds) as client:
                 name = client.get("sysName").get("sysName")
         except Exception as exc:  # noqa: BLE001 - Diagnose fuer den Operator
-            ok = False
-            lines.append(f"{entry}: {diagnose.device_error(exc, 'cisco_switch', target, True)}")
-            continue
+            return False, f"{entry}: {diagnose.device_error(exc, 'cisco_switch', target, True)}"
         shown = (name.decode("utf-8", errors="replace") if isinstance(name, bytes) else name) or "?"
-        lines.append(L(f"{entry}: erreichbar (SNMPv3 authPriv, sysName {shown})",
-                       f"{entry}: reachable (SNMPv3 authPriv, sysName {shown})"))  # fmt: skip
-    return ok, "; ".join(lines)
+        return True, L(f"{entry}: erreichbar (SNMPv3 authPriv, sysName {shown})",
+                       f"{entry}: reachable (SNMPv3 authPriv, sysName {shown})")  # fmt: skip
+
+    with ThreadPoolExecutor(max_workers=min(PARALLEL, len(entries))) as pool:
+        results = list(pool.map(one, entries))  # map: Reihenfolge wie im Lesebereich
+    return all(ok for ok, _ in results), "; ".join(line for _, line in results)
