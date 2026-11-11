@@ -46,7 +46,7 @@ und wird erweitert. Details: `README.md`, `ARCHITECTURE.md`, `docs/adr/`.
 
 - **Abnahme:** Der Anwender testet jede freigegebene Version sofort. Eine Version gilt als
   abgenommen, sobald seine nächste Rückmeldung keinen Einwand dazu enthält – in `ROADMAP.md`
-  („Abgenommen“) nachführen. Abgenommen bis **1.7.0** (2026-11-11).
+  („Abgenommen“) nachführen. Abgenommen bis **1.9.0** (2026-11-11).
 - **Klärung vor dem Bauen:** ändert sich Bedienung oder Bedeutung und ist der Wunsch mehrdeutig,
   zuerst 3–5 Zeilen Vorschlag mit einer Rückfrage, dann bauen.
 - **Sammeln:** Anpassungen einer Rückmeldungsrunde in **einer** Version (Patch = Korrektur,
@@ -119,5 +119,7 @@ und wird erweitert. Details: `README.md`, `ARCHITECTURE.md`, `docs/adr/`.
 mit 1.0.0 (Produktivschaltung DC, R14). Einzelheiten je Bereich in
 `docs/STAND.md`, Produktiv-Installation in `docs/INSTALLATION-PROD.md`, NetBox je Kunde in
 `docs/INSTALLATION-NETBOX-HOST.md`, Front-Proxy in `docs/INSTALLATION-FRONT.md`. Bekannte Einschränkungen von 1.0.0 und nächste Arbeiten in
-`ROADMAP.md` („Roadmap nach Versionen“): Version 2 = neuer Name und Cockpit (eigenes Projekt),
-Version 3 = Automatisierung; Korrekturen an Version 1 als 1.0.x.
+`ROADMAP.md` („Roadmap nach Versionen“): Version 2 = Cockpit (eigenes Repo, eng mit Magister,
+löst dessen Cockpit ab; der Name Automato bleibt), Version 3 = CMDB (Lizenz- und
+Gerätemanagement als eigenes Modul), Version 4 = Automatisierung; Korrekturen an Version 1 als
+1.x.

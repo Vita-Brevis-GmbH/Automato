@@ -172,6 +172,12 @@ Ops-Benutzer ──OIDC (Ops-Realm, OTP)──► Cockpit (Web + API + Postgres:
 
 ## Offene Entscheide (Anwender)
 
+**Stand 2026-11-11 (Version 2):** zu 1 – das Cockpit kommt in ein **eigenes Repo**, eng mit
+Magister verbunden („stark verheiratet mit Magister“). Es löst das bestehende Cockpit in
+Magister (`cockpit/`) ab. Der Name Automato bleibt. Lizenz- und Gerätemanagement wird nicht
+Teil des Cockpits, sondern die CMDB als eigenes Modul von Automato (Version 3). Die
+Automatisierung ist Version 4.
+
 Stand 2026-11-03 (ADR 0044): zu 2 **eine Instanz mit einem Mandanten je Kunde** (viele kleine
 Kunden), NetBox je Kunde als eigener Stack; zu 3 **Anmeldung je Mandant** (eigene Login-Seite wie
 bei Magister) mit einem Global Admin über alle Mandanten und einer globalen Sicht – Umsetzung in V2.
