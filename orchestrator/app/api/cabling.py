@@ -41,6 +41,7 @@ from app.models import InvVlan, MacEntry, SourceSystem, Tenant
 from app.models.source_system import Platform
 from app.store import cabling as store
 from app.store import customer_infra, l2, l2_export, l2_topo
+from app.store import sites as site_store
 from app.store.customer_infra import SHARED
 
 router = APIRouter(prefix="/cabling", tags=["cabling"])
@@ -389,61 +390,85 @@ def vlans(
     session: Session = Depends(get_session, scope="function"),
 ) -> list[dict]:
     """VLANs der Switches und des ACI (0.69.1): Name, EPGs, je Geraet Anzahl Access-Ports und
-    Trunks mit dem VLAN. Beim ACI zaehlen auch Port-Channels/vPCs (dort steht das VLAN)."""
+    Trunks mit dem VLAN. Beim ACI zaehlen auch Port-Channels/vPCs (dort steht das VLAN).
+
+    Seit 1.9.0 je Standort (Anwender 2026-11-11: „dort haben wir die VLAN ID mit Geräten an
+    beiden Standorten … pro Standort aufklappen“): ein VLAN gehoert zum Standort des
+    Quellsystems, das es liest (`sites.source_sites`) - VLAN 50 an zwei Standorten sind zwei
+    Zeilen, je mit den Geraeten dieses Standorts."""
     tid = _tenant(session, principal, tenant_id)
     cab = store.build(session, tid)
     platforms = dict(session.execute(
         select(SourceSystem.id, SourceSystem.platform).where(SourceSystem.tenant_id == tid)
     ).all())  # fmt: skip
+    site_of = site_store.source_sites(session, tid)
+
+    def where(sid: int | None) -> int:
+        site = site_of.get(sid) if sid is not None else None
+        return site.id if site is not None else 0
+
     ids = {sid for sid, p in platforms.items() if p in (Platform.CISCO_SWITCH, Platform.CISCO_ACI)}
-    names: dict[int, set[str]] = defaultdict(set)
-    epgs: dict[int, set[str]] = defaultdict(set)
-    kinds: dict[int, set[str]] = defaultdict(set)
+    Key = tuple[int, int]  # (Standort, VLAN)
+    names: dict[Key, set[str]] = defaultdict(set)
+    epgs: dict[Key, set[str]] = defaultdict(set)
+    kinds: dict[Key, set[str]] = defaultdict(set)
     if ids:
         rows = session.execute(
             select(InvVlan.vid, InvVlan.name, InvVlan.epgs, InvVlan.source_system_id)
             .where(InvVlan.tenant_id == tid, InvVlan.source_system_id.in_(ids))
         )  # fmt: skip
         for vid, name, vlan_epgs, sid in rows:
-            names[vid].add(name)
-            epgs[vid].update(vlan_epgs or [])
-            kinds[vid].add("aci" if platforms[sid] is Platform.CISCO_ACI else "switch")
-    use: dict[int, dict[str, list[int]]] = defaultdict(lambda: defaultdict(lambda: [0, 0]))
+            key = (where(sid), vid)
+            names[key].add(name)
+            epgs[key].update(vlan_epgs or [])
+            kinds[key].add("aci" if platforms[sid] is Platform.CISCO_ACI else "switch")
+    use: dict[Key, dict[str, list[int]]] = defaultdict(lambda: defaultdict(lambda: [0, 0]))
     for p in cab.ports:
         platform = platforms.get(p.source_system_id)
+        site = where(p.source_system_id)
         if platform is Platform.CISCO_ACI and p.kind in ("physical", "lag"):
             if p.untagged_vlan:
-                use[p.untagged_vlan][p.device][0] += 1
-                names.setdefault(p.untagged_vlan, set())
+                use[(site, p.untagged_vlan)][p.device][0] += 1
+                names.setdefault((site, p.untagged_vlan), set())
             for vid in p.tagged_vlans or []:
-                use[vid][p.device][1] += 1
-                names.setdefault(vid, set())
+                use[(site, vid)][p.device][1] += 1
+                names.setdefault((site, vid), set())
             continue
         if platform is not Platform.CISCO_SWITCH or p.kind != "physical":
             continue
         if p.mode == "access" and p.untagged_vlan:
-            use[p.untagged_vlan][p.device][0] += 1
-            names.setdefault(p.untagged_vlan, set())
+            use[(site, p.untagged_vlan)][p.device][0] += 1
+            names.setdefault((site, p.untagged_vlan), set())
         elif p.mode == "tagged":
             for vid in store.vlan_set(p.trunk_vlans) or set():
-                if vid in names:  # nur VLANs, die ein Switch kennt (nicht 1-4094 aufblaehen)
-                    use[vid][p.device][1] += 1
+                if (site, vid) in names:  # nur VLANs, die ein Switch hier kennt (nicht 1-4094)
+                    use[(site, vid)][p.device][1] += 1
     infra = _infra(session, principal, tid, customer_id)
+    sites = {s.id: s for s in site_of.values() if s is not None}
     out = []
-    for vid in sorted(names):
-        row = {"vid": vid, "names": sorted(names[vid]), "epgs": sorted(epgs[vid]),
-               "sources": sorted(kinds[vid]),
+    for site_id, vid in sorted(names, key=lambda k: (_site_order(sites.get(k[0])), k[1])):
+        key = (site_id, vid)
+        row = {"vid": vid, "site": site_store.site_out(sites.get(site_id)),
+               "names": sorted(names[key]), "epgs": sorted(epgs[key]),
+               "sources": sorted(kinds[key]),
                "devices": [{"device": d, "access": a, "trunks": t}
-                           for d, (a, t) in sorted(use.get(vid, {}).items())]}  # fmt: skip
+                           for d, (a, t) in sorted(use.get(key, {}).items())]}  # fmt: skip
         if infra is not None:  # 0.76.0: nur VLANs des Kunden (EPGs, Netze, Portgruppen)
             mark = customer_infra._mark(
-                infra.vlans.get(vid), *(infra.epg_paths.get(e) for e in epgs[vid])
+                infra.vlans.get(vid), *(infra.epg_paths.get(e) for e in epgs[key])
             )
             if not mark:
                 continue
             row["shared"] = mark == SHARED
         out.append(row)
     return out
+
+
+def _site_order(site) -> tuple:
+    """Physische Standorte zuerst, dann virtuelle, ohne Standort zuletzt - je nach Name."""
+    if site is None:
+        return (2, "")
+    return (0 if site.kind == "physical" else 1, (site.name or site.code).lower())
 
 
 @router.get("/sources")

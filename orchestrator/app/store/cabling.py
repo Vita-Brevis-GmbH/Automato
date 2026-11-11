@@ -17,6 +17,7 @@ Daraus werden Befunde (`checks`). Rein lesend; nur Daten der Plattform.
 
 import ipaddress
 import re
+from collections import defaultdict
 from dataclasses import dataclass, field
 
 from sqlalchemy import select
@@ -402,6 +403,52 @@ _FINDINGS = {
     "link_vlan_mismatch": "warning",
     "link_lag_mismatch": "warning",
 }
+
+
+@dataclass(frozen=True)
+class PortVlan:
+    """VLAN, das ein Switch-Port einem angeschlossenen Interface ohne eigenes VLAN gibt (1.9.0)."""
+
+    vid: int
+    switch: str  # Geraet des Switch-Ports
+    port: str
+    mode: str  # access | native
+    switch_source_id: int
+
+
+def port_vlans(cab: Cabling) -> dict[tuple[int, str], PortVlan]:
+    """(Quellsystem, Interface) eines gelesenen Geraets, das kein Switch ist (z. B. FortiGate-Port
+    mit IP) -> VLAN des Switch-Ports, an dem es laut Verkabelung haengt: Access-VLAN bzw. Native
+    VLAN des Trunks (1.9.0, Anwender 2026-11-11: „Native VLAN von dem Interface IP wird nicht
+    übernommen, obwohl dies auf dem Switch auslesbar ist. Nur das VLAN 1 ist absolut default und
+    dieses darf nicht verwendet werden“). VLAN 1 nie; ein Port-Channel erbt das VLAN seiner
+    Mitglieder, wenn alle gleich sind; widerspruechliche Angaben gelten nicht."""
+    found: dict[tuple[int, str], set[PortVlan]] = defaultdict(set)
+    for link in cab.links.values():
+        for end, other in ((link.a, link.b), (link.b, link.a)):
+            mine, sw = end.iface, other.iface
+            if mine is None or sw is None or sw.source_system_id not in cab.switch_sources:
+                continue
+            if mine.source_system_id in cab.switch_sources:
+                continue  # zwischen zwei Switches: kein Netz eines Interfaces
+            if sw.mode == "access":
+                vid, mode = sw.untagged_vlan, "access"
+            elif sw.mode == "tagged":
+                vid = sw.native_vlan if sw.native_vlan is not None else sw.untagged_vlan
+                mode = "native"
+            else:
+                continue
+            if not vid or vid == 1:
+                continue
+            pv = PortVlan(vid, sw.device, sw.name, mode, sw.source_system_id)
+            found[(mine.source_system_id, mine.name)].add(pv)
+            if mine.lag:
+                found[(mine.source_system_id, mine.lag)].add(pv)
+    out: dict[tuple[int, str], PortVlan] = {}
+    for key, options in found.items():
+        if len({o.vid for o in options}) == 1:
+            out[key] = min(options, key=lambda o: (o.switch, o.port))
+    return out
 
 
 def checks(session: Session, tenant_id: int, cab: Cabling | None = None) -> list[dict]:

@@ -16,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import naming
-from app.models import ObjectClass, Site, SiteLink
+from app.models import ObjectClass, Site, SiteLink, SourceSystem
 
 VIRTUAL_CODE = re.compile(r"^[0-9]{3}$")
 PHYSICAL_CODE = re.compile(r"^[A-Za-z][A-Za-z0-9-]{2,15}$")
@@ -54,6 +54,33 @@ def set_physical(session: Session, virtual: Site, physical: list[Site]) -> None:
     for p in {p.id: p for p in physical}.values():
         session.add(SiteLink(virtual_id=virtual.id, physical_id=p.id))
     session.flush()
+
+
+def default_site(sites: list[Site]) -> Site | None:
+    """Standort ohne Angabe am Quellsystem: der einzige physische, sonst der einzige ueberhaupt
+    (wie der NetBox-Sync seit 0.93.0)."""
+    physical = [s for s in sites if s.kind == "physical"]
+    if len(physical) == 1:
+        return physical[0]
+    return sites[0] if len(sites) == 1 else None
+
+
+def source_sites(session: Session, tenant_id: int) -> dict[int, Site | None]:
+    """Standort je Quellsystem des Mandanten (1.9.0): der am Quellsystem gewaehlte, sonst
+    `default_site`. VLANs gehoeren zum Standort des Quellsystems, das sie liest (Anwender
+    2026-11-11: „die VLANs sind entweder physischer Standort spezifisch oder für einen
+    virtuellen Standort spezifisch“)."""
+    sites = list(session.scalars(select(Site).where(Site.tenant_id == tenant_id).order_by(Site.id)))
+    by_id = {s.id: s for s in sites}
+    fallback = default_site(sites)
+    rows = session.execute(
+        select(SourceSystem.id, SourceSystem.site_id).where(SourceSystem.tenant_id == tenant_id)
+    )
+    return {sid: by_id.get(site_id) if site_id else fallback for sid, site_id in rows}
+
+
+def site_out(s: Site | None) -> dict | None:
+    return None if s is None else {"id": s.id, "code": s.code, "name": s.name, "kind": s.kind}
 
 
 class SiteIndex:

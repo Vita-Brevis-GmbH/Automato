@@ -1049,7 +1049,20 @@ function InventoryTable({
                     )}
                   </td>
                   <td className="mono">{cell(s.vrf)}</td>
-                  <td className="mono">{cell(s.vlan)}</td>
+                  <td className="mono">
+                    {s.vlan == null && s.vlan_switch ? (
+                      <span
+                        title={L(
+                          `vom Switch: ${s.vlan_switch.device} ${s.vlan_switch.port} (${s.vlan_switch.mode === "access" ? "Access-VLAN" : "Native VLAN"})`,
+                          `from the switch: ${s.vlan_switch.device} ${s.vlan_switch.port} (${s.vlan_switch.mode === "access" ? "access VLAN" : "native VLAN"})`,
+                        )}
+                      >
+                        {s.vlan_switch.vid} <span className="faint">{L("(Switch)", "(switch)")}</span>
+                      </span>
+                    ) : (
+                      cell(s.vlan)
+                    )}
+                  </td>
                   <td>
                     <IpamCell info={s.ipam} vlan={s.vlan} />
                   </td>

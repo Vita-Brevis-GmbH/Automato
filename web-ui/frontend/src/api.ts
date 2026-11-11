@@ -1029,6 +1029,8 @@ export interface InvSubnet extends InvBase {
   ipam: PrefixInfo | null;
   enrichment: PrefixInfo | null;
   site: SiteHint | null; // aus dem BD-/Netz-Namen
+  // 1.9.0: Interface ohne eigenes VLAN - VLAN des Switch-Ports laut Verkabelung (nie VLAN 1)
+  vlan_switch?: { vid: number; device: string; port: string; mode: "access" | "native" };
 }
 export interface InvVrf extends InvBase {
   name: string;
@@ -4514,6 +4516,7 @@ export interface CablingPort {
 }
 export interface CablingVlan {
   vid: number;
+  site?: SiteRef | null; // 1.9.0: Standort des Quellsystems (je Standort eine Zeile)
   names: string[];
   epgs: string[]; // ACI (0.69.1): EPGs mit dem VLAN (Tenant/AP/EPG)
   sources: ("aci" | "switch")[];

@@ -204,3 +204,31 @@ Die gelesenen ESXi-Hosts eines vCenters (ADR 0017 Nachtrag 1.8.0) kommen in den 
   CDP über den ESXi-Host bestätigt“.
 - Hosts, die Automato nur als Host einer VM kennt, kommen nicht nach NetBox.
 - Ein Sync ohne *Verkabelung* fasst die Hosts nicht an (`_device_section`).
+
+## Nachtrag 1.9.0 – VLANs je Standort, Native VLAN der Netze
+
+Anwender 2026-11-11: „<Switch>: Modus/VLANs an 2 Ports weggelassen – VLAN 50 in NetBox nicht
+eindeutig, was hat dies zu bedeuten?“, „die VLANs sind entweder physischer Standort spezifisch
+oder für einen virtuellen Standort spezifisch“ und „Native VLAN von dem Interface IP wird nicht
+übernommen … Nur das VLAN 1 ist absolut default und dieses darf nicht verwendet werden“.
+
+- **Geltungsbereich der VLAN-Gruppen:** Die Gruppe eines Quellsystems (`<Mandant>-<Quellsystem>`,
+  Netzinventar und Verkabelung) gilt am Standort des Quellsystems. In NetBox steht das als
+  `scope_type = dcim.site` mit `scope_id` dieses Standorts; ohne Standort bleibt sie global.
+  Vorher galten alle Gruppen global. VLAN 50 zweier Firewalls an zwei Standorten war damit für
+  jeden Switch „nicht eindeutig“. Bestehende Gruppen bekommen den Standort beim nächsten Sync
+  (Änderung).
+- **Suche des VLANs eines Ports** (`_vlan_level`): eigene Gruppe vor Standort vor global. Eine
+  Gruppe mit anderem Standort ist an diesem Gerät nicht verwendbar. Standorte, die der Sync
+  erst anlegt, zählen über ihren Slug.
+- **Mehrdeutig → eigene Gruppe:** Ist ein VLAN der Switches in NetBox auf der besten Stufe
+  mehrdeutig, legt der Sync es (wie ein fehlendes) in der Gruppe des Quellsystems an. Der Port
+  nimmt dann dieses.
+- **Native VLAN der Netze:** Hat das Netz eines Interfaces kein eigenes VLAN (FortiGate-Port mit
+  IP), nimmt der Sync das VLAN des Switch-Ports, an dem das Interface laut Verkabelung hängt
+  (`cabling.port_vlans`). Das ist das Access-VLAN bzw. das Native VLAN des Trunks, **nie VLAN 1**.
+  - Ein Port-Channel erbt das VLAN, wenn alle Mitglieder gleich sind.
+  - Widersprüchliche Angaben gelten nicht.
+  - Zugeordnet wird wie bei den Ports erst nach dem Lesen und nur eindeutig. Sonst bleibt das
+    Netz ohne VLAN, und der Hinweis nennt es.
+  - Dieselbe Angabe zeigt Automato bei den Subnetzen des Netzinventars als „(Switch)“.
