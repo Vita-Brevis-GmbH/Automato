@@ -7,6 +7,18 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 1.8.1 – 2026-11-11
+
+Anwender 2026-11-11 (`deploy/aufbau.sh pruefen`): AD-DNS „FEHLER … Am Quellsystem sind keine Zonen
+hinterlegt“ – „Im Quellsystem sind die Zonen drin“.
+
+- **Verbindungsübersicht prüft AD-DNS mit den DNS-Zonen:** Die Übersicht (System → Verbindungen,
+  `aufbau.sh pruefen`) gab der Prüfung die DNS-Zonen des Quellsystems nicht mit und meldete
+  deshalb „keine Zonen hinterlegt“. Jetzt prüft sie wie **Quellsysteme → Prüfen** je Zone, ob der
+  DNS-Server den Zonentransfer erlaubt.
+- **Hinweis bei Agent-Geräten:** Er nennt neben `.\run-agent.ps1 -Check` auf der Station auch
+  **Quellsysteme → Prüfen** – seit 1.7.0 prüft der Agent beim nächsten Abruf.
+
 ## 1.8.0 – 2026-11-11
 
 Rückmeldung zum Test von 1.7.0 (Anwender 2026-11-11).

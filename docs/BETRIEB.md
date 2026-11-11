@@ -2116,7 +2116,10 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     - Datenbank, Redis (Warteschlange zum zentralen Worker), Keycloak (bei OIDC die JWKS),
     - jedes zentral gelesene Quellsystem: Name, TCP, bei NetBox die API mit dem Lese-Token
       (nur lesend) und ob ein Schreib-Token für den Sync hinterlegt ist,
-    - Systeme, die ein Agent liest, als Hinweis je Agent (prüft der Agent: `.\run-agent.ps1 -Check`).
+    - Systeme, die ein Agent liest, als Hinweis je Agent (prüft der Agent: unter **Quellsysteme →
+      Prüfen** beim nächsten Abruf, seit 1.7.0, oder auf der Station `.\run-agent.ps1 -Check`).
+    - AD-DNS mit den DNS-Zonen des Quellsystems (Zonentransfer erlaubt?) – seit 1.8.1 wie
+      „Quellsysteme → Prüfen“.
 
     Je Ziel die Schritte (✓/✗) und die Abhilfe. Antwortet ein Dienst auf dem Docker-Host nicht
     (`host.docker.internal`), steht die passende ufw-Regel zum Kopieren da – schmal: nur das
