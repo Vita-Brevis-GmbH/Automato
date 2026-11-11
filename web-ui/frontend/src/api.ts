@@ -1474,15 +1474,22 @@ export const patchSystem = (
   } & SystemCredentials,
 ) => sendJSON<System>(`/api/systems/${id}`, "PATCH", body);
 export const deleteSystem = (id: number) => sendJSON<DeleteCounts>(`/api/systems/${id}`, "DELETE");
-// Erreichbarkeit vom Orchestrator aus (zentral gelesene Systeme): Name, TCP, NetBox-Status
+// Verbindung prüfen: zentral gelesene Systeme vom Orchestrator aus (Name, TCP, NetBox-Status),
+// Geräte hinter einem Agenten (1.7.0) als Auftrag an den Agenten (Name, Verbindung, Anmeldung)
 export interface SystemCheck {
   system_id: number;
   name: string;
   ok: boolean;
   hint: string | null;
-  steps: { step: "dns" | "tcp" | "http"; ok: boolean; detail: string }[];
+  steps: { step: "dns" | "tcp" | "http" | "login"; ok: boolean; detail: string }[];
+  from?: "orchestrator" | "agent";
+  agent?: string | null;
+  check_id?: number;
+  status?: "queued" | "running" | "done" | "expired";
 }
 export const checkSystem = (id: number) => sendJSON<SystemCheck>(`/api/systems/${id}/check`, "POST");
+export const fetchSystemCheck = (id: number, checkId: number) =>
+  getJSON<SystemCheck>(`/api/systems/${id}/check/${checkId}`);
 
 // Läufe
 // Alle Läufe seitenweise mit Gesamtzahl (0.13.0); status: open | queued | running | completed | failed

@@ -34,7 +34,7 @@ from app.auth.principal import Principal
 from app.config import Settings, get_settings
 from app.db import get_session
 from app.models import Agent, RunStatus, SourceSystem, Tenant
-from app.store import agent_access, agent_package, runs
+from app.store import agent_access, agent_checks, agent_package, runs
 from app.store import agents as store
 
 log = logging.getLogger(__name__)
@@ -148,9 +148,24 @@ class NextRun(BaseModel):
     target: Target | None = None
 
 
+class CheckJob(BaseModel):
+    """Prüfauftrag aus der Oberfläche (1.7.0): Gerät read-only prüfen, Ergebnis an
+    `POST /internal/agent/checks/{check_id}`."""
+
+    check_id: int
+    target: Target
+
+
 class NextRunOut(BaseModel):
     run: NextRun | None
     update: bool = False  # zuerst aktualisieren: neue Version liegt bereit (0.16.0)
+    checks: list[CheckJob] = []  # Prüfaufträge (1.7.0) - ältere Agenten ignorieren das Feld
+
+
+class CheckResultIn(BaseModel):
+    ok: bool
+    steps: list[dict] = Field(default_factory=list, max_length=20)
+    hint: str | None = Field(default=None, max_length=2000)
 
 
 # so lange warten neue Laeufe auf das Update eines veralteten Agenten (der alte prueft im
@@ -425,10 +440,11 @@ def next_run(
     settings: Settings = Depends(get_settings),
 ):
     update = _update_pending(agent, x_agent_version, x_agent_update, _current_version(settings))
+    checks = _claim_checks(session, agent)
     hold = datetime.now(UTC) - UPDATE_HOLD if update else None
     run = store.claim_next_run(session, agent, platform, queued_before=hold)
     if run is None:
-        return NextRunOut(run=None, update=update)
+        return NextRunOut(run=None, update=update, checks=checks)
     target = None
     src = session.get(SourceSystem, run.source_system_id) if run.source_system_id else None
     if src is not None:
@@ -440,7 +456,7 @@ def next_run(
             run.finished_at = datetime.now(UTC)
             run.message = f"Zugangsdaten nicht lesbar: {exc}"
             log.warning("Lauf %s abgebrochen: %s", run.id, exc)
-            return NextRunOut(run=None)
+            return NextRunOut(run=None, checks=checks)
     audit.record(
         session,
         actor=f"agent:{agent.name}",
@@ -457,7 +473,48 @@ def next_run(
             target=target,
         ),
         update=update,
+        checks=checks,
     )
+
+
+def _claim_checks(session: Session, agent: Agent) -> list[CheckJob]:
+    """Offene Prüfaufträge des Agenten samt Zugangsdaten (wie beim Lauf, nur für ihn)."""
+    jobs = []
+    for check in agent_checks.claim(session, agent):
+        src = session.get(SourceSystem, check.source_system_id)
+        try:
+            target = Target(**store.target_for(src, agent.id))
+        except credentials.CredentialsUnavailable as exc:
+            agent_checks.finish(
+                session, agent, check.id, False, [], f"Zugangsdaten nicht lesbar: {exc}"
+            )
+            continue
+        audit.record(
+            session,
+            actor=f"agent:{agent.name}",
+            action="agent_check.claimed",
+            subject=str(check.id),
+            detail={
+                "check_id": check.id,
+                "source_system_id": src.id,
+                "platform": src.platform.value,
+            },
+        )
+        jobs.append(CheckJob(check_id=check.id, target=target))
+    return jobs
+
+
+@agent_router.post("/checks/{check_id}", status_code=204)
+def check_result(
+    check_id: int,
+    body: CheckResultIn,
+    agent: Agent = Depends(require_agent),
+    session: Session = Depends(get_session, scope="function"),
+) -> Response:
+    """Ergebnis eines Prüfauftrags (1.7.0) - nur für den eigenen, abgeholten Auftrag."""
+    if agent_checks.finish(session, agent, check_id, body.ok, body.steps, body.hint) is None:
+        raise HTTPException(status_code=404, detail="check not found or not open")
+    return Response(status_code=204)
 
 
 @agent_router.get("/targets", response_model=list[Target])

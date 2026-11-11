@@ -7,6 +7,23 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 1.7.0 – 2026-11-11
+
+Anwender 2026-11-11: „Wenn ich den internen Worker verwende, kann ich die Verbindung prüfen, beim
+collector Agent nicht, können wir dies mit einbringen?“
+
+- **Verbindung prüfen auch bei Geräten hinter einem Agenten:** **Quellsysteme → Prüfen** legt
+  einen Prüfauftrag an; der Agent bekommt ihn beim nächsten Abruf (im Wach-Modus spätestens nach
+  20 s) samt Zugangsdaten, prüft read-only **Name, Verbindung und Anmeldung** (dieselbe Prüfung
+  wie `run-agent.ps1 -Check`) und meldet das Ergebnis. Die Seite zeigt „Der Agent … prüft beim
+  nächsten Abruf“ und danach die Schritte wie beim zentralen Worker, mit „(geprüft vom Agenten
+  …)“. Meldet sich der Agent nicht (geplante Aufgabe aus, Agent älter als 1.7.0), verfällt der
+  Auftrag nach drei Minuten sichtbar mit Hinweis. Doppelt klicken prüft nicht doppelt;
+  deaktivierter Agent: klare Meldung. Audit `agent_check.claimed`, Migration `0079`
+  (`agent_check`). Der Agent aktualisiert sich wie gewohnt selbst.
+- **Altlasten:** zwei Hinweise auf die „lokale Konfiguration“ des Workers entfernt (Lauf-Dialog,
+  Collector) – sie gibt es seit 1.6.0 nicht mehr.
+
 ## 1.6.1 – 2026-11-11
 
 Anwender 2026-11-11 beim Update auf 1.6.0: „WARN[0000] Docker Compose is configured to build using

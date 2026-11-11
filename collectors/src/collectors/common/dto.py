@@ -428,9 +428,10 @@ class Target(BaseModel):
 
     Der zugewiesene Agent bekommt es beim Abholen eines Laufs. Zugangsdaten je Plattform:
     FortiGate `token`, Cisco ACI `username`/`password`; sie fehlen, wenn am Geraet keine
-    hinterlegt sind (dann gilt die lokale Konfiguration). Switches & Router mit Zugang SNMPv3
-    (`access` = `snmp`, ADR 0033): `username` = SNMPv3-Benutzer, `auth_protocol`/`auth_password`,
-    `priv_protocol`/`priv_password` (nur authPriv), optional `context`.
+    hinterlegt sind (dann bricht der Lauf mit Hinweis ab, 1.6.0). Switches & Router mit Zugang
+    SNMPv3 (`access` = `snmp`, ADR 0033): `username` = SNMPv3-Benutzer,
+    `auth_protocol`/`auth_password`, `priv_protocol`/`priv_password` (nur authPriv), optional
+    `context`.
     """
 
     source_system_id: int | None = None

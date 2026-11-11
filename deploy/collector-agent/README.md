@@ -103,6 +103,12 @@ Bereits installierte Agenten übernehmen den Wach-Modus mit dem nächsten Selbst
 
 ## 3. Verbindung prüfen
 
+Im Web-UI (seit 1.7.0): **Mandanten & Standorte → Quellsysteme → Prüfen** beim Gerät. Der Agent
+prüft beim nächsten Abruf (im Wach-Modus spätestens nach 20 s) Name, Verbindung und Anmeldung
+read-only und meldet das Ergebnis; die Seite zeigt es, sobald es da ist. Meldet er sich nicht
+(geplante Aufgabe aus, Agent älter als 1.7.0), sagt die Seite das nach drei Minuten. Auf der
+Station selbst, für alle Geräte des Agenten:
+
 ```powershell
 powershell -ExecutionPolicy Bypass -File C:\Automato\collector\run-agent.ps1 -Check
 ```

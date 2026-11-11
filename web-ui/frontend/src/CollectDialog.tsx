@@ -275,13 +275,13 @@ export default function CollectDialog({
                     Für „{system.name}“ sind keine Zugangsdaten hinterlegt –{" "}
                     {execution === "external"
                       ? "der Agent bricht den Lauf ab."
-                      : "der zentrale Worker nutzt dann seine lokale Konfiguration bzw. Beispieldaten."}
+                      : "der zentrale Worker bricht den Lauf ab (Beispieldaten nur im Labor)."}
                   </>,
                   <>
                     No credentials are stored for “{system.name}” –{" "}
                     {execution === "external"
                       ? "the agent aborts the run."
-                      : "the central worker then uses its local configuration or sample data."}
+                      : "the central worker aborts the run (sample data only in the lab)."}
                   </>,
                 )}
               </Note>

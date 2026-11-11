@@ -17,6 +17,8 @@ log = logging.getLogger(__name__)
 # Letzte Antwort von next-run: eine neue Agent-Version liegt bereit, Laeufe kommen erst nach
 # dem Update (0.16.0)
 _update_requested = False
+# Pruefauftraege aus der Oberflaeche (1.7.0), mit next-run geliefert: {check_id, target}
+_checks: list[dict] = []
 
 
 def _headers() -> dict[str, str]:
@@ -33,7 +35,25 @@ def next_run(platform: str | None = None) -> dict | None:
     )
     body = response.json()
     _update_requested = bool(body.get("update"))
+    _checks.extend(c for c in body.get("checks") or [] if isinstance(c, dict))
     return body.get("run")
+
+
+def take_checks() -> list[dict]:
+    """Mit next-run gelieferte Pruefauftraege (1.7.0) - jeder nur einmal."""
+    jobs = list(_checks)
+    _checks.clear()
+    return jobs
+
+
+def report_check(check_id: int, ok: bool, steps: list[dict], hint: str | None) -> None:
+    """Ergebnis eines Pruefauftrags an den Orchestrator (nie Zugangsdaten)."""
+    settings = get_settings()
+    http.post_json(
+        f"{settings.orchestrator_url}/internal/agent/checks/{int(check_id)}",
+        {"ok": bool(ok), "steps": steps, "hint": hint},
+        _headers(),
+    )
 
 
 def update_requested() -> bool:
@@ -73,7 +93,7 @@ _sleep = time.sleep  # Tests ersetzen das Warten
 def claim_target(run_id: str) -> tuple[bool, Target | None]:
     """Ziel eines zentralen Laufs (zentraler Worker, internes Token) und ob dieser Auftrag ihn
     liest (0.109.1): ein erneut geschickter Lauf wird nur einmal gelesen. Ohne Quellsystem
-    (`target` None) gilt die lokale Konfiguration.
+    (`target` None) liest nur der Worker im Labor Beispieldaten (`samples_allowed`, 1.6.0).
 
     Nicht abrufbar (Netz, Orchestrator antwortet mit Fehler) -> nach Wiederholungen **nicht**
     lesen (0.113.2): ohne Ziel scheiterte der Lauf mit „keine Adresse fuer die

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   Agent,
   checkSystem,
+  fetchSystemCheck,
   createSite,
   createSystem,
   createTenant,
@@ -931,7 +932,8 @@ function SourceSystems({ me, tenant }: { me: Me; tenant: Tenant }) {
   const [editing, setEditing] = useState<System | "new" | null>(null);
   const [err, setErr] = useState<unknown>(null);
   const [toDelete, setToDelete] = useState<System | null>(null);
-  // Verbindung prüfen (zentral gelesene Systeme, vom Orchestrator aus)
+  // Verbindung prüfen: zentral gelesene Systeme vom Orchestrator aus, Geräte hinter einem Agenten
+  // (1.7.0) als Auftrag - der Agent prüft beim nächsten Abruf, die Seite fragt alle 2 s nach
   const [check, setCheck] = useState<SystemCheck | "busy" | null>(null);
   const runCheck = (s: System) => {
     setCheck("busy");
@@ -942,6 +944,20 @@ function SourceSystems({ me, tenant }: { me: Me; tenant: Tenant }) {
         setErr(e);
       });
   };
+  const waiting = check && check !== "busy" && (check.status === "queued" || check.status === "running");
+  useEffect(() => {
+    if (!waiting || check.check_id == null) return;
+    const { system_id, check_id } = check;
+    const timer = window.setTimeout(() => {
+      fetchSystemCheck(system_id, check_id)
+        .then((next) => setCheck((cur) => (cur && cur !== "busy" && cur.check_id === check_id ? next : cur)))
+        .catch((e) => {
+          setCheck(null);
+          setErr(e);
+        });
+    }, 2000);
+    return () => window.clearTimeout(timer);
+  }, [check, waiting]);
 
   const load = () =>
     fetchSystems(tenant.id)
@@ -985,19 +1001,53 @@ function SourceSystems({ me, tenant }: { me: Me; tenant: Tenant }) {
           </div>
         ) : null}
         {check === "busy" && <Note>{L("Verbindung wird geprüft…", "Checking connection…")}</Note>}
-        {check && check !== "busy" && (
+        {check && check !== "busy" && waiting && (
+          <div style={{ padding: "10px 16px 0" }} id="system-check">
+            <Note>
+              <b>{check.name}:</b>{" "}
+              {L(
+                <>
+                  Der Agent „{check.agent}“ prüft{check.status === "running" ? " gerade" : " beim nächsten Abruf"} –
+                  meist unter 30 Sekunden (im Wach-Modus fragt er alle 20 s nach).
+                </>,
+                <>
+                  The agent “{check.agent}” checks{check.status === "running" ? " right now" : " on its next poll"} –
+                  usually within 30 seconds (in watch mode it polls every 20 s).
+                </>,
+              )}{" "}
+              <button className="linkbtn" onClick={() => setCheck(null)}>
+                {L("schliessen", "close")}
+              </button>
+            </Note>
+          </div>
+        )}
+        {check && check !== "busy" && !waiting && (
           <div style={{ padding: "10px 16px 0" }} id="system-check">
             <Note warn={!check.ok}>
               <b>
-                {check.name}: {check.ok ? L("erreichbar", "reachable") : L("nicht erreichbar", "not reachable")}
+                {check.name}:{" "}
+                {check.status === "expired"
+                  ? L("keine Antwort vom Agenten", "no answer from the agent")
+                  : check.ok
+                    ? L("erreichbar", "reachable")
+                    : L("nicht erreichbar", "not reachable")}
               </b>{" "}
-              {L("(geprüft vom Orchestrator)", "(checked by the orchestrator)")}
+              {check.from === "agent"
+                ? L(`(geprüft vom Agenten „${check.agent}“)`, `(checked by the agent “${check.agent}”)`)
+                : L("(geprüft vom Orchestrator)", "(checked by the orchestrator)")}
               <ul style={{ margin: "4px 0" }}>
                 {check.steps.map((st, i) => (
                   <li key={i}>
                     {st.ok ? "✓" : "✗"}{" "}
-                    {{ dns: "Name", tcp: L("Verbindung", "Connection"), http: "NetBox-API" }[st.step]}:{" "}
-                    {st.detail}
+                    {
+                      {
+                        dns: "Name",
+                        tcp: L("Verbindung", "Connection"),
+                        http: "NetBox-API",
+                        login: L("Anmeldung", "Sign-in"),
+                      }[st.step]
+                    }
+                    : {st.detail}
                   </li>
                 ))}
               </ul>
@@ -1032,14 +1082,21 @@ function SourceSystems({ me, tenant }: { me: Me; tenant: Tenant }) {
               me.isAdmin
                 ? (s) => (
                     <>
-                      {s.agent_id == null && s.base_url && (
+                      {s.base_url && (
                         <button
                           className="btn btn-ghost btn-sm"
-                          disabled={check === "busy"}
-                          title={L(
-                            "Erreichbarkeit vom Orchestrator aus prüfen (Name, Verbindung, bei NetBox die API)",
-                            "Check reachability from the orchestrator (name, connection, for NetBox the API)",
-                          )}
+                          disabled={check === "busy" || !!waiting}
+                          title={
+                            s.agent_id == null
+                              ? L(
+                                  "Erreichbarkeit vom Orchestrator aus prüfen (Name, Verbindung, bei NetBox die API)",
+                                  "Check reachability from the orchestrator (name, connection, for NetBox the API)",
+                                )
+                              : L(
+                                  "Vom Agenten aus prüfen (Name, Verbindung, Anmeldung) – beim nächsten Abruf des Agenten",
+                                  "Check from the agent (name, connection, sign-in) – on the agent's next poll",
+                                )
+                          }
                           onClick={() => runCheck(s)}
                         >
                           {L("Prüfen", "Check")}
