@@ -70,6 +70,14 @@ werkzeuge() {
   done
   if docker compose version >/dev/null 2>&1; then ok "docker compose $(docker compose version --short 2>/dev/null)"
   else fehler "docker compose v2 fehlt (Paket docker-compose-plugin)"; fi
+  if hat_buildx; then ok "docker buildx $(docker buildx version 2>/dev/null | awk '{print $2}')"
+  else
+    warn "docker buildx fehlt – Compose baut ohne Bake (Warnung „configured to build using Bake, but buildx isn't installed“)"
+    local paket
+    paket=$(buildx_paket)
+    if [ -n "$paket" ]; then info "Nachinstallieren: sudo deploy/aufbau.sh docker-update (Paket $paket)"
+    else info "Nachinstallieren: Paket docker-buildx-plugin (Docker-Repository) bzw. docker-buildx (Ubuntu)"; fi
+  fi
   if docker info >/dev/null 2>&1; then ok "Docker-Dienst antwortet (Engine $(docker version --format '{{.Server.Version}}' 2>/dev/null))"
   else fehler "Docker-Dienst antwortet nicht (systemctl start docker; als root bzw. Gruppe docker)"; return; fi
   [ -f .env ] && ok ".env vorhanden" || warn ".env fehlt – es gelten die Vorgaben aus docker-compose.yml"
@@ -98,6 +106,17 @@ docker_pakete() {  # je installiertem Paket: name|installiert|verfuegbar
 }
 
 docker_aus_snap() { command -v snap >/dev/null 2>&1 && snap list docker >/dev/null 2>&1; }
+
+# buildx (1.6.1): neuere Compose-Versionen bauen ueber Bake und warnen ohne buildx
+hat_buildx() { docker buildx version >/dev/null 2>&1; }
+
+buildx_paket() {  # passendes Paket zur Herkunft von Docker - leer, wenn nicht ueber apt
+  local zeilen
+  zeilen=$(docker_pakete)
+  if grep -qE '^(docker-ce|docker-compose-plugin)\|' <<<"$zeilen"; then echo docker-buildx-plugin
+  elif grep -qE '^(docker\.io|docker-compose-v2)\|' <<<"$zeilen"; then echo docker-buildx
+  fi
+}
 
 paketliste_alt() {  # Datum der Paketliste, wenn sie aelter als 7 Tage ist
   local f t
@@ -155,6 +174,16 @@ cmd_docker_update() {
   if ! "${als_root[@]}" "$APT_GET" update -qq >/dev/null; then
     fehler "apt-get update fehlgeschlagen (Netz bzw. Paketquellen prüfen)"
     return 1
+  fi
+  local fehlt
+  fehlt=$(buildx_paket)
+  if [ -n "$fehlt" ] && ! hat_buildx; then  # 1.6.1: sonst warnt Compose bei jedem Bau
+    if "${als_root[@]}" env DEBIAN_FRONTEND=noninteractive "$APT_GET" install -y -qq \
+      -o Dpkg::Options::=--force-confold "$fehlt" >/dev/null && hat_buildx; then
+      ok "docker buildx nachinstalliert ($fehlt)"
+    else
+      warn "docker buildx nicht installiert ($fehlt) – Compose baut weiter ohne Bake"
+    fi
   fi
   local pakete=() p inst kand
   while IFS='|' read -r p inst kand; do

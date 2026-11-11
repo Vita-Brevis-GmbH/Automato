@@ -7,6 +7,19 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 1.6.1 – 2026-11-11
+
+Anwender 2026-11-11 beim Update auf 1.6.0: „WARN[0000] Docker Compose is configured to build using
+Bake, but buildx isn't installed – Warning im Installationsprozess.“
+
+- **buildx:** `deploy/aufbau.sh pruefen` meldet ein fehlendes buildx-Plugin samt passendem Paket;
+  `deploy/aufbau.sh docker-update` installiert es nach (`docker-buildx-plugin` aus dem
+  Docker-Repository bzw. `docker-buildx` von Ubuntu). Ohne buildx baut Compose weiter mit dem
+  alten Builder – die Warnung war harmlos, der Bau lief.
+- **`.env ordnen` schreibt Sicherung und neue Datei von Anfang an nur für den Besitzer lesbar**
+  (0600, danach die Rechte der alten `.env`) – vorher entstanden beide kurz mit den
+  Standardrechten, bevor die Rechte gesetzt wurden.
+
 ## 1.6.0 – 2026-11-11
 
 Anwender 2026-11-11 nach dem Update auf 1.5.1: „Ich habe das Zertifikat auf dem Web UI

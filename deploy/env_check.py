@@ -17,7 +17,6 @@ unbekannte bleiben auskommentiert stehen (Tippfehler?). Werte bleiben unveraende
 import argparse
 import os
 import re
-import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -203,6 +202,18 @@ def check(path: Path, root: Path = ROOT) -> int:
     return 1 if failed else 0
 
 
+def _write_private(target: Path, data: bytes, st: os.stat_result) -> None:
+    """Schreibt mit den Rechten und dem Besitzer der .env - nie kurz lesbar fuer andere (1.6.1):
+    die Datei entsteht mit 0600, erst danach gelten die Rechte des Originals."""
+    target.unlink(missing_ok=True)
+    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "wb") as f:
+        f.write(data)
+    if os.geteuid() == 0:
+        os.chown(target, st.st_uid, st.st_gid)
+    os.chmod(target, st.st_mode & 0o777)
+
+
 def order(path: Path, root: Path = ROOT, now: datetime | None = None) -> int:
     print(f"\n\033[1m==> .env ordnen ({path})\033[0m")
     if not path.is_file():
@@ -245,14 +256,11 @@ def order(path: Path, root: Path = ROOT, now: datetime | None = None) -> int:
         ok("bereits geordnet - nichts geaendert")
         return 0
     stamp = (now or datetime.now()).strftime("%Y%m%d-%H%M%S")
-    backup = path.with_name(f"{path.name}.vorher-{stamp}")
-    shutil.copy2(path, backup)
     st = path.stat()
+    backup = path.with_name(f"{path.name}.vorher-{stamp}")
+    _write_private(backup, path.read_bytes(), st)
     tmp = path.with_name(f"{path.name}.neu")
-    tmp.write_text(text)
-    os.chmod(tmp, st.st_mode & 0o777)
-    if os.geteuid() == 0:
-        os.chown(tmp, st.st_uid, st.st_gid)
+    _write_private(tmp, text.encode(), st)
     tmp.replace(path)
     ok(f"geordnet: {sum(1 for line in out if '=' in line and not line.startswith('#'))} Eintraege")
     if switched:

@@ -74,6 +74,8 @@ def test_ordnen_sortiert_entfernt_stellt_um_und_sichert(tmp_path):
     sicherung = list(tmp_path.glob(".env.vorher-*"))
     assert len(sicherung) == 1 and sicherung[0].read_text() == ALT
     assert (f.stat().st_mode & 0o777) == 0o600  # Rechte bleiben
+    assert (sicherung[0].stat().st_mode & 0o777) == 0o600  # Sicherung wie die .env (Secrets)
+    assert not (tmp_path / ".env.neu").exists()
     zeilen = neu.splitlines()
     # Abschnitte und Reihenfolge wie .env.example, Werte unverändert (auch Anführungszeichen)
     assert (
