@@ -44,12 +44,16 @@ from sqlalchemy.orm import Session, selectinload
 from app.i18n import L, lang
 from app.models import (
     Application,
+    DeviceObject,
     Epg,
     InvDevice,
     InvInterface,
     InvSubnet,
     InvVlan,
     InvVrf,
+    MatchStatus,
+    NetworkObject,
+    ObjectCategory,
     Platform,
     Site,
     SourceSystem,
@@ -63,9 +67,14 @@ from app.store import virtual as virtual_store
 from app.store.epgs import inventory_label
 
 TAG = "automato"
-SECTIONS = ("inventory", "mirror", "virtualization", "cabling", "applications")
-# ohne Angabe die bisherigen Abschnitte; Verkabelung/Applikationen nur ausdruecklich (ADR 0031)
+SECTIONS = ("inventory", "mirror", "virtualization", "cabling", "firewall_objects", "applications")
+# ohne Angabe die bisherigen Abschnitte; Verkabelung/Applikationen nur ausdruecklich (ADR 0031),
+# Firewall-Objekte (1.8.0) waehlt die Oberflaeche vor, wenn die Ziel-NetBox das IPAM ist
 DEFAULT_SECTIONS = ("inventory", "mirror", "virtualization")
+# Beschreibung der Werte aus Firewall-Objekten (1.8.0): daran erkennt der Sync seine Objekte, wenn
+# der Abschnitt nicht gewaehlt ist (bleiben dann unangetastet)
+FW_MARK = "FW-Objekt"
+_EXTERNAL_NAME = re.compile(r"^[A-Z]+-EXT_", re.I)  # H-EXT_, N-EXT_, R-EXT_ (Namenskonvention)
 INVENTORY_PLATFORMS = (Platform.FORTIGATE, Platform.CISCO_ACI)
 CABLING_PLATFORMS = (Platform.CISCO_SWITCH,)  # Switches & Router (ADR 0025)
 # Applikations-Tags (ADR 0031): `automato-app-<Mandant>-<Kuerzel bzw. Name>`; das Praefix gehoert
@@ -385,6 +394,8 @@ def build_wants(
         _virtualization_wants(session, w, tenant, tenant_ref)
     if "cabling" in sections:
         _cabling_wants(session, w, tenant, sites, tenant_ref)
+    if "firewall_objects" in sections:  # zuletzt: andere Abschnitte haben die genaueren Angaben
+        _firewall_object_wants(session, w, tenant, target, tenant_ref)
     if "applications" in sections:
         _application_wants(session, w, tenant)
     return w
@@ -813,6 +824,86 @@ def _mirror_wants(
                 {"tenant": tenant_ref},
             )
         )
+
+
+def _firewall_object_wants(
+    session: Session, w: Wants, tenant: Tenant, target: SourceSystem, tenant_ref: Ref
+) -> None:
+    """Werte der Firewall-Objekte ins IPAM (1.8.0, Anwender 2026-11-11: „da wir kein Infoblox
+    bei dem Kunden haben, sollte das IPAM die Netbox übernehmen und mit dem Sync sollte das IPAM
+    auch befüllt werden“): Hosts als IP-Adresse (Laenge aus dem Netz darum), Netze als Prefix,
+    Bereiche als Range - mit dem Objektnamen in der Beschreibung. Nur wenn diese NetBox das
+    fuehrende IPAM ist bzw. keines eingelesen ist; bewusst externe Ziele (H-EXT_, oeffentlich
+    ausserhalb der eigenen Netze) nicht. Was ein anderer Abschnitt schon anlegt, bleibt dessen."""
+    ctx = references.context(session, tenant.id)
+    primary = ctx.primary
+    if primary is not None and primary.source.id != target.id:
+        w.warnings.append(
+            f"Firewall-Objekte: führendes IPAM ist „{primary.source.name}“ – die Werte gehören"
+            " dorthin, nicht übernommen."
+        )
+        return
+    rows = session.execute(
+        select(DeviceObject.values, DeviceObject.name, NetworkObject.match_status)
+        .outerjoin(NetworkObject, NetworkObject.id == DeviceObject.network_object_id)
+        .where(
+            DeviceObject.tenant_id == tenant.id,
+            DeviceObject.category == ObjectCategory.ADDRESS,
+        )
+        .order_by(DeviceObject.name)
+    ).all()
+    skip = (MatchStatus.EXPECTED_EXTERNAL, MatchStatus.NOT_APPLICABLE)
+    names: dict[str, list[str]] = defaultdict(list)
+    for values, name, status in rows:
+        # bewusst extern (H-EXT_, oeffentlich ausserhalb der eigenen Netze); Bereiche haben kein
+        # Werte-Objekt - dort entscheidet der Name
+        if status in skip or (status is None and _EXTERNAL_NAME.match(name or "")):
+            continue
+        for value in values or []:
+            if name not in names[value]:
+                names[value].append(name)
+
+    def desc(value: str) -> str:
+        return _cut(f"{FW_MARK} {_examples(names[value])}", 200)
+
+    hosts: list[str] = []
+    for value in names:
+        if "-" in value:  # Bereich a-b
+            start, _, end = value.partition("-")
+            a, b = _ip(start.strip()), _ip(end.strip())
+            if a and b:
+                plen = 128 if ":" in a else 32
+                w.add(Want("ip_range", f"{a}-{b}", f"Range {value}",
+                           {"start_address": f"{a}/{plen}", "end_address": f"{b}/{plen}",
+                            "status": "active", "description": desc(value)},
+                           {"tenant": tenant_ref}))  # fmt: skip
+            continue
+        iface = _iface(value)
+        if iface is None:
+            continue
+        if iface.network.prefixlen == iface.max_prefixlen:
+            hosts.append(value)
+        elif iface.network.prefixlen > 0:  # 0.0.0.0/0 ist kein Netz fuers IPAM
+            net = iface.network.compressed
+            w.add(Want("prefix", net, f"Netz {net}",
+                       {"prefix": net, "status": "active", "description": desc(value)},
+                       {"vrf": None, "vlan": None, "tenant": tenant_ref}))  # fmt: skip
+    plens = _PrefixLens(w, primary)  # nach den Netzen: Laenge der Hosts aus dem engsten Netz
+    for value in hosts:
+        ip = _ip(value.split("/")[0])
+        if ip is None or w.has("ip_address", ip):
+            continue
+        dns = next((_dns(n) for n in references.dns_names(ctx, ip) if _dns(n)), "")
+        w.add(
+            Want(
+                "ip_address",
+                ip,
+                f"IP {ip} ({_examples(names[value], 2)})",
+                {"address": f"{ip}/{plens.of(ip)}", "status": "active", "dns_name": dns,
+                 "description": desc(value)},
+                {"tenant": tenant_ref},
+            )
+        )  # fmt: skip
 
 
 CLUSTER_TYPE = ("vmware-vsphere", "VMware vSphere")
@@ -1896,6 +1987,11 @@ def _device_section(obj: dict, platforms: dict[str, Platform]) -> str:
     return "cabling" if platform in CABLING_PLATFORMS else "inventory"
 
 
+def _fw_owned(have: Have) -> bool:
+    """Vom Abschnitt Firewall-Objekte angelegt (Beschreibung `FW-Objekt …`)."""
+    return str(have.obj.get("description") or "").startswith(f"{FW_MARK} ")
+
+
 def _foreign_groups(tslug: str, platforms: dict[str, Platform], chosen: set[str]) -> frozenset:
     """VLAN-Gruppen der Quellsysteme eines nicht gewaehlten Abschnitts: Netzinventar (FortiGate,
     ACI) bzw. Verkabelung (Switches, seit 1.7.0 mit VLANs) - bleiben unangetastet."""
@@ -1978,6 +2074,8 @@ def diff(
         for key, have in sorted(state[kind.name].items()):
             if key in wanted or not _in_scope(kind, have, state, tslug, gprefix, foreign, groups):
                 continue
+            if "firewall_objects" not in chosen and _fw_owned(have):
+                continue  # Wert eines Firewall-Objekts, Abschnitt nicht gewaehlt (1.8.0)
             items.append(
                 _item(
                     kind.name,
@@ -2374,6 +2472,11 @@ WARNINGS_EN = (
         "übernommen.",
         "Device {name} ({src}): model not read – without device type not applied, nor its ports "
         "and cables.",
+    ),
+    (
+        "Firewall-Objekte: führendes IPAM ist „{name}“ – die Werte gehören dorthin, nicht "
+        "übernommen.",
+        "Firewall objects: the primary IPAM is “{name}” – the values belong there, not applied.",
     ),
     (
         "{src}: {n} Ports ohne Namen nicht übernommen (Gerät {examples}).",

@@ -787,6 +787,7 @@ export interface AppDocSystem2 {
   }[];
   epgs: string[]; // Tenant/AP/EPG
   portgroups: string[];
+  networks?: string[]; // 1.8.0: Netz, an dem die IPs hängen (Subnetz mit Interface/VLAN und Gerät)
   // je NIC (0.43.1): Portgruppe → EPG und wie die Zuordnung zustande kam (name | vlan)
   nics?: { name: string; portgroup: string | null; vlan: number | null; ips: string[]; epg: string | null; match: string | null }[];
   hints?: string[]; // z. B. VM-Name nennt ein anderes Projekt als das AP der Portgruppe
@@ -860,6 +861,7 @@ export interface AppDocFinding {
 export interface ApplicationDoc {
   application: Application;
   tenant_code: string | null;
+  aci?: boolean; // 1.8.0: Mandant mit ACI – sonst Netz statt EPG (fehlt bei älteren Ständen = ACI)
   summary: {
     vms: number;
     servers: number;
@@ -1087,7 +1089,7 @@ export interface IpamCompare extends Paged<IpamRow> {
 
 // NetBox-Sync (ADR 0010): Vorschau -> Übernahme per Klick (admin)
 // Abschnitte; Verkabelung und Applikationen (ADR 0031) nur ausdrücklich gewählt
-export type SyncSection = "inventory" | "mirror" | "virtualization" | "cabling" | "applications";
+export type SyncSection = "inventory" | "mirror" | "virtualization" | "cabling" | "firewall_objects" | "applications";
 export interface SyncTarget {
   id: number;
   name: string;

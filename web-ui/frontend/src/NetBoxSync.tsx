@@ -125,6 +125,32 @@ const SECTIONS: { key: SyncSection; label: string; hint: string; more?: ReactNod
     ),
   },
   {
+    // 1.8.0 (Anwender: „sollte das IPAM die Netbox übernehmen und mit dem Sync sollte das IPAM auch befüllt werden“)
+    key: "firewall_objects",
+    label: L("Firewall-Objekte", "Firewall objects"),
+    hint: L(
+      "Hosts, Netze und Bereiche der Firewall-Objekte als IP-Adresse, Netz bzw. Range – wenn diese NetBox das IPAM ist",
+      "Hosts, networks and ranges of the firewall objects as IP address, prefix or range – if this NetBox is the IPAM",
+    ),
+    more: L(
+      <>
+        Nur wenn diese NetBox das führende IPAM ist (bzw. keines eingelesen ist) – sonst gehören die Werte ins führende
+        IPAM, die Vorschau sagt es. Beschreibung „FW-Objekt“ mit dem Objektnamen, DNS-Name aus dem DNS, Länge der IP aus
+        dem Netz darum. Bewusst externe Ziele (H-EXT_/N-EXT_, öffentlich ausserhalb der eigenen Netze) nicht; was ein
+        anderer Abschnitt anlegt (Interface-, VM-IP, DDI-Spiegel), bleibt dessen. Ohne diesen Abschnitt bleiben solche
+        Objekte in NetBox unangetastet. Danach liest Automato die NetBox neu ein – die Befunde „fehlt in NetBox“ entfallen.
+      </>,
+      <>
+        Only if this NetBox is the primary IPAM (or none has been collected) – otherwise the values belong to the
+        primary IPAM, the preview says so. Description “FW-Objekt” with the object name, DNS name from the DNS, length of
+        the IP from the surrounding network. Intentionally external destinations (H-EXT_/N-EXT_, public outside own
+        networks) not; what another section creates (interface, VM IP, DDI mirror) stays with it. Without this section
+        such objects in NetBox stay untouched. Afterwards Automato collects the NetBox again – the findings “not in
+        NetBox” no longer apply.
+      </>,
+    ),
+  },
+  {
     key: "applications",
     label: L("Applikationen", "Applications"),
     hint: L(
@@ -201,6 +227,8 @@ export default function NetBoxSync({
         setTargets(list);
         const usable = list.find((t) => t.has_write_token) ?? list[0];
         setTargetId(usable?.id ?? null);
+        // 1.8.0: ist die Ziel-NetBox das IPAM, die Werte der Firewall-Objekte gleich mit
+        setSections(usable?.ref_role === "primary" ? [...DEFAULT_SECTIONS, "firewall_objects"] : DEFAULT_SECTIONS);
       })
       .catch((e) => {
         setError(e);

@@ -116,12 +116,16 @@ export default function Objects({
   }, [params.object_id]);
 
   // Reiter wechseln (0.74.1): Typ-Filter und seine Werte sofort zurück – sonst lädt der neue
-  // Reiter zuerst mit dem Typ des alten (z. B. „ipmask“ bei Gruppen) und zeigt nichts
+  // Reiter zuerst mit dem Typ des alten (z. B. „ipmask“ bei Gruppen) und zeigt nichts. Seit 1.8.0
+  // auch das geöffnete Objekt und der Präfix (Anwender 2026-11-11: nach einem Adressobjekt blieb
+  // „nur …“ hängen, der Reiter Services zeigte nichts)
   const pickTab = (t: Tab) => {
     if (t === tab) return;
     setObjType("");
     setTypes({});
     setPrefixes({});
+    setPrefix("");
+    setPinned(null);
     setTab(t);
   };
   useEffect(() => setObjType(""), [tab]);
@@ -455,6 +459,7 @@ function ObjectTable({
   }, [tenantId, category, sourceId, query, issuesOnly, objType, prefix, hidePredefined, objectId, offset]);
   // VDOM „root“ nur bei Firewalls mit weiteren VDOMs (nur root = die Firewall, 0.17.0)
   const vdomShown = useVdomShown();
+  const filtered = !!(query || issuesOnly || objType || prefix || objectId || sourceId || hidePredefined);
 
   return (
     <>
@@ -464,10 +469,8 @@ function ObjectTable({
           {data === null ? (
             <Loading>{L("Lade Objekte…", "Loading objects…")}</Loading>
           ) : data.rows.length === 0 ? (
-            <Empty
-              title={query || issuesOnly ? L("Keine Treffer", "No matches") : L("Noch keine Objekte", "No objects yet")}
-            >
-              {query || issuesOnly
+            <Empty title={filtered ? L("Keine Treffer", "No matches") : L("Noch keine Objekte", "No objects yet")}>
+              {filtered
                 ? L("Filter oder Suche anpassen.", "Adjust the filter or search.")
                 : L(
                     "Objekte erscheinen nach dem ersten Lauf einer Firewall (FortiGate).",

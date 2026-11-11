@@ -193,13 +193,16 @@ def application(doc: dict, conns: dict | None, sources: dict[int, str], when: da
 
 def _systems(out: Writer, doc: dict) -> None:
     out.heading(L("Systeme", "Systems"), 1)
+    aci = doc.get("aci", True)  # 1.8.0: ohne ACI das Netz (Subnetz) statt der EPG
     rows = [[("VM " if x["kind"] == "vm" else "Server ") + x["name"], ", ".join(x.get("ips") or []),
-             ", ".join(x.get("epgs") or []), ", ".join(x.get("portgroups") or []),
+             ", ".join((x.get("epgs") if aci else x.get("networks")) or []),
+             ", ".join(x.get("portgroups") or []),
              f"{(x.get('rules') or {}).get('specific', 0)} / "
              f"{(x.get('rules') or {}).get('unspecific', 0)}"]
             for x in doc.get("systems") or []]  # fmt: skip
     if rows:
-        out.table(["System", "IPs", "EPG", L("Portgruppe", "Port group"),
+        out.table(["System", "IPs", "EPG" if aci else L("Netz", "Network"),
+                   L("Portgruppe", "Port group"),
                    L("Regeln spez. / unspez.", "Rules spec. / unspec.")],
                   _capped(out, rows, L("Systeme", "Systems")), [3, 3, 3, 3, 1.4])  # fmt: skip
     else:

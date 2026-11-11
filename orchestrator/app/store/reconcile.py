@@ -34,6 +34,7 @@ from app.models import (
     NetworkObject,
     ObjectCategory,
     ObjectClass,
+    Platform,
     RefRole,
     Rule,
     RuleAction,
@@ -174,6 +175,7 @@ def _rule_endpoint_issues(session: Session, tenant_id: int, ctx=None, prefixes=N
                 fw_names[oid].append(name)
     source_names = _source_names(session, tenant_id)
     primary = ctx.primary if ctx is not None else None
+    target = _sync_target(session, tenant_id, primary)
     out: list[Issue] = []
     for obj in objs.values():
         if obj.match_status is MatchStatus.UNMATCHED:
@@ -183,6 +185,9 @@ def _rule_endpoint_issues(session: Session, tenant_id: int, ctx=None, prefixes=N
                 "object_class": obj.object_class.value,
                 "reference": primary.source.name if primary else None,
                 "no_reference": primary is None or None,
+                # 1.8.0: NetBox ist das IPAM und wird von Automato befuellt (Sync-Ziel) - der
+                # Befund sagt, dass der NetBox-Sync den Wert anlegt (nicht „Fehler im IPAM“)
+                "sync_target": target,
                 "sources": sorted(source_names.get(s, f"#{s}") for s in sources_of[obj.id]),
                 "firewall_objects": fw_names.get(obj.id, [])[:10],
                 "rules": len(rules),
@@ -219,6 +224,33 @@ def _rule_endpoint_issues(session: Session, tenant_id: int, ctx=None, prefixes=N
                 )
             )
     return out
+
+
+def _sync_target(session: Session, tenant_id: int, primary) -> str | None:
+    """Name der NetBox, in die der NetBox-Sync schreibt (Schreib-Token hinterlegt), wenn sie das
+    fuehrende IPAM ist - bzw. ohne fuehrendes IPAM die einzige solche NetBox des Mandanten
+    (Anwender 2026-11-11: „da wir kein Infoblox bei dem Kunden haben, sollte das IPAM die
+    Netbox übernehmen und mit dem Sync sollte das IPAM auch befüllt werden“)."""
+    from app import credentials
+
+    def writable(s: SourceSystem) -> bool:
+        try:
+            return bool(s.credentials and credentials.decrypt(s.credentials).get("write_token"))
+        except credentials.CredentialsUnavailable:
+            return False
+
+    if primary is not None:
+        if primary.source.platform is not Platform.NETBOX:
+            return None
+        src = session.get(SourceSystem, primary.source.id)
+        return src.name if src is not None and writable(src) else None
+    boxes = session.scalars(
+        select(SourceSystem).where(
+            SourceSystem.tenant_id == tenant_id, SourceSystem.platform == Platform.NETBOX
+        )
+    )
+    names = [s.name for s in boxes if writable(s)]
+    return names[0] if len(names) == 1 else None
 
 
 ZONE_TYPES = frozenset({FindingType.ZONE_POLICY_VIOLATION, FindingType.ZONE_OVERLAP,
