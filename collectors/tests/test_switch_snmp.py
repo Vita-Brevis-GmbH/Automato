@@ -467,7 +467,7 @@ def test_lauf_snmp_mit_teilfehler(monkeypatch):
     assert all(entry[0] in ("open", "close", "get", "walk") for entry in log)
     # Zugangsdaten ohne Priv-Passwort: kein Paket, Lauf fehlgeschlagen (Agent, kein Lab)
     log.clear()
-    monkeypatch.setattr(tasks, "get_settings", lambda: SimpleNamespace(agent_token="x"))
+    monkeypatch.setattr("collectors.config.get_settings", lambda: SimpleNamespace(agent_token="x"))
     failed = tasks.collect_once("run-2", _target(priv_password=None))
     assert failed.status == "failed" and "keine Zugangsdaten" in failed.message and log == []
     weak = tasks.collect_once("run-3", _target(priv_protocol="des"))

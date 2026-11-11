@@ -65,8 +65,9 @@ docker compose exec orchestrator automato ensure-tenant --name lab --code lab01
 
 UI → **„Collector-Agenten"**:
 
-1. Name (z. B. `agent-dev-01`) + Mandant wählen → **Anlegen & Token erzeugen**.
-2. Das **Token** wird **einmalig** angezeigt → kopieren (danach nur noch der Hash gespeichert).
+1. **+ Agent**, Name (z. B. `agent-dev-01`) + Mandant wählen → **Anlegen**.
+2. **Zugang** → **Zugang herunterladen**: ZIP mit fertiger `agent.env` (Adresse + neues
+   Agent-Token; gespeichert wird nur der Hash) – jeder Download erneuert das Token.
 
 Der Agent erscheint in der Liste; „Zuletzt gesehen" füllt sich beim ersten Pull.
 Deaktivieren/Aktivieren über die Statusspalte (ein deaktivierter Agent authentisiert nicht mehr).
@@ -86,13 +87,14 @@ Agenten.
 ## 5. Externen Lauf durchspielen (Dev)
 
 Auf Dev kann der Agent lokal aus dem Repo laufen (ohne Windows). Er braucht nur
-Orchestrator-Adresse + Agent-Token; Adresse und Token der FortiGate kommen vom Quellsystem
-(Schritt 4b). **Ohne hinterlegtes Token bricht ein Agent den Lauf ab** (keine Beispieldaten
-im Kundennetz). Nur Beispieldaten testen: Gerät **ohne** Agent anlegen und zentral einlesen
-(`automato collect … --execution inprocess`).
+Orchestrator-Adresse + Agent-Token (aus der `agent.env` des Zugangs); Adresse und Token der
+FortiGate kommen vom Quellsystem (Schritt 4b). **Ohne hinterlegtes Token bricht ein Agent den
+Lauf ab** (keine Beispieldaten im Kundennetz). Nur Beispieldaten testen: Gerät **ohne** Agent
+anlegen und zentral einlesen (`automato collect … --execution inprocess`) – das geht nur mit
+`AUTOMATO_ENVIRONMENT=dev` (Vorgabe im Labor); im Betrieb nie.
 
 ```bash
-export AUTOMATO_ORCHESTRATOR_URL=http://localhost:8000 AUTOMATO_AGENT_TOKEN=<token aus Schritt 4>
+export AUTOMATO_ORCHESTRATOR_URL=http://localhost:8000 AUTOMATO_AGENT_TOKEN=<aus der agent.env>
 
 # (a) Erreichbarkeit aller zugewiesenen Geräte prüfen (read-only)
 uv run --package collectors automato-collector --check
@@ -118,12 +120,13 @@ die CLI im Container braucht keins.
 
 ### Windows-Agent im Dev
 
-Paket aus `deploy/collector-agent/` installieren (`install.ps1`), dann
-`C:\Automato\collector\agent.env` füllen (Vorlage `agent.env.example`):
-`AUTOMATO_ORCHESTRATOR_URL=http://<dev-vm>:8000` (direkt, **nicht** über den Web-UI-Proxy —
-der liefert `/internal` nicht aus) und `AUTOMATO_AGENT_TOKEN` – mehr nicht; die Geräte
-kommen vom Orchestrator (Schritt 4b). TLS-/Zertifikatszeilen nur einkommentieren, wenn die
-Dateien existieren. Die Station braucht Zugriff auf Port 8000 der Dev-VM und auf die FortiGate.
+Agent-Paket und Zugang aus der Oberfläche herunterladen, den Inhalt des Zugangs neben
+`install.ps1` legen und installieren (`deploy/collector-agent/README.md`). Die `agent.env` im
+Zugang zeigt direkt auf `http://<dev-vm>:8000` (**nicht** über den Web-UI-Proxy — der liefert
+`/internal` nicht aus; mit TLS intern `https://` samt CA), mit Agent-Gateway auf das Gateway
+samt Zertifikat; im Feld „Orchestrator-Adresse (vom Agent-Rechner aus)“ die von der Station
+erreichbare Adresse eintragen. Die Geräte kommen vom Orchestrator (Schritt 4b). Die Station
+braucht Zugriff auf Port 8000 der Dev-VM (bzw. das Gateway) und auf die FortiGate.
 
 ```powershell
 cd C:\Automato\collector

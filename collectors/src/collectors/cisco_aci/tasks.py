@@ -1,12 +1,10 @@
 """Cisco-ACI-Collector-Task (Model 1, read-only).
 
 Liest den MO-Baum der ACI-Tenants per APIC-REST (Login + `rsp-subtree=full`) und bildet
-Contracts auf Regeln ab - wie beim FortiGate-Collector. Zugangsdaten in dieser Reihenfolge:
-1. vom Orchestrator fuer das Geraet des Laufs (`Target`: Adresse, Benutzer/Passwort,
-   ACI-Tenants; ADR 0009),
-2. lokal `AUTOMATO_ACI_URL`/`_USERNAME`/`_PASSWORD` (Rueckfall),
-3. nur zentral/Lab: Beispiel-Export. Ein Agent im Kundennetz liest **nie** Beispieldaten -
-   ohne Zugangsdaten schlaegt der Lauf mit klarer Meldung fehl.
+Contracts auf Regeln ab - wie beim FortiGate-Collector. Zugangsdaten kommen vom Orchestrator
+fuer das Geraet des Laufs (`Target`: Adresse, Benutzer/Passwort, ACI-Tenants; ADR 0009). Ohne
+sie liest nur der zentrale Worker im Labor den Beispiel-Export (`samples_allowed`, 1.6.0) - sonst
+schlaegt der Lauf mit klarer Meldung fehl.
 """
 
 import json
@@ -24,7 +22,7 @@ from collectors.common import diagnose
 from collectors.common.dto import CollectorResult, NormalizedEpg, Target
 from collectors.common.i18n import L, german_only
 from collectors.common.upload import confirmed, submit_result
-from collectors.config import get_settings
+from collectors.config import samples_allowed
 
 
 def fetch_contracts() -> list[dict]:
@@ -58,14 +56,11 @@ class _Apic:
 
 
 def _credentials(target: Target | None) -> _Apic | None:
-    """APIC-Zugang - vom Geraet (Orchestrator) vor lokaler Konfiguration."""
+    """APIC-Zugang des Geraets - vom Orchestrator (Quellsystem, ADR 0009)."""
     if target is not None and target.base_url and target.username and target.password:
         return _Apic(
             target.base_url, target.username, target.password, target.verify_tls, target.read_scope
         )
-    s = get_settings()
-    if s.aci_url and s.aci_username and s.aci_password:
-        return _Apic(s.aci_url, s.aci_username, s.aci_password, s.aci_verify_tls, s.aci_tenants)
     return None
 
 
@@ -83,7 +78,7 @@ def _no_credentials(target: Target | None) -> str:
 
 def gather(target: Target | None = None) -> dict:
     """Tenant-Baum + Fabric-Klassen + Routing der Border-Leafs (ADR 0019) - echter APIC oder
-    (nur zentral) Beispieldaten. Lauf nur der Regeln (0.139.0, `Target.scope`): nur der
+    (nur im Labor) Beispieldaten. Lauf nur der Regeln (0.139.0, `Target.scope`): nur der
     Tenant-Baum (Contracts, Filter, EPGs) - Fabric und Routing bleiben vom letzten vollen Lauf."""
     apic = _credentials(target)
     rules = target is not None and target.scope == "rules"  # 0.139.0: nur die Tenants
@@ -98,8 +93,7 @@ def gather(target: Target | None = None) -> dict:
                 "fabric": client.fabric(),
                 "border": client.border_routing(contexts),
             }
-    if get_settings().agent_token:
-        # Agent im Kundennetz: nie Beispieldaten in einen echten Mandanten schreiben
+    if not samples_allowed():  # Agent bzw. Betrieb: nie Beispieldaten in einen echten Mandanten
         raise RuntimeError(_no_credentials(target))
     if rules:
         return {"tenants": fetch_mo_export(), "rules_only": True}
@@ -110,9 +104,7 @@ def check(target: Target | None = None) -> tuple[bool, str]:
     """Erreichbarkeit/Login am APIC pruefen (read-only, kein Ingest)."""
     apic = _credentials(target)
     if apic is None:
-        return False, _no_credentials(target) if target else L(
-            "keine APIC-Creds", "no APIC credentials"
-        )
+        return False, _no_credentials(target)
     try:
         with apic.client() as client:
             count = client.ping()

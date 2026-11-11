@@ -10,8 +10,13 @@ Standorte → Quellsysteme** an (Adresse, read-only Zugangsdaten – FortiGate: 
 Benutzer/Passwort + ACI-Tenants, Infoblox: WAPI-Benutzer/Passwort –, TLS-Prüfung)
 und weist sie dort einem Agenten zu. Der Orchestrator speichert die Zugangsdaten
 verschlüsselt und gibt sie pro Lauf **nur dem zugewiesenen Agenten**. Die `agent.env`
-enthält deshalb nur Orchestrator-Adresse + Agent-Token (+ optional TLS). Ein Gerät lässt
+enthält deshalb nur Orchestrator-Adresse + Agent-Token (+ Zertifikatszeilen). Ein Gerät lässt
 sich jederzeit einem anderen Agenten zuweisen, ohne an der Station etwas zu ändern.
+
+**Zugang aus dem Web-UI** (1.6.0, ADR 0052): `agent.env`, Agent-Token und – mit Agent-Gateway –
+Client-Zertifikat, Schlüssel und CA kommen als ein ZIP (**Collector-Agenten → Zugang →
+Zugang herunterladen**). Von Hand ausfüllen muss man nichts; jeder Download erneuert Token und
+Zertifikat.
 
 **Updates kommen automatisch** (ADR 0011): Der Agent aktualisiert sich vor jedem Lauf selbst
 über seinen Agent-Kanal, wenn der Orchestrator ein neues Paket hat und „Auto-Update“ für ihn
@@ -33,23 +38,27 @@ Build-Host (Python)        Windows-Station (Kundennetz)
   collectors (*.whl)                        └▶ run-agent.ps1 ⇒ automato-collector --poll
 ```
 
-## Schnellweg: Paket aus dem Web-UI (empfohlen)
+## Schnellweg: Paket und Zugang aus dem Web-UI (empfohlen)
 
-Im Web-UI unter **Collector-Agenten** steht die Einrichtung Schritt für Schritt:
-Geräte zuweisen, `agent.env` direkt im Browser erzeugen (Token des neuen Agenten wird
-übernommen) und das
-**Agent-Paket** (ZIP: collectors- und sot-gateway-Wheel + Skripte, ohne Zugangsdaten)
-herunterladen. Das
-Orchestrator-Image baut das Paket mit (Dockerfile-Stage `agent-package`). Auf der Station:
+Im Web-UI unter **Collector-Agenten** steht die Einrichtung Schritt für Schritt: Agent
+anlegen, Geräte zuweisen, das **Agent-Paket** (ZIP: collectors- und sot-gateway-Wheel + Skripte,
+ohne Zugangsdaten) und den **Zugang** des Agenten (ZIP: `agent.env`, ggf. `agent.crt`,
+`agent.key`, `agents-ca.crt` bzw. `automato-ca.crt`) herunterladen. Das Orchestrator-Image baut
+das Paket mit (Dockerfile-Stage `agent-package`). Auf der Station:
 
 ```powershell
-cd $HOME\Downloads\automato-collector-agent     # ZIP entpackt, agent.env daneben gelegt
+cd $HOME\Downloads\automato-collector-agent     # Paket entpackt, Inhalt des Zugangs daneben gelegt
 Get-ChildItem | Unblock-File
 powershell -ExecutionPolicy Bypass -File .\install.ps1 -IntervalMinutes 15
 powershell -ExecutionPolicy Bypass -File C:\Automato\collector\run-agent.ps1 -Check
 ```
 
-`install.ps1` findet das Wheel neben sich und übernimmt eine daneben liegende `agent.env`.
+`install.ps1` findet das Wheel neben sich und übernimmt `agent.env` und die Zertifikatsdateien
+nach `C:\Automato\collector` (mit anderem `-InstallDir` passt es die Pfade in der `agent.env`
+an). **Bestehender Agent:** nur den Inhalt des Zugangs nach `C:\Automato\collector` kopieren
+(`agent.env` wird ersetzt) und `run-agent.ps1 -Check` ausführen – keine Neuinstallation nötig.
+`agent.env` und `agent.key` nur auf dieser Station ablegen; den Ordner nur SYSTEM und
+Administratoren lesen lassen.
 
 ## 1. Wheel bauen (manuell, auf einem Build-Host)
 
@@ -72,18 +81,16 @@ kopieren (`install.ps1` installiert das sot-gateway-Wheel aus dem Ordner mit), d
 
 ```powershell
 .\install.ps1 -Wheel .\collectors-0.1.0-py3-none-any.whl -IntervalMinutes 15   # -Wheel optional
-# danach C:\Automato\collector\agent.env mit echten Werten fuellen (Orchestrator, Agent-Token, TLS)
+# ohne Zugang daneben: danach den Zugang aus dem Web-UI nach C:\Automato\collector kopieren
 ```
 
 **TLS intern (0.78.2):** Ist auf dem Server `AUTOMATO_INTERNAL_TLS=on`, spricht der
-Orchestrator auf Port 8000 nur noch HTTPS. Der Agent braucht dann
-`AUTOMATO_ORCHESTRATOR_URL=https://<host>:8000` und `AUTOMATO_ORCHESTRATOR_CA_BUNDLE` mit der
-internen CA (`automato-ca.crt`, nur das öffentliche Zertifikat). Das Paket aus dem Web-UI bringt
-die CA mit; `install.ps1` legt sie nach `C:\Automato\collector\automato-ca.crt`, stellt eine
-`http://…:8000`-Adresse in der `agent.env` auf `https://` um und ergänzt die CA-Zeile. Mit
-`http://` beendet der Orchestrator die Verbindung ohne Antwort („RemoteProtocolError: Server
-disconnected without sending a response“). Über das Agent-Gateway (Vorgabe `:8443`, Port nach
-`AUTOMATO_AGENT_GATEWAY_PORT`) ändert sich nichts.
+Orchestrator auf Port 8000 nur noch HTTPS. Ohne Agent-Gateway schreibt der Zugang dann
+`https://<host>:8000` in die `agent.env` und legt die interne CA (`automato-ca.crt`, nur das
+öffentliche Zertifikat) samt `AUTOMATO_ORCHESTRATOR_CA_BUNDLE` bei. Mit `http://` beendet der
+Orchestrator die Verbindung ohne Antwort („RemoteProtocolError: Server disconnected without
+sending a response“) – dann einen neuen Zugang herunterladen. Über das Agent-Gateway (Vorgabe
+`:8443`, Port nach `AUTOMATO_AGENT_GATEWAY_PORT`) ändert sich nichts.
 
 `install.ps1` legt ein venv an, installiert das Wheel (bringt `automato-collector` mit),
 kopiert `run-agent.ps1` + `agent.env` und registriert die Aufgabe **Automato Collector
@@ -101,9 +108,13 @@ powershell -ExecutionPolicy Bypass -File C:\Automato\collector\run-agent.ps1 -Ch
 ```
 
 Prüft read-only **alle diesem Agenten zugewiesenen Geräte** (eine Zeile je Gerät, Exit 0 =
-alle OK, 2 = mindestens eines fehlerhaft). Ohne zugewiesene Geräte erscheint ein Hinweis.
-Alte `agent.env` mit `AUTOMATO_FORTIGATE_URL/_TOKEN` (bzw. `AUTOMATO_ACI_*`) funktionieren als Rückfall weiter,
-die Angaben am Quellsystem haben aber Vorrang.
+alle OK, 2 = mindestens eines fehlerhaft). Ohne zugewiesene Geräte erscheint ein Hinweis
+(Exit 2). Geräte-Zugangsdaten in der `agent.env` (`AUTOMATO_FORTIGATE_URL/_TOKEN`,
+`AUTOMATO_ACI_*`) liest der Agent seit 1.6.0 nicht mehr – sie gehören ans Quellsystem im Web-UI
+und können aus alten `agent.env` gelöscht werden (ein neuer Zugang enthält sie nicht).
+Typische Meldungen: `403 agent channel requires the mTLS gateway` (Adresse zeigt auf Port 8000
+statt auf das Gateway – neuen Zugang laden), `certificate required` (Zertifikatszeilen fehlen),
+`403 client certificate does not belong to this agent` (Zertifikat eines anderen Agenten).
 
 **Sprache (0.90.0):** `AUTOMATO_LANG=en` in der `agent.env` stellt die Konsole und das Log des
 Agenten auf Englisch um (Standard Deutsch). Was der Agent an den Orchestrator meldet (Meldung des
@@ -129,10 +140,10 @@ Versionen manuell bauen und verteilen.
 |---|---|
 | `install.ps1` | venv + Wheel installieren, Scheduled Task registrieren |
 | `run-agent.ps1` | `agent.env` laden, `automato-collector --poll` starten |
-| `agent.env.example` | Vorlage für die Umgebung (Orchestrator, Agent-Token, TLS) |
+| `agent.env.example` | Vorlage der `agent.env` – im Normalfall kommt sie fertig aus dem Zugang (Web-UI) |
 | `agent_entry.py` | PyInstaller-Entry für eine Python-freie `.exe` |
 
-**Secrets:** Auf der Station liegt nur noch das Agent-Token (+ optional Client-Zertifikat)
-in `agent.env` (nicht committen); rotierbar je Agent. Die Geräte-Tokens liegen verschlüsselt
+**Secrets:** Auf der Station liegen nur das Agent-Token in `agent.env` und – mit Gateway – der
+Schlüssel `agent.key` (nicht committen); rotierbar je Agent über einen neuen Zugang. Die Geräte-Tokens liegen verschlüsselt
 im Orchestrator (ADR 0009) und kommen nur pro Lauf über die TLS-Verbindung zum Agenten
 (FortiGate-Token ebenso wie APIC-Benutzer/Passwort).

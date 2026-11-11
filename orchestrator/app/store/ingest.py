@@ -966,6 +966,8 @@ def _as_ip_or_net(value: str):
 
 
 def _safe_search_by_ip(sot, ip: str) -> list:
+    if sot is None:  # noch keine Referenzquelle eingelesen
+        return []
     try:
         return sot.search_by_ip(ip)
     except Exception:  # noqa: BLE001 - SoT-Fehler: als "nicht gefunden" behandeln, nie crashen
@@ -973,6 +975,8 @@ def _safe_search_by_ip(sot, ip: str) -> list:
 
 
 def _safe_get_by_name(sot, name: str):
+    if sot is None:
+        return None
     try:
         return sot.get_by_name(name)
     except Exception:  # noqa: BLE001

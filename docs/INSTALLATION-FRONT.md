@@ -31,7 +31,8 @@ Management-Netz ──▶ Automato-VM :443 direkt
 ## 1. Voraussetzungen
 
 - Automato produktiv nach `docs/INSTALLATION-PROD.md`, mit Profil `proxy`
-  (`AUTOMATO_COMPOSE_PROFILES` in `.env` enthält `--profile proxy`), Stand ≥ 1.2.0.
+  (`COMPOSE_PROFILES` in `.env` enthält `proxy`, z. B. `core,collectors,proxy`; bis 1.5.x
+  `AUTOMATO_COMPOSE_PROFILES`, umstellen mit `sudo deploy/aufbau.sh env ordnen`), Stand ≥ 1.2.0.
 - NetBox-Host nach `docs/INSTALLATION-NETBOX-HOST.md`; dort `ALLOW`/`FRONT` = Adresse dieser VM.
 - **DNS:** `*.mgmt.example.ch` → externe Adresse der WAF; intern `mgmt.int.example.ch` und
   `start.mgmt.int.example.ch` (oder `*.mgmt.int.example.ch`) → interne Adresse dieser VM.
@@ -107,18 +108,17 @@ AUTOMATO_FRONT_TOR=an
 
 ```bash
 cd /opt/automato/automato
-sudo deploy/update.sh origin/main        # ohne Angabe nur auf einem Branch (sonst „kein Branch“)
+sudo deploy/update.sh main               # hängt wieder an den Branch an (seit 1.6.0)
 cat VERSION                              # ≥ 1.2.1
 sudo deploy/front/front.sh erzeugen      # Portal, Einträge, Proxy neu laden („Proxy neu geladen“)
 ```
 
-- `update.sh` startet den Proxy mit den neuen Ordnern, sofern `AUTOMATO_COMPOSE_PROFILES` das Profil
-  `proxy` enthält; sonst `sudo docker compose --profile core --profile proxy up -d proxy`.
-- Compose immer mit **beiden** Profilen `core` und `proxy` aufrufen – der Proxy hängt an der Web-UI;
-  nur mit `--profile proxy` lehnt Compose das Projekt ab.
+- `update.sh` startet den Proxy mit den neuen Ordnern, sofern `COMPOSE_PROFILES` das Profil
+  `proxy` enthält; sonst `proxy` dort ergänzen und `sudo docker compose up -d`.
+- Compose liest die Profile aus `COMPOSE_PROFILES` in `.env` – darin immer **beide** Profile
+  `core` und `proxy`: der Proxy hängt an der Web-UI, nur mit `proxy` lehnt Compose das Projekt ab.
 - Antwortet ein neuer Name mit `ERR_SSL_PROTOCOL_ERROR`, kennt der Proxy ihn noch nicht (kein
-  Zertifikat für den Namen): `front.sh erzeugen` bzw. `sudo docker compose --profile core --profile
-  proxy restart proxy`.
+  Zertifikat für den Namen): `front.sh erzeugen` bzw. `sudo docker compose restart proxy`.
 
 ## 5. Kunden
 

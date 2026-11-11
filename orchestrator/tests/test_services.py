@@ -63,7 +63,7 @@ def no_sot(monkeypatch):
         def get_by_name(self, name):
             return None
 
-    monkeypatch.setattr("app.api.internal.build_adapter", lambda tenant, settings: NoSoT())
+    monkeypatch.setattr("app.store.references.snapshot_sot", lambda session, tenant_id: NoSoT())
 
 
 def _deliver(client, tid, sid, platform, **result):

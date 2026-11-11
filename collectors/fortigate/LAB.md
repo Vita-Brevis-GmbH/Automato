@@ -52,8 +52,8 @@ end
 execute api-user generate-key automato-collector
 ```
 
-`generate-key` gibt den API-Key **einmalig** aus → als `AUTOMATO_FORTIGATE_TOKEN`
-verwenden. `trusthost` schränkt die Quelle auf den Automato-Host ein.
+`generate-key` gibt den API-Key **einmalig** aus → als Token des Geräts im Web-UI hinterlegen
+(Abschnitt 6). `trusthost` schränkt die Quelle auf den Automato-Host ein.
 
 ## 4. Beispiel-Objekte + Policy (passend zum NetBox-Seed)
 
@@ -119,14 +119,15 @@ selbstsigniert → im Collector `verify_tls=false` (nur Lab!).
 
 ## 6. Automato anbinden
 
-```
-AUTOMATO_FORTIGATE_URL=https://<MGMT_IP>
-AUTOMATO_FORTIGATE_TOKEN=<api-key aus generate-key>
-```
+Im Web-UI unter **Quellsysteme** ein Gerät „FortiGate“ mit Adresse `https://<MGMT_IP>` und dem
+API-Key aus `generate-key` als Token anlegen (ADR 0009); im Lab mit selbstsigniertem Zertifikat
+„TLS-Zertifikat des Geräts prüfen“ ausschalten. Zugangsdaten in der `.env` gibt es seit 1.6.0 nicht mehr.
 
 ## Hinweise
 
-- Bis das Lab steht, liest der Collector Beispieldaten (`sample_policies.json`) durch
-  dieselbe Normalisierung – der Ende-zu-Ende-Pfad ist damit ohne FortiGate testbar.
+- Bis das Lab steht, liest der zentrale Collector in der Entwicklung
+  (`AUTOMATO_ENVIRONMENT=dev`, ohne Agent-Token) Beispieldaten (`sample_policies.json`) durch
+  dieselbe Normalisierung – der Ende-zu-Ende-Pfad ist damit ohne FortiGate testbar. Im Betrieb
+  und am Agenten nie (1.6.0).
 - Die Interface-Namen (`port2`=DMZ, `port3`=Server) an dein Lab anpassen; der Collector
   liest `srcintf`/`dstintf` als Zonen-Hinweis.

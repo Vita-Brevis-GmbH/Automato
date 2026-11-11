@@ -29,6 +29,10 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "collector_run.cancelled": frozenset({"platform", "source_system_id"}),
     "agent.created": frozenset({"agent_id", "name", "tenant_id"}),
     "agent.updated": frozenset({"agent_id", "enabled", "auto_update"}),
+    # 1.6.0 (ADR 0052): Zugang aus dem Web-UI - nie Token oder Schluessel
+    "agent.access_issued": frozenset(
+        {"agent_id", "name", "url", "certificate", "serial", "not_after"}
+    ),
     "agent.update_downloaded": frozenset({"agent_id", "from_version", "to"}),
     "naming_profile.created": frozenset({"profile_id", "customer", "name", "copied_from"}),
     "zone_schema.saved": frozenset({"profile_id", "zones", "links"}),

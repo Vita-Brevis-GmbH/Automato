@@ -92,7 +92,7 @@ def _count(session_factory, model, **where) -> int:
 
 
 def test_quellsystem_loeschen_nimmt_regeln_und_nat_mit(session_factory, client, monkeypatch):
-    monkeypatch.setattr("app.api.internal.build_adapter", lambda tenant, settings: _FakeSoT())
+    monkeypatch.setattr("app.store.references.snapshot_sot", lambda session, tenant_id: _FakeSoT())
     a, sid_a = _tenant_with_data(client, session_factory, "kunde-a")
     b, _ = _tenant_with_data(client, session_factory, "kunde-b")
 
@@ -126,7 +126,7 @@ def test_quellsystem_loeschen_nimmt_regeln_und_nat_mit(session_factory, client, 
 def test_mandant_loeschen_nur_mit_bestaetigung_und_vollstaendig(
     session_factory, client, monkeypatch
 ):
-    monkeypatch.setattr("app.api.internal.build_adapter", lambda tenant, settings: _FakeSoT())
+    monkeypatch.setattr("app.store.references.snapshot_sot", lambda session, tenant_id: _FakeSoT())
     a, _ = _tenant_with_data(client, session_factory, "kunde-a")
     b, _ = _tenant_with_data(client, session_factory, "kunde-b")
 

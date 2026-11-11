@@ -113,7 +113,7 @@ def test_lauf_mit_zugangsdaten_vom_orchestrator(monkeypatch):
 def test_agent_ohne_apic_zugangsdaten_liest_keine_beispieldaten(monkeypatch):
     import collectors.cisco_aci.tasks as t
 
-    monkeypatch.setattr(t, "get_settings", lambda: Settings(agent_token="a"))  # noqa: S106
+    monkeypatch.setattr("collectors.config.get_settings", lambda: Settings(agent_token="a"))  # noqa: S106
     monkeypatch.setattr(t, "submit_result", lambda run_id, result, via_agent=False: None)
     result = t.collect_once("r1", _target(password=None), via_agent=True)
     assert result.status == "failed" and "apic-01" in result.message and not result.rules
@@ -124,9 +124,8 @@ def test_check_mit_zugangsdaten(monkeypatch):
     t = _patch_client(monkeypatch, calls, {})
     ok, msg = t.check(_target())
     assert ok is True and "4 Tenants" in msg
-    monkeypatch.setattr(t, "get_settings", lambda: Settings(aci_url=""))
-    ok, msg = t.check()
-    assert ok is False and "Creds" in msg
+    ok, msg = t.check(_target(password=None))
+    assert ok is False and "keine Zugangsdaten" in msg
 
 
 # Echte APIC-Antwort (rsp-subtree=full): dn nur am Tenant, Kinder nur mit rn

@@ -122,11 +122,6 @@ services:
       AUTOMATO_REDIS_URL: redis://redis:6379/0
       AUTOMATO_INTERNAL_API_TOKEN: ${AUTOMATO_INTERNAL_API_TOKEN:-dev-only-token}
       AUTOMATO_CORS_ORIGINS: ${AUTOMATO_CORS_ORIGINS:-["http://localhost:5173"]}
-      # SoT-Zugang (lesend) fuer das Matching. NetBox laeuft als eigener Stack auf
-      # dem Host -> ueber host.docker.internal:<port> erreichbar (siehe lab/README.md).
-      AUTOMATO_NETBOX_URL: ${AUTOMATO_NETBOX_URL:-}
-      AUTOMATO_NETBOX_TOKEN: ${AUTOMATO_NETBOX_TOKEN:-}
-      AUTOMATO_NETBOX_VERIFY_TLS: ${AUTOMATO_NETBOX_VERIFY_TLS:-true}
       # AuthN (E1, ADR 0007): dev = ohne Login (Standard-Admin), oidc = Keycloak-JWT.
       # Ohne Angaben bleibt es bei dev; fuer oidc in .env setzen (deploy/keycloak/PROD-INSTALL.md).
       AUTOMATO_AUTH_MODE: ${AUTOMATO_AUTH_MODE:-dev}
@@ -189,6 +184,9 @@ services:
       # Kunden-Portal: nur dieser Ordner wird beschrieben (soll.json); Besitzer setzt
       # `front.sh agent` (uid 1001)
       - ./deploy/front/state:/var/lib/automato-front
+      # Agent-CA (1.6.0, ADR 0052): Zugang mit Zertifikat aus dem Web-UI. Lesbar ist nur, was
+      # `make-certs.sh oberflaeche` freigibt (CA-Zertifikat + -Schluessel, Besitzer uid 1001)
+      - ./deploy/agent-gateway/pki:/etc/automato/agent-ca:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     # produktiv nur lokal (AUTOMATO_API_BIND=127.0.0.1): Zugang ueber Proxy bzw. Agent-Gateway
@@ -214,17 +212,9 @@ services:
       AUTOMATO_REDIS_URL: redis://redis:6379/0
       AUTOMATO_ORCHESTRATOR_URL: http://orchestrator:8000
       AUTOMATO_INTERNAL_API_TOKEN: ${AUTOMATO_INTERNAL_API_TOKEN:-dev-only-token}
-      # Zentraler Worker: Zugangsdaten kommen vom Quellsystem (Web-UI, ADR 0009). Die
-      # FORTIGATE-Variablen sind nur Rueckfall; leer + ohne Quellsystem-Token -> Beispieldaten.
-      # Die FortiGate-VM ist per LAN-IP direkt erreichbar (kein host.docker.internal noetig).
-      AUTOMATO_FORTIGATE_URL: ${AUTOMATO_FORTIGATE_URL:-}
-      AUTOMATO_FORTIGATE_TOKEN: ${AUTOMATO_FORTIGATE_TOKEN:-}
-      AUTOMATO_FORTIGATE_VERIFY_TLS: ${AUTOMATO_FORTIGATE_VERIFY_TLS:-true}
-      AUTOMATO_ACI_URL: ${AUTOMATO_ACI_URL:-}
-      AUTOMATO_ACI_USERNAME: ${AUTOMATO_ACI_USERNAME:-}
-      AUTOMATO_ACI_PASSWORD: ${AUTOMATO_ACI_PASSWORD:-}
-      AUTOMATO_ACI_VERIFY_TLS: ${AUTOMATO_ACI_VERIFY_TLS:-true}
-      AUTOMATO_ACI_TENANTS: ${AUTOMATO_ACI_TENANTS:-}
+      # Zentraler Worker: Zugangsdaten kommen vom Quellsystem (Web-UI, ADR 0009); Beispieldaten
+      # ohne Zugangsdaten nur im Labor (1.6.0: AUTOMATO_ENVIRONMENT=dev)
+      AUTOMATO_ENVIRONMENT: ${AUTOMATO_ENVIRONMENT:-dev}
       # TLS intern (0.49.0): Orchestrator per HTTPS, Redis per rediss://, gegen die interne CA
       AUTOMATO_INTERNAL_TLS: ${AUTOMATO_INTERNAL_TLS:-off}
     volumes:

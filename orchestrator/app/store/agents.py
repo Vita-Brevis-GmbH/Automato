@@ -33,6 +33,14 @@ def create_agent(session: Session, name: str, tenant_id: int | None) -> tuple[Ag
     return agent, token
 
 
+def renew_token(session: Session, agent: Agent) -> str:
+    """Neues Token (1.6.0, Zugang aus dem Web-UI) - das bisherige gilt ab sofort nicht mehr."""
+    token = secrets.token_urlsafe(32)
+    agent.token_hash = hash_token(token)
+    session.flush()
+    return token
+
+
 def list_agents(session: Session) -> list[Agent]:
     return list(session.scalars(select(Agent).order_by(Agent.name)))
 

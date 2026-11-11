@@ -11,7 +11,7 @@ Start aufgelöst:
 Werte **ohne** bekanntes Schema bleiben unverändert → `.env`/Dev verhält sich wie bisher.
 `resolve_settings` löst genau die secret-tragenden Felder der Settings einmalig beim
 App-Start auf (siehe `app.main.create_app`). So bleibt der Rest der Anwendung ahnungslos
-und nutzt `settings.netbox_token` etc. unverändert (Adapter-Pattern wie beim SoT-Gateway).
+und nutzt `settings.credentials_key` etc. unverändert (Adapter-Pattern wie beim SoT-Gateway).
 """
 
 from app.secrets.base import SecretProvider, SecretsError
@@ -22,9 +22,6 @@ from app.secrets.openbao import OpenBaoProvider
 # Felder der Settings, die ein Secret tragen und beim Start aufgelöst werden.
 SECRET_FIELDS: tuple[str, ...] = (
     "internal_api_token",
-    "netbox_token",
-    "infoblox_username",
-    "infoblox_password",
     "audit_encryption_key",
     "credentials_key",
     "agent_gateway_secret",

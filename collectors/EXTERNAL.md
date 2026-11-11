@@ -75,8 +75,9 @@ automato-collector --check                 # optional: --platform fortigate
 # Exit 0 = alle OK, 2 = mindestens ein Gerät fehlerhaft
 ```
 
-Ohne Agent-Token bzw. ohne zugewiesene Geräte prüft `--check` die lokale Konfiguration
-(`AUTOMATO_FORTIGATE_URL/_TOKEN` bzw. `AUTOMATO_ACI_URL/_USERNAME/_PASSWORD`).
+Ohne Agent-Token bzw. ohne zugewiesene Geräte gibt es nichts zu prüfen (Exit 2 mit Hinweis):
+Geräte und Zugangsdaten kommen seit 1.6.0 nur noch vom Orchestrator (Quellsystem im Web-UI,
+ADR 0009) – lokale Rückfälle wie `AUTOMATO_FORTIGATE_URL` gibt es nicht mehr.
 
 ## Installation (Windows)
 
@@ -90,28 +91,25 @@ Ohne Agent-Token bzw. ohne zugewiesene Geräte prüft `--check` die lokale Konfi
 | Variable | Zweck |
 |---|---|
 | `AUTOMATO_ORCHESTRATOR_URL` | Basis-URL des Orchestrators (intern erreichbar) |
-| `AUTOMATO_AGENT_TOKEN` | Agent-Token fürs Pull-Modell (einmalig bei `POST /agents`): Läufe abholen + Ergebnis abliefern |
+| `AUTOMATO_AGENT_TOKEN` | Agent-Token fürs Pull-Modell: Läufe abholen + Ergebnis abliefern (steht in der `agent.env` aus **Zugang herunterladen**, ADR 0052) |
 | `AUTOMATO_INTERNAL_API_TOKEN` | nur zentraler Worker / `--run-id`-Modus – **nicht** am Agenten |
-| `AUTOMATO_FORTIGATE_URL` / `_TOKEN` / `_VERIFY_TLS` | nur Rückfall; Normalfall: am Quellsystem im Web-UI (ADR 0009) |
-| `AUTOMATO_ACI_URL` / `_USERNAME` / `_PASSWORD` / `_VERIFY_TLS` / `_TENANTS` | Cisco APIC, nur Rückfall (wie oben) |
 | `AUTOMATO_ORCHESTRATOR_CA_BUNDLE` | CA-Pin für den Orchestrator (TLS-Server) |
 | `AUTOMATO_CLIENT_CERT` / `AUTOMATO_CLIENT_KEY` | mTLS-Client-Zertifikat des Agenten |
 
-Secrets nicht im Klartext ablegen: Referenzen `env:`/`file:`/`openbao:` nutzen
-(ADR 0007, `deploy/secrets/README.md`). Nichts davon gehört ins Repo.
+Zugangsdaten der Geräte stehen nicht in der `agent.env` – sie kommen je Lauf vom Orchestrator.
+Die `agent.env` samt Client-Zertifikat erzeugt die Oberfläche (**Collector-Agenten → Zugang
+herunterladen**, ADR 0052). Nichts davon gehört ins Repo.
 
 ## Pull-Modell (Agent-Queue)
 
 Statt die `RUN_ID` out-of-band zu übergeben, kann der Agent Läufe **abholen**:
 
 ```bash
-# einmalig (zentral, admin): Agent registrieren -> Token NUR hier sichtbar
-curl -X POST https://orchestrator.intern/agents -H "Authorization: Bearer <admin>" \
-  -H "Content-Type: application/json" -d '{"name":"agent-win-01","tenant_id":1}'
-# -> {"id":.., "name":"agent-win-01", "token":"<AGENT_TOKEN>"}
+# einmalig im Web-UI: Collector-Agenten -> Anlegen -> Zugang herunterladen (ZIP mit agent.env,
+# Token und - mit Agent-Gateway - Client-Zertifikat, ADR 0052)
 
 # am Agenten (Task-Scheduler): naechsten externen Lauf holen und ausfuehren
-AUTOMATO_AGENT_TOKEN=<AGENT_TOKEN> automato-collector --poll
+automato-collector --poll        # liest AUTOMATO_AGENT_TOKEN aus der agent.env
 ```
 
 `--poll` holt den ältesten offenen Lauf mit `execution=external` eines **diesem Agenten
@@ -126,21 +124,9 @@ keine Zugangsdaten.
   Kundennetz, **kein** zentraler Zugriff aufs Zielsystem.
 - Read-only erzwungen — der Collector schreibt nie ins Zielsystem.
 - **mTLS (empfohlen):** Agent präsentiert ein Client-Zertifikat (`AUTOMATO_CLIENT_CERT/_KEY`)
-  und pinnt die Server-CA (`AUTOMATO_ORCHESTRATOR_CA_BUNDLE`). Serverseitig erzwingt der
-  Reverse-Proxy vor `/internal` Client-Zertifikate, z. B. Caddy:
-
-  ```caddyfile
-  orchestrator.intern {
-      @internal path /internal/*
-      tls /srv/orch.crt /srv/orch.key {
-          client_auth {
-              mode require_and_verify
-              trusted_ca_cert_file /srv/agents-ca.crt
-          }
-      }
-      reverse_proxy @internal orchestrator:8000
-  }
-  ```
-
-  Der interne Token (`X-Internal-Token`) bleibt zusätzlich als zweite Schicht. Agent-Token
-  bzw. Client-Zertifikate je Agent/Kunde rotierbar.
+  und pinnt die Server-CA (`AUTOMATO_ORCHESTRATOR_CA_BUNDLE`). Serverseitig prüft das
+  Agent-Gateway (`deploy/agent-gateway/`, Profil `agent-gateway`) das Zertifikat vor
+  `/internal/agent/*`. Zertifikat, Schlüssel, CA und passende `agent.env` liefert die Oberfläche
+  in einem ZIP (**Zugang herunterladen**, ADR 0052).
+- Das Agent-Token bleibt zusätzlich als zweite Schicht. Jeder neue Zugang erneuert Token und
+  Zertifikat; das alte Token gilt danach nicht mehr.

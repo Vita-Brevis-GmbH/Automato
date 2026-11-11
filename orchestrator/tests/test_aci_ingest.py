@@ -17,7 +17,7 @@ class _NoSoT:
 
 
 def _setup(session_factory, monkeypatch) -> tuple[int, int]:
-    monkeypatch.setattr("app.api.internal.build_adapter", lambda tenant, settings: _NoSoT())
+    monkeypatch.setattr("app.store.references.snapshot_sot", lambda session, tenant_id: _NoSoT())
     s = session_factory()
     t = Tenant(name="kunde-a", ipam_type=IpamType.NETBOX, dns_type=DnsType.ACTIVE_DIRECTORY)
     s.add(t)

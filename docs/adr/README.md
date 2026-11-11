@@ -56,3 +56,4 @@ Format: eine Datei pro Entscheidung, z. B. `0001-monorepo-vs-multirepo.md`.
 | 0049 | Datenstand nach Inhalt (gleiche Kennungen, Abdruck je Quellsystem), nur betroffene Applikationen neu (Fussabdruck je Stand), Befunde und Vorrechnen erst nach den Läufen |
 | 0050 | Kunden-Portal in der Oberfläche (Soll-Stand, Host-Agent `front.sh sync`), Realm je Kunde unter `<kurzname>-doc` mit Rechten nur aus dem Portal, gemeinsamer Realm für den Betreiber |
 | 0051 | Anmelde-Tor im Front-Proxy: oauth2-proxy je Realm vor Startseite und allen Werkzeugen, eine Anmeldung je Realm (SSO), NetBox über den Realm (Rollen → Rechte), Kunde ohne Realm gesperrt |
+| 0052 | Agent-Zugang aus dem Web-UI: ZIP je Agent mit agent.env (neues Token), Client-Zertifikat, Schlüssel und Agent-CA; Agent-CA nur lesend im Orchestrator, freigegeben mit `make-certs.sh oberflaeche` |

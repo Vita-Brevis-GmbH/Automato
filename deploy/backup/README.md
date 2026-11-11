@@ -11,8 +11,8 @@ deploy/backup/backup.sh                        # Standard /var/backups/automato,
 
 Seit 0.42.0 lesen `backup.sh`, `restore.sh`, `deploy/update.sh` und `deploy/aufbau.sh` die
 Werte `AUTOMATO_BACKUP_AGE_RECIPIENT`, `AUTOMATO_BACKUP_AGE_IDENTITY`, `AUTOMATO_BACKUP_DIR`,
-`AUTOMATO_BACKUP_KEEP_DAYS`, `AUTOMATO_BACKUP_PLAIN` und `AUTOMATO_COMPOSE_PROFILES` auch aus
-`.env` (gelesen, nicht ausgeführt; eine Umgebungsvariable geht vor). Von Hand geht es weiter so:
+`AUTOMATO_BACKUP_KEEP_DAYS`, `AUTOMATO_BACKUP_PLAIN` und `COMPOSE_PROFILES` (seit 1.6.0, vorher
+`AUTOMATO_COMPOSE_PROFILES`) auch aus `.env` (gelesen, nicht ausgeführt; eine Umgebungsvariable geht vor). Von Hand geht es weiter so:
 `age-keygen -o ~/automato-backup.agekey` und
 `export AUTOMATO_BACKUP_AGE_RECIPIENT=$(age-keygen -y ~/automato-backup.agekey)`. Die Identität
 zusätzlich getrennt von der VM aufbewahren – ohne sie ist keine Sicherung lesbar.

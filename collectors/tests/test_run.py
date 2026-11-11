@@ -4,7 +4,7 @@ from collectors.common.dto import Target
 from collectors.config import Settings
 from collectors.run import main
 
-AGENT = Settings(agent_token="agent-tok", fortigate_url="", fortigate_token="")  # noqa: S106
+AGENT = Settings(agent_token="agent-tok")  # noqa: S106
 
 
 def _capture(sent: dict):
@@ -74,7 +74,7 @@ def test_runner_poll_nutzt_zugangsdaten_vom_orchestrator(monkeypatch):
             }
 
     monkeypatch.setattr(t, "FortiGateClient", FakeClient)
-    monkeypatch.setattr(t, "get_settings", lambda: AGENT)
+    monkeypatch.setattr("collectors.config.get_settings", lambda: AGENT)
     sent = {}
     monkeypatch.setattr(t, "submit_result", _capture(sent))
     assert run.main(["--poll"]) == 0
@@ -92,7 +92,7 @@ def test_agent_ohne_zugangsdaten_liest_keine_beispieldaten(monkeypatch):
         "next_run",
         lambda platform=None: {"platform": "fortigate", "run_id": "r1", "target": target},
     )
-    monkeypatch.setattr(t, "get_settings", lambda: AGENT)
+    monkeypatch.setattr("collectors.config.get_settings", lambda: AGENT)
     sent = {}
 
     def submit(run_id, result, via_agent=False):
@@ -111,18 +111,16 @@ def test_runner_poll_ohne_lauf(monkeypatch):
     assert run.main(["--poll"]) == 0
 
 
-def test_check_ok_exit0(monkeypatch):
+def test_check_ohne_agent_token_nichts_zu_pruefen(monkeypatch, capsys):
+    """1.6.0: Geraete-Zugang nur noch vom Quellsystem - ohne Agent-Token gibt es nichts zu
+    pruefen (den zentralen Worker prueft System -> Verbindungen)."""
     import collectors.run as run
 
-    monkeypatch.setitem(run.CHECKERS, "fortigate", lambda target=None: (True, "erreichbar"))
-    assert run.main(["--check", "--platform", "fortigate"]) == 0
-
-
-def test_check_fehler_exit2(monkeypatch):
-    import collectors.run as run
-
-    monkeypatch.setitem(run.CHECKERS, "fortigate", lambda target=None: (False, "nope"))
-    assert run.main(["--check", "--platform", "fortigate"]) == 2
+    monkeypatch.setattr(run, "get_settings", lambda: Settings())
+    called = []
+    monkeypatch.setitem(run.CHECKERS, "fortigate", lambda target=None: called.append(1))
+    assert run.main(["--check", "--platform", "fortigate", "--no-update"]) == 2
+    assert "ohne Agent-Token nichts zu pruefen" in capsys.readouterr().out and not called
 
 
 def test_check_agent_prueft_alle_zugewiesenen_geraete(monkeypatch, capsys):
@@ -147,22 +145,22 @@ def test_check_agent_prueft_alle_zugewiesenen_geraete(monkeypatch, capsys):
     assert "fw-01 (fortigate) check: OK" in out and "fw-02 (fortigate) check: FEHLER" in out
 
 
-def test_check_agent_ohne_geraete_prueft_lokal(monkeypatch, capsys):
+def test_check_agent_ohne_geraete(monkeypatch, capsys):
     import collectors.run as run
 
     monkeypatch.setattr(run, "get_settings", lambda: AGENT)
     monkeypatch.setattr(run.agent_api, "targets", lambda: [])
-    monkeypatch.setitem(run.CHECKERS, "fortigate", lambda target=None: (False, "keine Creds"))
+    called = []
+    monkeypatch.setitem(run.CHECKERS, "fortigate", lambda target=None: called.append(1))
     assert run.main(["--check"]) == 2
-    assert "keine Geraete zugewiesen" in capsys.readouterr().out
+    assert "keine Geraete zugewiesen" in capsys.readouterr().out and not called
 
 
-def test_fortigate_check_ohne_creds(monkeypatch):
+def test_fortigate_check_ohne_zugangsdaten():
     import collectors.fortigate.tasks as t
 
-    monkeypatch.setattr(t, "get_settings", lambda: Settings(fortigate_url="", fortigate_token=""))
-    ok, msg = t.check()
-    assert ok is False and "Creds" in msg
+    ok, msg = t.check(Target(source_system_id=1, name="fw-01", base_url="https://fw"))
+    assert ok is False and "keine Zugangsdaten fuer „fw-01“" in msg
 
 
 def test_upload_header_je_rueckkanal(monkeypatch):
@@ -608,3 +606,19 @@ def test_upload_wiederholt_nach_timeout_und_uebernimmt_die_quittung(monkeypatch)
     monkeypatch.setattr(up.http, "post_json", refused)
     up.submit_references("r1", ReferenceBatch(records=[]))
     assert len(tries) == 3
+
+
+def test_betrieb_liest_nie_beispieldaten(monkeypatch):
+    """1.6.0 (Anwender: keine Leichen, keine Fehlfunktionen): ohne Zugangsdaten liest nur der
+    zentrale Worker im Labor (AUTOMATO_ENVIRONMENT=dev) Beispieldaten - im Betrieb schlaegt der
+    Lauf fehl, statt Beispieldaten in einen echten Mandanten zu schreiben."""
+    import pytest
+
+    import collectors.fortigate.tasks as t
+
+    fw = Target(source_system_id=1, name="fw-01", base_url="https://fw")
+    monkeypatch.setattr("collectors.config.get_settings", lambda: Settings(environment="prod"))
+    with pytest.raises(RuntimeError, match="keine Zugangsdaten fuer „fw-01“"):
+        t.gather(fw)
+    monkeypatch.setattr("collectors.config.get_settings", lambda: Settings(environment="dev"))
+    assert t.gather(fw)["policies"]  # Labor: Beispieldaten

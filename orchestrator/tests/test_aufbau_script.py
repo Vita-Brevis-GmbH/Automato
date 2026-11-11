@@ -144,7 +144,7 @@ def test_backup_schluessel_einmal_einrichten_und_aus_env_lesen(tmp_path):
     """0.42.0: deploy/update.sh brach ohne AUTOMATO_BACKUP_AGE_RECIPIENT ab - einmal mit
     backup-schluessel in .env eintragen, danach liest jedes Skript ihn von dort."""
     env = _age(tmp_path)
-    (tmp_path / "env").write_text("AUTOMATO_NETBOX_TOKEN=bleibt\n")
+    (tmp_path / "env").write_text("AUTOMATO_UI_HOST=bleibt\n")
     out = _run(tmp_path, "pruefen", **env)
     assert "kein age-Empfänger" in out.stdout and "backup-schluessel" in out.stdout
 
@@ -153,7 +153,7 @@ def test_backup_schluessel_einmal_einrichten_und_aus_env_lesen(tmp_path):
     ident = tmp_path / "automato-backup.agekey"
     assert ident.is_file() and oct(ident.stat().st_mode & 0o777) == "0o600"
     lines = (tmp_path / "env").read_text().splitlines()
-    assert lines == ["AUTOMATO_NETBOX_TOKEN=bleibt",
+    assert lines == ["AUTOMATO_UI_HOST=bleibt",
                      "AUTOMATO_BACKUP_AGE_RECIPIENT=age1testempfaenger",
                      f"AUTOMATO_BACKUP_AGE_IDENTITY={ident}"]  # fmt: skip
     # zweiter Aufruf: dieselbe Identitaet, keine doppelten Zeilen
@@ -242,7 +242,7 @@ def test_container_ausserhalb_der_update_profile(tmp_path):
     out = _run(tmp_path, "status", COMPOSE=str(stub))
     assert "orchestrator (startet gerade)" in out.stdout
     assert "nicht in den Profilen von deploy/update.sh: collector" in out.stdout
-    assert "--profile collectors" in out.stdout
+    assert "COMPOSE_PROFILES=core,collectors" in out.stdout
 
 
 def test_migrate_dienst_einmalig(tmp_path):

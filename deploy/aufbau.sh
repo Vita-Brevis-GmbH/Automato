@@ -17,6 +17,9 @@
 #   deploy/aufbau.sh db-rollen [--neu]    getrennte DB-Rollen (0.48.0): App-Rolle ohne DDL mit
 #                                         Zufalls-Passwort in .env, Container neu starten; --neu
 #                                         = neues Passwort
+#   deploy/aufbau.sh env [ordnen]         .env pruefen (nur Namen, nie Werte) bzw. nach den
+#                                         Abschnitten von .env.example ordnen, Sicherung
+#                                         .env.vorher-<Zeit> (1.6.0, deploy/env_check.py)
 #   deploy/aufbau.sh tls-intern [--erneuern]  TLS intern (0.49.0): eigene CA und Zertifikate je
 #                                         Dienst (deploy/tls/pki), AUTOMATO_INTERNAL_TLS=on in
 #                                         .env, Container neu starten; --erneuern = Zertifikate
@@ -34,15 +37,17 @@
 # antwortet die Login-Seite. Befund 0.40.0: NetBox war nach einem Neustart aus, Automato nicht.
 #
 # Exit 0 = alles erreichbar, 1 = mindestens ein Fehler. Aendert nur `firewall --anwenden`,
-# `netbox-start`, `backup-schluessel`, `docker-update`, `db-rollen` und `tls-intern` etwas. Einstellungen auch aus .env
+# `netbox-start`, `backup-schluessel`, `docker-update`, `db-rollen`, `tls-intern` und
+# `env ordnen` etwas. Einstellungen auch aus .env
 # (deploy/env.sh).
-# Profile ueber AUTOMATO_COMPOSE_PROFILES (Standard "--profile core"), wie deploy/update.sh.
+# Profile ueber COMPOSE_PROFILES in .env (Standard nur "core"), wie deploy/update.sh.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 . deploy/env.sh
 
 COMPOSE=${COMPOSE:-docker compose}
-read -r -a PROFILES <<<"${AUTOMATO_COMPOSE_PROFILES:---profile core}"
+# ohne gueltige Profile nur `env` (das stellt sie um)
+if ! compose_profile && [ "${1:-}" != "env" ]; then exit 2; fi
 HEALTH_URL=${AUTOMATO_HEALTH_URL:-$(standard_health_url)}
 NETBOX_DIR=${AUTOMATO_NETBOX_DIR:-source-of-truth/netbox/netbox-docker}
 NETBOX_COMPOSE=${NETBOX_COMPOSE:-docker compose}
@@ -249,7 +254,7 @@ container() {
   done <<<"$zeilen"
   if [ -n "$fremd" ]; then
     warn "läuft, ist aber nicht in den Profilen von deploy/update.sh:$fremd – bleibt auf altem Stand."
-    info "In .env ergänzen, z. B.: AUTOMATO_COMPOSE_PROFILES=--profile core --profile collectors --profile proxy"
+    info "In .env ergänzen, z. B.: COMPOSE_PROFILES=core,collectors,proxy"
   fi
   if [ -n "$ohne" ]; then
     warn "ohne Neustart-Regel:$ohne – nach einem Neustart der VM bleiben sie aus."
@@ -619,6 +624,8 @@ cmd_tls_intern() {
 cmd_pruefen() {
   werkzeuge
   docker_stand
+  # .env (1.6.0): alte, doppelte, unbekannte und fehlende Schluessel - nur Namen
+  python3 deploy/env_check.py || FEHLER=1
   konfiguration
   container
   netbox_stack
@@ -653,6 +660,14 @@ case "${1:-pruefen}" in
   docker-update) cmd_docker_update ;;
   db-rollen) shift; cmd_db_rollen "${1:-}" ;;
   tls-intern) shift; cmd_tls_intern "${1:-}" ;;
+  env)
+    shift
+    case "${1:-}" in
+      "") exec python3 deploy/env_check.py ;;
+      ordnen) exec python3 deploy/env_check.py --ordnen ;;
+      *) echo "env [ordnen]" >&2; exit 2 ;;
+    esac
+    ;;
   -h | --help) sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//' ;;
-  *) echo "Unbekannter Befehl: $1 (pruefen, firewall [--anwenden], status, netbox-start, backup-schluessel, docker-update, db-rollen [--neu], tls-intern [--erneuern])" >&2; exit 2 ;;
+  *) echo "Unbekannter Befehl: $1 (pruefen, firewall [--anwenden], status, netbox-start, backup-schluessel, docker-update, db-rollen [--neu], tls-intern [--erneuern], env [ordnen])" >&2; exit 2 ;;
 esac

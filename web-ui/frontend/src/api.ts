@@ -1180,6 +1180,7 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     public detail: string,
+    public reason: string | null = null, // maschinenlesbarer Grund (`detail.reason`, z. B. Agent-Zugang)
   ) {
     // status 0 = keine Antwort (Verbindung abgebrochen, 0.139.2)
     super(status === 0 ? detail : detail ? `${detail} (HTTP ${status})` : `HTTP ${status}`);
@@ -1209,6 +1210,7 @@ export function describeError(e: unknown): string {
 function detailText(body: unknown): string {
   const d = (body as { detail?: unknown } | null)?.detail;
   if (typeof d === "string") return d;
+  if (d && typeof d === "object" && "message" in d) return String((d as { message: unknown }).message);
   if (Array.isArray(d)) {
     // Pydantic-Validierungsfehler: [{loc:[...], msg:"..."}]
     return d
@@ -1275,7 +1277,9 @@ async function fetchChecked(url: string, init: RequestInit = {}): Promise<Respon
         `${L("Der Orchestrator lehnt das Anmelde-Token ab", "The orchestrator rejects the sign-in token")}: ${detail || "HTTP 401"}`,
       );
     }
-    throw new ApiError(response.status, detail);
+    const d = (body as { detail?: { reason?: unknown } } | null)?.detail;
+    const reason = d && typeof d === "object" && typeof d.reason === "string" ? d.reason : null;
+    throw new ApiError(response.status, detail, reason);
   }
   return response;
 }
@@ -1541,15 +1545,24 @@ export const setAgentAutoUpdate = (id: number, autoUpdate: boolean) =>
 // Agent-Paket (ZIP: collectors-Wheel + install.ps1/run-agent.ps1, ohne Zugangsdaten)
 export const downloadAgentPackage = async (): Promise<Blob> =>
   (await fetchChecked("/api/agents/package")).blob();
-// 0.78.2: TLS intern an? Dann spricht der Orchestrator auf :8000 HTTPS mit der internen CA
+// Einrichtung: TLS intern (0.78.2), mTLS-Agent-Gateway (1.5.1) und Agent-CA (1.6.0, ADR 0052)
+export type AgentCaState = "ok" | "ca_missing" | "ca_denied" | "ca_invalid";
 export interface AgentPackageInfo {
-  internal_tls: boolean;
-  ca: boolean;
-  ca_name: string;
-  gateway_url?: string; // 1.5.1: Agenten nur über das mTLS-Agent-Gateway (leer = direkt auf :8000)
+  internal_tls: boolean; // Orchestrator spricht auf :8000 HTTPS
+  gateway_url: string; // Agenten nur über das Gateway (leer = direkt auf :8000)
+  agent_ca: AgentCaState | null; // null = ohne Gateway
 }
 export const fetchAgentPackageInfo = () => getJSON<AgentPackageInfo>("/api/agents/package/info");
-export const downloadAgentCa = async (): Promise<Blob> => (await fetchChecked("/api/agents/package/ca")).blob();
+// Zugang je Agent (1.6.0): ZIP mit agent.env (neues Token) und - mit Gateway - Zertifikat
+export const downloadAgentAccess = async (id: number, orchestratorUrl: string) => {
+  const r = await fetchChecked(`/api/agents/${id}/access`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ orchestrator_url: orchestratorUrl }),
+  });
+  const name = /filename="([^"]+)"/.exec(r.headers.get("Content-Disposition") ?? "")?.[1];
+  return { blob: await r.blob(), filename: name ?? `automato-zugang-${id}.zip` };
+};
 
 // Namensprofile & Wörterbücher
 export const fetchNamingProfiles = () => getJSON<NamingProfile[]>("/api/naming-profiles");

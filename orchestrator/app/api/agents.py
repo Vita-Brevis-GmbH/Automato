@@ -34,7 +34,7 @@ from app.auth.principal import Principal
 from app.config import Settings, get_settings
 from app.db import get_session
 from app.models import Agent, RunStatus, SourceSystem, Tenant
-from app.store import agent_package, runs
+from app.store import agent_access, agent_package, runs
 from app.store import agents as store
 
 log = logging.getLogger(__name__)
@@ -70,6 +70,11 @@ class AgentOut(BaseModel):
 
 class AgentCreated(AgentOut):
     token: str  # einmalig
+
+
+class AccessIn(BaseModel):
+    # Adresse des Orchestrators vom Agent-Rechner aus - nur ohne mTLS-Gateway (sonst dessen Adresse)
+    orchestrator_url: str = Field(default="", max_length=300)
 
 
 class AgentPatch(BaseModel):
@@ -184,7 +189,8 @@ def _out(a: Agent, systems: list | None = None, current: str | None = None) -> A
     )
 
 
-# Dateien des Agent-Pakets (keine Secrets: agent.env erzeugt das UI lokal im Browser)
+# Dateien des Agent-Pakets (keine Secrets: agent.env und Zertifikat kommen je Agent aus dem
+# Zugang, POST /agents/{id}/access)
 _PACKAGE_FILES = (
     "install.ps1",
     "run-agent.ps1",
@@ -207,46 +213,25 @@ def _ca_pem(settings: Settings) -> bytes | None:
 
 class PackageInfoOut(BaseModel):
     internal_tls: bool  # Orchestrator spricht auf :8000 HTTPS mit der internen CA
-    ca: bool  # CA-Zertifikat verfuegbar (im Paket und als Download)
-    ca_name: str = CA_NAME
     # mTLS-Agent-Gateway (1.5.1): Agenten nur darueber - Adresse + Client-Zertifikat in agent.env
     gateway_url: str = ""
-
-
-def _gateway_url(settings: Settings) -> str:
-    host = settings.agent_gateway_host.strip()
-    if settings.internal_mtls_mode == "off" or not host or host == "localhost":
-        return ""
-    if ":" in host and not host.startswith("["):
-        host = f"[{host}]"  # IPv6
-    port = settings.agent_gateway_port
-    return f"https://{host}" if port == 443 else f"https://{host}:{port}"
+    # Agent-CA fuer den Zugang (1.6.0): None ohne Gateway, sonst ok | ca_missing | ca_denied |
+    # ca_invalid
+    agent_ca: str | None = None
 
 
 @router.get("/package/info", response_model=PackageInfoOut)
 def package_info(
     _: Principal = Depends(require_admin), settings: Settings = Depends(get_settings)
 ) -> PackageInfoOut:
-    """Fuer die Einrichtung (0.78.2): TLS intern an? Dann https:// und die CA in agent.env.
-    Mit dem mTLS-Gateway (1.5.1) dessen Adresse - Port 8000 ist dann fuer Agenten gesperrt."""
+    """Fuer die Einrichtung: TLS intern an (0.78.2, dann https://)? Mit dem mTLS-Gateway (1.5.1)
+    dessen Adresse - Port 8000 ist dann fuer Agenten gesperrt - und ob die Agent-CA
+    Zertifikate ausstellen kann (1.6.0). Die CA der internen TLS liegt im Zugang bzw. Paket."""
     return PackageInfoOut(
         internal_tls=settings.internal_tls,
-        ca=_ca_pem(settings) is not None,
-        gateway_url=_gateway_url(settings),
+        gateway_url=agent_access.gateway_url(settings),
+        agent_ca=agent_access.ca_state(settings),
     )
-
-
-@router.get("/package/ca")
-def download_ca(
-    _: Principal = Depends(require_admin), settings: Settings = Depends(get_settings)
-) -> Response:
-    """CA-Zertifikat der internen CA (0.78.2) - fuer Agenten, die direkt auf :8000 zugreifen."""
-    pem = _ca_pem(settings)
-    if pem is None:
-        raise HTTPException(status_code=404, detail="internal TLS is off")
-    disposition = f'attachment; filename="{CA_NAME}"'
-    return Response(content=pem, media_type="application/x-pem-file",
-                    headers={"Content-Disposition": disposition})  # fmt: skip
 
 
 @router.get("/package")
@@ -354,6 +339,59 @@ def update_agent(
         detail={"agent_id": agent.id, "enabled": agent.enabled, "auto_update": agent.auto_update},
     )
     return _out(agent, store.assigned_systems(session, agent), _current_version(settings))
+
+
+@router.post("/{agent_id}/access")
+def download_access(
+    agent_id: int,
+    body: AccessIn,
+    principal: Principal = Depends(require_admin),
+    session: Session = Depends(get_session, scope="function"),
+    settings: Settings = Depends(get_settings),
+) -> Response:
+    """Zugang des Agenten als ZIP (1.6.0, ADR 0052): agent.env mit neuem Token und - mit dem
+    mTLS-Gateway - Client-Zertifikat, Schluessel und Agent-CA. Das bisherige Token gilt danach
+    nicht mehr; Schluessel und Token werden nirgends gespeichert. 409 = nicht moeglich
+    (`detail.reason`: ca_missing | ca_denied | ca_invalid | name | gateway_host), 422 = Adresse."""
+    agent = session.get(Agent, agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail="agent not found")
+    gateway = settings.internal_mtls_mode != "off"
+    try:
+        if gateway and not agent_access.gateway_url(settings):
+            raise agent_access.AccessError("gateway_host", "AUTOMATO_AGENT_GATEWAY_HOST not set")
+        url = agent_access.orchestrator_url(settings, body.orchestrator_url)
+        ca = agent_access.load_ca(settings) if gateway else None
+        issued = agent_access.issue(ca, agent.name) if ca is not None else None
+    except agent_access.AccessError as exc:
+        status = 422 if exc.reason == "url" else 409
+        detail = {"reason": exc.reason, "message": str(exc)}
+        raise HTTPException(status_code=status, detail=detail) from exc
+    token = store.renew_token(session, agent)
+    audit.record(
+        session,
+        actor=f"user:{principal.subject}",
+        action="agent.access_issued",
+        subject=str(agent.id),
+        detail={
+            "agent_id": agent.id,
+            "name": agent.name,
+            "url": url,
+            "certificate": issued is not None,
+            "serial": format(issued.serial, "x") if issued else None,
+            "not_after": issued.not_after.isoformat() if issued else None,
+        },
+    )
+    data = agent_access.bundle(agent.name, url, token, settings, ca, issued, _ca_pem(settings))
+    safe = "".join(c if c.isalnum() or c in "._-" else "_" for c in agent.name)[:60] or "agent"
+    return Response(
+        content=data,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="automato-zugang-{safe}.zip"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 def require_agent(

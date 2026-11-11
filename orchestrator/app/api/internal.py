@@ -23,7 +23,6 @@ from app.db import get_session, get_session_factory
 from app.i18n import german
 from app.models import REFERENCE_PLATFORMS, CollectorRun, RunStatus, SourceSystem, Tenant
 from app.schemas.collector import CollectorResult, ReferenceBatch
-from app.sot import build_adapter
 from app.store import agents as agent_store
 from app.store import (
     app_refresh,
@@ -346,10 +345,9 @@ def _submit(
     if run.status is RunStatus.COMPLETED and run.tenant_id and run.source_system_id:
         tenant = session.get(Tenant, run.tenant_id)
         try:
-            # gespeicherter Stand der Referenzquellen, sonst Live-Adapter (Rueckfall)
-            sot = references.snapshot_sot(session, tenant.id) or build_adapter(
-                tenant, get_settings()
-            )
+            # gespeicherter Stand der Referenzquellen (Quellsysteme im Web-UI); ohne bleibt
+            # die Zuordnung zum IPAM offen, bis eine Referenzquelle eingelesen ist (1.6.0)
+            sot = references.snapshot_sot(session, tenant.id)
         except Exception as exc:  # noqa: BLE001 - Ingest-Fehler sichtbar machen, Lieferung annehmen
             log.exception("Einspielen von Lauf %s fehlgeschlagen", run.id)
             sot, error = None, _reason(exc)

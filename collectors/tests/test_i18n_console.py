@@ -10,7 +10,7 @@ from collectors.common import selfupdate as su
 from collectors.common.dto import Target
 from collectors.config import Settings
 
-AGENT = Settings(agent_token="agent-tok", fortigate_url="", fortigate_token="")  # noqa: S106
+AGENT = Settings(agent_token="agent-tok")  # noqa: S106
 FW = {"source_system_id": 7, "name": "fw-01", "platform": "fortigate"}  # ohne Zugangsdaten
 
 
@@ -38,11 +38,10 @@ def test_sprache_aus_automato_lang(monkeypatch):
 
 
 def test_check_auf_englisch(english, monkeypatch, capsys):
-    import collectors.fortigate.tasks as t
     import collectors.run as run
 
     monkeypatch.setattr(run, "get_settings", lambda: AGENT)
-    monkeypatch.setattr(t, "get_settings", lambda: AGENT)
+    monkeypatch.setattr("collectors.config.get_settings", lambda: AGENT)
     monkeypatch.setattr(run.agent_api, "targets", lambda: [Target(**FW)])
     assert run.main(["--check", "--no-update"]) == 2
     out = capsys.readouterr().out
@@ -52,12 +51,11 @@ def test_check_auf_englisch(english, monkeypatch, capsys):
 
 
 def test_check_ohne_sprache_deutsch(monkeypatch, capsys):
-    import collectors.fortigate.tasks as t
     import collectors.run as run
 
     monkeypatch.delenv("AUTOMATO_LANG", raising=False)
     monkeypatch.setattr(run, "get_settings", lambda: AGENT)
-    monkeypatch.setattr(t, "get_settings", lambda: AGENT)
+    monkeypatch.setattr("collectors.config.get_settings", lambda: AGENT)
     monkeypatch.setattr(run.agent_api, "targets", lambda: [Target(**FW)])
     assert run.main(["--check", "--no-update"]) == 2
     assert "check: FEHLER - keine Zugangsdaten fuer „fw-01“" in capsys.readouterr().out
@@ -78,7 +76,7 @@ def _poll(monkeypatch, ack):
 
     runs = iter([{"platform": "fortigate", "run_id": "r1", "target": FW}, None])
     monkeypatch.setattr(run.agent_api, "next_run", lambda platform=None: next(runs))
-    monkeypatch.setattr(t, "get_settings", lambda: AGENT)
+    monkeypatch.setattr("collectors.config.get_settings", lambda: AGENT)
     sent = {}
 
     def submit(run_id, result, via_agent=False):

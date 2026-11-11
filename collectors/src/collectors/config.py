@@ -24,17 +24,9 @@ class Settings(BaseSettings):
     client_cert: str = ""  # mTLS Client-Zertifikat (PEM)
     client_key: str = ""  # mTLS Client-Key (PEM)
 
-    # Zielsystem-Zugang lokal - nur Rueckfall: normalerweise kommen Adresse und Zugangsdaten
-    # vom Quellsystem im Web-UI (ADR 0009). Zentral/Lab ohne beides: Beispieldaten.
-    # verify_tls im Lab i. d. R. false (selbstsigniert). Alles read-only!
-    fortigate_url: str = ""
-    fortigate_token: str = ""
-    fortigate_verify_tls: bool = True
-    aci_url: str = ""
-    aci_username: str = ""
-    aci_password: str = ""
-    aci_verify_tls: bool = True
-    aci_tenants: str = ""  # kommagetrennt, leer = alle ausser infra/mgmt
+    # Adresse und Zugangsdaten der Geraete kommen immer vom Quellsystem im Web-UI (ADR 0009).
+    # dev | staging | prod: Beispieldaten ohne Zugangsdaten nur im Labor (1.6.0, samples_allowed)
+    environment: str = "dev"
 
     # TLS intern (0.49.0, ADR 0023) - nur der zentrale Worker im Compose-Netz: Orchestrator per
     # HTTPS und Redis per rediss://, beide gegen die interne CA geprueft. Agenten nutzen
@@ -69,3 +61,11 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def samples_allowed() -> bool:
+    """Beispieldaten statt eines Geraets (1.6.0): nur der zentrale Worker im Labor
+    (AUTOMATO_ENVIRONMENT=dev). Ein Agent im Kundennetz und jeder Betrieb (staging/prod) liest
+    nie Beispieldaten - ohne Zugangsdaten schlaegt der Lauf mit klarer Meldung fehl."""
+    s = get_settings()
+    return not s.agent_token and s.environment == "dev"

@@ -2,7 +2,9 @@
 # Update der Automato-VM mit Sicherung vorher und Rueckfall (Produktions-Gate).
 #
 #   deploy/update.sh            Sicherung -> git pull --ff-only -> Images bauen -> starten -> Health
-#   deploy/update.sh <git-ref>  wie oben, aber auf einen bestimmten Stand (Tag/Commit/Branch)
+#   deploy/update.sh <git-ref>  wie oben, aber auf einen bestimmten Stand: Branch (z. B. main -
+#                               haengt wieder an den Branch an, auch nach einem Rueckfall), Tag
+#                               oder Commit (losgeloest)
 #   deploy/update.sh --rollback zurueck auf Code UND Datenbank vor dem letzten Update
 #
 # Am Ende prueft deploy/aufbau.sh den Aufbau und die Verbindungen (nur Hinweis, kein Abbruch).
@@ -16,7 +18,7 @@
 # Die Sicherung macht deploy/backup/backup.sh (age-Empfaenger: AUTOMATO_BACKUP_AGE_RECIPIENT,
 # fuer den Rueckfall die Identitaet AUTOMATO_BACKUP_AGE_IDENTITY) - beide seit 0.42.0 auch aus
 # .env, einmal eingerichtet mit `deploy/aufbau.sh backup-schluessel`. Profile ueber
-# AUTOMATO_COMPOSE_PROFILES (Standard "--profile core"). Migrationen laufen vor dem Start des
+# COMPOSE_PROFILES in .env (Standard nur "core"). Migrationen laufen vor dem Start des
 # Orchestrators (seit 0.48.0 im Dienst migrate, als Eigentuemer der Tabellen); deshalb setzt der
 # Rueckfall auch die Datenbank auf die Sicherung zurueck - Daten seit dem Update gehen dabei
 # verloren (meist nur Minuten).
@@ -26,7 +28,7 @@ cd "$(dirname "$0")/.."
 . deploy/env.sh
 
 COMPOSE=${COMPOSE:-docker compose}
-read -r -a PROFILES <<<"${AUTOMATO_COMPOSE_PROFILES:---profile core}"
+compose_profile || exit 2
 HEALTH_URL=${AUTOMATO_HEALTH_URL:-$(standard_health_url)}
 BACKUP_DIR=${AUTOMATO_BACKUP_DIR:-/var/backups/automato}
 STATE=.automato-update # letzter Update-Stand (gitignored)
@@ -61,8 +63,8 @@ update() {
     exit 2
   fi
   if [ -z "$ref" ] && ! git symbolic-ref -q HEAD >/dev/null; then
-    echo "FEHLER: kein Branch ausgecheckt (z. B. nach einem Rueckfall) - Stand angeben:" >&2
-    echo "        deploy/update.sh <tag|branch>" >&2
+    echo "FEHLER: kein Branch ausgecheckt (z. B. nach einem Rueckfall) - Branch angeben:" >&2
+    echo "        deploy/update.sh main   (bzw. einen Tag/Commit)" >&2
     exit 2
   fi
   local prev_rev prev_version
@@ -101,7 +103,14 @@ update() {
 
   echo "2/4 Code holen"
   git fetch --quiet --tags origin
-  if [ -n "$ref" ]; then git checkout --quiet --detach "$ref"; else git pull --quiet --ff-only; fi
+  if [ -z "$ref" ]; then
+    git pull --quiet --ff-only
+  elif git show-ref --verify --quiet "refs/remotes/origin/${ref#origin/}"; then
+    # Branch (1.6.0): wieder anhaengen, damit das naechste Update ohne Angabe geht
+    git checkout --quiet -B "${ref#origin/}" "origin/${ref#origin/}"
+  else
+    git checkout --quiet --detach "$ref"  # Tag oder Commit
+  fi
   echo "    $prev_version ($prev_rev) -> $(version) ($(git rev-parse HEAD))"
 
   echo "3/4 Images holen, bauen und starten"

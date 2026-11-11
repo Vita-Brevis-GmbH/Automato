@@ -1,10 +1,8 @@
 """FortiGate-Collector-Task.
 
-Liest die Regeln per FortiOS-REST-API (read-only). Zugangsdaten in dieser Reihenfolge:
-1. vom Orchestrator fuer das Geraet des Laufs (`Target`, ADR 0009),
-2. lokal `AUTOMATO_FORTIGATE_URL`/`_TOKEN` (Rueckfall, z. B. alte agent.env),
-3. nur zentral/Lab: Beispieldaten. Ein Agent im Kundennetz liest **nie** Beispieldaten -
-   ohne Zugangsdaten schlaegt der Lauf mit klarer Meldung fehl.
+Liest die Regeln per FortiOS-REST-API (read-only). Zugangsdaten kommen vom Orchestrator fuer
+das Geraet des Laufs (`Target`, ADR 0009). Ohne sie liest nur der zentrale Worker im Labor
+Beispieldaten (`samples_allowed`, 1.6.0) - sonst schlaegt der Lauf mit klarer Meldung fehl.
 Ergebnis geht per HTTP an die interne Orchestrator-API (kein DB-Zugriff).
 """
 
@@ -19,7 +17,7 @@ from collectors.common import diagnose
 from collectors.common.dto import CollectorResult, Target
 from collectors.common.i18n import L, german_only
 from collectors.common.upload import confirmed, submit_result
-from collectors.config import get_settings
+from collectors.config import samples_allowed
 from collectors.fortigate import normalize as norm
 from collectors.fortigate import routing
 from collectors.fortigate.client import FortiGateClient
@@ -30,12 +28,9 @@ def _sample(name: str) -> list | dict:
 
 
 def _credentials(target: Target | None) -> tuple[str, str, bool] | None:
-    """(URL, Token, verify_tls) - vom Geraet (Orchestrator) vor lokaler Konfiguration."""
+    """(URL, Token, verify_tls) des Geraets - vom Orchestrator (Quellsystem, ADR 0009)."""
     if target is not None and target.base_url and target.token:
         return target.base_url, target.token, target.verify_tls
-    settings = get_settings()
-    if settings.fortigate_url and settings.fortigate_token:
-        return settings.fortigate_url, settings.fortigate_token, settings.fortigate_verify_tls
     return None
 
 
@@ -57,7 +52,7 @@ def rules_only(target: Target | None) -> bool:
 
 
 def gather(target: Target | None = None) -> dict:
-    """FortiGate-Rohdaten (IPv4+IPv6, NAT) - echtes Geraet je VDOM (`vdoms`) oder (nur zentral)
+    """FortiGate-Rohdaten (IPv4+IPv6, NAT) - echtes Geraet je VDOM (`vdoms`) oder (nur im Labor)
     Beispieldaten als ein VDOM ohne Namen (flach, wie aeltere Clients). Lauf nur der Regeln
     (0.139.0): ohne Interfaces, Zonen, Routing, HA und System (`rules_only` im Ergebnis)."""
     creds = _credentials(target)
@@ -65,8 +60,7 @@ def gather(target: Target | None = None) -> dict:
         url, token, verify = creds
         client = FortiGateClient(url, token, verify_tls=verify)
         return client.gather_rules() if rules_only(target) else client.gather()
-    if get_settings().agent_token:
-        # Agent im Kundennetz: nie Beispieldaten in einen echten Mandanten schreiben
+    if not samples_allowed():  # Agent bzw. Betrieb: nie Beispieldaten in einen echten Mandanten
         raise RuntimeError(_no_credentials(target))
     if rules_only(target):
         return {"vdoms": [_sample_rules()], "rules_only": True}
@@ -105,17 +99,13 @@ def check(target: Target | None = None) -> tuple[bool, str]:
     """Erreichbarkeit/Auth des Zielsystems pruefen (read-only, kein Ingest)."""
     creds = _credentials(target)
     if creds is None:
-        return False, _no_credentials(target) if target else _no_creds()
+        return False, _no_credentials(target)
     url, token, verify = creds
     try:
         FortiGateClient(url, token, verify_tls=verify).ping()
     except Exception as exc:  # noqa: BLE001 - Diagnose fuer den Operator
         return False, diagnose.device_error(exc, "fortigate", target, local=True)
     return True, L(f"erreichbar: {url}", f"reachable: {url}")
-
-
-def _no_creds() -> str:
-    return L("keine FortiGate-Creds", "no FortiGate credentials")
 
 
 # Bewusst ungueltig: darf von keiner FortiGate akzeptiert werden (R16)
@@ -130,7 +120,7 @@ def strict_check(target: Target | None = None) -> tuple[bool, str]:
     fehlgeschlagene Anmeldung (Sperre nach admin-lockout-threshold, FortiOS-Standard 3)."""
     creds = _credentials(target)
     if creds is None:
-        return False, _no_credentials(target) if target else _no_creds()
+        return False, _no_credentials(target)
     url, _token, verify = creds
     try:
         FortiGateClient(url, _INVALID_TOKEN, verify_tls=verify).ping()

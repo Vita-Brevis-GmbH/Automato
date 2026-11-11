@@ -221,12 +221,14 @@ jobs:
       # echten Caddy, je Realm ein oauth2-proxy, ein Test-Keycloak: Anmeldung, Rückkehr, Rollen,
       # gefälschte Kopfzeilen, NetBox-API mit Token, Sperre ohne Realm, Portal nur admin/operator
       - uses: astral-sh/setup-uv@v3
-      - name: Anmelde-Tor Ende zu Ende (Caddy + oauth2-proxy + Test-IdP)
+      # 1.6.0 (ADR 0052): Agent-Zugang aus dem Web-UI durch das echte mTLS-Agent-Gateway
+      - name: Anmelde-Tor und Agent-Gateway Ende zu Ende (Caddy + oauth2-proxy + Test-IdP)
         env:
           AUTOMATO_TEST_TOR: "1"
         run: |
           uv sync --all-packages
-          uv run --package orchestrator pytest orchestrator/tests/test_front_tor_e2e.py -q
+          uv run --package orchestrator pytest orchestrator/tests/test_front_tor_e2e.py \
+            orchestrator/tests/test_agent_gateway_e2e.py -q
 
   # UI-Tests im Browser (Playwright): Orchestrator mit Beispieldaten + Vite, alle Ansichten und
   # die Kernablaeufe (Suche, NAT-Links, Findings, Dienste, Standorte, Alle einlesen).

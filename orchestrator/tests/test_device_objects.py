@@ -22,7 +22,7 @@ class _SoT:
 
 
 def _setup(session_factory, monkeypatch, names=("fw-01",)) -> tuple[int, list[int]]:
-    monkeypatch.setattr("app.api.internal.build_adapter", lambda tenant, settings: _SoT())
+    monkeypatch.setattr("app.store.references.snapshot_sot", lambda session, tenant_id: _SoT())
     s = session_factory()
     t = Tenant(name="kunde-a", ipam_type=IpamType.NETBOX, dns_type=DnsType.ACTIVE_DIRECTORY)
     s.add(t)

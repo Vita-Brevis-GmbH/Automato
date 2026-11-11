@@ -4,21 +4,20 @@
 # Aus dem Repo-Root ausfuehren.
 #
 # Eingaben ueber Umgebungsvariablen:
-#   NETBOX_TOKEN     (Pflicht) read-only Collector-Token aus source-of-truth/netbox/setup.sh
 #   FORTIGATE_URL    (optional) z. B. https://10.10.0.1 - leer -> Collector liest Beispieldaten
 #   FORTIGATE_TOKEN  (optional) API-Token des read-only FortiGate-Users (LAB.md)
 #   NETBOX_PORT      (optional) Host-Port der NetBox-Instanz (Default 8080)
+# Geraete und NetBox kommen als Quellsysteme in die Oberflaeche (1.6.0) - die .env enthaelt
+# keine Zugangsdaten zu Geraeten. Der Lab-Lauf (`automato lab`) legt FortiGate samt Token an.
 #
 # Beispiel (mit echtem FortiGate):
-#   NETBOX_TOKEN=abc... FORTIGATE_URL=https://10.10.0.1 FORTIGATE_TOKEN=xyz... \
-#     bash lab/up-automato.sh
+#   FORTIGATE_URL=https://10.10.0.1 FORTIGATE_TOKEN=xyz... bash lab/up-automato.sh
 set -euo pipefail
 
 [ -f docker-compose.yml ] || { echo "Bitte aus dem Repo-Root ausfuehren."; exit 1; }
 NETBOX_PORT="${NETBOX_PORT:-8080}"
 FORTIGATE_URL="${FORTIGATE_URL:-}"
 FORTIGATE_TOKEN="${FORTIGATE_TOKEN:-}"
-: "${NETBOX_TOKEN:?NETBOX_TOKEN fehlt (read-only Collector-Token aus der NetBox-setup.sh)}"
 if [ -z "$FORTIGATE_URL" ] || [ -z "$FORTIGATE_TOKEN" ]; then
   echo "Hinweis: ohne FORTIGATE_URL/FORTIGATE_TOKEN liest der Collector Beispieldaten."
 fi
@@ -58,14 +57,7 @@ POSTGRES_PASSWORD=${PG_PASSWORD}
 AUTOMATO_ENVIRONMENT=dev
 AUTOMATO_INTERNAL_API_TOKEN=${INTERNAL_TOKEN}
 AUTOMATO_CORS_ORIGINS=["http://localhost:5173"]
-
-AUTOMATO_NETBOX_URL=http://host.docker.internal:${NETBOX_PORT}
-AUTOMATO_NETBOX_TOKEN=${NETBOX_TOKEN}
-AUTOMATO_NETBOX_VERIFY_TLS=false
-
-AUTOMATO_FORTIGATE_URL=${FORTIGATE_URL}
-AUTOMATO_FORTIGATE_TOKEN=${FORTIGATE_TOKEN}
-AUTOMATO_FORTIGATE_VERIFY_TLS=false
+COMPOSE_PROFILES=core,collectors
 EOF
 echo ".env geschrieben."
 
@@ -81,21 +73,26 @@ if [ "$HAD_ENV" = "1" ]; then
   rm -f .env.extra
 fi
 
-# TLS-Proxy fuer die Web-UI mitstarten, wenn eine UI-Adresse konfiguriert ist.
-PROFILES=(--profile core --profile collectors)
+# TLS-Proxy fuer die Web-UI mitstarten, wenn eine UI-Adresse konfiguriert ist. Die Profile
+# stehen nur in COMPOSE_PROFILES (1.6.0) - docker compose liest sie selbst aus .env.
 if grep -q '^AUTOMATO_UI_HOST=.' .env; then
-  PROFILES+=(--profile proxy)
+  sed -i 's/^COMPOSE_PROFILES=core,collectors$/COMPOSE_PROFILES=core,collectors,proxy/' .env
+fi
+# Uebernommene, nicht mehr gelesene Eintraege (z. B. AUTOMATO_NETBOX_URL, AUTOMATO_FORTIGATE_*,
+# AUTOMATO_COMPOSE_PROFILES) entfernen und nach .env.example ordnen - nur Namen in der Ausgabe.
+if command -v python3 >/dev/null 2>&1; then
+  AUTOMATO_ENV_FILE=.env python3 deploy/env_check.py --ordnen | grep -E 'entfernt|umgestellt|auskommentiert' || true
 fi
 
 # Optional: Automato-Volumes vorher loeschen (z. B. nach einem Postgres-Passwort-
 # Mismatch). Harmlos im Lab - die Regeln werden beim Collect-Lauf neu befuellt.
 if [ "${AUTOMATO_RESET:-0}" = "1" ]; then
   echo "AUTOMATO_RESET=1 -> loesche Automato-Volumes ..."
-  docker compose --profile core --profile collectors down -v --remove-orphans 2>/dev/null || true
+  docker compose down -v --remove-orphans 2>/dev/null || true
 fi
 
 echo "== Stack bauen und starten =="
-docker compose "${PROFILES[@]}" up -d --build
+docker compose up -d --build
 
 echo "Warte auf Orchestrator-Health unter http://localhost:8000/health ..."
 ok=""
@@ -113,7 +110,9 @@ Web-UI (Dev):  http://localhost:5173
 Web-UI (TLS):  https://$(sed -n 's/^AUTOMATO_UI_HOST=//p' .env | head -n1)  (nur mit AUTOMATO_UI_HOST)
 
 Durchstich ausloesen (Model 2, FortiGate -> NetBox-Matching):
-  docker compose exec orchestrator automato lab --base-url ${FORTIGATE_URL}
+  docker compose exec orchestrator automato lab --base-url "${FORTIGATE_URL}" --token "<FortiGate-Token>" --insecure
   docker compose exec orchestrator automato status --run-id <aus-obiger-Ausgabe>
   curl -s http://localhost:8000/rules | python3 -m json.tool
+NetBox als Referenzquelle: Oberflaeche -> Mandanten & Standorte -> Quellsysteme -> NetBox
+  (Adresse http://host.docker.internal:${NETBOX_PORT}, Lese-Token aus der NetBox-setup.sh)
 EOF

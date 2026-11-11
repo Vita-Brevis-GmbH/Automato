@@ -3,8 +3,8 @@
 Liest Virtual Services, VS VIPs, Pools, Pool Groups, VRF Contexts und Application Profiles je
 Avi-Tenant und bildet sie als publizierte Dienste ab (NAT wie der Virtual Server der FortiGate).
 Zugangsdaten vom Orchestrator fuer das Geraet des Laufs (`Target`: Adresse, Benutzer/Passwort,
-Tenants in `read_scope`; ADR 0009). Ohne Zugangsdaten liest nur der zentrale Worker (Lab) die
-Beispieldaten - ein Agent im Kundennetz nie.
+Tenants in `read_scope`; ADR 0009). Ohne Zugangsdaten liest nur der zentrale Worker im Labor die
+Beispieldaten (`samples_allowed`, 1.6.0) - ein Agent und der Betrieb nie.
 """
 
 import json
@@ -18,7 +18,7 @@ from collectors.common import diagnose
 from collectors.common.dto import CollectorResult, Target
 from collectors.common.i18n import L, german_only
 from collectors.common.upload import confirmed, submit_result
-from collectors.config import get_settings
+from collectors.config import samples_allowed
 
 
 def _sample() -> dict:
@@ -46,12 +46,12 @@ def _no_credentials(target: Target | None) -> str:
 
 
 def gather(target: Target | None = None) -> dict:
-    """Avi-Objekte je Tenant - echter Controller oder (nur zentral) Beispieldaten."""
+    """Avi-Objekte je Tenant - echter Controller oder (nur im Labor) Beispieldaten."""
     client = _client(target)
     if client is not None:
         with client:
             return client.gather(target.read_scope if target else "")
-    if get_settings().agent_token:
+    if not samples_allowed():  # Agent bzw. Betrieb (1.6.0): nie Beispieldaten
         raise RuntimeError(_no_credentials(target))
     return _sample()
 

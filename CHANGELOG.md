@@ -7,6 +7,51 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 1.6.0 – 2026-11-11
+
+Anwender 2026-11-11 nach dem Update auf 1.5.1: „Ich habe das Zertifikat auf dem Web UI
+heruntergeladen, warum geht das nicht mehr?“, `update.sh` brach nach einem Rückfall ab („kein
+Branch ausgecheckt“), „Können wir das env aufräumen, sauber sortieren und löschen, was wir nicht
+mehr brauchen? Haben wir im Code noch viele solche Altlasten?“ – und: „Ich möchte keine Leichen im
+Code oder Fehlfunktionen nach dem Umbau … ich will das Zertifikat und die .env Config im WebUI
+herunterladen können und es muss funktionieren.“
+
+- **Zugang des Agenten aus der Oberfläche** (ADR 0052): Collector-Agenten → **Zugang** →
+  **Zugang herunterladen** liefert ein ZIP mit fertiger `agent.env` (Adresse, neues Agent-Token,
+  Zertifikatszeilen, Sprache), mit Agent-Gateway dazu Client-Zertifikat und Schlüssel des Agenten
+  (`agent.crt`/`agent.key`, CN = Agent-Name, passt zum Modus `bind`) und `agents-ca.crt`, mit TLS
+  intern ohne Gateway `automato-ca.crt`, und eine kurze Anleitung. Inhalt nach
+  `C:\Automato\collector` kopieren, `run-agent.ps1 -Check` – fertig. Jeder Download erneuert das
+  Token (das alte gilt sofort nicht mehr) und das Zertifikat; Audit `agent.access_issued` mit
+  Seriennummer und Ablauf. Geht es nicht (Agent-CA fehlt, nicht lesbar, ungültig, Name nicht
+  zulässig, Gateway-Name fehlt), nennt die Seite den Grund und gibt keinen halben Zugang aus.
+  Ersetzt den `agent.env`-Generator im Browser, das einmal angezeigte Token beim Anlegen und den
+  Download der CA (`/agents/package/ca`). Geprüft Ende zu Ende mit dem echten Gateway (Caddy) im
+  CI: das ausgestellte Zertifikat wird angenommen, fremde und fehlende abgewiesen.
+- **Agent-CA für den Orchestrator** (`deploy/agent-gateway/make-certs.sh`): `ca` gibt die CA
+  gleich frei (nur lesend eingebunden, Schlüssel nur für den Orchestrator lesbar,
+  `gateway.key` bleibt root); für eine bestehende CA einmal `sudo make-certs.sh oberflaeche`, mit
+  `oberflaeche aus` wieder gesperrt. Neues Risiko R24.
+- **`install.ps1`** übernimmt `agent.env` und die Zertifikatsdateien aus dem Zugang (auch bei
+  anderem `-InstallDir`); das alte Umschreiben der Adresse für TLS intern entfällt (steht im
+  Zugang schon richtig).
+- **`.env` prüfen und ordnen:** `sudo deploy/aufbau.sh env` zeigt fehlende Pflichtwerte, nicht
+  mehr gelesene, unbekannte und doppelte Einträge (nur Namen, nie Werte); `… env ordnen` sortiert
+  nach `.env.example`, entfernt nicht mehr Gelesenes, kommentiert Unbekanntes aus und sichert
+  vorher (`.env.vorher-<zeit>`). `pruefen` führt die Prüfung mit aus. `.env.example` neu
+  gegliedert.
+- **Eine Angabe der Profile:** nur noch `COMPOSE_PROFILES` (liest Compose selbst) – die Skripte
+  lesen `AUTOMATO_COMPOSE_PROFILES` nicht mehr und brechen mit Hinweis ab; `env ordnen` stellt um.
+- **`deploy/update.sh main`** hängt den Stand wieder an den Branch an (auch nach einem Rückfall).
+- **Altlasten entfernt:** Geräte- und NetBox-/Infoblox-Zugangsdaten aus der Umgebung
+  (`AUTOMATO_FORTIGATE_*`, `AUTOMATO_ACI_*`, `AUTOMATO_NETBOX_URL/_TOKEN/_VERIFY_TLS`,
+  `AUTOMATO_INFOBLOX_*`) samt Rückfallpfad im Orchestrator (`app/sot.py`) und im Collector –
+  Zugangsdaten nur noch am Quellsystem (ADR 0009). Beispieldaten liest nur noch der zentrale
+  Worker mit `AUTOMATO_ENVIRONMENT=dev` (nie ein Agent, nie im Betrieb); `--check` ohne
+  Agent-Token meldet „nichts zu prüfen“. Labor: `automato lab --token … --insecure`,
+  `lab/up-automato.sh` ohne Geräte-Zugangsdaten in der `.env`.
+- **Anleitungen** nachgeführt (Agent, Gateway, Installation, Front, Betrieb, Labor, Secrets).
+
 ## 1.5.1 – 2026-11-10
 
 Anwender 2026-11-10: Collector-Agent erreicht den Server nicht („die Firewall ist offen …, aber

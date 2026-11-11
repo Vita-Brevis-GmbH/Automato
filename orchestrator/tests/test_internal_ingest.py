@@ -32,7 +32,7 @@ class _FakeSoT:
 
 
 def test_durchstich_collector_result_landet_in_rules(client, session_factory, monkeypatch):
-    monkeypatch.setattr("app.api.internal.build_adapter", lambda tenant, settings: _FakeSoT())
+    monkeypatch.setattr("app.store.references.snapshot_sot", lambda session, tenant_id: _FakeSoT())
 
     # Mandant + Quellsystem anlegen
     session = session_factory()
