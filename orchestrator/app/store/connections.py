@@ -36,7 +36,7 @@ from sqlalchemy.orm import Session
 from app import credentials, tls
 from app.config import Settings
 from app.i18n import L, lang, use
-from app.models import Agent, SourceSystem
+from app.models import Agent, Platform, SourceSystem
 from app.store import db_roles, reachability, runs
 
 ORDER = {"ok": 0, "info": 0, "warn": 1, "error": 2}
@@ -352,6 +352,9 @@ def _sources(session: Session, tenant_ids: set[int] | None) -> tuple[list[dict],
             "id": s.id, "name": s.name, "platform": s.platform.value, "url": s.base_url,
             "verify_tls": s.verify_tls, "token": secrets.get("token"),
             "write_token": bool(secrets.get("write_token")),
+            # AD-DNS: die Zonen wie „Quellsysteme → Prüfen“ (1.8.1; vorher fehlten sie hier und
+            # die Übersicht meldete „keine Zonen hinterlegt“)
+            "zones": s.read_scope.split() if s.platform == Platform.AD_DNS else None,
         })  # fmt: skip
     agents = {a.id: a.name for a in session.scalars(select(Agent).where(Agent.id.in_(by_agent)))}
     items = [
@@ -364,11 +367,13 @@ def _sources(session: Session, tenant_ids: set[int] | None) -> tuple[list[dict],
             [],
             L(
                 f"{len(names)} Quellsysteme ({', '.join(names[:5])}"
-                f"{' …' if len(names) > 5 else ''}) liest der Agent – Prüfung auf der Station: "
+                f"{' …' if len(names) > 5 else ''}) liest der Agent – prüfen unter Quellsysteme → "
+                "Prüfen (der Agent prüft beim nächsten Abruf) oder auf der Station: "
                 ".\\run-agent.ps1 -Check",
                 f"{len(names)} source systems ({', '.join(names[:5])}"
-                f"{' …' if len(names) > 5 else ''}) are read by the agent – check on the "
-                "station: .\\run-agent.ps1 -Check",
+                f"{' …' if len(names) > 5 else ''}) are read by the agent – check under Source "
+                "systems → Check (the agent checks on its next poll) or on the station: "
+                ".\\run-agent.ps1 -Check",
             ),
         )  # fmt: skip
         for aid, names in by_agent.items()
@@ -378,7 +383,7 @@ def _sources(session: Session, tenant_ids: set[int] | None) -> tuple[list[dict],
 
 def _source(s: dict, network) -> Item:
     result = reachability.check(s["url"], s["platform"], token=s["token"],
-                                verify_tls=s["verify_tls"])  # fmt: skip
+                                verify_tls=s["verify_tls"], zones=s.get("zones"))  # fmt: skip
     steps = [asdict(st) for st in result.steps]
     item = Item(f"source:{s['id']}", L("Quellsysteme", "Source systems"),
                 f"{s['name']} ({s['platform']})", s["url"],

@@ -78,6 +78,7 @@ def test_zeitueberschreitung_zum_docker_host_nennt_die_ufw_regel(client, monkeyp
     ag = items["agent"]
     assert (ag["status"], ag["name"]) == ("info", "Agent „ag-01“")
     assert "run-agent.ps1 -Check" in ag["hint"] and "ddi" in ag["hint"]
+    assert "Quellsysteme → Prüfen" in ag["hint"]  # seit 1.7.0 auch über die Oberfläche
 
     # nur Admins; der Mandant schränkt ein
     viewer = {"X-Dev-Roles": "viewer", "X-Dev-Tenants": str(tid)}
@@ -155,3 +156,25 @@ def test_cli_json_und_exit_code(client, monkeypatch, tmp_path, capsys):
     result["items"][0]["status"] = "ok"
     assert cli.main(["check-connections"]) == 0
     assert capsys.readouterr().out.startswith("OK     Redis  redis:6379")
+
+
+def test_ad_dns_mit_den_zonen_des_quellsystems(client, monkeypatch, tmp_path):
+    """Anwender 1.8.0 (`aufbau.sh pruefen`): „Am Quellsystem sind keine Zonen hinterlegt“, obwohl
+    DNS-Zonen eingetragen sind - die Übersicht gab sie der Prüfung nicht mit (1.8.1)."""
+    tid = client.post("/tenants", json={"name": "Umgebung P"}, headers=ADMIN).json()["id"]
+    body = {"tenant_id": tid, "name": "ad", "platform": "ad_dns", "base_url": "dc01.example.ch",
+            "read_scope": "example.ch\n20.10.in-addr.arpa"}  # fmt: skip
+    assert client.post("/systems", json=body, headers=ADMIN).status_code == 201
+    _routes(monkeypatch, tmp_path)
+    _redis_ok(monkeypatch)
+    seen = {}
+
+    def check(url, platform, **kw):
+        seen[platform] = kw.get("zones")
+        return connections.reachability.Result(True, [])
+
+    monkeypatch.setattr(connections.reachability, "check", check)
+    out = client.get("/system/connections", headers=ADMIN).json()
+    assert seen == {"ad_dns": ["example.ch", "20.10.in-addr.arpa"]}
+    (ad,) = (i for i in out["items"] if i["key"].startswith("source:"))
+    assert ad["status"] == "ok"
