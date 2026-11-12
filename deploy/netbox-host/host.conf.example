@@ -14,6 +14,11 @@ ALLOW="10.0.30.5/32 10.0.10.0/24"
 # Adresse des Benutzers statt die des Front-Proxys (leer = nicht übernehmen)
 FRONT="10.0.30.5/32"
 
+# Port des Proxys auf dieser VM (1.9.1). 443, ausser hier läuft schon ein Dienst auf 443 (z. B. in
+# Dev auf der Magister-VM): dann z. B. 8444, in .env des Front-Proxys AUTOMATO_FRONT_NETBOX=<ip>:8444
+# und die Firewall für diesen Port öffnen. Nach einer Änderung: netbox-host.sh init
+# PORT=443
+
 # Anmeldung über das Anmelde-Tor des Front-Proxys (1.4.0, ADR 0051): NetBox übernimmt den Benutzer
 # aus den Kopfzeilen des Front-Proxys (nur von FRONT); Rechte aus den Realm-Rollen (role:admin =
 # Superuser, role:operator = bearbeiten, sonst lesen). Einrichten bzw. nachführen: sso alle

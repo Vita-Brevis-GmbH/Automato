@@ -122,7 +122,32 @@ def test_proxy_ist_gehaertet(host):
     assert 'security_opt: ["no-new-privileges:true"]' in compose
     assert "cap_drop: [ALL]" in compose and "cap_add: [NET_BIND_SERVICE]" in compose
     assert "read_only: true" in compose and "tmpfs: [/tmp]" in compose
-    assert compose.count('"443:443"') == 1  # einziger veröffentlichter Port
+    assert compose.count('"${NBH_PORT:-443}:443"') == 1  # einziger veröffentlichter Port
+    assert "NBH_PORT=443" in (host.dir / "proxy" / ".env").read_text()  # Vorgabe 443
+
+
+def test_port_aus_host_conf(host):
+    """1.9.1: auf einer VM mit einem anderen Dienst auf 443 (Dev auf der Magister-VM)."""
+    with (host.dir / "host.conf").open("a") as f:
+        f.write("PORT=8444\n")
+    r = host("init")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "NBH_PORT=8444" in (host.dir / "proxy" / ".env").read_text()
+    with (host.dir / "host.conf").open("a") as f:
+        f.write("PORT=443x\n")
+    r = host("init")
+    assert r.returncode != 0
+    assert "PORT in host.conf" in r.stdout + r.stderr
+
+
+def test_pruefen_fragt_den_proxy_auf_seinem_port(host):
+    with (host.dir / "host.conf").open("a") as f:
+        f.write("PORT=8444\n")
+    assert host("init").returncode == 0
+    assert host("neu", "kunde-a", "Kunde A").returncode == 0
+    r = host("pruefen")
+    assert "Proxy läuft (Port 8444)" in r.stdout
+    assert "über den Proxy erreichbar (https://kunde-a-nb.mgmt.example.ch:8444)" in r.stdout
 
 
 def test_neu_schreibt_instanz_mit_eigenen_secrets(host):

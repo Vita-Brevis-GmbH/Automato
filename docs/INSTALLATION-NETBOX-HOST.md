@@ -140,6 +140,14 @@ In `host.conf`:
 - `FRONT`: Adresse der Automato-VM – nur ihrer Angabe `X-Forwarded-For` wird geglaubt (NetBox
   sieht die Adresse des Benutzers).
 - `NETBOX_DOCKER_TAG` / `NETBOX_VERSION`: Version aller Instanzen (Vorgabe NetBox 4.6).
+- `PORT` (1.9.1): Port des Proxys auf dieser VM, Vorgabe 443. Nur wenn hier schon ein anderer
+  Dienst Port 443 belegt (in Dev z. B. die Magister-VM), einen freien Port wie `8444` setzen. Dann:
+  - auf dem Front-Proxy `AUTOMATO_FRONT_NETBOX=<ip dieser VM>:8444`;
+  - in der Firewall dieser VM (`DOCKER-USER`) den Port für die Automato-VM und das
+    Management-Netz öffnen;
+  - direkt aus dem Management-Netz heisst die NetBox `https://<kunde>-nb.<DOMAIN>:8444`.
+
+  `ALLOW` und `FRONT` bleiben wie oben (Adresse der Automato-VM). Nach einer Änderung `init`.
 
 Zertifikat ablegen und den Proxy starten:
 

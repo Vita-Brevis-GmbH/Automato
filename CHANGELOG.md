@@ -7,6 +7,16 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 1.9.1 – 2026-11-12
+
+Dev-Aufbau mit zwei VMs (Anwender 2026-11-12: „Netbox muss entweder auf dem Magister VM oder auf
+die Automato VM, keine dritte VM“). Auf beiden VMs belegt schon ein Dienst Port 443.
+
+- **NetBox-Host mit eigenem Port** (`deploy/netbox-host/netbox-host.sh`): `PORT` in `host.conf`
+  (Vorgabe 443). Der Proxy veröffentlicht ihn auf dem Host, im Container bleibt 443; `pruefen` fragt
+  den Proxy auf diesem Port. Der Front-Proxy kannte `AUTOMATO_FRONT_NETBOX=<ip>:<port>` schon.
+- Anleitung `docs/INSTALLATION-NETBOX-HOST.md` (Abschnitt 3, `PORT`), `host.conf.example`.
+
 ## 1.9.0 – 2026-11-11
 
 Rückmeldung zum Test von 1.8.x (Anwender 2026-11-11). Ein Teil ging zuerst ohne die Collector-

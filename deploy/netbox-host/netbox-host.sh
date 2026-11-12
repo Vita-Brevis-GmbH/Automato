@@ -68,6 +68,11 @@ lade_conf() {
   AGE_RECIPIENT=${AGE_RECIPIENT:-}
   SSO=${SSO:-an}
   case "$SSO" in an | aus) ;; *) abbruch "SSO in host.conf: an oder aus ('$SSO')" ;; esac
+  # Port des Proxys auf dem Host (1.9.1): 443, ausser die VM trägt schon einen Dienst auf 443
+  # (z. B. Dev auf der Magister-VM); der Front-Proxy nennt ihn in AUTOMATO_FRONT_NETBOX=<ip>:<port>
+  PORT=${PORT:-443}
+  [[ "$PORT" =~ ^[0-9]{1,5}$ ]] && [ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ] \
+    || abbruch "PORT in host.conf: Zahl von 1 bis 65535 ('$PORT')"
 }
 
 root_noetig() {
@@ -152,7 +157,7 @@ cmd_init() {
   rm -rf "$NBH_DIR/proxy/www"
   rm -f "$NBH_DIR/proxy/sites/_start.caddy"
   if [ -s "$NBH_DIR/proxy/pki/wildcard.crt" ]; then
-    proxyc up -d >/dev/null && ok "Proxy läuft (443)"
+    proxyc up -d >/dev/null && ok "Proxy läuft (Port $PORT)"
   else
     info "Proxy startet nach dem Zertifikat: netbox-host.sh init erneut"
   fi
@@ -174,6 +179,7 @@ proxy_env() {  # .env des Proxys aus host.conf: wer zugreifen darf, wessen X-For
     printf 'ALLOW="%s"\n' "$allow"
     # Front-Proxy: seine Angabe X-Forwarded-For (Adresse des Benutzers) wird übernommen
     [ -z "${FRONT:-}" ] || printf 'FRONT="%s"\n' "$FRONT"
+    printf 'NBH_PORT=%s\n' "${PORT:-443}"
   } >"$NBH_DIR/proxy/.env"
   chmod 640 "$NBH_DIR/proxy/.env"
 }
@@ -639,7 +645,7 @@ cmd_pruefen() {
   root_noetig
   lade_conf
   titel "Proxy"
-  if proxyc ps --status running --services 2>/dev/null | grep -qx proxy; then ok "Proxy läuft"
+  if proxyc ps --status running --services 2>/dev/null | grep -qx proxy; then ok "Proxy läuft (Port $PORT)"
   else fehler "Proxy läuft nicht – netbox-host.sh init"; fi
   if [ -s "$NBH_DIR/proxy/pki/wildcard.crt" ]; then
     if openssl x509 -in "$NBH_DIR/proxy/pki/wildcard.crt" -noout -checkend $((30 * 86400)) >/dev/null 2>&1; then
@@ -673,9 +679,9 @@ cmd_pruefen() {
     else
       fehler "$k: NetBox antwortet im Container nicht – cd $(nbdir "$k") && docker compose logs netbox"
     fi
-    code=$($CURL -sk -o /dev/null -w '%{http_code}' --resolve "$(nb_host "$k"):443:127.0.0.1" "https://$(nb_host "$k")/login/" 2>/dev/null || true)
+    code=$($CURL -sk -o /dev/null -w '%{http_code}' --resolve "$(nb_host "$k"):$PORT:127.0.0.1" "https://$(nb_host "$k"):$PORT/login/" 2>/dev/null || true)
     case "$code" in
-      200) ok "$k: über den Proxy erreichbar (https://$(nb_host "$k"))" ;;
+      200) ok "$k: über den Proxy erreichbar (https://$(nb_host "$k"):$PORT)" ;;
       403) ok "$k: Proxy antwortet (403 – die VM selbst ist nicht in ALLOW)" ;;
       *) fehler "$k: über den Proxy nicht erreichbar (HTTP ${code:-–})" ;;
     esac
