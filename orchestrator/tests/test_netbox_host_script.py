@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 SCRIPT = Path(__file__).resolve().parents[2] / "deploy" / "netbox-host" / "netbox-host.sh"
+OPENSSL = shutil.which("openssl") or "openssl"
 
 pytestmark = pytest.mark.skipif(
     not shutil.which("bash") or not shutil.which("openssl"), reason="bash/openssl fehlen"
@@ -144,7 +145,7 @@ def test_port_aus_host_conf(host):
 def _zertifikat(pki: Path, name: str) -> None:
     """Selbst signiertes Zertifikat mit Schlüssel (EC, schnell) nach pki/wildcard.*."""
     subprocess.run(  # noqa: S603 - feste Argumente
-        ["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256",
+        [OPENSSL, "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256",
          "-nodes", "-keyout", str(pki / "wildcard.key"), "-out", str(pki / "wildcard.crt"),
          "-days", "2", "-subj", "/CN=test", "-addext", f"subjectAltName=DNS:{name}"],
         check=True, capture_output=True,
@@ -164,7 +165,7 @@ def test_init_startet_den_proxy_nicht_mit_fremdem_zertifikat(host):
     pki = host.dir / "proxy" / "pki"
     _zertifikat(pki, "*.mgmt.example.ch")
     subprocess.run(  # noqa: S603 - feste Argumente
-        ["openssl", "genpkey", "-algorithm", "EC", "-pkeyopt", "ec_paramgen_curve:P-256",
+        [OPENSSL, "genpkey", "-algorithm", "EC", "-pkeyopt", "ec_paramgen_curve:P-256",
          "-out", str(pki / "wildcard.key")],
         check=True, capture_output=True,
     )  # fmt: skip
