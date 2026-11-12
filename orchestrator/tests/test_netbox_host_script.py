@@ -27,6 +27,7 @@ if [ "$1" = network ]; then [ "$2" = inspect ] && exit 1; exit 0; fi
 shift
 case "$*" in
   "config --services") printf 'netbox\nnetbox-worker\npostgres\nredis\nredis-cache\n' ;;
+  ps*restarting*) exit 0 ;;
   ps*--services*) echo proxy ;;
   ps*) echo "netbox running" ;;
   *pg_dump*) echo "SQL-DUMP" ;;
@@ -138,6 +139,42 @@ def test_port_aus_host_conf(host):
     r = host("init")
     assert r.returncode != 0
     assert "PORT in host.conf" in r.stdout + r.stderr
+
+
+def _zertifikat(pki: Path, name: str) -> None:
+    """Selbst signiertes Zertifikat mit Schlüssel (EC, schnell) nach pki/wildcard.*."""
+    subprocess.run(  # noqa: S603 - feste Argumente
+        ["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256",
+         "-nodes", "-keyout", str(pki / "wildcard.key"), "-out", str(pki / "wildcard.crt"),
+         "-days", "2", "-subj", "/CN=test", "-addext", f"subjectAltName=DNS:{name}"],
+        check=True, capture_output=True,
+    )  # fmt: skip
+
+
+def test_zertifikat_passt_zum_schluessel(host):
+    _zertifikat(host.dir / "proxy" / "pki", "*.mgmt.example.ch")
+    r = host("init")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "Zertifikat für *.mgmt.example.ch, passt zum Schlüssel" in r.stdout
+    assert "Zertifikat für *.mgmt.example.ch, passt zum Schlüssel" in host("pruefen").stdout
+
+
+def test_init_startet_den_proxy_nicht_mit_fremdem_zertifikat(host):
+    """1.9.1, Dev: in wildcard.crt stand nur die CA – Caddy startete endlos neu."""
+    pki = host.dir / "proxy" / "pki"
+    _zertifikat(pki, "*.mgmt.example.ch")
+    subprocess.run(  # noqa: S603 - feste Argumente
+        ["openssl", "genpkey", "-algorithm", "EC", "-pkeyopt", "ec_paramgen_curve:P-256",
+         "-out", str(pki / "wildcard.key")],
+        check=True, capture_output=True,
+    )  # fmt: skip
+    host.log.write_text("")
+    r = host("init")
+    assert r.returncode != 0
+    assert "passt nicht zu pki/wildcard.key" in r.stderr
+    assert "compose up" not in host.log.read_text(), "Proxy darf nicht starten"
+    p = host("pruefen")
+    assert "passt nicht zu pki/wildcard.key" in p.stderr
 
 
 def test_pruefen_fragt_den_proxy_auf_seinem_port(host):

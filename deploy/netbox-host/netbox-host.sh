@@ -132,6 +132,8 @@ cmd_init() {
   titel "Zertifikat"
   if [ -s "$NBH_DIR/proxy/pki/wildcard.crt" ] && [ -s "$NBH_DIR/proxy/pki/wildcard.key" ]; then
     ok "pki/wildcard.crt und pki/wildcard.key vorhanden"
+    # Passt das Zertifikat nicht, startet Caddy nicht und startet endlos neu – vorher abbrechen
+    zert_pruefen || abbruch "Proxy nicht gestartet – erst das Zertifikat richten, dann init erneut"
   else
     warn "Wildcard-Zertifikat fehlt: Fullchain nach $NBH_DIR/proxy/pki/wildcard.crt, Schlüssel nach pki/wildcard.key (für *.$DOMAIN)"
   fi
@@ -169,6 +171,24 @@ cmd_init() {
     printf '# NetBox-Host: tägliche Sicherung aller Kunden (netbox-host.sh)\n17 2 * * * root %s sichern alle >>/var/log/netbox-host-backup.log 2>&1\n' \
       "$self" >/etc/cron.d/netbox-host
     ok "/etc/cron.d/netbox-host (täglich 02:17)"
+  fi
+}
+
+zert_pruefen() {  # Zertifikat des Proxys: passt zum Schlüssel, nennt *.DOMAIN (1.9.1)
+  # Anlass (Dev, 2026-11-12): in wildcard.crt stand nur das Zertifikat der CA – das ausgestellte
+  # fehlte beim Zusammensetzen der Kette. Caddy meldete „private key does not match public key“
+  # und startete endlos neu; pruefen zeigte nur das Ablaufdatum (das der CA).
+  local crt="$NBH_DIR/proxy/pki/wildcard.crt" key="$NBH_DIR/proxy/pki/wildcard.key" a b
+  a=$(openssl x509 -in "$crt" -noout -pubkey 2>/dev/null) || a=""
+  b=$(openssl pkey -in "$key" -pubout 2>/dev/null) || b=""
+  if [ -z "$a" ] || [ "$a" != "$b" ]; then
+    fehler "pki/wildcard.crt passt nicht zu pki/wildcard.key – zuerst steht das ausgestellte Zertifikat (hier: $(openssl x509 -in "$crt" -noout -subject 2>/dev/null || echo 'unlesbar')), danach die Kette"
+    return 1
+  fi
+  if openssl x509 -in "$crt" -noout -ext subjectAltName 2>/dev/null | grep -qF "*.$DOMAIN"; then
+    ok "Zertifikat für *.$DOMAIN, passt zum Schlüssel"
+  else
+    warn "Zertifikat nennt *.$DOMAIN nicht (subjectAltName) – der Front-Proxy lehnt es ab"
   fi
 }
 
@@ -645,9 +665,12 @@ cmd_pruefen() {
   root_noetig
   lade_conf
   titel "Proxy"
-  if proxyc ps --status running --services 2>/dev/null | grep -qx proxy; then ok "Proxy läuft (Port $PORT)"
+  if proxyc ps --status restarting --services 2>/dev/null | grep -qx proxy; then
+    fehler "Proxy startet ständig neu – (cd $NBH_DIR/proxy && docker compose logs --tail 20 proxy)"
+  elif proxyc ps --status running --services 2>/dev/null | grep -qx proxy; then ok "Proxy läuft (Port $PORT)"
   else fehler "Proxy läuft nicht – netbox-host.sh init"; fi
   if [ -s "$NBH_DIR/proxy/pki/wildcard.crt" ]; then
+    zert_pruefen || true
     if openssl x509 -in "$NBH_DIR/proxy/pki/wildcard.crt" -noout -checkend $((30 * 86400)) >/dev/null 2>&1; then
       ok "Zertifikat gültig bis $(openssl x509 -in "$NBH_DIR/proxy/pki/wildcard.crt" -noout -enddate | cut -d= -f2)"
     else

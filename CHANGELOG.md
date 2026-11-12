@@ -15,6 +15,11 @@ die Automato VM, keine dritte VM“). Auf beiden VMs belegt schon ein Dienst Por
 - **NetBox-Host mit eigenem Port** (`deploy/netbox-host/netbox-host.sh`): `PORT` in `host.conf`
   (Vorgabe 443). Der Proxy veröffentlicht ihn auf dem Host, im Container bleibt 443; `pruefen` fragt
   den Proxy auf diesem Port. Der Front-Proxy kannte `AUTOMATO_FRONT_NETBOX=<ip>:<port>` schon.
+- **Zertifikat des NetBox-Hosts geprüft** (Fund aus der Einrichtung: in `wildcard.crt` stand nur das
+  Zertifikat der CA, Caddy startete endlos neu, `pruefen` zeigte nur das Ablaufdatum der CA):
+  - `init` und `pruefen` vergleichen Zertifikat und Schlüssel und prüfen den Namen `*.<DOMAIN>`;
+  - passt es nicht, startet `init` den Proxy nicht und nennt, was in der Datei steht;
+  - `pruefen` meldet einen Proxy, der ständig neu startet, als Fehler statt „läuft“.
 - Anleitung `docs/INSTALLATION-NETBOX-HOST.md` (Abschnitt 3, `PORT`), `host.conf.example`.
 
 ## 1.9.0 – 2026-11-11
