@@ -20,6 +20,7 @@ die Automato VM, keine dritte VM“). Auf beiden VMs belegt schon ein Dienst Por
   - `init` und `pruefen` vergleichen Zertifikat und Schlüssel und prüfen den Namen `*.<DOMAIN>`;
   - passt es nicht, startet `init` den Proxy nicht und nennt, was in der Datei steht;
   - `pruefen` meldet einen Proxy, der ständig neu startet, als Fehler statt „läuft“.
+  - `init` holt einen Proxy aus der Neustart-Schleife (Neustart statt Warten auf Docker).
 - Anleitung `docs/INSTALLATION-NETBOX-HOST.md` (Abschnitt 3, `PORT`), `host.conf.example`.
 
 ## 1.9.0 – 2026-11-11

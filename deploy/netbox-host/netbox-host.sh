@@ -159,6 +159,11 @@ cmd_init() {
   rm -rf "$NBH_DIR/proxy/www"
   rm -f "$NBH_DIR/proxy/sites/_start.caddy"
   if [ -s "$NBH_DIR/proxy/pki/wildcard.crt" ]; then
+    # Hängt der Proxy in der Neustart-Schleife (z. B. altes Zertifikat), erzeugt `up -d` ihn nicht
+    # neu, und Docker wartet zwischen den Versuchen immer länger – jetzt neu starten.
+    if proxyc ps --status restarting --services 2>/dev/null | grep -qx proxy; then
+      proxyc restart proxy >/dev/null && info "Proxy aus der Neustart-Schleife geholt"
+    fi
     proxyc up -d >/dev/null && ok "Proxy läuft (Port $PORT)"
   else
     info "Proxy startet nach dem Zertifikat: netbox-host.sh init erneut"

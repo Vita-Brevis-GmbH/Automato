@@ -28,7 +28,7 @@ if [ "$1" = network ]; then [ "$2" = inspect ] && exit 1; exit 0; fi
 shift
 case "$*" in
   "config --services") printf 'netbox\nnetbox-worker\npostgres\nredis\nredis-cache\n' ;;
-  ps*restarting*) exit 0 ;;
+  ps*restarting*) [ -f "$NBH_LOG.restarting" ] && echo proxy; exit 0 ;;
   ps*--services*) echo proxy ;;
   ps*) echo "netbox running" ;;
   *pg_dump*) echo "SQL-DUMP" ;;
@@ -176,6 +176,17 @@ def test_init_startet_den_proxy_nicht_mit_fremdem_zertifikat(host):
     assert "compose up" not in host.log.read_text(), "Proxy darf nicht starten"
     p = host("pruefen")
     assert "passt nicht zu pki/wildcard.key" in p.stderr
+
+
+def test_init_holt_den_proxy_aus_der_neustart_schleife(host):
+    """Nach dem Richten des Zertifikats: init startet den hängenden Proxy neu."""
+    _zertifikat(host.dir / "proxy" / "pki", "*.mgmt.example.ch")
+    Path(f"{host.log}.restarting").write_text("")
+    host.log.write_text("")
+    r = host("init")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "compose restart proxy" in host.log.read_text()
+    assert "Proxy aus der Neustart-Schleife geholt" in r.stdout
 
 
 def test_pruefen_fragt_den_proxy_auf_seinem_port(host):
