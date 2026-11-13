@@ -1140,6 +1140,8 @@ except ValueError:
     body = None
 if r.status_code in (401, 403) and isinstance(body, dict) and "detail" in body:
     print("ok")
+elif "Keine NetBox" in r.text or (r.status_code == 200 and not r.text.strip()):
+    print("fehlt")
 elif "Unbekannte Adresse" in r.text or "Zugriff nur" in r.text:
     print("gesperrt")
 else:
@@ -1155,6 +1157,7 @@ automato_zur_netbox() {  # $1 Kunde: erreicht Automato (Orchestrator) seine NetB
     tls) fehler "$k: Automato vertraut dem Zertifikat von $url nicht – CA nach deploy/trust/, dann docker compose up -d --force-recreate orchestrator collector" ;;
     weg) fehler "$k: Automato erreicht $url nicht (DNS im Container bzw. Weg zur eigenen Adresse)" ;;
     gesperrt) fehler "$k: Front-Proxy lässt Automato nicht zur NetBox – front.sh erzeugen (Docker-Netze von Automato)" ;;
+    fehlt) fehler "$k: auf dem NetBox-Host gibt es keine NetBox für $k – dort: netbox-host.sh neu $k" ;;
     http_*) warn "$k: NetBox über den Front-Proxy antwortet unerwartet (${antwort#http_}) – $url/api/status/" ;;
     *) info "$k: Weg Automato → NetBox nicht geprüft (Orchestrator läuft nicht bzw. docker exec geht nicht)" ;;
   esac
@@ -1331,12 +1334,23 @@ cmd_pruefen() {
     fi
     local nbhost=${NETBOX%:*} nbport=443
     [ "$nbhost" = "$NETBOX" ] || nbport=${NETBOX##*:}
-    code=$($CURL -s --noproxy '*' "${ca[@]}" -o /dev/null -w '%{http_code}' --resolve "$k-nb.$DOMAIN:$nbport:$nbhost" "https://$k-nb.$DOMAIN:$nbport/login/" 2>/dev/null || true)
-    case "$code" in
-      200) ok "$k: NetBox vom Front-Proxy aus erreichbar" ;;
-      403) fehler "$k: NetBox-Host lehnt diese VM ab (403) – ALLOW/FRONT in /opt/netbox-host/host.conf" ;;
-      *) fehler "$k: NetBox nicht erreichbar (HTTP ${code:-–}; Zertifikat, Firewall, gibt es $k auf dem NetBox-Host?)" ;;
-    esac
+    # wie die Prüfung des Cockpits: ein absichtlich ungültiges Token, NetBox antwortet selbst mit
+    # JSON-403 – eine leere Seite bzw. 404 heisst, es gibt die Instanz auf dem NetBox-Host nicht
+    local antwort
+    antwort=$(mktemp)
+    code=$($CURL -s --noproxy '*' "${ca[@]}" -o "$antwort" -w '%{http_code}' \
+      -H "Authorization: Token automato-statuspruefung" -H "Accept: application/json" \
+      --resolve "$k-nb.$DOMAIN:$nbport:$nbhost" "https://$k-nb.$DOMAIN:$nbport/api/status/" 2>/dev/null || true)
+    if [ "$code" = 403 ] && grep -q '"detail"' "$antwort"; then
+      ok "$k: NetBox vom Front-Proxy aus erreichbar"
+    elif [ "$code" = 403 ]; then
+      fehler "$k: NetBox-Host lehnt diese VM ab (403) – ALLOW/FRONT in /opt/netbox-host/host.conf"
+    elif [ "$code" = 404 ] || [ "$code" = 200 ]; then
+      fehler "$k: auf dem NetBox-Host gibt es keine NetBox für $k – dort: netbox-host.sh neu $k"
+    else
+      fehler "$k: NetBox nicht erreichbar (HTTP ${code:-–}; Zertifikat, Firewall)"
+    fi
+    rm -f "$antwort"
     automato_zur_netbox "$k"
   done
   [ -n "$(kunden)" ] || info "noch keine Kunden – front.sh kunde <kunde> \"<Name>\""

@@ -127,6 +127,7 @@ cmd_init() {
   install -m 644 "$SCRIPT_DIR/proxy/docker-compose.yml" "$NBH_DIR/proxy/docker-compose.yml"
   install -m 644 "$SCRIPT_DIR/proxy/Caddyfile" "$NBH_DIR/proxy/Caddyfile"
   proxy_env
+  [ -z "${DOMAIN:-}" ] || site_auffang
   ok "Proxy-Vorlage nach $NBH_DIR/proxy"
 
   titel "Zertifikat"
@@ -316,6 +317,7 @@ cmd_sso() {
   titel "Proxy (Kopfzeilen der Anmeldung nur vom Front-Proxy)"
   install -m 644 "$SCRIPT_DIR/proxy/Caddyfile" "$NBH_DIR/proxy/Caddyfile"
   proxy_env
+  site_auffang
   proxy_reload
   liste=$wer
   [ "$wer" != alle ] || liste=$(kunden)
@@ -413,6 +415,17 @@ networks:
     external: true
 YAML
   } >"$nb/docker-compose.override.yml"
+}
+
+site_auffang() {  # Namen ohne NetBox-Instanz: 404 mit Hinweis statt einer leeren Seite (1.10.0)
+  install -d -m 755 "$NBH_DIR/proxy/sites"
+  cat >"$NBH_DIR/proxy/sites/_unbekannt.caddy" <<EOF
+# Namen ohne NetBox-Instanz (netbox-host.sh) – nicht von Hand ändern
+*.$DOMAIN {
+	import common
+	respond "Keine NetBox für diesen Namen · no NetBox for this name (netbox-host.sh neu <kunde>)" 404
+}
+EOF
 }
 
 site_netbox() {  # Proxy-Eintrag der NetBox eines Kunden

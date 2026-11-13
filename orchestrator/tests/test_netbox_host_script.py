@@ -115,7 +115,8 @@ def test_init_legt_grundgeruest_und_schluessel_an(host):
     assert 'ALLOW="10.0.30.5/32 10.0.10.0/24"' in env and 'FRONT="10.0.30.5/32"' in env
     # Startseiten und Übersicht liegen seit 1.1.0 auf dem Front-Proxy
     assert not (d / "proxy" / "www").exists()
-    assert not list((d / "proxy" / "sites").glob("*.caddy"))
+    # nur der Auffang für Namen ohne Instanz (1.10.0): 404 statt einer leeren Seite von Caddy
+    assert [p.name for p in (d / "proxy" / "sites").glob("*.caddy")] == ["_unbekannt.caddy"]
     assert "network create netbox-front" in host.log.read_text()
 
 
@@ -224,7 +225,7 @@ def test_neu_schreibt_instanz_mit_eigenen_secrets(host):
     assert "ports:" not in over  # nur der Proxy veröffentlicht einen Port
 
     sites = sorted(p.name for p in (host.dir / "proxy" / "sites").glob("*.caddy"))
-    assert sites == ["kunde-a-nb.caddy"]  # keine Startseite hier (Front-Proxy)
+    assert sites == ["_unbekannt.caddy", "kunde-a-nb.caddy"]  # keine Startseite hier (Front-Proxy)
     site = (host.dir / "proxy" / "sites" / "kunde-a-nb.caddy").read_text()
     assert "kunde-a-nb.mgmt.example.ch {" in site and "reverse_proxy nb-kunde-a:8080" in site
     assert "NAME=Kunde\\ A" in (host.dir / "kunden" / "kunde-a" / "kunde.conf").read_text()
@@ -379,3 +380,17 @@ def test_sso_richtet_ein_und_entfernt(host):
     falsch = conf.read_text().replace("SSO=an\n", "SSO=vielleicht\n")
     conf.write_text(falsch)
     assert "SSO in host.conf" in host("sso", "alle").stderr
+
+
+def test_namen_ohne_instanz_antworten_mit_404(host):
+    """1.10.0: Caddy beantwortet einen Namen ohne Site mit einer leeren 200 – der Front-Proxy hielt
+    so eine fehlende NetBox für erreichbar (Dev-Test 2026-11-13). Der Auffang sagt es deutlich."""
+    auffang = (host.dir / "proxy" / "sites" / "_unbekannt.caddy").read_text()
+    domain = re.search(r"^DOMAIN=\"?([^\"\n]+)", (host.dir / "host.conf").read_text(), re.M)
+    assert domain and f"*.{domain.group(1)} {{" in auffang
+    assert "import common" in auffang  # Zertifikat, ALLOW und Kopfzeilen wie bei jeder NetBox
+    assert 'respond "Keine NetBox für diesen Namen' in auffang and '" 404' in auffang
+    (host.dir / "proxy" / "sites" / "_unbekannt.caddy").unlink()
+    out = host("sso", "alle")  # sso schreibt den Proxy neu – auch den Auffang
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert (host.dir / "proxy" / "sites" / "_unbekannt.caddy").exists()

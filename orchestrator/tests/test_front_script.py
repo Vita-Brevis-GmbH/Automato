@@ -113,6 +113,14 @@ def front(tmp_path):
         'case "$*" in\n'
         '  *gibt-es-nicht-front-pruefen*) echo "${FRONT_CURL_UEBRIGE:-200}"; exit 0 ;;\n'
         "esac\n"
+        # 1.10.0: NetBox je Kunde über /api/status/ mit ungültigem Token – NetBox antwortet JSON-403
+        'case "$*" in\n'
+        "  */api/status/*)\n"
+        '    o=""; vor=""; for a in "$@"; do [ "$vor" = -o ] && o=$a; vor=$a; done\n'
+        '    b=${FRONT_CURL_BODY-json}; [ "$b" != json ] || b=\'{"detail": "Invalid token"}\'\n'
+        '    [ -z "$o" ] || printf \'%s\' "$b" > "$o"\n'
+        '    echo "${FRONT_CURL_NB:-403}"; exit 0 ;;\n'
+        "esac\n"
         'echo "${FRONT_CURL_CODE:-200}"\n',
     )
     env = {
@@ -316,9 +324,18 @@ def test_pruefen_zertifikate_und_wege(front):
     assert "DOCKER-USER ohne Sperre" in offen.stdout + offen.stderr
 
     _zertifikat(front.pki, "mgmt-int", "DNS:mgmt.int.example.ch")  # ohne Wildcard
-    out = front("pruefen", FRONT_CURL_CODE="403")
+    out = front("pruefen", FRONT_CURL_BODY="Zugriff nur aus freigegebenen Netzen")
     assert "mgmt-int.crt deckt *.mgmt.int.example.ch nicht ab" in out.stderr
     assert "NetBox-Host lehnt diese VM ab (403)" in out.stderr
+
+    # 1.10.0: Instanz fehlt auf dem NetBox-Host – Auffang 404 bzw. ältere Hosts mit leerer 200
+    for code, body in [("404", "Keine NetBox für diesen Namen"), ("200", "")]:
+        out = front("pruefen", FRONT_CURL_NB=code, FRONT_CURL_BODY=body)
+        assert "kunde-a: auf dem NetBox-Host gibt es keine NetBox für kunde-a" in out.stderr
+        assert "netbox-host.sh neu kunde-a" in out.stderr
+        assert "NetBox vom Front-Proxy aus erreichbar" not in out.stdout
+    out = front("pruefen", FRONT_CURL_NB="502")
+    assert "kunde-a: NetBox nicht erreichbar (HTTP 502" in out.stderr
 
 
 def _soll(front, kunden: list[dict]) -> Path:
@@ -846,6 +863,7 @@ def test_automato_selbst_an_seine_netbox(front):
         ("tls", "vertraut dem Zertifikat von https://kunde-a-nb.mgmt.example.ch nicht – CA nach"),
         ("weg", "Automato erreicht https://kunde-a-nb.mgmt.example.ch nicht"),
         ("gesperrt", "Front-Proxy lässt Automato nicht zur NetBox – front.sh erzeugen"),
+        ("fehlt", "keine NetBox für kunde-a – dort: netbox-host.sh neu kunde-a"),
         ("leer", "Weg Automato → NetBox nicht geprüft"),
     ]:  # fmt: skip
         out = front("pruefen", FRONT_AUTOMATO_NB=antwort)

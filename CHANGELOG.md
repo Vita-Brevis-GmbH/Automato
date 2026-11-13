@@ -47,6 +47,13 @@ alles, Cockpit erfasst selbst). ADR 0053.
   `magister-root.pem`): `front.sh erzeugen` ändert nichts, solange eine CA aus
   `AUTOMATO_FRONT_NETBOX_CA`, `_UEBRIGE_CA` bzw. (mit Tor) `_KEYCLOAK_CA` fehlt, leer oder kein
   PEM-Zertifikat ist; `pruefen` nennt „fehlt oder ist leer“. Die Adressen der VM ohne Docker-Brücken.
+- **NetBox, die es nicht gibt, als Fehler** (Fund aus dem Test: Kunde im Portal unter einem anderen
+  Kurznamen als auf dem NetBox-Host – `pruefen` meldete „erreichbar“, die Seite blieb leer): Caddy
+  beantwortete einen Namen ohne Eintrag mit einer leeren 200. Der NetBox-Host hat jetzt einen
+  Auffang `_unbekannt.caddy` (404 „Keine NetBox für diesen Namen“, von `init` und `sso`
+  geschrieben); `front.sh pruefen` fragt je Kunde `/api/status/` mit absichtlich ungültigem Token
+  wie das Cockpit – nur NetBox selbst antwortet mit JSON-403 – und nennt sonst „keine NetBox für
+  <kunde> – dort: `netbox-host.sh neu <kunde>`“, auch auf dem Weg aus dem Orchestrator.
 - **Zusätzliche CAs ohne Override-Datei:** jede CA in `deploy/trust/` (PEM oder DER) vertrauen
   Orchestrator und zentraler Worker zusätzlich (`sot_gateway/trust.py`: Bündel in `/tmp`,
   `SSL_CERT_FILE`, auch für die CLI); ohne Dateien ändert sich nichts.
