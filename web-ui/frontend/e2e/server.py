@@ -23,6 +23,9 @@ os.environ.setdefault("AUTOMATO_DOC_STALE_SECONDS", "120")
 # 0.133.2: alle Applikationen vorrechnen nicht in den UI-Tests - nach jeder Aenderung rechnete der
 # Hintergrund sonst alle Beispiel-Applikationen (Uebersicht laufend neu); geprueft in Python-Tests
 os.environ.setdefault("AUTOMATO_DOC_WARM_ALL", "false")
+# 1.11.0 (ADR 0054): Freigaben aus dem Cockpit (PUT /freigaben) in release_1110.spec.ts - nur ein
+# Test-Token des lokalen UI-Servers, kein Geheimnis
+os.environ.setdefault("AUTOMATO_COCKPIT_TOKEN", "e2e-cockpit-token")
 
 import uvicorn  # noqa: E402
 from app.api import jobs  # noqa: E402

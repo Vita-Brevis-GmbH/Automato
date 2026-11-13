@@ -27,6 +27,8 @@
 #   deploy/aufbau.sh cockpit-token        Token, mit dem das Cockpit das Inventar holt (1.10.0,
 #                                         ADR 0053): neu in .env, Orchestrator neu starten, einmal
 #                                         anzeigen (ein früheres gilt danach nicht mehr)
+#   deploy/aufbau.sh netbox-host-token    Token für den Agenten des NetBox-Hosts (1.11.0, ADR
+#                                         0054): GET /api/netbox-host, sonst wie cockpit-token
 #
 # Die Verbindungen prueft der Orchestrator selbst (`automato check-connections`, wie System ->
 # Verbindungen im UI): Datenbank, Redis, Keycloak, jedes zentral gelesene Quellsystem - auf
@@ -40,7 +42,8 @@
 # antwortet die Login-Seite. Befund 0.40.0: NetBox war nach einem Neustart aus, Automato nicht.
 #
 # Exit 0 = alles erreichbar, 1 = mindestens ein Fehler. Aendert nur `firewall --anwenden`,
-# `netbox-start`, `backup-schluessel`, `docker-update`, `db-rollen`, `tls-intern`, `cockpit-token` und
+# `netbox-start`, `backup-schluessel`, `docker-update`, `db-rollen`, `tls-intern`, `cockpit-token`,
+# `netbox-host-token` und
 # `env ordnen` etwas. Einstellungen auch aus .env
 # (deploy/env.sh).
 # Profile ueber COMPOSE_PROFILES in .env (Standard nur "core"), wie deploy/update.sh.
@@ -556,20 +559,30 @@ cmd_backup_schluessel() {
 }
 
 # --- Inventar fürs Cockpit (1.10.0, ADR 0053) -----------------------------------------------
-cmd_cockpit_token() {
-  titel "Token für das Cockpit (Inventar)"
+neues_token() {  # $1 Schlüssel in .env, $2 Titel, $3 wo eintragen
+  titel "$2"
   local token
   token=$(openssl rand -hex 32 2>/dev/null) || { fehler "openssl fehlt"; return 1; }
-  setze_env AUTOMATO_COCKPIT_TOKEN "$token"
-  ok "in $ENV_DATEI eingetragen: AUTOMATO_COCKPIT_TOKEN (ein früheres gilt nicht mehr)"
+  setze_env "$1" "$token"
+  ok "in $ENV_DATEI eingetragen: $1 (ein früheres gilt nicht mehr)"
   if $COMPOSE "${PROFILES[@]}" up -d orchestrator >/dev/null 2>&1; then
     ok "Orchestrator neu gestartet"
   else
     warn "Orchestrator nicht neu gestartet: $COMPOSE ${PROFILES[*]} up -d orchestrator"
   fi
-  info "Im Cockpit bei der Automato-Instanz unter „Inventar aus Automato“ eintragen – nur dort,"
+  info "$3 – nur dort,"
   info "nie in Chat, Ticket oder Datei. Es steht nur in $ENV_DATEI und wird nur jetzt angezeigt:"
   printf '\n    %s\n\n' "$token"
+}
+
+cmd_cockpit_token() {
+  neues_token AUTOMATO_COCKPIT_TOKEN "Token für das Cockpit (Inventar, Freigaben)" \
+    "Im Cockpit bei der Automato-Instanz unter „Inventar aus Automato“ eintragen"
+}
+
+cmd_netbox_host_token() {  # 1.11.0, ADR 0054
+  neues_token AUTOMATO_NETBOX_HOST_TOKEN "Token für den NetBox-Host (Agent)" \
+    "Auf dem NetBox-Host bei sudo deploy/netbox-host/netbox-host.sh agent <adresse> eingeben"
 }
 
 # --- Getrennte DB-Rollen (0.48.0) ----------------------------------------------------------
@@ -710,6 +723,7 @@ case "${1:-pruefen}" in
   db-rollen) shift; cmd_db_rollen "${1:-}" ;;
   tls-intern) shift; cmd_tls_intern "${1:-}" ;;
   cockpit-token) cmd_cockpit_token ;;
+  netbox-host-token) cmd_netbox_host_token ;;
   env)
     shift
     case "${1:-}" in

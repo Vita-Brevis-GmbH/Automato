@@ -5,7 +5,7 @@
 #
 # Adressen (<domain> = AUTOMATO_FRONT_DOMAIN, <intern> = AUTOMATO_FRONT_DOMAIN_INT):
 #   <kunde>.<domain>        Startseite des Kunden (Kacheln zu seinen Werkzeugen)
-#   <kunde>-nb.<domain>     NetBox des Kunden (NetBox-Host, AUTOMATO_FRONT_NETBOX)
+#   <kunde>-nb.<domain>     NetBox des Kunden (NetBox-Host, AUTOMATO_FRONT_NETBOX) – ohne --ohne-nb
 #   <kunde>-doc.<domain>    Automato (diese VM) – nur mit --doc
 #   <kunde>-um.<domain>     Benutzerverwaltung (Magister) – nur mit --um und AUTOMATO_FRONT_MAGISTER
 #   <kunde>-cmdb.<domain>   CMDB – nur mit --cmdb und AUTOMATO_FRONT_CMDB
@@ -16,7 +16,7 @@
 # und nie über die WAF.
 #
 # Verwendung (im Repo-Ordner, mit sudo):
-#   front.sh kunde <kunde> "<Anzeigename>" [--doc] [--um] [--cmdb] [--realm <r>]
+#   front.sh kunde <kunde> "<Anzeigename>" [--doc] [--um] [--cmdb] [--ohne-nb] [--realm <r>]
 #                  [--zugriff ueberall|intern|"<netz> …"]           anlegen/ändern
 #   front.sh link <kunde> <titel> <url> [beschreibung]               weitere Kachel auf der Startseite
 #   front.sh entfernen <kunde> --ja                                 Kunde aus dem Front-Proxy nehmen
@@ -45,6 +45,10 @@
 # Management-Netz, nie über die WAF) oder nur aus bestimmten Netzen (Adresse des Benutzers, über
 # die WAF aus X-Forwarded-For). Allen anderen antworten alle Adressen des Kunden wie eine
 # unbekannte Adresse (404) – auch vor dem Anmelde-Tor und für die NetBox-API.
+#
+# Seit 1.11.0 (ADR 0054) ist NetBox ein wählbares Werkzeug (NB=ja|nein, --ohne-nb; fehlt der Wert
+# in kunden/<k>.conf: ja) und Kunden kommen auch aus dem Cockpit (QUELLE=cockpit, über die
+# Oberfläche und soll.json) – sie gelten wie Kunden aus der Oberfläche als nicht von Hand änderbar.
 #
 # Einstellungen: AUTOMATO_FRONT_* in .env (siehe .env.example). Kunden: deploy/front/kunden/,
 # erzeugt: deploy/front/generated/, Client-Secrets: deploy/front/tor/ (alles nicht im Repo).
@@ -194,10 +198,12 @@ kurzname() {  # wie deploy/netbox-host/netbox-host.sh (DNS-Label, Platz für "-c
 }
 
 kdir() { printf '%s/kunden' "$FRONT_DIR"; }
-aus_oberflaeche() {  # Kunde wird in der Oberfläche gepflegt (QUELLE=oberflaeche)?
-  [ -f "$(kdir)/$1.conf" ] && grep -qx 'QUELLE=oberflaeche' "$(kdir)/$1.conf"
+aus_oberflaeche() {  # Kunde kommt über soll.json (QUELLE=oberflaeche bzw. seit 1.11.0 cockpit)?
+  [ -f "$(kdir)/$1.conf" ] && grep -qxE 'QUELLE=(oberflaeche|cockpit)' "$(kdir)/$1.conf"
 }
+aus_cockpit() { [ -f "$(kdir)/$1.conf" ] && grep -qx 'QUELLE=cockpit' "$(kdir)/$1.conf"; }
 nur_befehl() {
+  ! aus_cockpit "$1" || abbruch "Kunde '$1' wird im Cockpit gepflegt (Kundenregister, ADR 0054)"
   ! aus_oberflaeche "$1" || abbruch "Kunde '$1' wird in der Oberfläche gepflegt (Administration → Kunden-Portal)"
 }
 gen() { printf '%s/generated' "$FRONT_DIR"; }
@@ -210,9 +216,10 @@ kunden() {  # alle Kurznamen
   return 0
 }
 
-lies_kunde() {  # setzt NAME, DOC, UM, CMDB_AN, QUELLE, REALM, ZUGRIFF, NETZE aus kunden/<k>.conf
+lies_kunde() {  # setzt NAME, DOC, NB, UM, CMDB_AN, QUELLE, REALM, ZUGRIFF, NETZE aus kunden/<k>.conf
   local k=$1
-  NAME=$k DOC=nein UM=nein CMDB_AN=nein QUELLE=befehl REALM="" ZUGRIFF=ueberall NETZE=""
+  # NB fehlt in Dateien vor 1.11.0: NetBox wie bisher an
+  NAME=$k DOC=nein NB=ja UM=nein CMDB_AN=nein QUELLE=befehl REALM="" ZUGRIFF=ueberall NETZE=""
   # shellcheck disable=SC1090 # mit printf %q geschrieben (kunde)
   . "$(kdir)/$k.conf"
 }
@@ -321,7 +328,7 @@ EOF
 kacheln() {  # Kacheln der Startseite eines Kunden (Titel\tURL\tBeschreibung)
   local k=$1
   lies_kunde "$k"
-  printf 'NetBox\thttps://%s-nb.%s\tIPAM, Geräte, Verkabelung\n' "$k" "$DOMAIN"
+  [ "$NB" != ja ] || printf 'NetBox\thttps://%s-nb.%s\tIPAM, Geräte, Verkabelung\n' "$k" "$DOMAIN"
   [ "$DOC" != ja ] || printf 'Dokumentation\thttps://%s-doc.%s\tFirewall-Regeln, Applikationen, Wege\n' "$k" "$DOMAIN"
   [ "$UM" != ja ] || [ -z "$MAGISTER" ] || printf 'Benutzerverwaltung\thttps://%s-um.%s\tBenutzer und Rechte\n' "$k" "$DOMAIN"
   [ "$CMDB_AN" != ja ] || [ -z "$CMDB" ] || printf 'CMDB\thttps://%s-cmdb.%s\tLizenzen und Geräte\n' "$k" "$DOMAIN"
@@ -478,7 +485,7 @@ schreibe_kunde() {  # Caddy-Einträge eines Kunden
   zugriff_matcher
   route_kunde $'\t\t'"root * /srv/front/$k"$'\n\t\timport front-seite'
   printf '}\n'
-  if [ -n "$NETBOX" ]; then
+  if [ -n "$NETBOX" ] && [ "$NB" = ja ]; then
     nb_ziel() {  # NetBox auf dem NetBox-Host; $1 = Zeile(n) für den Benutzer
       printf '\t\treverse_proxy https://%s {\n\t\t\theader_up Host {host}%s\n\t\t\ttransport http {\n\t\t\t\ttls_server_name {host}%s\n\t\t\t}\n\t\t}' \
         "$NETBOX" "${1:-}" "$trust"
@@ -571,12 +578,17 @@ schreibe_topologie() {
   tmp=$(mktemp "$FRONT_STATE/.topologie-XXXXXX") || return 0
   for k in $(kunden); do
     lies_kunde "$k"
-    local nb="" doc="" um="" cm=""
-    [ -z "$NETBOX" ] || nb="https://$k-nb.$DOMAIN"
+    local nb="" doc="" um="" cm="" w=""
+    [ -z "$NETBOX" ] || [ "$NB" != ja ] || nb="https://$k-nb.$DOMAIN"
     [ "$DOC" != ja ] || doc="https://$k-doc.$DOMAIN"
     [ "$UM" != ja ] || [ -z "$MAGISTER" ] || um="https://$k-um.$DOMAIN"
     [ "$CMDB_AN" != ja ] || [ -z "$CMDB" ] || cm="https://$k-cmdb.$DOMAIN"
-    printf '%s\n' "$k$sep${NAME//$sep/}${sep}https://$k.$DOMAIN$sep$nb$sep$doc$sep$um$sep$cm"
+    # 1.11.0 (ADR 0054): Herkunft und gewählte Werkzeuge, Zugriff, Netze, Realm – fürs Cockpit
+    [ "$DOC" != ja ] || w+=" doc"
+    [ "$NB" != ja ] || w+=" nb"
+    [ "$UM" != ja ] || w+=" um"
+    [ "$CMDB_AN" != ja ] || w+=" cmdb"
+    printf '%s\n' "$k$sep${NAME//$sep/}${sep}https://$k.$DOMAIN$sep$nb$sep$doc$sep$um$sep$cm$sep$QUELLE$sep${w# }$sep$ZUGRIFF$sep$NETZE$sep$REALM"
   done | python3 -I -c "$TOPOLOGIE_PY" "$vm" "$(eigene_ips)" "${ui:+https://$ui}" "$portal" "$DOMAIN" \
     "$NETBOX" "$UEBRIGE" "$MAGISTER" "$CMDB" "$TOR" >"$tmp" || { rm -f "$tmp"; return 0; }
   chmod 644 "$tmp"
@@ -588,12 +600,14 @@ TOPOLOGIE_PY=$(cat <<'PY'
 import json, sys
 from datetime import datetime, timezone
 vm, ips, ui, portal, domain, netbox, uebrige, magister, cmdb, tor = sys.argv[1:11]
-felder = ("kurzname", "name", "startseite", "netbox", "automato", "magister", "cmdb")
+felder = ("kurzname", "name", "startseite", "netbox", "automato", "magister", "cmdb",
+          "quelle", "werkzeuge", "zugriff", "netze", "realm")
+listen = ("werkzeuge", "netze")  # mit Leerzeichen getrennt
 kunden = []
 for zeile in sys.stdin.read().splitlines():
     teile = zeile.split("\x1f")
     if len(teile) == len(felder):
-        kunden.append({f: (w or None) for f, w in zip(felder, teile)})
+        kunden.append({f: (w.split() if f in listen else (w or None)) for f, w in zip(felder, teile)})
 print(json.dumps({
     "zeit": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     "vm": {"name": vm, "adressen": ips.split()},
@@ -825,7 +839,7 @@ tor_starten() {  # Container des Tors nach compose.yml (bzw. anhalten, wenn kein
 werkzeuge() {  # Kurzliste der Werkzeuge eines Kunden
   local k=$1 w=""
   lies_kunde "$k"
-  [ -z "$NETBOX" ] || w="NetBox"
+  [ -z "$NETBOX" ] || [ "$NB" != ja ] || w="NetBox"
   [ "$DOC" != ja ] || w="${w:+$w, }Doku"
   if [ "$UM" = ja ]; then
     if [ -n "$MAGISTER" ]; then w="${w:+$w, }Benutzer"; else w="${w:+$w, }Benutzer (aus)"; fi
@@ -840,16 +854,17 @@ werkzeuge() {  # Kurzliste der Werkzeuge eines Kunden
 cmd_kunde() {
   root_noetig
   lade_conf
-  local k=${1:-} name=${2:-} doc=nein um=nein cmdb=nein realm="" zugriff=ueberall netz=""
+  local k=${1:-} name=${2:-} doc=nein nb=ja um=nein cmdb=nein realm="" zugriff=ueberall netz=""
   kurzname "$k"
   nur_befehl "$k"
-  [ -n "$name" ] && [[ "$name" != --* ]] || abbruch "Verwendung: kunde <kunde> \"<Anzeigename>\" [--doc] [--um] [--cmdb] [--realm <realm>] [--zugriff ueberall|intern|\"<netz> …\"]"
+  [ -n "$name" ] && [[ "$name" != --* ]] || abbruch "Verwendung: kunde <kunde> \"<Anzeigename>\" [--doc] [--um] [--cmdb] [--ohne-nb] [--realm <realm>] [--zugriff ueberall|intern|\"<netz> …\"]"
   shift 2
   while [ $# -gt 0 ]; do
     case "$1" in
       --doc) doc=ja ;;
       --um) um=ja ;;
       --cmdb) cmdb=ja ;;
+      --ohne-nb) nb=nein ;;
       --realm) realm=${2:-}; realm_pruefen "$realm"; shift ;;
       --zugriff)
         case "${2:-}" in
@@ -859,18 +874,24 @@ cmd_kunde() {
         zugriff_pruefen "$zugriff" "$netz"
         shift
         ;;
-      *) abbruch "unbekannte Angabe '$1' (--doc, --um, --cmdb, --realm <realm>, --zugriff …)" ;;
+      *) abbruch "unbekannte Angabe '$1' (--doc, --um, --cmdb, --ohne-nb, --realm <realm>, --zugriff …)" ;;
     esac
     shift
   done
   install -d -m 750 "$(kdir)"
-  printf 'NAME=%q\nDOC=%q\nUM=%q\nCMDB_AN=%q\nREALM=%q\nZUGRIFF=%q\nNETZE=%q\n' \
-    "$name" "$doc" "$um" "$cmdb" "$realm" "$zugriff" "$netz" >"$(kdir)/$k.conf"
+  printf 'NAME=%q\nDOC=%q\nNB=%q\nUM=%q\nCMDB_AN=%q\nREALM=%q\nZUGRIFF=%q\nNETZE=%q\n' \
+    "$name" "$doc" "$nb" "$um" "$cmdb" "$realm" "$zugriff" "$netz" >"$(kdir)/$k.conf"
   titel "Kunde $k im Front-Proxy"
   ZUGRIFF=$zugriff NETZE=$netz
   ok "Zugriff: $(zugriff_text)"
   ok "Startseite https://$k.$DOMAIN"
-  [ -n "$NETBOX" ] && ok "NetBox https://$k-nb.$DOMAIN → $NETBOX" || warn "AUTOMATO_FRONT_NETBOX fehlt – keine Weiterleitung zur NetBox"
+  if [ "$nb" != ja ]; then
+    info "NetBox: aus (--ohne-nb)"
+  elif [ -n "$NETBOX" ]; then
+    ok "NetBox https://$k-nb.$DOMAIN → $NETBOX"
+  else
+    warn "AUTOMATO_FRONT_NETBOX fehlt – keine Weiterleitung zur NetBox"
+  fi
   if [ "$doc" = ja ]; then
     ok "Dokumentation https://$k-doc.$DOMAIN"
     info "Keycloak (Client automato-web): Valid redirect URI https://$k-doc.$DOMAIN/* und Web origin https://$k-doc.$DOMAIN ergänzen"
@@ -920,8 +941,11 @@ cmd_liste() {
   printf '%-20s %-28s %-16s %-14s %-8s %s\n' KUNDE WERKZEUGE REALM ZUGRIFF QUELLE STARTSEITE
   for k in $(kunden); do
     lies_kunde "$k"
-    quelle=Hand
-    [ "$QUELLE" != oberflaeche ] || quelle=Portal
+    case "$QUELLE" in
+      oberflaeche) quelle=Portal ;;
+      cockpit) quelle=Cockpit ;;
+      *) quelle=Hand ;;
+    esac
     printf '%-20s %-28s %-16s %-14s %-8s https://%s.%s\n' "$k" "$(werkzeuge "$k")" "${REALM:-–}" \
       "$(zugriff_text | cut -c1-14)" "$quelle" "$k" "$DOMAIN"
   done
@@ -1002,7 +1026,7 @@ adressen() {  # je Zeile Name<TAB>Zweck<TAB>Zertifikat: jede Adresse, die dieser
   for k in $(kunden); do
     lies_kunde "$k"
     printf '%s.%s\t%s: Startseite\t%s\n' "$k" "$DOMAIN" "$k" "$c"
-    if [ -n "$NETBOX" ]; then printf '%s-nb.%s\t%s: NetBox\t%s\n' "$k" "$DOMAIN" "$k" "$c"; fi
+    if [ -n "$NETBOX" ] && [ "$NB" = ja ]; then printf '%s-nb.%s\t%s: NetBox\t%s\n' "$k" "$DOMAIN" "$k" "$c"; fi
     if [ "$DOC" = ja ]; then printf '%s-doc.%s\t%s: Automato\t%s\n' "$k" "$DOMAIN" "$k" "$c"; fi
     if [ "$UM" = ja ] && [ -n "$MAGISTER" ]; then
       printf '%s-um.%s\t%s: Benutzerverwaltung (Magister)\t%s\n' "$k" "$DOMAIN" "$k" "$c"
@@ -1325,6 +1349,10 @@ cmd_pruefen() {
     esac
     [ "$ZUGRIFF" = ueberall ] || info "$k: Zugriff $(zugriff_text)"
     [ -n "$NETBOX" ] || continue
+    if [ "$NB" != ja ]; then
+      info "$k: ohne NetBox (NB=nein)"
+      continue
+    fi
     # Orchestrator (Prüfen, NetBox-Sync) und zentraler Worker (Einlesen, Abgleich) müssen die
     # NetBox gleich erreichen – extra_hosts in docker-compose.override.yml für beide (1.5.0)
     orch=$(dc exec -T orchestrator getent hosts "$k-nb.$DOMAIN" 2>/dev/null | awk 'NR==1 {print $1}' || true)
@@ -1347,11 +1375,17 @@ cmd_pruefen() {
       fehler "$k: NetBox-Host lehnt diese VM ab (403) – ALLOW/FRONT in /opt/netbox-host/host.conf"
     elif [ "$code" = 404 ] || [ "$code" = 200 ]; then
       fehler "$k: auf dem NetBox-Host gibt es keine NetBox für $k – dort: netbox-host.sh neu $k"
+      code=fehlt
     else
       fehler "$k: NetBox nicht erreichbar (HTTP ${code:-–}; Zertifikat, Firewall)"
     fi
     rm -f "$antwort"
-    automato_zur_netbox "$k"
+    # fehlt die NetBox schon auf dem NetBox-Host, käme dieselbe Meldung vom Orchestrator noch einmal (1.11.0)
+    if [ "$code" = fehlt ]; then
+      info "$k: Weg Automato → NetBox nicht geprüft (erst die NetBox auf dem NetBox-Host anlegen)"
+    else
+      automato_zur_netbox "$k"
+    fi
   done
   [ -n "$(kunden)" ] || info "noch keine Kunden – front.sh kunde <kunde> \"<Name>\""
   echo
@@ -1363,7 +1397,7 @@ cmd_pruefen() {
 # --- Host-Agent: Kunden aus der Oberfläche (1.3.0, ADR 0050) ---------------------------------
 sync_anwenden() {  # läuft in einer Subshell: abbruch beendet nur diese
   lade_conf
-  local soll=$1 zeilen art k a b c d e f g
+  local soll=$1 zeilen art k a b c d e f g h i
   local -A gewollt=()
   install -d -m 750 "$(kdir)"
   rm -f "$(kdir)"/*.neu
@@ -1380,13 +1414,15 @@ for kunde in data.get("kunden") or []:
     flags = ["ja" if kunde.get(t) else "nein" for t in ("doc", "um", "cmdb")]
     zugriff = clean(kunde.get("zugriff") or "ueberall")  # 1.5.0; ältere Oberfläche: überall
     netze = " ".join(clean(n) for n in kunde.get("netze") or [])
+    nb = "ja" if kunde.get("nb", True) else "nein"  # 1.11.0; ältere Oberfläche: NetBox an
+    quelle = "cockpit" if kunde.get("quelle") == "cockpit" else "oberflaeche"  # 1.11.0
     print(SEP.join(["K", k, clean(kunde.get("name"))] + flags
-                   + [clean(kunde.get("realm")), zugriff, netze]))
+                   + [clean(kunde.get("realm")), zugriff, netze, nb, quelle]))
     for link in kunde.get("links") or []:
         print(SEP.join(["L", k, clean(link.get("title")), clean(link.get("url")), clean(link.get("text"))]))
 PY
   ) || abbruch "soll.json nicht lesbar ($soll)"
-  while IFS=$'\x1f' read -r art k a b c d e f g; do
+  while IFS=$'\x1f' read -r art k a b c d e f g h i; do
     case "$art" in
       K)
         kurzname "$k"
@@ -1394,8 +1430,10 @@ PY
         [ -z "$e" ] || realm_pruefen "$e"
         [ "$f" = netze ] || g=""
         zugriff_pruefen "${f:-ueberall}" "$g"
-        printf 'NAME=%q\nDOC=%q\nUM=%q\nCMDB_AN=%q\nREALM=%q\nZUGRIFF=%q\nNETZE=%q\nQUELLE=oberflaeche\n' \
-          "$a" "$b" "$c" "$d" "$e" "${f:-ueberall}" "$g" >"$(kdir)/$k.conf.neu"
+        [ "$h" = nein ] || h=ja
+        [ "$i" = cockpit ] || i=oberflaeche
+        printf 'NAME=%q\nDOC=%q\nNB=%q\nUM=%q\nCMDB_AN=%q\nREALM=%q\nZUGRIFF=%q\nNETZE=%q\nQUELLE=%q\n' \
+          "$a" "$b" "$h" "$c" "$d" "$e" "${f:-ueberall}" "$g" "$i" >"$(kdir)/$k.conf.neu"
         : >"$(kdir)/$k.links.tsv.neu"
         gewollt[$k]=1
         ;;
@@ -1549,7 +1587,7 @@ tor_adressen() {  # Valid redirect URIs des Clients automato-front in einem Real
     lies_kunde "$k"
     [ "$REALM" = "$realm" ] || continue
     printf '            https://%s.%s/oauth2/callback\n' "$k" "$DOMAIN"
-    [ -z "$NETBOX" ] || printf '            https://%s-nb.%s/oauth2/callback\n' "$k" "$DOMAIN"
+    [ -z "$NETBOX" ] || [ "$NB" != ja ] || printf '            https://%s-nb.%s/oauth2/callback\n' "$k" "$DOMAIN"
     [ "$DOC" != ja ] || printf '            https://%s-doc.%s/oauth2/callback\n' "$k" "$DOMAIN"
     [ "$UM" != ja ] || [ -z "$MAGISTER" ] || printf '            https://%s-um.%s/oauth2/callback\n' "$k" "$DOMAIN"
     [ "$CMDB_AN" != ja ] || [ -z "$CMDB" ] || printf '            https://%s-cmdb.%s/oauth2/callback\n' "$k" "$DOMAIN"

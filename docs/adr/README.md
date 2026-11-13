@@ -58,3 +58,4 @@ Format: eine Datei pro Entscheidung, z. B. `0001-monorepo-vs-multirepo.md`.
 | 0051 | Anmelde-Tor im Front-Proxy: oauth2-proxy je Realm vor Startseite und allen Werkzeugen, eine Anmeldung je Realm (SSO), NetBox über den Realm (Rollen → Rechte), Kunde ohne Realm gesperrt |
 | 0052 | Agent-Zugang aus dem Web-UI: ZIP je Agent mit agent.env (neues Token), Client-Zertifikat, Schlüssel und Agent-CA; Agent-CA nur lesend im Orchestrator, freigegeben mit `make-certs.sh oberflaeche` |
 | 0053 | Front-Proxy als einziger Eingang der Domain (übrige Namen an die Plattform dahinter, z. B. Magister), eine Prüfung für alle Adressen und Ziele, Inventar fürs Cockpit (`GET /inventory` nur mit eigenem Token) |
+| 0054 | Freigaben aus dem Cockpit: `PUT /freigaben` mit dem Token des Cockpits (ganzer Stand, idempotent, alles oder nichts); Cockpit Autor für Kurzname/Name/Werkzeuge/Zugriff/Realm, Automato für Mandant/Kunden/Rolle/Kacheln; NetBox als wählbares Werkzeug; Inventar mit Herkunft |

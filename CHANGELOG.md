@@ -7,6 +7,52 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 1.11.0 – 2026-11-13
+
+Freigaben aus dem Cockpit (Anwender 2026-11-13: „starte mal P2“ nach dem Vorschlag „Ein Ort für
+Kunden: im Cockpit Kunden anlegen und Werkzeuge wählen; Automato übernimmt“). ADR 0054.
+
+- **`PUT /freigaben`** (über die Oberfläche `/api/freigaben`): das Kundenregister des Cockpits
+  schickt den ganzen Stand seiner Kunden (Kurzname, Name, Werkzeuge, Zugriff, Netze, Realm), mit
+  demselben Token wie das Inventar (`AUTOMATO_COCKPIT_TOKEN`; ohne Token 404, falsch 401).
+  Automato führt sein Kunden-Portal nach: idempotent (dieselbe Anfrage zweimal = keine Änderung,
+  kein Audit, `soll.json` bleibt), alles oder nichts (`422` mit `fehler[]`), vorhandene Kunden
+  aus der Oberfläche werden übernommen (Mandant, Kunden, Rolle und Kacheln bleiben), entfernt
+  werden nur Kunden aus dem Cockpit. Audit `portal.customer.*` mit Akteur `cockpit` und
+  `quelle: cockpit`; die Antwort nennt angelegt/geändert/übernommen/entfernt und ob der
+  Front-Proxy den Stand schon übernommen hat. Token-Prüfung gemeinsam in `auth/cockpit.py`.
+- **Kunden aus dem Cockpit im Kunden-Portal:** Kennzeichen „aus dem Cockpit“; Kurzname, Name,
+  Werkzeuge, Zugriff und Realm nur lesbar, Entfernen nur im Cockpit (`409`). Hier pflegt man nur
+  Mandant, Kunden, Standard-Rolle und Kacheln. Migration `0081`: `portal_customer.source`
+  (`oberflaeche` | `cockpit`) und `nb`.
+- **NetBox als Werkzeug:** im Kunden-Portal „NetBox (-nb)“ (Vorgabe an), im Soll-Stand `nb`, in
+  `kunden/<k>.conf` `NB=ja|nein` (fehlt der Wert: ja), `front.sh kunde … --ohne-nb`. Ohne NetBox
+  keine `-nb`-Adresse, keine Kachel, keine Prüfung in `pruefen`/`adressen` und kein Callback des
+  Anmelde-Tors. Bestehende Kunden behalten ihre NetBox.
+- **Inventar mit Herkunft:** `front.sh erzeugen` schreibt je Kunde auch Herkunft (`quelle`:
+  `oberflaeche`, `cockpit`, `befehl`), gewählte Werkzeuge, Zugriff, Netze und Realm nach
+  `topologie.json`; `GET /inventory` gibt sie geprüft heraus (unbekannte Werte null bzw. leer).
+  Vertrag bleibt v1. `front.sh sync` übernimmt `nb` und `quelle` aus `soll.json`; Kunden mit
+  `QUELLE=cockpit` gelten wie Kunden aus der Oberfläche (nicht per Befehl änderbar, `liste` zeigt
+  „Cockpit“).
+- **NetBox je Kunde aus Automato** (Cockpit P2, Vorschlag „die NetBox je Kunde legt der Host-Agent
+  dort an, statt `netbox-host.sh neu` von Hand“): `netbox-host.sh agent <adresse>` richtet auf dem
+  NetBox-Host einen systemd-Timer ein, der alle 5 Minuten `netbox-host.sh sync` aufruft. Der holt
+  `GET /api/netbox-host` (Kunden mit NetBox, nur Kurzname und Name, dazu die Domain) mit einem
+  eigenen Token (`deploy/aufbau.sh netbox-host-token`, `AUTOMATO_NETBOX_HOST_TOKEN` – nicht das
+  des Cockpits) und legt fehlende Instanzen mit `neu` an; das Admin-Passwort liegt dann nur für
+  root in `kunden/<k>/admin-passwort`. Nie selbst entfernt: eine NetBox ohne Freigabe meldet
+  `pruefen`. Token in `automato.token` (nur root), an curl als Kopfzeile aus einer Datei; eine
+  andere Domain als in `host.conf` gibt eine Warnung. Anleitung `docs/INSTALLATION-NETBOX-HOST.md`
+  4a.
+- **Reservierte Kurznamen** im Kunden-Portal wie in `front.sh`: auch `konsole` und `connect`; auf
+  dem NetBox-Host ebenso.
+- **Eine Meldung statt zwei:** fehlt die NetBox eines Kunden auf dem NetBox-Host, prüft
+  `front.sh pruefen` den Weg aus dem Orchestrator nicht mehr zusätzlich (dort erschien dieselbe
+  Meldung „keine NetBox für <kunde>“ ein zweites Mal).
+- **Audit des Kunden-Portals mit Inhalt:** die Aktionen `portal.customer.*` hatten keinen Eintrag
+  in der Allowlist (nur `_dropped`); jetzt bleiben die geänderten Felder ohne die Kacheln.
+
 ## 1.10.0 – 2026-11-13
 
 Ein Eingang für alles (Anwender 2026-11-13: „Die Magister Webseiten sollten doch über den Front

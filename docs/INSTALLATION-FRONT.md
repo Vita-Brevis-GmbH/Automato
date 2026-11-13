@@ -346,6 +346,10 @@ Chat, Ticket oder Datei). Ein erneutes `cockpit-token` macht das alte ungültig.
 
 - `GET /api/inventory` antwortet nur mit diesem Token (Bearer), nie mit einer Anmeldung von
   Personen; ohne eingerichtetes Token `404`. Inhalt: nur Namen und Adressen.
+- Seit 1.11.0 (ADR 0054) schickt das Cockpit mit demselben Token auch die **Freigaben**
+  (`PUT /api/freigaben`): Kunden, Werkzeuge, Zugriff und Realm für das Kunden-Portal. Das Token
+  darf damit Kunden des Kunden-Portals anlegen, ändern und entfernen (nicht Mandant, Kunden und
+  Rolle) – nur im Cockpit hinterlegen.
 - Das Cockpit erreicht die Oberfläche: seine Adresse steht in `AUTOMATO_UI_ALLOW`, und es vertraut
   dem Zertifikat (im Cockpit `deploy/certs/inventory-ca.pem`, wenn es eine interne CA ist).
 

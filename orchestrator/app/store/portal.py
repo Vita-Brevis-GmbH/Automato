@@ -28,7 +28,8 @@ from app.i18n import L
 from app.models import Customer, PortalCustomer, Tenant
 
 SHORT_NAME = re.compile(r"^[a-z0-9]([a-z0-9-]{0,40}[a-z0-9])?$")
-RESERVED = frozenset({"start", "www", "proxy", "alle", "konfig", "mgmt"})
+# wie front.sh (seit 1.10.0 auch konsole und connect: Namen der Plattform dahinter)
+RESERVED = frozenset({"start", "www", "proxy", "alle", "konfig", "mgmt", "konsole", "connect"})
 SUFFIXES = ("-nb", "-doc", "-um", "-cmdb")
 REALM = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 URL = re.compile(r"^https://[^\s\t\"<>]{1,500}$")
@@ -37,6 +38,8 @@ SOLL, STATUS = "soll.json", "status.json"
 # Zugriff je Kunde (1.5.0): von wo die Adressen des Kunden erreichbar sind
 ACCESS = ("ueberall", "intern", "netze")
 MAX_NETS = 50
+# Herkunft je Kunde (1.11.0, ADR 0054): in Automato angelegt bzw. vom Kundenregister des Cockpits
+SOURCE_UI, SOURCE_COCKPIT = "oberflaeche", "cockpit"
 
 
 class PortalError(ValueError):
@@ -223,16 +226,18 @@ def realm_for_host(session: Session, host: str | None) -> str | None:
 def out(pc: PortalCustomer, domain: str = "") -> dict:
     addresses = {}
     if domain:
-        addresses = {"start": f"https://{pc.short_name}.{domain}",
-                     "netbox": f"https://{pc.short_name}-nb.{domain}"}  # fmt: skip
-        for tool, on in (("doc", pc.doc), ("um", pc.um), ("cmdb", pc.cmdb)):
+        addresses = {"start": f"https://{pc.short_name}.{domain}"}
+        # NetBox seit 1.11.0 waehlbar (`nb`, Vorgabe an)
+        for key, tool, on in (("netbox", "nb", pc.nb), ("doc", "doc", pc.doc),
+                              ("um", "um", pc.um), ("cmdb", "cmdb", pc.cmdb)):  # fmt: skip
             if on:
-                addresses[tool] = f"https://{pc.short_name}-{tool}.{domain}"
+                addresses[key] = f"https://{pc.short_name}-{tool}.{domain}"
     return {
         "id": pc.id,
         "short_name": pc.short_name,
         "name": pc.name,
         "doc": pc.doc,
+        "nb": pc.nb,
         "um": pc.um,
         "cmdb": pc.cmdb,
         "links": list(pc.links or []),
@@ -242,6 +247,7 @@ def out(pc: PortalCustomer, domain: str = "") -> dict:
         "default_role": pc.default_role,
         "access": pc.access or "ueberall",
         "access_nets": list(pc.access_nets or []),
+        "source": pc.source or SOURCE_UI,
         "addresses": addresses,
         "updated_by": pc.updated_by,
         "updated_at": pc.updated_at,
@@ -259,14 +265,16 @@ def listing(session: Session) -> list[PortalCustomer]:
 def desired(session: Session) -> dict:
     """Soll-Stand fuer den Front-Proxy (nur, was front.sh braucht - kein Mandant). Seit 1.4.0
     mit dem Realm: das Anmelde-Tor fragt je Kunde in dessen Realm (ADR 0051); ohne Realm
-    gesperrt. Seit 1.5.0 mit dem Zugriff je Kunde (`zugriff`, `netze`)."""
+    gesperrt. Seit 1.5.0 mit dem Zugriff je Kunde (`zugriff`, `netze`), seit 1.11.0 mit NetBox
+    als Werkzeug (`nb`) und der Herkunft (`quelle`: oberflaeche | cockpit, ADR 0054)."""
     return {
         "version": 1,
         "erzeugt": datetime.now(UTC).isoformat(timespec="seconds"),
         "kunden": [
-            {"kurzname": pc.short_name, "name": pc.name, "doc": pc.doc, "um": pc.um,
-             "cmdb": pc.cmdb, "realm": pc.realm or "", "zugriff": pc.access or "ueberall",
-             "netze": list(pc.access_nets or []), "links": list(pc.links or [])}
+            {"kurzname": pc.short_name, "name": pc.name, "doc": pc.doc, "nb": pc.nb,
+             "um": pc.um, "cmdb": pc.cmdb, "realm": pc.realm or "",
+             "zugriff": pc.access or "ueberall", "netze": list(pc.access_nets or []),
+             "links": list(pc.links or []), "quelle": pc.source or SOURCE_UI}
             for pc in listing(session)
         ],
     }  # fmt: skip

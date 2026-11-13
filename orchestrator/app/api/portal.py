@@ -5,6 +5,10 @@ Host-Agenten (`store/portal.py`); der Agent auf der VM uebernimmt sie in den Fro
 (`front.sh sync`) und meldet den Stand zurueck. Realm, Mandant und Kunden steuern die Anmeldung
 der Benutzer eines Kunden-Realms (`auth/oidc.py`) - sie gehen nicht an den Host. Der Zugriff je
 Kunde (1.5.0: ueberall, intern, netze) geht an den Host; der Front-Proxy sperrt danach.
+
+Kunden aus dem Cockpit (1.11.0, ADR 0054, `PUT /freigaben`): hier aendern sich nur Mandant,
+Kunden, Standard-Rolle und Kacheln - Kurzname, Name, Werkzeuge, Zugriff und Realm fuehrt das
+Cockpit, entfernt werden sie nur dort.
 """
 
 from datetime import UTC, datetime
@@ -37,6 +41,7 @@ class PortalIn(BaseModel):
     short_name: str = Field(max_length=60)
     name: str = Field(min_length=1, max_length=200)
     doc: bool = False
+    nb: bool = True  # NetBox (-nb) seit 1.11.0 waehlbar, Vorgabe an
     um: bool = False
     cmdb: bool = False
     links: list[LinkIn] = Field(default_factory=list)
@@ -88,7 +93,7 @@ def _apply(session: Session, pc: PortalCustomer, data: PortalIn) -> dict:
             raise HTTPException(status_code=409, detail=L(
                 f"Realm '{realm}' gehört schon zu '{other.short_name}'",
                 f"Realm '{realm}' already belongs to '{other.short_name}'"))  # fmt: skip
-    new = {"short_name": short, "name": name, "doc": data.doc, "um": data.um,
+    new = {"short_name": short, "name": name, "doc": data.doc, "nb": data.nb, "um": data.um,
            "cmdb": data.cmdb, "links": links, "realm": realm, "tenant_id": data.tenant_id,
            "customer_ids": customers, "default_role": role, "access": access,
            "access_nets": nets}  # fmt: skip
@@ -157,6 +162,13 @@ def update_customer(
     if pc is None:
         raise HTTPException(status_code=404, detail="portal customer not found")
     previous = pc.short_name
+    if pc.source == portal.SOURCE_COCKPIT:
+        # Autor ist das Cockpit (ADR 0054): hier nur Mandant, Kunden, Rolle und Kacheln - die
+        # uebrigen Felder bleiben, wie sie sind, egal was die Anfrage nennt
+        data = data.model_copy(update={
+            "short_name": pc.short_name, "name": pc.name, "doc": pc.doc, "nb": pc.nb,
+            "um": pc.um, "cmdb": pc.cmdb, "realm": pc.realm, "access": pc.access or "ueberall",
+            "access_nets": list(pc.access_nets or [])})  # fmt: skip
     changed = _apply(session, pc, data)
     pc.updated_by, pc.updated_at = principal.subject, datetime.now(UTC)
     audit.record(session, actor=principal.subject, action="portal.customer.updated",
@@ -176,6 +188,11 @@ def delete_customer(
     pc = session.get(PortalCustomer, pc_id)
     if pc is None:
         raise HTTPException(status_code=404, detail="portal customer not found")
+    if pc.source == portal.SOURCE_COCKPIT:
+        raise HTTPException(status_code=409, detail=L(
+            f"Kunde '{pc.short_name}' kommt aus dem Cockpit – im Cockpit entfernen",
+            f"Customer '{pc.short_name}' comes from the cockpit – remove it in the cockpit",
+        ))  # fmt: skip
     audit.record(session, actor=principal.subject, action="portal.customer.deleted",
                  subject=pc.short_name, detail={"realm": pc.realm})  # fmt: skip
     session.delete(pc)

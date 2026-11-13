@@ -181,6 +181,37 @@ sudo deploy/netbox-host/netbox-host.sh neu kunde-a "Kunde A"
 Eintrag in der hosts-Datei `<IP dieser VM> kunde-a-nb.mgmt.example.ch`, dann die Adresse im
 Browser öffnen (Zertifikat der eigenen CA).
 
+### 4a. Agent: Kunden aus Automato (seit 1.11.0)
+
+Statt `neu` von Hand legt der Agent die NetBox je Kunde selbst an: alle 5 Minuten holt er aus
+Automato die Kunden mit dem Werkzeug NetBox (Kunden-Portal bzw. Kundenregister des Cockpits) und
+ruft für jeden ohne Instanz `neu` auf. Entfernt wird nie selbst – eine NetBox, die in Automato
+nicht mehr freigegeben ist, meldet er nur (`pruefen`); entfernen bleibt `loeschen <kunde> --ja`.
+
+Auf der **Automato-VM** ein eigenes Token für den NetBox-Host erzeugen (wird einmal angezeigt):
+
+```bash
+cd /opt/automato/automato && sudo deploy/aufbau.sh netbox-host-token
+```
+
+Auf dem **NetBox-Host** (fragt nach dem Token, die Eingabe ist unsichtbar):
+
+```bash
+cd /opt/netbox-host/automato
+sudo deploy/netbox-host/netbox-host.sh agent https://automato.int.example.ch
+sudo deploy/netbox-host/netbox-host.sh pruefen      # Abschnitt „Agent“
+```
+
+- Die Adresse ist die der Oberfläche von Automato; der NetBox-Host braucht dorthin HTTPS. Hat
+  ihr Zertifikat eine eigene CA, die das System nicht kennt: CA als PEM ablegen und in
+  `host.conf` `AUTOMATO_CA=/opt/netbox-host/automato-ca.pem` setzen.
+- Das Token liegt in `/opt/netbox-host/automato.token` (nur root), nie in `host.conf`; der Agent
+  übergibt es als Kopfzeile aus einer Datei, nicht in der Befehlszeile.
+- Das Passwort des Benutzers `admin` einer neuen NetBox liegt in
+  `/opt/netbox-host/kunden/<kunde>/admin-passwort` (nur root): in den Tresor, dann löschen.
+- Die Tokens für Automato (`token <kunde>`, unten) bleiben ein Handgriff.
+- Log: `journalctl -u netbox-host-sync -f`; einmal sofort: `sudo deploy/netbox-host/netbox-host.sh sync`.
+
 **Anbinden an Automato:**
 
 ```bash

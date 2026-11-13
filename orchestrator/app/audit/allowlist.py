@@ -10,6 +10,13 @@ Neue Aktionen ohne Eintrag hier verlieren ihr `detail` (nur `_dropped` bleibt) -
 bewusst: lieber ein lückenhaftes als ein undichtes Log.
 """
 
+# Kunden-Portal (1.11.0): geaenderte Felder ohne die Kacheln (frei eingegebene Adressen); bei
+# Freigaben aus dem Cockpit (Akteur `cockpit`) die Herkunft in `quelle`
+_PORTAL = frozenset(
+    {"short_name", "name", "doc", "nb", "um", "cmdb", "realm", "tenant_id", "customer_ids",
+     "default_role", "access", "access_nets", "quelle", "uebernommen"}
+)  # fmt: skip
+
 # action -> erlaubte detail-Keys. Nur unkritische, benannte Felder.
 ALLOWLIST: dict[str, frozenset[str]] = {
     "collector_run.queued": frozenset(
@@ -214,6 +221,10 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "customer.created": frozenset({"tenant_id", "customer_id", "name", "selectors"}),
     "customer.updated": frozenset({"tenant_id", "customer_id", "name", "selectors"}),
     "customer.deleted": frozenset({"tenant_id", "customer_id", "name", "selectors"}),
+    # Kunden-Portal (1.3.0, ADR 0050) bzw. Freigaben aus dem Cockpit (1.11.0, ADR 0054)
+    "portal.customer.created": _PORTAL,
+    "portal.customer.updated": _PORTAL,
+    "portal.customer.deleted": _PORTAL,
     # Zuordnung Benutzer -> Kunde in Automato (0.53.0, ADR 0018 Schritt 4); seit den feineren
     # Rollen mit Herkunft (Betreuer bzw. Kunden-Admin) und den Kunden-Rollen des Handelnden
     "customer_user.assigned": frozenset(

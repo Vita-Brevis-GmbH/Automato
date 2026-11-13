@@ -328,11 +328,14 @@ def test_pruefen_zertifikate_und_wege(front):
     assert "mgmt-int.crt deckt *.mgmt.int.example.ch nicht ab" in out.stderr
     assert "NetBox-Host lehnt diese VM ab (403)" in out.stderr
 
-    # 1.10.0: Instanz fehlt auf dem NetBox-Host – Auffang 404 bzw. ältere Hosts mit leerer 200
+    # 1.10.0: Instanz fehlt auf dem NetBox-Host – Auffang 404 bzw. ältere Hosts mit leerer 200;
+    # 1.11.0: die Meldung nur einmal (nicht noch einmal auf dem Weg aus dem Orchestrator)
     for code, body in [("404", "Keine NetBox für diesen Namen"), ("200", "")]:
-        out = front("pruefen", FRONT_CURL_NB=code, FRONT_CURL_BODY=body)
+        out = front("pruefen", FRONT_CURL_NB=code, FRONT_CURL_BODY=body, FRONT_AUTOMATO_NB="fehlt")
         assert "kunde-a: auf dem NetBox-Host gibt es keine NetBox für kunde-a" in out.stderr
+        assert out.stderr.count("keine NetBox für kunde-a") == 1
         assert "netbox-host.sh neu kunde-a" in out.stderr
+        assert "Weg Automato → NetBox nicht geprüft (erst die NetBox" in out.stdout
         assert "NetBox vom Front-Proxy aus erreichbar" not in out.stdout
     out = front("pruefen", FRONT_CURL_NB="502")
     assert "kunde-a: NetBox nicht erreichbar (HTTP 502" in out.stderr
@@ -827,6 +830,9 @@ def test_topologie_fuer_das_inventar(front):
         "kurzname": "kunde-a", "name": "Kunde A", "startseite": "https://kunde-a.mgmt.example.ch",
         "netbox": "https://kunde-a-nb.mgmt.example.ch", "automato": "https://kunde-a-doc.mgmt.example.ch",
         "magister": None, "cmdb": None,
+        # 1.11.0 (ADR 0054): Herkunft und Auswahl fürs Cockpit
+        "quelle": "befehl", "werkzeuge": ["doc", "nb"], "zugriff": "ueberall", "netze": [],
+        "realm": None,
     }  # fmt: skip
     assert kunden["kunde-b"]["automato"] is None
 
@@ -898,3 +904,98 @@ def test_portal_unter_der_domain_der_kunden(front):
 
     for name in ("start", "konsole", "connect"):
         assert f"Kurzname '{name}' ist reserviert" in front("kunde", name, "X").stderr
+
+
+# --- NetBox als Werkzeug, Kunden aus dem Cockpit (1.11.0, ADR 0054) ------------------------------
+
+
+def test_kunde_ohne_netbox(front):
+    """NB=nein (--ohne-nb): keine -nb-Adresse, keine Kachel, keine Prüfung, kein Callback."""
+    (front.dir / "state").mkdir(parents=True)
+    out = front("kunde", "kunde-a", "Kunde A", "--doc", "--ohne-nb", "--realm", "kunde-a")
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert "NetBox: aus (--ohne-nb)" in out.stdout
+    assert "NB=nein" in (front.dir / "kunden" / "kunde-a.conf").read_text()
+    assert front("kunde", "kunde-b", "Kunde B", "--realm", "kunde-a").returncode == 0
+    site = (front.gen / "sites" / "kunde-a.caddy").read_text()
+    assert "kunde-a-nb." not in site and "kunde-a-doc.mgmt.example.ch {" in site
+    seite = (front.gen / "www" / "kunde-a" / "index.html").read_text()
+    assert "-nb." not in seite and "Dokumentation" in seite
+    portal = (front.gen / "www" / "_portal" / "index.html").read_text()
+    assert "<span>Doku</span>" in portal and "<span>NetBox</span>" in portal  # nur kunde-b
+    assert "kunde-b-nb.mgmt.example.ch {" in (front.gen / "sites" / "kunde-b.caddy").read_text()
+
+    liste = front("liste").stdout
+    assert re.search(r"^kunde-a\s+Doku\s", liste, re.M)
+    assert re.search(r"^kunde-b\s+NetBox\s", liste, re.M)
+    tor = front("tor").stdout
+    assert "https://kunde-a-doc.mgmt.example.ch/oauth2/callback" in tor
+    assert "https://kunde-b-nb.mgmt.example.ch/oauth2/callback" in tor
+    assert "kunde-a-nb" not in tor
+
+    topo = json.loads((front.dir / "state" / "topologie.json").read_text(encoding="utf-8"))
+    kunden = {k["kurzname"]: k for k in topo["kunden"]}
+    assert kunden["kunde-a"]["netbox"] is None and kunden["kunde-a"]["werkzeuge"] == ["doc"]
+    assert kunden["kunde-a"]["realm"] == "kunde-a" and kunden["kunde-b"]["werkzeuge"] == ["nb"]
+
+    _zertifikat(front.pki, "mgmt", "DNS:*.mgmt.example.ch")
+    _zertifikat(front.pki, "mgmt-int", "DNS:mgmt.int.example.ch,DNS:*.mgmt.int.example.ch")
+    out = front("pruefen")
+    text = out.stdout + out.stderr
+    assert out.returncode == 0, text
+    assert "kunde-a: ohne NetBox (NB=nein)" in text
+    assert "kunde-a-nb" not in text and "kunde-b-nb.mgmt.example.ch" in text
+    assert text.count("NetBox vom Front-Proxy aus erreichbar") == 1  # nur kunde-b
+
+
+def test_alte_kunden_conf_ohne_nb_behaelt_netbox(front):
+    """kunden/<k>.conf vor 1.11.0 ohne NB: NetBox wie bisher an."""
+    kdir = front.dir / "kunden"
+    kdir.mkdir(parents=True)
+    (kdir / "kunde-a.conf").write_text(
+        "NAME='Kunde A'\nDOC=nein\nUM=nein\nCMDB_AN=nein\nREALM=''\nZUGRIFF=ueberall\nNETZE=''\n"
+    )
+    assert front("erzeugen").returncode == 0
+    assert "kunde-a-nb.mgmt.example.ch {" in (front.gen / "sites" / "kunde-a.caddy").read_text()
+    seite = (front.gen / "www" / "kunde-a" / "index.html").read_text()
+    assert 'href="https://kunde-a-nb.mgmt.example.ch"' in seite
+
+
+def test_sync_uebernimmt_netbox_und_herkunft_cockpit(front):
+    front("kunde", "kunde-c", "Kunde C")  # von Hand angelegt - bleibt unberührt
+    _soll(front, [
+        {"kurzname": "kunde-a", "name": "A", "doc": True, "nb": False, "quelle": "cockpit",
+         "realm": "kunde-a", "zugriff": "intern", "netze": [], "links": []},
+        {"kurzname": "kunde-b", "name": "B", "links": []},  # Oberfläche vor 1.11.0
+        {"kurzname": "kunde-d", "name": "D", "nb": True, "quelle": "fremd", "links": []},
+    ])  # fmt: skip
+    out = front("sync")
+    assert out.returncode == 0, out.stdout + out.stderr
+    conf = {
+        k: (front.dir / "kunden" / f"{k}.conf").read_text()
+        for k in ("kunde-a", "kunde-b", "kunde-d")
+    }
+    assert "NB=nein" in conf["kunde-a"] and "QUELLE=cockpit" in conf["kunde-a"]
+    assert "NB=ja" in conf["kunde-b"] and "QUELLE=oberflaeche" in conf["kunde-b"]
+    assert "QUELLE=oberflaeche" in conf["kunde-d"]  # nur cockpit oder oberflaeche
+    assert "kunde-a-nb." not in (front.gen / "sites" / "kunde-a.caddy").read_text()
+    assert "kunde-b-nb.mgmt.example.ch {" in (front.gen / "sites" / "kunde-b.caddy").read_text()
+
+    # aus dem Cockpit: nicht per Befehl änderbar
+    nein = front("kunde", "kunde-a", "Anders")
+    assert nein.returncode != 0 and "im Cockpit" in nein.stderr
+    liste = front("liste").stdout
+    assert re.search(r"^kunde-a\s.*nur intern\s+Cockpit", liste, re.M)
+    assert re.search(r"^kunde-b\s.*Portal", liste, re.M)
+    assert re.search(r"^kunde-c\s.*Hand", liste, re.M)
+    topo = json.loads((front.dir / "state" / "topologie.json").read_text(encoding="utf-8"))
+    kunden = {k["kurzname"]: k for k in topo["kunden"]}
+    assert (kunden["kunde-a"]["quelle"], kunden["kunde-a"]["zugriff"]) == ("cockpit", "intern")
+    assert (kunden["kunde-b"]["quelle"], kunden["kunde-c"]["quelle"]) == ("oberflaeche", "befehl")
+
+    # im Cockpit entfernt (nicht mehr im Soll-Stand): weg wie Kunden aus der Oberfläche
+    _soll(front, [{"kurzname": "kunde-b", "name": "B", "links": []}])
+    assert front("sync").returncode == 0
+    assert not (front.dir / "kunden" / "kunde-a.conf").exists()
+    assert not (front.gen / "sites" / "kunde-a.caddy").exists()
+    assert (front.gen / "sites" / "kunde-c.caddy").exists()

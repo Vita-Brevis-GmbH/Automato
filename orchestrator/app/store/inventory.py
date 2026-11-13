@@ -6,20 +6,29 @@ Keycloak dazu. Das Cockpit holt das mit einem eigenen Token (`GET /inventory`) u
 sein Inventar nach (Hosts, Instanzen je Kunde). Keine Geheimnisse und keine Fachdaten: nur
 Namen und Adressen, jeder Wert geprueft und gekuerzt - die Datei schreibt root auf dem Host,
 gelesen wird sie trotzdem wie fremde Eingabe.
+
+Seit 1.11.0 (ADR 0054, Gegenrichtung der Freigaben) je Kunde auch Herkunft (`quelle`),
+Werkzeuge, Zugriff, Netze und Realm - so uebernimmt das Cockpit Kunden, die es noch nicht kennt,
+ohne Realm oder Zugriff zu verlieren. Vertrag bleibt v1 (nur neue optionale Felder).
 """
 
+import ipaddress
 import json
 import re
 from pathlib import Path
 
 from app import __version__
 from app.config import Settings
+from app.store import portal
 
 TOPOLOGIE = "topologie.json"
 #: Fassung der Antwort (Vertrag im Cockpit: docs/vertraege/inventar.md)
 VERTRAG = 1
 _KUNDE = ("kurzname", "name", "startseite", "netbox", "automato", "magister", "cmdb")
 _ADRESSE = re.compile(r"^[0-9A-Fa-f.:]{2,45}$")
+#: Herkunft je Kunde: Cockpit (Freigaben), Oberflaeche (Kunden-Portal), Befehl (front.sh kunde)
+_QUELLEN = ("cockpit", "oberflaeche", "befehl")
+_WERKZEUGE = ("doc", "nb", "um", "cmdb")
 
 
 def _topologie(state_dir: str) -> dict:
@@ -60,12 +69,44 @@ def _front(topo: dict) -> dict | None:
     }
 
 
+def _netze(value: object) -> list[str]:
+    out: list[str] = []
+    for raw in (value if isinstance(value, list) else [])[: portal.MAX_NETS]:
+        if not isinstance(raw, str):
+            continue
+        try:
+            net = str(ipaddress.ip_network(raw.strip(), strict=False))
+        except ValueError:
+            continue
+        if net not in out:
+            out.append(net)
+    return out
+
+
+def _herkunft(k: dict) -> dict:
+    """Herkunft, Werkzeuge, Zugriff, Netze und Realm (1.11.0) - nur bekannte bzw. gueltige
+    Werte, sonst null/leer (aeltere topologie.json ohne die Felder: null)."""
+    werkzeuge = k.get("werkzeuge")
+    zugriff = k.get("zugriff") if k.get("zugriff") in portal.ACCESS else None
+    realm = k.get("realm")
+    realm_ok = isinstance(realm, str) and portal.REALM.match(realm) and realm != "master"
+    return {
+        "quelle": k.get("quelle") if k.get("quelle") in _QUELLEN else None,
+        "werkzeuge": [w for w in _WERKZEUGE if w in werkzeuge]
+        if isinstance(werkzeuge, list)
+        else None,
+        "zugriff": zugriff,
+        "netze": _netze(k.get("netze")) if zugriff == "netze" else [],
+        "realm": realm if realm_ok else None,
+    }
+
+
 def _kunden(topo: dict) -> list[dict]:
     kunden = topo.get("kunden") if isinstance(topo.get("kunden"), list) else []
     out = []
     for k in kunden[:1000]:
         if isinstance(k, dict) and _text(k.get("kurzname"), 63):
-            out.append({feld: _text(k.get(feld)) for feld in _KUNDE})
+            out.append({**{feld: _text(k.get(feld)) for feld in _KUNDE}, **_herkunft(k)})
     return out
 
 

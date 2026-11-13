@@ -78,12 +78,40 @@ def test_inventar_aus_der_topologie(client, tmp_path):
         "10.0.20.10",
         True,
     )
-    # nur die bekannten Felder, nur gueltige Kunden
+    # nur die bekannten Felder, nur gueltige Kunden; topologie.json vor 1.11.0 ohne Herkunft
     assert data["kunden"] == [{
         "kurzname": "kunde-a", "name": "Kunde A", "startseite": "https://kunde-a.mgmt.example.ch",
         "netbox": "https://kunde-a-nb.mgmt.example.ch", "automato": None, "magister": None,
-        "cmdb": None,
+        "cmdb": None, "quelle": None, "werkzeuge": None, "zugriff": None, "netze": [],
+        "realm": None,
     }]  # fmt: skip
+
+
+def test_kunden_mit_herkunft_werkzeugen_und_zugriff(client, tmp_path):
+    """1.11.0 (ADR 0054, Gegenrichtung der Freigaben): je Kunde Herkunft, Werkzeuge, Zugriff,
+    Netze und Realm - nur bekannte bzw. gueltige Werte, sonst null/leer."""
+    basis = {"startseite": None, "netbox": None, "automato": None, "magister": None,
+             "cmdb": None}  # fmt: skip
+    _topologie(tmp_path, kunden=[
+        {"kurzname": "kunde-a", "name": "A", **basis, "quelle": "cockpit",
+         "werkzeuge": ["nb", "doc", "nb", "ssh", {"x": 1}], "zugriff": "netze",
+         "netze": ["203.0.113.0/24", "203.0.113.7", "kein-netz", 5, "2001:db8::/48"],
+         "realm": "kunde-a"},
+        {"kurzname": "kunde-b", "name": "B", **basis, "quelle": "fremd", "werkzeuge": "doc",
+         "zugriff": "intern", "netze": ["10.0.0.0/8"], "realm": "master"},
+        {"kurzname": "kunde-c", "name": "C", **basis, "quelle": "befehl", "werkzeuge": [],
+         "zugriff": "vpn", "netze": ["10.0.0.0/8"], "realm": "a b"},
+    ])  # fmt: skip
+    kunden = {k["kurzname"]: k for k in _get(client, tmp_path).json()["kunden"]}
+    a, b, c = kunden["kunde-a"], kunden["kunde-b"], kunden["kunde-c"]
+    assert (a["quelle"], a["werkzeuge"], a["zugriff"], a["realm"]) == (
+        "cockpit", ["doc", "nb"], "netze", "kunde-a")  # fmt: skip
+    assert a["netze"] == ["203.0.113.0/24", "203.0.113.7/32", "2001:db8::/48"]
+    # unbekannte Herkunft, keine Liste, Netze nur bei "netze", nie der Realm "master"
+    assert (b["quelle"], b["werkzeuge"], b["zugriff"], b["netze"], b["realm"]) == (
+        None, None, "intern", [], None)  # fmt: skip
+    assert (c["quelle"], c["werkzeuge"], c["zugriff"], c["netze"], c["realm"]) == (
+        "befehl", [], None, [], None)  # fmt: skip
 
 
 def test_ohne_front_proxy_nur_automato(client, tmp_path):

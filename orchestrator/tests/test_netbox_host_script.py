@@ -5,6 +5,7 @@ Sicherung laufen. Seit 1.1.0 (ADR 0044 Nachtrag) ein Backend hinter dem Front-Pr
 Automato-VM: NetBox unter <kunde>-nb, keine Startseiten hier, Proxy gehärtet, Konfiguration in
 der Sicherung."""
 
+import json
 import os
 import re
 import shutil
@@ -55,6 +56,30 @@ if [ "$1" = -d ]; then cat "$4"; exit 0; fi
 exit 1
 """
 
+# 1.11.0: Abruf der Kunden aus Automato (Agent) – Antwort aus "$NBH_LOG.antwort", Aufrufe und die
+# Kopfzeilen-Datei protokolliert (das Token darf nie in der Befehlszeile stehen)
+CURL = r"""
+echo "curl $*" >> "$NBH_LOG.curl"
+case "$*" in
+  */api/netbox-host*)
+    [ -f "$NBH_LOG.automato-aus" ] && exit 7
+    o=""; vor=""
+    for a in "$@"; do
+      [ "$vor" = -o ] && o=$a
+      [ "$vor" = -H ] && case "$a" in @*) cat "${a#@}" >> "$NBH_LOG.kopf" ;; esac
+      vor=$a
+    done
+    cp "$NBH_LOG.antwort" "$o"; exit 0 ;;
+esac
+echo 200
+"""
+
+SYSTEMCTL = r"""
+echo "systemctl $*" >> "$NBH_LOG"
+case "$*" in is-active*) [ -f "$NBH_LOG.timer-aus" ] && exit 3 ;; esac
+exit 0
+"""
+
 KEYGEN = r"""
 if [ "$1" = -o ]; then echo "AGE-SECRET-KEY-TEST" > "$2"; exit 0; fi
 if [ "$1" = -y ]; then echo "age1testempfaenger"; exit 0; fi
@@ -82,15 +107,18 @@ def host(tmp_path):
         "GIT": str(_stub(bin_dir / "git", GIT)),
         "AGE": str(_stub(bin_dir / "age", AGE)),
         "AGE_KEYGEN": str(_stub(bin_dir / "age-keygen", KEYGEN)),
-        "CURL": str(_stub(bin_dir / "curl", "echo 200\n")),
+        "CURL": str(_stub(bin_dir / "curl", CURL)),
+        "SYSTEMCTL": str(_stub(bin_dir / "systemctl", SYSTEMCTL)),
+        "NBH_SYSTEMD_DIR": str(tmp_path / "systemd"),
         "AGE_IDENTITY": str(tmp_path / "backup.agekey"),
         "PATH": f"{bin_dir}:{os.environ['PATH']}",  # sync-user.sh ruft docker direkt
     }
 
-    def run(*args: str) -> subprocess.CompletedProcess:
+    def run(*args: str, **mehr: str) -> subprocess.CompletedProcess:
         return subprocess.run(  # noqa: S603 - Testskript des Repos
             [shutil.which("bash") or "bash", str(SCRIPT), *args],
-            capture_output=True, text=True, env=env, timeout=60, check=False,
+            capture_output=True, text=True, env={**env, **mehr}, timeout=60, check=False,
+            stdin=subprocess.DEVNULL,
         )  # fmt: skip
 
     run.dir = tmp_path / "nbh"  # type: ignore[attr-defined]
@@ -400,3 +428,95 @@ def test_namen_ohne_instanz_antworten_mit_404(host):
     out = host("init")
     assert out.returncode == 0, out.stdout + out.stderr
     assert "caddy reload --config /etc/caddy/Caddyfile" in host.log.read_text()
+
+
+TOKEN = "t0ken-fuer-den-netbox-host-0123456789"
+
+
+def _antwort(host, kunden, domain="mgmt.example.ch"):
+    Path(f"{host.log}.antwort").write_text(
+        json.dumps({"vertrag": 1, "domain": domain, "kunden": kunden})
+    )
+
+
+def test_agent_richtet_den_abgleich_ein(host):
+    """1.11.0 (ADR 0054): Token nur in einer Datei für root, Adresse in host.conf, systemd-Timer."""
+    ohne = host("agent", "https://automato.int.example.ch")  # kein Terminal, kein NBH_TOKEN
+    assert ohne.returncode == 1 and "Token fehlt" in ohne.stderr
+    falsch = host("agent", "http://automato.int.example.ch", NBH_TOKEN=TOKEN)
+    assert falsch.returncode == 1 and "Verwendung: agent https://" in falsch.stderr
+    out = host("agent", "https://automato.int.example.ch/", NBH_TOKEN=TOKEN)
+    assert out.returncode == 0, out.stdout + out.stderr
+    datei = host.dir / "automato.token"
+    assert datei.read_text().strip() == TOKEN and datei.stat().st_mode & 0o777 == 0o600
+    conf = (host.dir / "host.conf").read_text()
+    assert "AUTOMATO_URL=https://automato.int.example.ch\n" in conf and TOKEN not in conf
+    systemd = host.dir.parent / "systemd"
+    assert "netbox-host.sh sync" in (systemd / "netbox-host-sync.service").read_text()
+    assert "OnUnitActiveSec=5min" in (systemd / "netbox-host-sync.timer").read_text()
+    assert "systemctl enable --now netbox-host-sync.timer" in host.log.read_text()
+    # erneut: Adresse ersetzt, nicht doppelt
+    host("agent", "https://automato2.int.example.ch", NBH_TOKEN=TOKEN)
+    conf = (host.dir / "host.conf").read_text()
+    assert re.findall(r"^AUTOMATO_URL=.*$", conf, re.M) == [
+        "AUTOMATO_URL=https://automato2.int.example.ch"
+    ]
+
+
+def test_sync_legt_fehlende_netbox_an_und_entfernt_nie(host):
+    assert host("neu", "kunde-a").returncode == 0
+    assert host("neu", "kunde-x").returncode == 0  # in Automato nicht (mehr) freigegeben
+    host("agent", "https://automato.int.example.ch", NBH_TOKEN=TOKEN)
+    _antwort(host, [
+        {"kurzname": "kunde-a", "name": "Kunde A"},
+        {"kurzname": "kunde-b", "name": "Kunde B"},
+        {"kurzname": "Kunde C", "name": "ungültig"},
+        "kein Objekt",
+    ])  # fmt: skip
+    out = host("sync")
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert "kunde-a: NetBox vorhanden" in out.stdout
+    assert "kunde-b: angelegt – Tokens für Automato: netbox-host.sh token kunde-b" in out.stdout
+    assert (host.dir / "kunden" / "kunde-b" / "netbox").is_dir()
+    assert "NAME=Kunde\\ B" in (host.dir / "kunden" / "kunde-b" / "kunde.conf").read_text()
+    pw = host.dir / "kunden" / "kunde-b" / "admin-passwort"
+    assert pw.stat().st_mode & 0o777 == 0o600 and len(pw.read_text().strip()) >= 12
+    assert pw.read_text().strip() not in out.stdout  # nicht ins Protokoll des Agenten
+    assert "kunde-x: in Automato ohne NetBox freigegeben – bleibt" in out.stdout + out.stderr
+    assert (host.dir / "kunden" / "kunde-x" / "netbox").is_dir()  # nie selbst entfernt
+    assert not (host.dir / "kunden" / "kunde-c").exists()
+    stand = json.loads((host.dir / "sync-status.json").read_text())
+    assert (stand["ok"], stand["kunden"], stand["angelegt"], stand["ohne_freigabe"]) == (
+        True, 2, ["kunde-b"], ["kunde-x"],
+    )  # fmt: skip
+    # das Token nur als Kopfzeile aus einer Datei, nie in der Befehlszeile
+    assert TOKEN not in Path(f"{host.log}.curl").read_text()
+    assert f"Authorization: Bearer {TOKEN}" in Path(f"{host.log}.kopf").read_text()
+    assert not list(host.dir.glob(".kopf-*")) and not list(host.dir.glob(".antwort-*"))
+
+    out = host("pruefen")
+    assert "letzter Abgleich" in out.stdout and "2 Kunden mit NetBox" in out.stdout
+    assert "ohne Freigabe in Automato: kunde-x (bleiben" in out.stdout
+
+
+def test_sync_meldet_fehler_und_andere_domain(host):
+    host("agent", "https://automato.int.example.ch", NBH_TOKEN=TOKEN)
+    _antwort(host, [], domain="andere.example.ch")
+    out = host("sync")
+    assert out.returncode == 0
+    assert "Automato nennt die Domain andere.example.ch, dieser Host mgmt.example.ch" in (
+        out.stdout + out.stderr
+    )
+    Path(f"{host.log}.automato-aus").write_text("")
+    out = host("sync")
+    assert out.returncode == 1 and "Automato antwortet nicht" in out.stderr
+    assert json.loads((host.dir / "sync-status.json").read_text())["ok"] is False
+    Path(f"{host.log}.timer-aus").write_text("")
+    out = host("pruefen")
+    assert "Timer läuft nicht" in out.stderr and "fehlgeschlagen" in out.stderr
+
+
+def test_ohne_agent_wie_bisher(host):
+    out = host("pruefen")
+    assert "nicht eingerichtet – NetBox je Kunde von Hand" in out.stdout
+    assert host("sync").returncode == 1

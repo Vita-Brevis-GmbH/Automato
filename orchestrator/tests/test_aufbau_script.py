@@ -381,3 +381,20 @@ def test_cockpit_token_neu_in_env_und_einmal_angezeigt(tmp_path):
     ]
     assert len([z for z in zeilen if z.startswith("AUTOMATO_COCKPIT_TOKEN=")]) == 1
     assert token not in neu.stdout
+
+
+def test_netbox_host_token_eigenes_token(tmp_path):
+    """1.11.0 (ADR 0054): netbox-host-token legt AUTOMATO_NETBOX_HOST_TOKEN an, das Token des
+    Cockpits bleibt unberührt."""
+    log = tmp_path / "calls.log"
+    stub = _stub(tmp_path / "token-compose", f'echo "$*" >> {log}\n')
+    env = {"AUTOMATO_ENV_FILE": str(tmp_path / "env"), "COMPOSE": str(stub)}
+    (tmp_path / "env").write_text("AUTOMATO_COCKPIT_TOKEN=bleibt\n")
+    out = _run(tmp_path, "netbox-host-token", **env)
+    assert out.returncode == 0, out.stdout + out.stderr
+    zeilen = (tmp_path / "env").read_text().splitlines()
+    assert "AUTOMATO_COCKPIT_TOKEN=bleibt" in zeilen
+    (token,) = (z.split("=", 1)[1] for z in zeilen if z.startswith("AUTOMATO_NETBOX_HOST_TOKEN="))
+    assert re.fullmatch(r"[0-9a-f]{64}", token) and out.stdout.count(token) == 1
+    assert "netbox-host.sh agent" in out.stdout
+    assert log.read_text().strip().endswith("up -d orchestrator")

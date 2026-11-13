@@ -19,7 +19,9 @@ import { Empty, ErrorBox, fmtTime, Loading, Modal, Note, PageHead } from "./ui";
 // Kunden-Portal (1.3.0, ADR 0050): Kunden der Plattform – Startseite, Werkzeuge, Kacheln und die
 // Anmeldung je Kunde (eigener Keycloak-Realm). Der Host-Agent auf der VM übernimmt die Änderungen
 // in den Front-Proxy (front.sh sync); NetBox-Instanz und Realm legt man mit den angezeigten
-// Befehlen an.
+// Befehlen an. Seit 1.11.0 (ADR 0054) kommen Kunden auch aus dem Cockpit (Kundenregister): dann
+// pflegt das Cockpit Kurzname, Name, Werkzeuge, Zugriff und Realm, hier nur Mandant, Kunden,
+// Rolle und Kacheln; NetBox (-nb) ist ein wählbares Werkzeug.
 
 const ROLES: [string, string][] = [
   ["viewer", L("liest die Doku", "reads the documentation")],
@@ -32,6 +34,7 @@ const EMPTY: PortalCustomerIn = {
   short_name: "",
   name: "",
   doc: false,
+  nb: true,
   um: false,
   cmdb: false,
   links: [],
@@ -51,21 +54,23 @@ function accessText(c: PortalCustomer): string {
 }
 
 function tools(c: PortalCustomer): string {
-  return ["NetBox", c.doc && "Doku", c.um && "UM", c.cmdb && "CMDB"].filter(Boolean).join(", ");
+  return [c.nb && "NetBox", c.doc && "Doku", c.um && "UM", c.cmdb && "CMDB"].filter(Boolean).join(", ") || "–";
 }
+
+const fromCockpit = (c: PortalCustomer | null) => c?.source === "cockpit";
 
 // Befehle für das, was der Agent (noch) nicht selbst macht: NetBox-Instanz, Keycloak-Realm und
 // seit 1.4.0 (ADR 0051) das Client-Secret des Anmelde-Tors je Realm
 function setupSteps(c: PortalCustomer, data: PortalListing): { title: string; cmd: string }[] {
-  const steps = [
-    {
+  const steps: { title: string; cmd: string }[] = [];
+  if (c.nb)
+    steps.push({
       title: L(
         "NetBox-Host: Instanz anlegen (einmal; bestehende Instanz: Anmeldung über das Tor mit „sso“)",
         "NetBox host: create the instance (once; existing instance: sign-in via the gate with “sso”)",
       ),
       cmd: `sudo deploy/netbox-host/netbox-host.sh neu ${c.short_name}\nsudo deploy/netbox-host/netbox-host.sh sso ${c.short_name}`,
-    },
-  ];
+    });
   const domain = data.domain || "<domain>";
   const doc = c.addresses.doc ?? `https://${c.short_name}-doc.${domain}`;
   const main = data.keycloak.main_realm;
@@ -204,14 +209,16 @@ export default function Portal({ tenants }: { tenants: Tenant[] }) {
             (<span className="mono">-nb</span>), Doku (<span className="mono">-doc</span>), Benutzerverwaltung
             (<span className="mono">-um</span>), CMDB (<span className="mono">-cmdb</span>) und weitere Kacheln. Mit einem
             eigenen Realm meldet sich der Kunde unter seiner Doku-Adresse dort an (z. B. Azure oder LDAPS) und sieht nur
-            den hier zugeordneten Ausschnitt. Der Host-Agent übernimmt Änderungen in den Front-Proxy.
+            den hier zugeordneten Ausschnitt. Der Host-Agent übernimmt Änderungen in den Front-Proxy. Bei Kunden aus dem
+            Cockpit pflegt das Cockpit Kurzname, Name, Werkzeuge, Zugriff und Realm.
           </>,
           <>
             Customers of the platform: start page <span className="mono">&lt;short name&gt;.&lt;domain&gt;</span>, NetBox
             (<span className="mono">-nb</span>), documentation (<span className="mono">-doc</span>), user management
             (<span className="mono">-um</span>), CMDB (<span className="mono">-cmdb</span>) and further tiles. With its own
             realm the customer signs in there under its documentation address (e.g. Azure or LDAPS) and sees only the scope
-            assigned here. The host agent applies changes to the front proxy.
+            assigned here. The host agent applies changes to the front proxy. For customers from the cockpit, the cockpit
+            maintains short name, name, tools, access and realm.
           </>,
         )}
       </PageHead>
@@ -281,7 +288,21 @@ export default function Portal({ tenants }: { tenants: Tenant[] }) {
                   <Fragment key={c.id}>
                     <tr>
                       <td className="mono">{c.short_name}</td>
-                      <td>{c.name}</td>
+                      <td>
+                        {c.name}
+                        {fromCockpit(c) && (
+                          <span
+                            className="chip info portal-cockpit"
+                            style={{ marginLeft: 6 }}
+                            title={L(
+                              "Kurzname, Name, Werkzeuge, Zugriff und Realm pflegt das Cockpit; entfernen nur dort",
+                              "Short name, name, tools, access and realm are maintained in the cockpit; remove only there",
+                            )}
+                          >
+                            {L("aus dem Cockpit", "from the cockpit")}
+                          </span>
+                        )}
+                      </td>
                       <td>{tools(c)}</td>
                       <td>
                         {c.realm && c.realm !== data.keycloak.main_realm ? (
@@ -323,10 +344,15 @@ export default function Portal({ tenants }: { tenants: Tenant[] }) {
                         </button>{" "}
                         <button className="linkbtn" onClick={() => setEditing(c)}>
                           {L("Bearbeiten", "Edit")}
-                        </button>{" "}
-                        <button className="linkbtn danger" onClick={() => remove(c)}>
-                          {L("Entfernen", "Remove")}
                         </button>
+                        {!fromCockpit(c) && (
+                          <>
+                            {" "}
+                            <button className="linkbtn danger" onClick={() => remove(c)}>
+                              {L("Entfernen", "Remove")}
+                            </button>
+                          </>
+                        )}
                       </td>
                     </tr>
                     {open === c.id && (
@@ -385,6 +411,7 @@ function PortalEditor({
           short_name: existing.short_name,
           name: existing.name,
           doc: existing.doc,
+          nb: existing.nb ?? true,
           um: existing.um,
           cmdb: existing.cmdb,
           links: existing.links.map((l) => ({ ...l })),
@@ -402,6 +429,8 @@ function PortalEditor({
   const [err, setErr] = useState<unknown>(null);
   const [netsText, setNetsText] = useState(() => (existing?.access_nets ?? []).join("\n"));
   const set = (patch: Partial<PortalCustomerIn>) => setF((old) => ({ ...old, ...patch }));
+  // Kunde aus dem Cockpit (1.11.0, ADR 0054): Kurzname, Name, Werkzeuge, Zugriff und Realm nur lesbar
+  const locked = fromCockpit(existing);
 
   useEffect(() => {
     if (f.tenant_id == null) {
@@ -450,12 +479,21 @@ function PortalEditor({
       }
     >
       <ErrorBox error={err} />
+      {locked && (
+        <Note>
+          {L(
+            "Aus dem Cockpit: Kurzname, Name, Werkzeuge, Zugriff und Realm pflegt das Cockpit (Kundenregister) – hier nur Mandant, Kunden, Rolle und Kacheln. Entfernen nur im Cockpit.",
+            "From the cockpit: short name, name, tools, access and realm are maintained in the cockpit (customer register) – here only tenant, customers, role and tiles. Remove only in the cockpit.",
+          )}
+        </Note>
+      )}
       <div className="field">
         <label htmlFor="pc-short">{L("Kurzname", "Short name")}</label>
         <input
           id="pc-short"
           className="input mono"
           value={f.short_name}
+          disabled={locked}
           maxLength={42}
           placeholder={L("z. B. kunde-a", "e.g. customer-a")}
           onChange={(e) => set({ short_name: e.target.value.toLowerCase() })}
@@ -469,24 +507,27 @@ function PortalEditor({
       </div>
       <div className="field">
         <label htmlFor="pc-name">{L("Anzeigename", "Display name")}</label>
-        <input id="pc-name" className="input" value={f.name} maxLength={200} placeholder={L("z. B. Kunde A", "e.g. Customer A")} onChange={(e) => set({ name: e.target.value })} />
+        <input id="pc-name" className="input" value={f.name} disabled={locked} maxLength={200} placeholder={L("z. B. Kunde A", "e.g. Customer A")} onChange={(e) => set({ name: e.target.value })} />
       </div>
       <div className="field">
-        <span className="label">{L("Werkzeuge (NetBox immer)", "Tools (NetBox always)")}</span>
+        <span className="label">{L("Werkzeuge", "Tools")}</span>
         <label className="check">
-          <input type="checkbox" checked={f.doc} onChange={(e) => set({ doc: e.target.checked })} /> {L("Doku (Automato, -doc)", "Documentation (Automato, -doc)")}
+          <input type="checkbox" checked={f.nb} disabled={locked} onChange={(e) => set({ nb: e.target.checked })} /> {L("NetBox (-nb)", "NetBox (-nb)")}
         </label>
         <label className="check">
-          <input type="checkbox" checked={f.um} onChange={(e) => set({ um: e.target.checked })} /> {L("Benutzerverwaltung (-um)", "User management (-um)")}
+          <input type="checkbox" checked={f.doc} disabled={locked} onChange={(e) => set({ doc: e.target.checked })} /> {L("Doku (Automato, -doc)", "Documentation (Automato, -doc)")}
         </label>
         <label className="check">
-          <input type="checkbox" checked={f.cmdb} onChange={(e) => set({ cmdb: e.target.checked })} /> CMDB (-cmdb)
+          <input type="checkbox" checked={f.um} disabled={locked} onChange={(e) => set({ um: e.target.checked })} /> {L("Benutzerverwaltung (-um)", "User management (-um)")}
+        </label>
+        <label className="check">
+          <input type="checkbox" checked={f.cmdb} disabled={locked} onChange={(e) => set({ cmdb: e.target.checked })} /> CMDB (-cmdb)
         </label>
       </div>
 
       <div className="field">
         <label htmlFor="pc-access">{L("Zugriff (von wo die Adressen erreichbar sind)", "Access (where the addresses can be reached from)")}</label>
-        <select id="pc-access" className="input" value={f.access} onChange={(e) => set({ access: e.target.value as PortalAccess })}>
+        <select id="pc-access" className="input" value={f.access} disabled={locked} onChange={(e) => set({ access: e.target.value as PortalAccess })}>
           <option value="ueberall">{L("Überall – aus dem Internet (über WAF bzw. FortiGate)", "Everywhere – from the internet (via WAF or FortiGate)")}</option>
           <option value="intern">{L("Nur intern – nur aus dem Management-Netz", "Internal only – only from the management network")}</option>
           <option value="netze">{L("Nur aus diesen Netzen", "Only from these networks")}</option>
@@ -497,6 +538,7 @@ function PortalEditor({
             className="input mono"
             rows={3}
             value={netsText}
+            disabled={locked}
             placeholder={L("z. B. 203.0.113.0/24 (je Zeile ein Netz oder eine Adresse)", "e.g. 203.0.113.0/24 (one network or address per line)")}
             onChange={(e) => setNetsText(e.target.value)}
           />
@@ -512,7 +554,7 @@ function PortalEditor({
       <h3 style={{ marginTop: 12 }}>{L("Anmeldung", "Sign-in")}</h3>
       <div className="field">
         <label htmlFor="pc-realm">{L("Eigener Realm (optional)", "Own realm (optional)")}</label>
-        <input id="pc-realm" className="input mono" value={f.realm ?? ""} maxLength={64} placeholder={L("leer = Realm von Automato", "empty = realm of Automato")} onChange={(e) => set({ realm: e.target.value })} />
+        <input id="pc-realm" className="input mono" value={f.realm ?? ""} disabled={locked} maxLength={64} placeholder={L("leer = Realm von Automato", "empty = realm of Automato")} onChange={(e) => set({ realm: e.target.value })} />
         <div className="hint">
           {L(
             "Unter der Doku-Adresse meldet sich der Kunde in diesem Realm an (z. B. mit Azure oder LDAPS). Benutzer daraus sind immer Kunden-Benutzer und sehen nur den Ausschnitt unten – was der Realm sonst meldet, zählt nicht.",

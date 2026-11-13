@@ -13,11 +13,16 @@ mit dem Realm von Automato selbst gilt die bisherige Anmeldung.
 Zugriff je Kunde (1.5.0): `access` = von wo die Adressen des Kunden erreichbar sind – `ueberall`
 (Vorgabe, über WAF/FortiGate aus dem Internet), `intern` (nur Management-Netz) oder `netze` (nur
 aus `access_nets`). Der Front-Proxy antwortet allen anderen wie bei einer unbekannten Adresse.
+
+Herkunft (1.11.0, ADR 0054): `source` = `oberflaeche` (in Automato angelegt) oder `cockpit` (vom
+Kundenregister des Cockpits mit `PUT /freigaben`). Bei Kunden aus dem Cockpit sind Kurzname, Name,
+Werkzeuge, Zugriff und Realm nur dort aenderbar; Mandant, Kunden, Rolle und Kacheln pflegt
+Automato. `nb` = NetBox (`-nb`) ist seit 1.11.0 ein waehlbares Werkzeug (Vorgabe an).
 """
 
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, false
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, false, true
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -30,6 +35,8 @@ class PortalCustomer(Base):
     short_name: Mapped[str] = mapped_column(String(42), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(200))
     doc: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    # NetBox (-nb) als Werkzeug (1.11.0): Vorgabe an - bestehende Kunden behalten ihre NetBox
+    nb: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
     um: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     cmdb: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     # weitere Kacheln: [{"title", "url", "text"}]
@@ -44,6 +51,10 @@ class PortalCustomer(Base):
     access: Mapped[str] = mapped_column(String(16), default="ueberall", server_default="ueberall")
     access_nets: Mapped[list | None] = mapped_column(JSON, nullable=True, default=list)
     position: Mapped[int] = mapped_column(Integer, default=0)
+    # Herkunft (1.11.0, ADR 0054): oberflaeche | cockpit
+    source: Mapped[str] = mapped_column(
+        String(16), default="oberflaeche", server_default="oberflaeche"
+    )
     updated_by: Mapped[str | None] = mapped_column(String(200), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)

@@ -88,6 +88,9 @@ class Settings(BaseSettings):
     # Inventar fuers Cockpit (1.10.0, ADR 0053): GET /inventory nur mit diesem Token (Bearer),
     # erzeugt mit `deploy/aufbau.sh cockpit-token`. Leer = der Endpunkt gibt es nicht (404).
     cockpit_token: str = ""
+    # Kunden fuer den NetBox-Host (1.11.0, ADR 0054): GET /netbox-host nur mit diesem Token,
+    # erzeugt mit `deploy/aufbau.sh netbox-host-token`. Leer = der Endpunkt gibt es nicht (404).
+    netbox_host_token: str = ""
 
     # Zeitgesteuerte Laeufe je Quellsystem (Cron am Quellsystem). Aus = keine Hintergrund-
     # Schleife (Tests, Werkzeuge); docker-compose schaltet ihn fuer den Orchestrator ein.

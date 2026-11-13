@@ -137,6 +137,7 @@ services:
       # Inventar fuers Cockpit (1.10.0, ADR 0053): GET /api/inventory nur mit diesem Token
       # (deploy/aufbau.sh cockpit-token); leer = aus
       AUTOMATO_COCKPIT_TOKEN: ${AUTOMATO_COCKPIT_TOKEN:-}
+      AUTOMATO_NETBOX_HOST_TOKEN: ${AUTOMATO_NETBOX_HOST_TOKEN:-}
       AUTOMATO_OIDC_CLOCK_SKEW_SECONDS: ${AUTOMATO_OIDC_CLOCK_SKEW_SECONDS:-60}
       # Schluessel der Geraete-Zugangsdaten (ADR 0009). Leer = Schluesseldatei im Volume
       # orchestrator-data (beim ersten Start erzeugt, mitsichern!); produktiv besser als

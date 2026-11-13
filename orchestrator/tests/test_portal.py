@@ -59,6 +59,7 @@ def test_kunde_anlegen_schreibt_soll_stand(portal_client, session_factory, tmp_p
         "realm": "kunde-a",  # 1.4.0: das Anmelde-Tor fragt im Realm des Kunden (ADR 0051)
         "zugriff": "ueberall", "netze": [],  # 1.5.0: Vorgabe wie bisher
         "links": [{"title": "Handbuch", "url": "https://handbuch.example.ch", "text": "Doku"}],
+        "nb": True, "quelle": "oberflaeche",  # 1.11.0: NetBox wählbar (Vorgabe an), Herkunft
     }]  # fmt: skip
     # Mandant, Kunden und Rolle bleiben in Automato
     assert "tenant" not in json.dumps(soll) and "customer_ids" not in json.dumps(soll)
@@ -79,6 +80,8 @@ def test_kunde_anlegen_schreibt_soll_stand(portal_client, session_factory, tmp_p
     ("data", "status", "text"),
     [
         ({"short_name": "start"}, 422, "reserviert"),
+        ({"short_name": "konsole"}, 422, "reserviert"),  # 1.11.0 wie front.sh seit 1.10.0
+        ({"short_name": "connect"}, 422, "reserviert"),
         ({"short_name": "kunde-doc"}, 422, "reserviert"),
         ({"short_name": "Kunde_A"}, 422, "ungültig"),
         ({"realm": "master"}, 422, "Realm"),

@@ -24,6 +24,13 @@ FRONT="10.0.30.5/32"
 # Superuser, role:operator = bearbeiten, sonst lesen). Einrichten bzw. nachführen: sso alle
 SSO=an
 
+# Agent (1.11.0, ADR 0054): legt die NetBox je Kunde selbst an – aus den Kunden mit dem Werkzeug
+# NetBox in Automato. Einrichten: netbox-host.sh agent https://<oberfläche von automato> (setzt
+# AUTOMATO_URL, das Token liegt in automato.token, nur root). AUTOMATO_CA: CA des Zertifikats der
+# Oberfläche, wenn sie nicht im System hinterlegt ist (PEM, z. B. /opt/netbox-host/automato-ca.pem).
+# AUTOMATO_URL=
+# AUTOMATO_CA=
+
 # Version: netbox-docker-Tag und passendes Image (gleich wie source-of-truth/netbox/setup.sh)
 NETBOX_DOCKER_TAG=5.0.2
 NETBOX_VERSION=v4.6.10-5.0.2

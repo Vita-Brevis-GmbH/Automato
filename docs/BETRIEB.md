@@ -2418,6 +2418,15 @@ Client-Zertifikat und die passenden Zeilen der `agent.env`.
   (Management-Netz) oder nur aus diesen Netzen; von Hand `front.sh kunde … --zugriff intern|"<netze>"`.
   Wer nicht darf, sieht für alle Adressen des Kunden nur „Unbekannte Adresse“ (auch keine
   Anmeldung, keine NetBox-API). `front.sh liste` zeigt Zugriff und Quelle (Portal/Hand).
+- **Kunden aus dem Cockpit** (1.11.0, ADR 0054): das Kundenregister des Cockpits schickt seine
+  Kunden mit `PUT /api/freigaben` (Token wie das Inventar, `aufbau.sh cockpit-token`). Im
+  Kunden-Portal tragen sie „aus dem Cockpit“: Kurzname, Name, Werkzeuge, Zugriff und Realm nur
+  lesbar, Entfernen nur im Cockpit; hier pflegt man Mandant, Kunden, Rolle und Kacheln. Ein
+  vorhandener Kunde mit gleichem Kurznamen wird übernommen. `front.sh liste` zeigt Quelle
+  „Cockpit“; von Hand nicht änderbar.
+- **NetBox als Werkzeug** (1.11.0): im Kunden-Portal „NetBox (-nb)“ (Vorgabe an), von Hand
+  `front.sh kunde … --ohne-nb`. Ohne NetBox keine Adresse `<kunde>-nb`, keine Kachel, keine
+  Prüfung.
 - Agent-Tokens werden nur gehasht gespeichert und einmalig angezeigt. Produktiv sprechen
   Agenten nur über das **mTLS-Agent-Gateway** (`deploy/agent-gateway`, Modus `bind`:
   Zertifikat und Token gehören zum selben Agenten); Port 8000 nicht in Agent-Netze freigeben.
