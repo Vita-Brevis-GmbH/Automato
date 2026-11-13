@@ -198,6 +198,9 @@ sudo deploy/front/front.sh erzeugen && sudo deploy/front/front.sh pruefen
   die ihre Zertifikate selbst bei Let's Encrypt holt, gehört nicht dahinter (TLS endet hier).
 - `pruefen` meldet unter „Ziele“, ob das Ziel antwortet und sein Zertifikat vertraut ist, und
   unter „Adressen“, wohin der Wildcard zeigt.
+- **Direkt, nicht über den Front-Proxy:** `konsole.<domain>` (Port 4444) und `connect.<domain>`
+  (Connector der AD-Agenten, Port 46200) von Magister brauchen einen eigenen A-Eintrag auf die
+  Magister-VM, sonst fängt der Wildcard sie ein – `pruefen` meldet es.
 
 ## 6. Anmelde-Tor (1.4.0, ADR 0051)
 
@@ -284,10 +287,6 @@ Docker-Netze an; seit 1.10.0 (ADR 0053) lässt der Front-Proxy diese Netze für 
 an die NetBox durch, vor der Sperre nach Absender und dem Zugriff je Kunde und ohne Kopfzeilen der
 Anmeldung. Die Netze ermittelt `front.sh erzeugen` aus den laufenden Containern – nach einem
 `docker compose down` (neue Netze) `front.sh erzeugen` erneut.
-
-**Namen der Plattform dahinter, die direkt gehen** (1.10.0): mit `AUTOMATO_FRONT_UEBRIGE` und dem
-Wildcard auf dieser VM brauchen `konsole.<domain>` (Port 4444) und `connect.<domain>` (Connector,
-Port 46200) von Magister einen eigenen A-Eintrag auf die Magister-VM – `pruefen` meldet es.
 
 **Erreicht diese VM die Adresse gar nicht** (z. B. FortiGate ohne Hairpin; `pruefen` meldet „erreicht
 … nicht“): den Namen in `docker-compose.override.yml` direkt auf den NetBox-Host zeigen – **für
