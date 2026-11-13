@@ -20,6 +20,9 @@ verknüpft wurden“).
   fehlte die Kachel deshalb trotz gewähltem Werkzeug.
 - **Kachel „Magister“** auf der Startseite (statt „Benutzerverwaltung“), in `adressen`, `liste`, der
   Topologie und den Callbacks des Anmelde-Tors, sobald es ein Ziel gibt.
+- **CI:** der Test der zusätzlichen CAs (1.10.0) baut seine Test-CA jetzt mit Schlüsselverwendung
+  und Kennungen – Python ab 3.13 prüft Zertifikate streng (`VERIFY_X509_STRICT`), die CI (3.14)
+  lehnte die alte Test-CA ab. Eine echte interne CA braucht dieselben Erweiterungen.
 - **Anmeldung:** ein Mandant, der im Kundenregister mit einem Kunden verknüpft ist (Werkzeug
   Magister), liegt unter `<kunde>-um` hinter dem Anmelde-Tor; ein nicht verknüpfter erreicht man
   weiter als übrigen Namen ohne Tor, mit der Anmeldung von Magister.
