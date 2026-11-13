@@ -271,7 +271,7 @@ sudo deploy/front/front.sh adressen
    der eigenen CA, deren Stammzertifikat nach `deploy/trust/` (Orchestrator und zentraler Worker
    vertrauen ihm dann zusätzlich, `deploy/trust/README.md`):
    ```bash
-   sudo install -m 644 /root/ca.crt deploy/trust/interne-ca.crt
+   sudo install -D -m 644 /root/ca.crt deploy/trust/interne-ca.crt
    sudo docker compose up -d --force-recreate orchestrator collector
    ```
 4. Prüfen: `sudo deploy/front/front.sh pruefen` geht je Kunde den Weg des NetBox-Syncs aus dem

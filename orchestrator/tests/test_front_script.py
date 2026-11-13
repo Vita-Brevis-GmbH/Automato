@@ -212,6 +212,14 @@ def test_werkzeuge_nur_mit_freischaltung(front):
 
 def test_eigene_ca_fuer_den_netbox_host(front):
     front.env_file.write_text(ENV + "AUTOMATO_FRONT_NETBOX_CA=intern-ca.crt\n")
+    # 1.10.0: fehlt die Datei oder ist sie leer, ändert erzeugen nichts (Proxy lehnte sonst ab)
+    fehlt = front("erzeugen")
+    assert fehlt.returncode != 0 and "intern-ca.crt fehlt oder ist leer" in fehlt.stderr
+    (front.pki / "intern-ca.crt").write_text("")
+    assert "fehlt oder ist leer" in front("erzeugen").stderr
+    (front.pki / "intern-ca.crt").write_text("kein Zertifikat\n")
+    assert "ist kein Zertifikat im PEM-Format" in front("erzeugen").stderr
+    _zertifikat(front.pki, "intern-ca", "DNS:ca.example.ch")
     assert front("kunde", "kunde-a", "Kunde A").returncode == 0
     site = (front.gen / "sites" / "kunde-a.caddy").read_text()
     assert "tls_trust_pool file /etc/caddy/pki/intern-ca.crt" in site
@@ -719,6 +727,7 @@ def test_uebrige_namen_an_magister(front):
     _zertifikat(front.pki, "mgmt", "DNS:*.mgmt.example.ch")
     _zertifikat(front.pki, "mgmt-int", "DNS:mgmt.int.example.ch,DNS:*.mgmt.int.example.ch")
     _zertifikat(front.pki, "ui", "DNS:automato.int.example.ch")
+    shutil.copy(front.pki / "mgmt.crt", front.pki / "magister-root.pem")
     assert front("kunde", "kunde-a", "Kunde A").returncode == 0
 
     rest = (front.gen / "sites" / "_unbekannt.caddy").read_text()
@@ -737,11 +746,12 @@ def test_uebrige_namen_an_magister(front):
     assert "header" not in uebrig
 
     dns = "*.mgmt.example.ch 10.0.20.5\n"  # Wildcard auf den Front-Proxy: jetzt gewollt
+    (front.pki / "magister-root.pem").write_text("")  # wie nach einem abgebrochenen `cat >`
     out = front("pruefen", FRONT_DNS=dns, FRONT_CURL_UEBRIGE="404")
     text = out.stdout + out.stderr
     assert "Übrige Namen unter mgmt.example.ch an: 10.0.20.10 (CA magister-root.pem)" in text
     assert "*.mgmt.example.ch zeigt auf diese VM – übrige Namen gehen an 10.0.20.10" in text
-    assert "Übrige Namen: CA fehlt (deploy/proxy/pki/magister-root.pem)" in text
+    assert "Übrige Namen: CA fehlt oder ist leer (deploy/proxy/pki/magister-root.pem)" in text
     assert "„Unbekannte Adresse“" not in text
 
     shutil.copy(front.pki / "mgmt.crt", front.pki / "magister-root.pem")

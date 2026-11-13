@@ -35,6 +35,10 @@ alles, Cockpit erfasst selbst). ADR 0053.
   API mit Token an die NetBox durch – vor der Sperre und dem Zugriff je Kunde, ohne Kopfzeilen der
   Anmeldung. `front.sh pruefen` geht je Kunde den Weg des NetBox-Syncs aus dem Orchestrator bis
   zur NetBox (Zertifikat, Weg, gesperrt).
+- **CA-Dateien geprüft** (Fund aus dem Test: eine abgebrochene Eingabe hinterliess eine leere
+  `magister-root.pem`): `front.sh erzeugen` ändert nichts, solange eine CA aus
+  `AUTOMATO_FRONT_NETBOX_CA`, `_UEBRIGE_CA` bzw. (mit Tor) `_KEYCLOAK_CA` fehlt, leer oder kein
+  PEM-Zertifikat ist; `pruefen` nennt „fehlt oder ist leer“. Die Adressen der VM ohne Docker-Brücken.
 - **Zusätzliche CAs ohne Override-Datei:** jede CA in `deploy/trust/` (PEM oder DER) vertrauen
   Orchestrator und zentraler Worker zusätzlich (`sot_gateway/trust.py`: Bündel in `/tmp`,
   `SSL_CERT_FILE`, auch für die CLI); ohne Dateien ändert sich nichts.

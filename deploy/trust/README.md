@@ -6,7 +6,7 @@ Zertifikat des Front-Proxys bzw. der NetBox eines Kunden ausgestellt hat. Nur da
 Zertifikat der CA, nie einen Schlüssel.
 
 ```bash
-sudo install -m 644 /root/ca.crt deploy/trust/interne-ca.crt
+sudo install -D -m 644 /root/ca.crt deploy/trust/interne-ca.crt
 sudo docker compose up -d --force-recreate orchestrator collector
 ```
 

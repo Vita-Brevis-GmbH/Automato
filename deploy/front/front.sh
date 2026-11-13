@@ -605,8 +605,20 @@ print(json.dumps({
 PY
 )
 
+ca_pruefen() {  # $1 Einstellung, $2 Datei in deploy/proxy/pki: da, nicht leer, ein Zertifikat (PEM)?
+  [ -n "$2" ] || return 0
+  local f=$FRONT_PKI/$2
+  [ -s "$f" ] || abbruch "$1: deploy/proxy/pki/$2 fehlt oder ist leer – nichts geändert"
+  openssl x509 -in "$f" -noout 2>/dev/null ||
+    abbruch "$1: deploy/proxy/pki/$2 ist kein Zertifikat im PEM-Format – nichts geändert"
+}
+
 cmd_erzeugen() {
   lade_conf
+  # eine fehlende oder leere CA-Datei liesse den Proxy jede Verbindung dorthin ablehnen (1.10.0)
+  ca_pruefen AUTOMATO_FRONT_NETBOX_CA "$NETBOX_CA"
+  ca_pruefen AUTOMATO_FRONT_UEBRIGE_CA "$UEBRIGE_CA"
+  if tor_an; then ca_pruefen AUTOMATO_FRONT_KEYCLOAK_CA "$KC_CA"; fi
   local g k www name abmelden
   EIGENE_NETZE=$(eigene_netze)
   [ -z "$EIGENE_NETZE" ] || netze "Docker-Netze von Automato" "$EIGENE_NETZE"
@@ -933,8 +945,12 @@ pruefe_zertifikat() {  # $1 Datei-Name ohne Endung, $2.. Namen, die es abdecken 
 # --- Adressen und Ziele (1.9.2) --------------------------------------------------------------------
 # Kommt eine Adresse hier an (DNS), kennt der Proxy sie (sonst „Unbekannte Adresse“), deckt das
 # Zertifikat sie ab – und erreicht der Proxy, wohin er weiterleitet?
-eigene_ips() {  # IPv4-Adressen dieser VM, mit Leerzeichen
+eigene_ips() {  # IPv4-Adressen dieser VM ohne Docker-Brücken, mit Leerzeichen
   local ips=${FRONT_LOKALE_IPS:-} liste=()
+  if [ -z "$ips" ]; then
+    ips=$(ip -o -4 addr show scope global 2>/dev/null |
+      awk '$2 !~ /^(docker|br-|veth|virbr)/ {split($4, a, "/"); print a[1]}' | tr '\n' ' ' || true)
+  fi
   [ -n "$ips" ] || ips=$(hostname -I 2>/dev/null || true)
   read -ra liste <<<"$ips"
   printf '%s\n' "${liste[@]}" | grep -E '^[0-9]+(\.[0-9]+){3}$' | tr '\n' ' ' | sed 's/ $//' || true
@@ -1120,7 +1136,7 @@ pruefe_uebrige() {  # Ziel der übrigen Namen: mit einem Namen, den es nicht gib
   local host=${UEBRIGE%:*} port=443 name="gibt-es-nicht-front-pruefen.$DOMAIN" ca=() code
   [ "$host" = "$UEBRIGE" ] || port=${UEBRIGE##*:}
   if [ -n "$UEBRIGE_CA" ]; then
-    [ -s "$FRONT_PKI/$UEBRIGE_CA" ] || { fehler "Übrige Namen: CA fehlt (deploy/proxy/pki/$UEBRIGE_CA)"; return; }
+    [ -s "$FRONT_PKI/$UEBRIGE_CA" ] || { fehler "Übrige Namen: CA fehlt oder ist leer (deploy/proxy/pki/$UEBRIGE_CA)"; return; }
     ca=(--cacert "$FRONT_PKI/$UEBRIGE_CA")
   fi
   code=$($CURL -s --noproxy '*' "${ca[@]}" -o /dev/null -w '%{http_code}' --resolve "$name:$port:$host" \
