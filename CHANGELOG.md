@@ -7,6 +7,18 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 1.12.1 – 2026-11-13
+
+Korrekturen aus dem Test des Anmelde-Tors (Anwender 2026-11-13).
+
+- **Abmelden beendet die Keycloak-Sitzung wirklich:** „Abmelden“ auf der Startseite, im Portal und
+  in NetBox (`/logout/`) schickt den Browser nach dem Löschen des Cookies des Tors über die
+  Abmeldeseite von Keycloak (`client_id=automato-front`, `post_logout_redirect_uri` = Startseite
+  bzw. Portal) zurück. Bisher endete nur die Sitzung des Tors; der nächste Aufruf meldete still
+  wieder an („Abmelde-Button geht nicht“). Das Tor erlaubt Keycloak als Ziel nach dem Abmelden.
+- **`front.sh tor`** nennt je Realm auch die *Valid post logout redirect URIs* von
+  `automato-front` (Startseiten der Kunden, Portal); das Cockpit trägt sie selbst ein (ADR 0006).
+
 ## 1.12.0 – 2026-11-13
 
 Magister unter `<kunde>-um` (Anwender 2026-11-13: „die Magister Plattformen sollen alle umbenannt

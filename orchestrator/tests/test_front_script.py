@@ -476,6 +476,15 @@ def test_tor_schuetzt_jede_adresse_und_sperrt_ohne_realm(front):
         "import front-tor")  # fmt: skip
     assert "import front-identitaet vb" in site.split("vb-um.mgmt.example.ch {")[1]
     assert "Abmelden" in (front.gen / "www" / "vb" / "index.html").read_text()
+    # 1.12.1: Abmelden über die Abmeldeseite von Keycloak, zurück auf die Startseite – sonst meldet
+    # der nächste Aufruf still wieder an (Fund aus dem Dev-Test)
+    abmelden = (
+        "/oauth2/sign_out?rd=https%3A%2F%2Flogin.example.ch%2Frealms%2Fvb%2Fprotocol%2F"
+        "openid-connect%2Flogout%3Fclient_id%3Dautomato-front%26post_logout_redirect_uri%3D"
+        "https%253A%252F%252Fvb.mgmt.example.ch%252F"
+    )
+    assert f'href="{abmelden}"' in (front.gen / "www" / "vb" / "index.html").read_text()
+    assert f"redir /logout/ {abmelden} 302" in nb
     gesperrt = (front.gen / "sites" / "kunde-b.caddy").read_text()
     assert gesperrt.count("import front-gesperrt") == 2 and "front-tor" not in gesperrt
 
@@ -498,6 +507,13 @@ def test_tor_schuetzt_jede_adresse_und_sperrt_ohne_realm(front):
     assert f'env_file: ["{datei}"]' in compose and "ein-client-secret" not in compose
     assert "read_only: true" in compose and 'cap_drop: ["ALL"]' in compose
     assert "name: automato-front-tor\n    external: true" in compose
+    assert '"--whitelist-domain=login.example.ch"' in compose  # Ziel nach dem Abmelden
+    portal = (front.gen / "www" / "_portal" / "index.html").read_text()
+    assert "post_logout_redirect_uri%3Dhttps%253A%252F%252Fstart.mgmt.int.example.ch%252F" in portal
+    stand = front("tor")
+    assert "Valid post logout redirect URIs:" in stand.stdout
+    assert "https://vb.mgmt.example.ch/*" in stand.stdout
+    assert "https://start.mgmt.int.example.ch/*" in stand.stdout
     log = front.log.read_text()
     assert "compose -p automato-tor -f" in log and "up -d --remove-orphans" in log
 

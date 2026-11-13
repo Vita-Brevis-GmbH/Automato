@@ -298,10 +298,22 @@ html() {  # Text für HTML maskieren
 }
 
 # --- Seiten ------------------------------------------------------------------------------------
-seite() {  # HTML-Gerüst: $1 Titel, $2 Untertitel, $3 "abmelden" (Anmelde-Tor), Kacheln auf stdin
+# Abmelden mit Anmelde-Tor (1.12.1): das Tor löscht sein Cookie und schickt den Browser über die
+# Abmeldeseite von Keycloak zurück auf $2 – so endet auch die Sitzung in Keycloak, statt dass der
+# nächste Aufruf still wieder anmeldet. $1 Realm, $2 Adresse danach (Post-Logout-URI des Clients)
+abmelde_url() {
+  local realm=$1 zurueck=$2 ziel
+  [ -n "$KC" ] || { printf '/oauth2/sign_out'; return 0; }
+  ziel="$KC/realms/$realm/protocol/openid-connect/logout?client_id=$TOR_CLIENT&post_logout_redirect_uri=$(url_kodiert "$zurueck")"
+  printf '/oauth2/sign_out?rd=%s' "$(url_kodiert "$ziel")"
+}
+
+url_kodiert() { python3 -I -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$1"; }
+
+seite() {  # HTML-Gerüst: $1 Titel, $2 Untertitel, $3 Adresse zum Abmelden (Anmelde-Tor), Kacheln auf stdin
   local t=$1 sub=$2 fuss="Anmeldung je Werkzeug · sign-in per tool" kt ku kb
   # mit Anmelde-Tor: die Anmeldung gilt für alle Werkzeuge, Abmelden beendet auch die Keycloak-Sitzung
-  [ "${3:-}" != abmelden ] || fuss='<a href="/oauth2/sign_out">Abmelden · sign out</a>'
+  [ -z "${3:-}" ] || fuss="<a href=\"$3\">Abmelden · sign out</a>"
   cat <<EOF
 <!doctype html>
 <html lang="de">
@@ -519,7 +531,7 @@ schreibe_kunde() {  # Caddy-Einträge eines Kunden
     fi
     route_kunde "$(nb_ziel "$ident")" \
       $'\t\thandle @front_nb_token {\n'"$(nb_ziel "" | sed 's/^/\t/')"$'\n\t\t}' \
-      $'\t\tredir /logout/ /oauth2/sign_out 302' "$eigen"
+      $'\t\tredir /logout/ '"$(abmelde_url "$REALM" "https://$k.$DOMAIN/")"' 302' "$eigen"
     printf '}\n'
   fi
   if [ "$DOC" = ja ]; then
@@ -677,7 +689,7 @@ cmd_erzeugen() {
     lies_kunde "$k"
     tor_fuer_kunde
     abmelden=""
-    [ -z "$TOR_DIENST" ] || abmelden=abmelden
+    [ -z "$TOR_DIENST" ] || abmelden=$(abmelde_url "$REALM" "https://$k.$DOMAIN/")
     kacheln "$k" | seite "$NAME" "Werkzeuge · tools" "$abmelden" >"$www/$k/index.html"
   done
   # Unbekannte Namen unter den Domains (z. B. <kunde>-doc ohne --doc): 404 statt einer leeren
@@ -706,7 +718,7 @@ cmd_erzeugen() {
     if tor_an; then
       if [ -n "$HAUPT_REALM" ] && tor_bereit "$HAUPT_REALM"; then
         portal=$'\t\timport front-tor tor-intern\n'"$portal"
-        abmelden=abmelden
+        abmelden=$(abmelde_url "$HAUPT_REALM" "https://start.$INTERN/")
       else
         portal=$'\t\timport front-gesperrt'
       fi
@@ -799,6 +811,10 @@ tor_dienst_yaml() {  # $1 Container, $2 Realm, $3 erlaubte Rollen (leer = alle B
     --silence-ping-logging=true
   )
   [ -z "$INTERN" ] || args+=("--whitelist-domain=$INTERN" "--whitelist-domain=.$INTERN")
+  # Abmelden über die Abmeldeseite von Keycloak (1.12.1): rd zeigt dorthin
+  local kc_host=${KC#*://}
+  kc_host=${kc_host%%/*}
+  [ -z "$kc_host" ] || args+=("--whitelist-domain=$kc_host")
   for rolle in $rollen; do args+=("--allowed-role=$rolle"); done
   [ -z "$KC_CA" ] || args+=(--provider-ca-file=/etc/automato-tor/ca.crt --use-system-trust-store=true)
   printf '  %s:\n    <<: *tor\n    env_file: ["%s"]\n' "$dienst" "$(tor_env "$realm")"
@@ -1627,6 +1643,17 @@ tor_adressen() {  # Valid redirect URIs des Clients automato-front in einem Real
   fi
 }
 
+tor_logout_adressen() {  # Valid post logout redirect URIs des Clients automato-front (1.12.1)
+  local realm=$1 k
+  for k in $(kunden); do
+    lies_kunde "$k"
+    [ "$REALM" != "$realm" ] || printf '            https://%s.%s/*\n' "$k" "$DOMAIN"
+  done
+  if [ "$realm" = "$HAUPT_REALM" ] && [ -n "$INTERN" ]; then
+    printf '            https://start.%s/*\n' "$INTERN"
+  fi
+}
+
 tor_stand() {
   local r k
   titel "Anmelde-Tor ($TOR)"
@@ -1645,6 +1672,8 @@ tor_stand() {
     info "Keycloak → Realm $r → Client $TOR_CLIENT (Client authentication an, Standard flow, PKCE S256),"
     info "  Valid redirect URIs:"
     tor_adressen "$r"
+    info "  Valid post logout redirect URIs:"
+    tor_logout_adressen "$r"
   done
   for k in $TOR_GESPERRT; do
     lies_kunde "$k"
