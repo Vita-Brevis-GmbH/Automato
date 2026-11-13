@@ -1,0 +1,4 @@
+# Eigene CAs bleiben lokal (Zertifikate sind öffentlich, aber kundenspezifisch).
+*
+!.gitignore
+!README.md

@@ -263,18 +263,32 @@ sudo deploy/front/front.sh adressen
 
 ## 8. Automato an die NetBox eines Kunden
 
-`netbox-host.sh token kunde-a` auf dem NetBox-Host (Lese- und Schreib-Token werden nur einmal
-angezeigt – direkt eintragen bzw. in den Tresor), dann in Automato beim Mandanten des Kunden →
-Quellsysteme → NetBox mit `https://kunde-a-nb.mgmt.example.ch`. Der Weg geht über die WAF (diese
-VM muss die externe Adresse erreichen); die WAF darf die API der NetBox (JSON, `PATCH`/`POST` beim
-NetBox-Sync) nicht blockieren.
+1. `netbox-host.sh token kunde-a` auf dem NetBox-Host (Lese- und Schreib-Token werden nur einmal
+   angezeigt – direkt eintragen bzw. in den Tresor).
+2. In Automato beim Mandanten des Kunden → Quellsysteme → NetBox mit
+   `https://kunde-a-nb.mgmt.example.ch` und den beiden Token.
+3. **Zertifikat der internen CA** (1.10.0): stammt das Zertifikat des Front-Proxys bzw. der WAF von
+   der eigenen CA, deren Stammzertifikat nach `deploy/trust/` (Orchestrator und zentraler Worker
+   vertrauen ihm dann zusätzlich, `deploy/trust/README.md`):
+   ```bash
+   sudo install -m 644 /root/ca.crt deploy/trust/interne-ca.crt
+   sudo docker compose up -d --force-recreate orchestrator collector
+   ```
+4. Prüfen: `sudo deploy/front/front.sh pruefen` geht je Kunde den Weg des NetBox-Syncs aus dem
+   Orchestrator bis zur NetBox („Automato erreicht seine NetBox über den Front-Proxy“).
 
-**Erreicht diese VM die externe Adresse nicht** (Test:
-`curl -s -o /dev/null -w "%{http_code}\n" -H "Authorization: Token test" https://kunde-a-nb.mgmt.example.ch/api/status/`
-→ `403` = gut, `000` = kein Weg, z. B. FortiGate ohne Hairpin): den Namen in
-`docker-compose.override.yml` direkt auf den NetBox-Host zeigen – **für `orchestrator` und
-`collector`** (Prüfen und NetBox-Sync laufen im Orchestrator, Einlesen und Abgleich im zentralen
-Worker):
+**Der Weg:** über die WAF (die VM muss die externe Adresse erreichen; die WAF darf die API der
+NetBox – JSON, `PATCH`/`POST` beim NetBox-Sync – nicht blockieren) bzw. ohne WAF direkt über den
+Front-Proxy auf dieser VM. Im zweiten Fall kommen Orchestrator und Worker mit einer Adresse ihrer
+Docker-Netze an; seit 1.10.0 (ADR 0053) lässt der Front-Proxy diese Netze für die **API mit Token**
+an die NetBox durch, vor der Sperre nach Absender und dem Zugriff je Kunde und ohne Kopfzeilen der
+Anmeldung. Die Netze ermittelt `front.sh erzeugen` aus den laufenden Containern – nach einem
+`docker compose down` (neue Netze) `front.sh erzeugen` erneut.
+
+**Erreicht diese VM die Adresse gar nicht** (z. B. FortiGate ohne Hairpin; `pruefen` meldet „erreicht
+… nicht“): den Namen in `docker-compose.override.yml` direkt auf den NetBox-Host zeigen – **für
+`orchestrator` und `collector`** (Prüfen und NetBox-Sync laufen im Orchestrator, Einlesen und
+Abgleich im zentralen Worker), dann mit dem Port des NetBox-Hosts in der Adresse des Quellsystems:
 
 ```yaml
 services:

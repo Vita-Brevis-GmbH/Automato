@@ -5,8 +5,13 @@ Orchestrator (collectors.<platform>.collect).
 """
 
 from celery import Celery
+from sot_gateway import trust
 
 from collectors.config import get_settings
+
+# zusaetzliche CAs aus deploy/trust (1.10.0, ADR 0053) - der zentrale Worker liest wie der
+# Orchestrator (z. B. die NetBox eines Kunden hinter dem Front-Proxy); ohne Ordner nichts
+trust.zusaetzliche_cas()
 
 app = Celery(
     "automato-collectors",

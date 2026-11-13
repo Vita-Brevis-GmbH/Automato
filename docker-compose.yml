@@ -190,6 +190,9 @@ services:
       # Agent-CA (1.6.0, ADR 0052): Zugang mit Zertifikat aus dem Web-UI. Lesbar ist nur, was
       # `make-certs.sh oberflaeche` freigibt (CA-Zertifikat + -Schluessel, Besitzer uid 1001)
       - ./deploy/agent-gateway/pki:/etc/automato/agent-ca:ro
+      # Zusaetzliche CAs (1.10.0, ADR 0053): jede *.crt/*.pem/*.cer hier gilt zusaetzlich, z. B.
+      # die interne CA hinter der NetBox eines Kunden (sot_gateway.trust)
+      - ./deploy/trust:/etc/automato/trust:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     # produktiv nur lokal (AUTOMATO_API_BIND=127.0.0.1): Zugang ueber Proxy bzw. Agent-Gateway
@@ -222,6 +225,7 @@ services:
       AUTOMATO_INTERNAL_TLS: ${AUTOMATO_INTERNAL_TLS:-off}
     volumes:
       - ./deploy/tls/pki/client:/etc/automato/tls:ro
+      - ./deploy/trust:/etc/automato/trust:ro  # zusaetzliche CAs wie im Orchestrator (1.10.0)
     extra_hosts:
       - "host.docker.internal:host-gateway"
 

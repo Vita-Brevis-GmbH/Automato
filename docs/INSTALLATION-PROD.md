@@ -750,6 +750,9 @@ services:
 EOF
 ```
 
+**Seit 1.10.0 einfacher:** das Stammzertifikat nach `deploy/trust/` legen (`deploy/trust/README.md`) –
+Orchestrator und Worker vertrauen ihm dann zusätzlich, ohne Override-Datei.
+
 TLS zwischen den Containern (interne CA, 6.4) bleibt davon unberührt. Nach jeder Änderung an den
 CAs: `sudo update-ca-certificates` und `sudo docker compose up -d --force-recreate orchestrator
 collector` – die eingebundene Datei liest ein laufender Container sonst nicht neu.

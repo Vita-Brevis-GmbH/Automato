@@ -28,8 +28,18 @@ alles, Cockpit erfasst selbst). ADR 0053.
   Keycloak-Issuer heraus – nur mit eigenem Token `AUTOMATO_COCKPIT_TOKEN` (Bearer), ohne Token
   404. Neu: `deploy/aufbau.sh cockpit-token` (neues Token in `.env`, Orchestrator neu, einmal
   angezeigt). Das Cockpit übernimmt daraus Hosts und Instanzen (vitabrevis-cockpit ADR 0004).
+- **Automato an die NetBox seiner Kunden über den Front-Proxy** (Anwender 2026-11-13: „das
+  Konstrukt bitte weiter bauen“): ohne WAF kommen Orchestrator und Worker über den Hairpin mit
+  einer Adresse ihrer Docker-Netze am Front-Proxy an und wurden bisher wie Fremde gesperrt. Jetzt
+  lässt `-nb` diese Netze (von `front.sh erzeugen` aus den laufenden Containern ermittelt) für die
+  API mit Token an die NetBox durch – vor der Sperre und dem Zugriff je Kunde, ohne Kopfzeilen der
+  Anmeldung. `front.sh pruefen` geht je Kunde den Weg des NetBox-Syncs aus dem Orchestrator bis
+  zur NetBox (Zertifikat, Weg, gesperrt).
+- **Zusätzliche CAs ohne Override-Datei:** jede CA in `deploy/trust/` (PEM oder DER) vertrauen
+  Orchestrator und zentraler Worker zusätzlich (`sot_gateway/trust.py`: Bündel in `/tmp`,
+  `SSL_CERT_FILE`, auch für die CLI); ohne Dateien ändert sich nichts.
 - `.env.example` (Abschnitte Front-Proxy und „Inventar fürs Cockpit“), Anleitung
-  `docs/INSTALLATION-FRONT.md` (Abschnitte 5a und 10), `docs/STAND.md`.
+  `docs/INSTALLATION-FRONT.md` (Abschnitte 5a, 8 und 10), `deploy/trust/README.md`, `docs/STAND.md`.
 
 ## 1.9.2 – 2026-11-13
 

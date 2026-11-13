@@ -444,8 +444,11 @@ tor_fuer_kunde() {  # setzt TOR_DIENST (Container des Tors; leer = ohne Tor bzw.
   fi
 }
 
-route_kunde() {  # route einer Kunden-Adresse: $1 Ziel, $2 vor dem Tor (immer), $3 vor dem Tor (nur mit Tor)
-  printf '\troute {\n\t\timport front-kunden-sperre\n'
+route_kunde() {  # route einer Kunden-Adresse: $1 Ziel, $2 vor dem Tor (immer), $3 vor dem Tor (nur mit Tor),
+  # $4 noch vor der Sperre nach Absender (Automato selbst an seine NetBox, 1.10.0)
+  printf '\troute {\n'
+  [ -z "${4:-}" ] || printf '%s\n' "$4"
+  printf '\t\timport front-kunden-sperre\n'
   zugriff_sperre
   [ -z "${2:-}" ] || printf '%s\n' "$2"
   if [ -n "$GESPERRT" ]; then
@@ -479,9 +482,17 @@ schreibe_kunde() {  # Caddy-Einträge eines Kunden
     zugriff_matcher
     # API mit Token (NetBox-Sync von Automato, Skripte): NetBox prüft den Token selbst – ohne Tor
     printf '\t@front_nb_token {\n\t\tpath /api/* /graphql/*\n\t\theader_regexp Authorization ^(Token|Bearer)\\s\n\t}\n'
+    local eigen=""
+    if [ -n "$EIGENE_NETZE" ]; then
+      # Automato selbst (Orchestrator, Worker) an die NetBox seines Kunden (1.10.0, ADR 0053): kommt
+      # über den Hairpin mit einer Adresse seiner Docker-Netze – nur die API mit Token, ohne
+      # Kopfzeilen der Anmeldung, vor der Sperre nach Absender und dem Zugriff je Kunde
+      printf '\t@front_eigen {\n\t\tremote_ip %s\n\t\tpath /api/* /graphql/*\n\t\theader_regexp Authorization ^(Token|Bearer)\\s\n\t}\n' "$EIGENE_NETZE"
+      eigen=$'\t\timport front-ohne-identitaet\n\t\thandle @front_eigen {\n'"$(nb_ziel "" | sed 's/^/\t/')"$'\n\t\t}'
+    fi
     route_kunde "$(nb_ziel "$ident")" \
       $'\t\thandle @front_nb_token {\n'"$(nb_ziel "" | sed 's/^/\t/')"$'\n\t\t}' \
-      $'\t\tredir /logout/ /oauth2/sign_out 302'
+      $'\t\tredir /logout/ /oauth2/sign_out 302' "$eigen"
     printf '}\n'
   fi
   if [ "$DOC" = ja ]; then
@@ -506,6 +517,24 @@ schreibe_kunde() {  # Caddy-Einträge eines Kunden
     route_kunde $'\t\t'"reverse_proxy $CMDB {$ident"$'\n\t\t}'
     printf '}\n'
   fi
+}
+
+eigene_netze() {  # Docker-Netze von Orchestrator, Worker und Proxy (1.10.0): Absender von Automato selbst
+  if [ -n "${FRONT_EIGENE_NETZE+x}" ]; then  # Tests bzw. von Hand
+    printf '%s' "$FRONT_EIGENE_NETZE"
+    return 0
+  fi
+  local svc id net netze=""
+  for svc in orchestrator collector proxy; do
+    id=$($DOCKER compose --profile core --profile collectors --profile proxy ps -q "$svc" 2>/dev/null | head -1 || true)
+    [ -n "$id" ] || continue
+    for net in $($DOCKER inspect -f '{{range .NetworkSettings.Networks}}{{.NetworkID}} {{end}}' "$id" 2>/dev/null || true); do
+      netze+=" $($DOCKER network inspect -f '{{range .IPAM.Config}}{{.Subnet}} {{end}}' "$net" 2>/dev/null || true)"
+    done
+  done
+  local liste=()
+  read -ra liste <<<"$netze"
+  printf '%s\n' "${liste[@]}" | grep -E '^[0-9A-Fa-f:.]+/[0-9]{1,3}$' | sort -u | tr '\n' ' ' | sed 's/ $//' || true
 }
 
 # Der Proxy hängt an der Web-UI (Profil core): Compose braucht beide Profile, sonst lehnt es das
@@ -579,6 +608,8 @@ PY
 cmd_erzeugen() {
   lade_conf
   local g k www name abmelden
+  EIGENE_NETZE=$(eigene_netze)
+  [ -z "$EIGENE_NETZE" ] || netze "Docker-Netze von Automato" "$EIGENE_NETZE"
   g=$(gen)
   www=$g/www
   install -d -m 755 "$g" "$g/sites" "$www"
@@ -1038,6 +1069,53 @@ ziel_melden() {  # $1 Ziel, $2 URL
   esac
 }
 
+# Weg des NetBox-Syncs (1.10.0): aus dem Orchestrator über DNS und Front-Proxy bis zur NetBox – mit
+# einem absichtlich ungültigen Token, NetBox antwortet dann selbst (JSON-403); Vertrauen wie der
+# Dienst (zusätzliche CAs aus deploy/trust)
+NB_WEG_PY=$(cat <<'PY'
+import ssl, sys
+try:
+    from sot_gateway import trust
+    trust.zusaetzliche_cas()
+except Exception:
+    pass
+import httpx
+try:
+    r = httpx.get(sys.argv[1] + "/api/status/", timeout=8,
+                  headers={"Authorization": "Token automato-statuspruefung", "Accept": "application/json"})
+except httpx.ConnectError as exc:
+    tls = isinstance(exc.__cause__, ssl.SSLError) or "CERTIFICATE_VERIFY_FAILED" in str(exc)
+    print("tls" if tls else "weg")
+    sys.exit(0)
+except httpx.HTTPError:
+    print("weg")
+    sys.exit(0)
+try:
+    body = r.json()
+except ValueError:
+    body = None
+if r.status_code in (401, 403) and isinstance(body, dict) and "detail" in body:
+    print("ok")
+elif "Unbekannte Adresse" in r.text or "Zugriff nur" in r.text:
+    print("gesperrt")
+else:
+    print(f"http_{r.status_code}")
+PY
+)
+
+automato_zur_netbox() {  # $1 Kunde: erreicht Automato (Orchestrator) seine NetBox über den Front-Proxy?
+  local k=$1 url="https://$1-nb.$DOMAIN" antwort
+  antwort=$(dc exec -T orchestrator python -c "$NB_WEG_PY" "$url" 2>/dev/null | tail -1 || true)
+  case "$antwort" in
+    ok) ok "$k: Automato erreicht seine NetBox über den Front-Proxy (Weg des NetBox-Syncs)" ;;
+    tls) fehler "$k: Automato vertraut dem Zertifikat von $url nicht – CA nach deploy/trust/, dann docker compose up -d --force-recreate orchestrator collector" ;;
+    weg) fehler "$k: Automato erreicht $url nicht (DNS im Container bzw. Weg zur eigenen Adresse)" ;;
+    gesperrt) fehler "$k: Front-Proxy lässt Automato nicht zur NetBox – front.sh erzeugen (Docker-Netze von Automato)" ;;
+    http_*) warn "$k: NetBox über den Front-Proxy antwortet unerwartet (${antwort#http_}) – $url/api/status/" ;;
+    *) info "$k: Weg Automato → NetBox nicht geprüft (Orchestrator läuft nicht bzw. docker exec geht nicht)" ;;
+  esac
+}
+
 pruefe_uebrige() {  # Ziel der übrigen Namen: mit einem Namen, den es nicht gibt, wie der Proxy (SNI, CA)
   local host=${UEBRIGE%:*} port=443 name="gibt-es-nicht-front-pruefen.$DOMAIN" ca=() code
   [ "$host" = "$UEBRIGE" ] || port=${UEBRIGE##*:}
@@ -1205,6 +1283,7 @@ cmd_pruefen() {
       403) fehler "$k: NetBox-Host lehnt diese VM ab (403) – ALLOW/FRONT in /opt/netbox-host/host.conf" ;;
       *) fehler "$k: NetBox nicht erreichbar (HTTP ${code:-–}; Zertifikat, Firewall, gibt es $k auf dem NetBox-Host?)" ;;
     esac
+    automato_zur_netbox "$k"
   done
   [ -n "$(kunden)" ] || info "noch keine Kunden – front.sh kunde <kunde> \"<Name>\""
   echo

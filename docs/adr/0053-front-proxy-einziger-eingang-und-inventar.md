@@ -43,6 +43,13 @@ und testen“. Auf die Rückfrage gewählt: „Übrige Namen an Magister“, „
    `deploy/aufbau.sh cockpit-token`), nie mit der Anmeldung einer Person; ohne Token gibt es den
    Endpunkt nicht (404). Das Cockpit holt, Automato schreibt nichts ins Cockpit.
 
+4. **Automato selbst an die NetBox seiner Kunden** (Anwender 2026-11-13: „das Konstrukt bitte
+   weiter bauen“): ohne WAF geht der NetBox-Sync über den Front-Proxy auf derselben VM. Die
+   Docker-Netze von Orchestrator, Worker und Proxy (aus den laufenden Containern) dürfen an `-nb`
+   die API mit Token benutzen – vor der Sperre nach Absender und dem Zugriff je Kunde, ohne
+   Kopfzeilen der Anmeldung. Zusätzliche CAs für diese Wege liegen in `deploy/trust/` statt in
+   einer Override-Datei.
+
 ## Folgen
 
 - DNS im Dev und in der Produktion: ein Wildcard der Kunden-Domain auf den Front-Proxy (bzw. die

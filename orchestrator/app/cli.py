@@ -28,6 +28,7 @@ import os
 import sys
 from pathlib import Path
 
+from sot_gateway import trust
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -538,6 +539,7 @@ def language(argv: list[str] | None) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
+    trust.zusaetzliche_cas()  # wie der Dienst: zusaetzliche CAs aus deploy/trust (1.10.0)
     with use(language(argv)):
         args = build_parser().parse_args(argv)
         session = get_sessionmaker()()

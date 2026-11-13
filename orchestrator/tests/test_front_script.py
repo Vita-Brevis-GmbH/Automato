@@ -29,6 +29,19 @@ case "$*" in
   compose*) echo 'service "proxy" depends on undefined service "web-ui"' >&2; exit 1 ;;
 esac
 case "$*" in
+  *"exec -T orchestrator python "*)
+    [ "${FRONT_AUTOMATO_NB:-ok}" = leer ] || echo "${FRONT_AUTOMATO_NB:-ok}"; exit 0 ;;
+  # Docker-Netze von Automato (1.10.0): nur mit FRONT_DOCKER_NETZE=1
+  *" ps -q orchestrator"|*" ps -q collector"|*" ps -q proxy")
+    [ "${FRONT_DOCKER_NETZE:-}" = 1 ] && echo "id-${!#}"; exit 0 ;;
+  "inspect -f "*" id-"*)
+    case "${!#}" in id-proxy) echo "netz-a netz-tor" ;; *) echo "netz-a" ;; esac; exit 0 ;;
+  "network inspect -f "*)
+    case "${!#}" in
+      netz-a) echo "172.18.0.0/16 " ;;
+      netz-tor) echo "172.19.0.0/16 fd00::/64 " ;;
+    esac
+    exit 0 ;;
   *"exec -T orchestrator getent hosts "*)
     [ -z "${FRONT_GETENT_ORCH:-}" ] || echo "$FRONT_GETENT_ORCH  ${!#}"; exit 0 ;;
   *"exec -T collector getent hosts "*)
@@ -780,3 +793,43 @@ def test_topologie_fuer_das_inventar(front):
         "magister": None, "cmdb": None,
     }  # fmt: skip
     assert kunden["kunde-b"]["automato"] is None
+
+
+def test_automato_selbst_an_seine_netbox(front):
+    """1.10.0 (ADR 0053): Orchestrator und Worker kommen über den Hairpin mit einer Adresse ihrer
+    Docker-Netze an den Front-Proxy – nur die API mit Token geht an die NetBox, vor der Sperre und
+    ohne Kopfzeilen der Anmeldung; pruefen geht den Weg aus dem Orchestrator bis zur NetBox."""
+    front.env_file.write_text(DEV_ENV)
+    _zertifikat(front.pki, "mgmt", "DNS:*.mgmt.example.ch")
+    _zertifikat(front.pki, "mgmt-int", "DNS:mgmt.int.example.ch,DNS:*.mgmt.int.example.ch")
+    _zertifikat(front.pki, "ui", "DNS:automato.int.example.ch")
+    out = front("kunde", "kunde-a", "Kunde A", "--zugriff", "intern", FRONT_DOCKER_NETZE="1")
+    assert out.returncode == 0, out.stdout + out.stderr
+    site = (front.gen / "sites" / "kunde-a.caddy").read_text()
+    nb = site.split("kunde-a-nb.mgmt.example.ch {")[1]
+    eigen = nb.split("@front_eigen {")[1].split("\n\t}")[0]
+    assert "remote_ip 172.18.0.0/16 172.19.0.0/16 fd00::/64" in eigen
+    assert "header_regexp Authorization ^(Token|Bearer)\\s" in eigen
+    route = nb.split("\troute {\n")[1]
+    vorn = route.split("\t\timport front-kunden-sperre")[0]
+    assert vorn.startswith("\t\timport front-ohne-identitaet\n\t\thandle @front_eigen {")
+    assert "reverse_proxy https://10.0.20.10:8444 {" in vorn and "tls_server_name {host}" in vorn
+    assert "X-Automato-User" not in vorn
+    # die Startseite und -doc bleiben wie bisher
+    assert "@front_eigen" not in site.split("kunde-a-nb.mgmt.example.ch {")[0]
+
+    ohne = front("erzeugen")  # Container laufen nicht: keine eigenen Netze, kein Eintrag
+    assert ohne.returncode == 0
+    assert "@front_eigen" not in (front.gen / "sites" / "kunde-a.caddy").read_text()
+
+    for antwort, text in [
+        ("ok", "kunde-a: Automato erreicht seine NetBox über den Front-Proxy"),
+        ("tls", "vertraut dem Zertifikat von https://kunde-a-nb.mgmt.example.ch nicht – CA nach"),
+        ("weg", "Automato erreicht https://kunde-a-nb.mgmt.example.ch nicht"),
+        ("gesperrt", "Front-Proxy lässt Automato nicht zur NetBox – front.sh erzeugen"),
+        ("leer", "Weg Automato → NetBox nicht geprüft"),
+    ]:  # fmt: skip
+        out = front("pruefen", FRONT_AUTOMATO_NB=antwort)
+        assert text in out.stdout + out.stderr, antwort
+    log = front.log.read_text()
+    assert "exec -T orchestrator python -c" in log and "https://kunde-a-nb.mgmt.example.ch" in log
