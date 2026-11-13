@@ -751,6 +751,10 @@ def test_uebrige_namen_an_magister(front):
     text = out.stdout + out.stderr
     assert "Übrige Namen unter mgmt.example.ch an: 10.0.20.10 (CA magister-root.pem)" in text
     assert "*.mgmt.example.ch zeigt auf diese VM – übrige Namen gehen an 10.0.20.10" in text
+    # Konsole und Connector der Plattform dahinter gehen nicht über den Front-Proxy
+    for n in ("konsole", "connect"):
+        assert f"{n}.mgmt.example.ch zeigt auf diese VM (Wildcard)" in text
+        assert "eigener A-Eintrag auf 10.0.20.10" in text
     assert "Übrige Namen: CA fehlt oder ist leer (deploy/proxy/pki/magister-root.pem)" in text
     assert "„Unbekannte Adresse“" not in text
 
@@ -759,6 +763,11 @@ def test_uebrige_namen_an_magister(front):
     text = out.stdout + out.stderr
     assert out.returncode == 0, text
     assert "Übrige Namen: 10.0.20.10 erreichbar, Zertifikat vertraut (HTTP 404)" in text
+    direkt = front("adressen", FRONT_DNS=dns + "konsole.mgmt.example.ch 10.0.20.10\n")
+    assert (
+        "konsole.mgmt.example.ch → 10.0.20.10 (direkt, nicht über den Front-Proxy)" in direkt.stdout
+    )
+    assert "connect.mgmt.example.ch zeigt auf diese VM (Wildcard)" in direkt.stdout
     aufrufe = front.log.read_text() if front.log.exists() else ""
     assert "exec -T proxy wget" in aufrufe
     out = front("pruefen", FRONT_DNS=dns, FRONT_CURL_UEBRIGE="000")

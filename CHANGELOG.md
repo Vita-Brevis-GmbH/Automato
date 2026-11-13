@@ -35,6 +35,10 @@ alles, Cockpit erfasst selbst). ADR 0053.
   API mit Token an die NetBox durch – vor der Sperre und dem Zugriff je Kunde, ohne Kopfzeilen der
   Anmeldung. `front.sh pruefen` geht je Kunde den Weg des NetBox-Syncs aus dem Orchestrator bis
   zur NetBox (Zertifikat, Weg, gesperrt).
+- **Namen, die nicht über den Front-Proxy gehen:** zeigt der Wildcard auf diese VM und gehen die
+  übrigen Namen an Magister, meldet `pruefen`, wenn `konsole.<domain>` (Port 4444) bzw.
+  `connect.<domain>` (Connector, Port 46200) ebenfalls hier landen – sie brauchen einen eigenen
+  A-Eintrag auf die Magister-VM (Fund aus dem Test: `connect` zeigte auf die Automato-VM).
 - **CA-Dateien geprüft** (Fund aus dem Test: eine abgebrochene Eingabe hinterliess eine leere
   `magister-root.pem`): `front.sh erzeugen` ändert nichts, solange eine CA aus
   `AUTOMATO_FRONT_NETBOX_CA`, `_UEBRIGE_CA` bzw. (mit Tor) `_KEYCLOAK_CA` fehlt, leer oder kein

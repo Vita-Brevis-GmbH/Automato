@@ -285,6 +285,10 @@ an die NetBox durch, vor der Sperre nach Absender und dem Zugriff je Kunde und o
 Anmeldung. Die Netze ermittelt `front.sh erzeugen` aus den laufenden Containern – nach einem
 `docker compose down` (neue Netze) `front.sh erzeugen` erneut.
 
+**Namen der Plattform dahinter, die direkt gehen** (1.10.0): mit `AUTOMATO_FRONT_UEBRIGE` und dem
+Wildcard auf dieser VM brauchen `konsole.<domain>` (Port 4444) und `connect.<domain>` (Connector,
+Port 46200) von Magister einen eigenen A-Eintrag auf die Magister-VM – `pruefen` meldet es.
+
 **Erreicht diese VM die Adresse gar nicht** (z. B. FortiGate ohne Hairpin; `pruefen` meldet „erreicht
 … nicht“): den Namen in `docker-compose.override.yml` direkt auf den NetBox-Host zeigen – **für
 `orchestrator` und `collector`** (Prüfen und NetBox-Sync laufen im Orchestrator, Einlesen und

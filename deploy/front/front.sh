@@ -1020,6 +1020,7 @@ pruefe_wildcard() {  # $1 Domain, $2 kunden|intern: wohin zeigt ein Name, den es
       info "übrige Namen gehen so direkt an $ips, nicht über diesen Proxy (AUTOMATO_FRONT_UEBRIGE ungenutzt)"
   elif [ "$2" = kunden ] && [ -n "$UEBRIGE" ]; then
     ok "*.$1 zeigt auf diese VM – übrige Namen gehen an $UEBRIGE (AUTOMATO_FRONT_UEBRIGE)"
+    pruefe_direkt "$1"
   elif [ "$2" = kunden ]; then
     warn "*.$1 zeigt auf diese VM: jeder andere Name unter $1 landet hier und bekommt „Unbekannte Adresse“"
     info "richtig nur, wenn die Domain allein diesem Front-Proxy gehört. Gehören andere Namen einer"
@@ -1028,6 +1029,23 @@ pruefe_wildcard() {  # $1 Domain, $2 kunden|intern: wohin zeigt ein Name, den es
   else
     ok "*.$1 zeigt auf diese VM"
   fi
+}
+
+# Namen der Plattform dahinter, die nicht über den Front-Proxy gehen (Magister: Konsole :4444 nur
+# intern, Connector :46200 für die AD-Agenten) – fängt der Wildcard sie ein, sind sie weg (1.10.0)
+DIREKT_NAMEN="konsole connect"
+
+pruefe_direkt() {  # $1 Domain
+  local n ips ziel=${UEBRIGE%:*}
+  for n in $DIREKT_NAMEN; do
+    ips=$(dns_v4 "$n.$1")
+    [ -n "$ips" ] || continue
+    if ist_lokal "$ips"; then
+      warn "$n.$1 zeigt auf diese VM (Wildcard) – gehört direkt zur Plattform dahinter (Magister: Konsole :4444, Connector :46200): eigener A-Eintrag auf $ziel"
+    else
+      ok "$n.$1 → $ips (direkt, nicht über den Front-Proxy)"
+    fi
+  done
 }
 
 pruefe_adressen() {
