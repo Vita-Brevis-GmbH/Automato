@@ -173,6 +173,32 @@ Gilt für Startseite und alle Werkzeuge des Kunden – vor dem Anmelde-Tor und a
 mit Token. Allen anderen antworten die Adressen wie ein Name, den es nicht gibt (404 „Unbekannte
 Adresse“), so verrät die Antwort nicht, dass es den Kunden gibt.
 
+## 5a. Übrige Namen an die Plattform dahinter (1.10.0, ADR 0053)
+
+Teilt sich der Front-Proxy die Domain mit einer anderen Plattform – z. B. die Kundenseiten von
+Magister unter derselben Domain –, gehen deren Namen über den Front-Proxy: er bedient seine
+Kunden selbst und gibt **jeden anderen Namen** der Domain weiter, statt „Unbekannte Adresse“.
+Ein Wildcard `*.<domain>` im DNS auf diese VM (bzw. die WAF) genügt dann für alles.
+
+```bash
+sudo install -m 644 /pfad/zur/root-ca.pem deploy/proxy/pki/magister-root.pem   # CA des Ziels
+setenv AUTOMATO_FRONT_UEBRIGE 10.0.30.10            # Ziel, optional :Port (Magister: 443)
+setenv AUTOMATO_FRONT_UEBRIGE_CA magister-root.pem  # leer = öffentliches Zertifikat
+sudo deploy/front/front.sh erzeugen && sudo deploy/front/front.sh pruefen
+```
+
+- Name und SNI bleiben, die Plattform erkennt ihre Kunden daran; ihr Zertifikat muss die Namen
+  abdecken, und die CA dazu liegt in `deploy/proxy/pki`.
+- Die Sperre nach Absender gilt wie für Kunden-Adressen (`AUTOMATO_FRONT_KUNDEN_ALLOW`).
+  Kopfzeilen der Anmeldung (`X-Automato-*`, `X-Auth-Request-*`) werden entfernt; die Antwort
+  behält die Kopfzeilen der Plattform.
+- **Magister:** in `plattform.conf` `PLATTFORM_WAF=<Adresse dieser VM>` (dann `plattform-aufbau.sh
+  up`): Magister glaubt `X-Forwarded-For` nur von hier und sieht so die Adresse der Benutzer.
+- Das Zertifikat des Front-Proxys (`mgmt.crt`, `*.<domain>`) deckt die Namen ab. Eine Plattform,
+  die ihre Zertifikate selbst bei Let's Encrypt holt, gehört nicht dahinter (TLS endet hier).
+- `pruefen` meldet unter „Ziele“, ob das Ziel antwortet und sein Zertifikat vertraut ist, und
+  unter „Adressen“, wohin der Wildcard zeigt.
+
 ## 6. Anmelde-Tor (1.4.0, ADR 0051)
 
 Vor jeder Kunden-Adresse (Startseite, `-nb`, `-doc`, `-um`, `-cmdb`) und vor dem Portal fragt der
@@ -280,3 +306,23 @@ warnt, wenn Orchestrator und Worker verschieden auflösen.
   `.env` und `deploy/proxy/pki` sichern (wie die Konfiguration in `INSTALLATION-PROD.md` 7).
 - **Update auf 1.4.0:** `update.sh` startet den Proxy im neuen Netz `automato-front-tor`; danach
   `sudo deploy/front/front.sh erzeugen`. Ohne `AUTOMATO_FRONT_TOR=an` bleibt alles wie in 1.3.
+
+## 10. Inventar fürs Cockpit (1.10.0, ADR 0053)
+
+Das Cockpit (vitabrevis-cockpit, ADR 0004 dort) holt von hier, was diese Installation betreibt –
+VM, Front-Proxy mit Portal, Keycloak-Realm und je Kunde die NetBox – und führt daraus sein
+Inventar nach. Grundlage ist `deploy/front/state/topologie.json`, die `front.sh erzeugen` (auch
+über den Host-Agenten) schreibt.
+
+```bash
+sudo deploy/aufbau.sh cockpit-token     # neues Token in .env, Orchestrator neu, einmal angezeigt
+```
+
+Im Cockpit unter Inventar → Automato-Instanz → „Token hinterlegen“ eintragen (nur dort, nie in
+Chat, Ticket oder Datei). Ein erneutes `cockpit-token` macht das alte ungültig.
+
+- `GET /api/inventory` antwortet nur mit diesem Token (Bearer), nie mit einer Anmeldung von
+  Personen; ohne eingerichtetes Token `404`. Inhalt: nur Namen und Adressen.
+- Das Cockpit erreicht die Oberfläche: seine Adresse steht in `AUTOMATO_UI_ALLOW`, und es vertraut
+  dem Zertifikat (im Cockpit `deploy/certs/inventory-ca.pem`, wenn es eine interne CA ist).
+

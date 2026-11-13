@@ -112,6 +112,12 @@ lade_conf() {
   netze AUTOMATO_FRONT_KUNDEN_ALLOW "$KUNDEN_ALLOW"
   [ -z "$NETBOX" ] || [[ "$NETBOX" =~ ^[A-Za-z0-9.:-]+$ ]] || abbruch "AUTOMATO_FRONT_NETBOX ungültig (Name oder IP, optional :Port)"
   [ -z "$NETBOX_CA" ] || [[ "$NETBOX_CA" =~ ^[A-Za-z0-9._-]+$ ]] || abbruch "AUTOMATO_FRONT_NETBOX_CA ungültig (Dateiname in deploy/proxy/pki)"
+  # Übrige Namen der Kunden-Domain (1.10.0, ADR 0053): an die Plattform, der sie sonst gehören
+  # (z. B. Kundenseiten von Magister) statt „Unbekannte Adresse“
+  UEBRIGE=${AUTOMATO_FRONT_UEBRIGE:-}
+  UEBRIGE_CA=${AUTOMATO_FRONT_UEBRIGE_CA:-}
+  [ -z "$UEBRIGE" ] || [[ "$UEBRIGE" =~ ^[A-Za-z0-9.:-]+$ ]] || abbruch "AUTOMATO_FRONT_UEBRIGE ungültig (Name oder IP, optional :Port)"
+  [ -z "$UEBRIGE_CA" ] || [[ "$UEBRIGE_CA" =~ ^[A-Za-z0-9._-]+$ ]] || abbruch "AUTOMATO_FRONT_UEBRIGE_CA ungültig (Dateiname in deploy/proxy/pki)"
   local u
   for u in "$MAGISTER" "$CMDB"; do
     [ -z "$u" ] || [[ "$u" =~ ^https?://[A-Za-z0-9.:/_-]+$ ]] || abbruch "Adresse ungültig: '$u' (http(s)://name[:port][/pfad])"
@@ -348,6 +354,15 @@ schreibe_snippets() {
 	@front_fremd not remote_ip $KUNDEN_ALLOW
 }
 
+# Übrige Namen unter $DOMAIN (AUTOMATO_FRONT_UEBRIGE): wie Kunden-Adressen, aber ohne eigene
+# Kopfzeilen der Antwort – die setzt die Plattform dahinter (z. B. Magister) selbst
+(front-uebrige) {
+	tls /etc/caddy/pki/mgmt.crt /etc/caddy/pki/mgmt.key {
+		protocols tls1.2 tls1.3
+	}
+	@front_fremd not remote_ip $KUNDEN_ALLOW
+}
+
 # Interne Adressen: Zertifikat der eigenen CA für $INTERN und *.$INTERN, nur Management-Netz
 (front-intern) {
 	tls /etc/caddy/pki/mgmt-int.crt /etc/caddy/pki/mgmt-int.key {
@@ -512,6 +527,55 @@ proxy_reload() {
   fi
 }
 
+# Adressen und Ziele für den Orchestrator (1.10.0, ADR 0053): das Cockpit holt daraus sein
+# Inventar (GET /api/inventory). Nur Namen und Adressen, nur mit eingerichtetem Host-Agenten.
+schreibe_topologie() {
+  [ -d "$FRONT_STATE" ] || return 0
+  local k tmp ui=${AUTOMATO_UI_HOST:-} portal="" vm sep=$'\x1f'
+  [ -z "$INTERN" ] || portal="https://start.$INTERN"
+  vm=${FRONT_HOSTNAME:-$(hostname -f 2>/dev/null || hostname 2>/dev/null || true)}
+  tmp=$(mktemp "$FRONT_STATE/.topologie-XXXXXX") || return 0
+  for k in $(kunden); do
+    lies_kunde "$k"
+    local nb="" doc="" um="" cm=""
+    [ -z "$NETBOX" ] || nb="https://$k-nb.$DOMAIN"
+    [ "$DOC" != ja ] || doc="https://$k-doc.$DOMAIN"
+    [ "$UM" != ja ] || [ -z "$MAGISTER" ] || um="https://$k-um.$DOMAIN"
+    [ "$CMDB_AN" != ja ] || [ -z "$CMDB" ] || cm="https://$k-cmdb.$DOMAIN"
+    printf '%s\n' "$k$sep${NAME//$sep/}${sep}https://$k.$DOMAIN$sep$nb$sep$doc$sep$um$sep$cm"
+  done | python3 -I -c "$TOPOLOGIE_PY" "$vm" "$(eigene_ips)" "${ui:+https://$ui}" "$portal" "$DOMAIN" \
+    "$NETBOX" "$UEBRIGE" "$MAGISTER" "$CMDB" "$TOR" >"$tmp" || { rm -f "$tmp"; return 0; }
+  chmod 644 "$tmp"
+  mv -f "$tmp" "$FRONT_STATE/topologie.json"
+}
+
+# Python für schreibe_topologie: Kunden auf stdin (Trenner 0x1f), Werte als Argumente
+TOPOLOGIE_PY=$(cat <<'PY'
+import json, sys
+from datetime import datetime, timezone
+vm, ips, ui, portal, domain, netbox, uebrige, magister, cmdb, tor = sys.argv[1:11]
+felder = ("kurzname", "name", "startseite", "netbox", "automato", "magister", "cmdb")
+kunden = []
+for zeile in sys.stdin.read().splitlines():
+    teile = zeile.split("\x1f")
+    if len(teile) == len(felder):
+        kunden.append({f: (w or None) for f, w in zip(felder, teile)})
+print(json.dumps({
+    "zeit": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    "vm": {"name": vm, "adressen": ips.split()},
+    "oberflaeche": ui or None,
+    "portal": portal or None,
+    "domain": domain,
+    "netbox_host": netbox or None,
+    "uebrige": uebrige or None,
+    "magister": magister or None,
+    "cmdb": cmdb or None,
+    "tor": tor == "an",
+    "kunden": kunden,
+}, ensure_ascii=False, indent=1))
+PY
+)
+
 cmd_erzeugen() {
   lade_conf
   local g k www name abmelden
@@ -531,10 +595,20 @@ cmd_erzeugen() {
     kacheln "$k" | seite "$NAME" "Werkzeuge · tools" "$abmelden" >"$www/$k/index.html"
   done
   # Unbekannte Namen unter den Domains (z. B. <kunde>-doc ohne --doc): 404 statt einer leeren
-  # Antwort; die bekannten Namen sind genauer und gehen vor
+  # Antwort; die bekannten Namen sind genauer und gehen vor. Mit AUTOMATO_FRONT_UEBRIGE (1.10.0,
+  # ADR 0053) gehen die übrigen Namen der Kunden-Domain an die Plattform dahinter (z. B. Magister):
+  # Name und SNI bleiben, die Sperre nach Absender gilt, Kopfzeilen der Anmeldung nie vom Absender
   {
     printf '# Unbekannte Adressen (front.sh) – nicht von Hand ändern\n'
-    printf '*.%s {\n\timport front-kunden\n\troute {\n\t\timport front-kunden-sperre\n\t\trespond "Unbekannte Adresse" 404\n\t}\n}\n' "$DOMAIN"
+    if [ -n "$UEBRIGE" ]; then
+      local trust_u=""
+      [ -z "$UEBRIGE_CA" ] || trust_u=$'\n\t\t\t\ttls_trust_pool file /etc/caddy/pki/'"$UEBRIGE_CA"
+      printf '*.%s {\n\timport front-uebrige\n\troute {\n\t\timport front-kunden-sperre\n' "$DOMAIN"
+      printf '\t\treverse_proxy https://%s {\n\t\t\theader_up Host {host}\n' "$UEBRIGE"
+      printf '\t\t\ttransport http {\n\t\t\t\ttls_server_name {host}%s\n\t\t\t}\n\t\t}\n\t}\n}\n' "$trust_u"
+    else
+      printf '*.%s {\n\timport front-kunden\n\troute {\n\t\timport front-kunden-sperre\n\t\trespond "Unbekannte Adresse" 404\n\t}\n}\n' "$DOMAIN"
+    fi
     [ -z "$INTERN" ] || printf '\n*.%s {\n\timport front-intern\n\troute {\n\t\timport front-intern-sperre\n\t\trespond "Unbekannte Adresse" 404\n\t}\n}\n' "$INTERN"
   } >"$g/sites/_unbekannt.caddy"
   if [ -n "$INTERN" ]; then
@@ -581,6 +655,7 @@ EOF
   fi
   schreibe_tor_compose
   chmod -R a+rX "$g"
+  schreibe_topologie
   ok "Front-Proxy erzeugt ($(kunden | wc -l | tr -d ' ') Kunden)"
   tor_starten
   proxy_reload
@@ -894,11 +969,15 @@ pruefe_wildcard() {  # $1 Domain, $2 kunden|intern: wohin zeigt ein Name, den es
     info "kein Wildcard *.$1 im DNS – jede Adresse oben braucht einen eigenen Eintrag"
   elif ! ist_lokal "$ips"; then
     info "*.$1 → $ips (nicht diese VM) – die Adressen oben brauchen je einen eigenen Eintrag"
+    [ "$2" != kunden ] || [ -z "$UEBRIGE" ] ||
+      info "übrige Namen gehen so direkt an $ips, nicht über diesen Proxy (AUTOMATO_FRONT_UEBRIGE ungenutzt)"
+  elif [ "$2" = kunden ] && [ -n "$UEBRIGE" ]; then
+    ok "*.$1 zeigt auf diese VM – übrige Namen gehen an $UEBRIGE (AUTOMATO_FRONT_UEBRIGE)"
   elif [ "$2" = kunden ]; then
     warn "*.$1 zeigt auf diese VM: jeder andere Name unter $1 landet hier und bekommt „Unbekannte Adresse“"
-    info "richtig nur, wenn die Domain allein diesem Front-Proxy gehört; teilt sie sich die Domain mit"
-    info "einer anderen Plattform (z. B. Kundenseiten von Magister): den Wildcard dort lassen und je"
-    info "Adresse oben einen eigenen Eintrag auf diese VM"
+    info "richtig nur, wenn die Domain allein diesem Front-Proxy gehört. Gehören andere Namen einer"
+    info "Plattform dahinter (z. B. Kundenseiten von Magister): AUTOMATO_FRONT_UEBRIGE=<ip>[:port]"
+    info "(übrige Namen an sie) – oder den Wildcard dort lassen und je Adresse oben einen Eintrag"
   else
     ok "*.$1 zeigt auf diese VM"
   fi
@@ -959,6 +1038,22 @@ ziel_melden() {  # $1 Ziel, $2 URL
   esac
 }
 
+pruefe_uebrige() {  # Ziel der übrigen Namen: mit einem Namen, den es nicht gibt, wie der Proxy (SNI, CA)
+  local host=${UEBRIGE%:*} port=443 name="gibt-es-nicht-front-pruefen.$DOMAIN" ca=() code
+  [ "$host" = "$UEBRIGE" ] || port=${UEBRIGE##*:}
+  if [ -n "$UEBRIGE_CA" ]; then
+    [ -s "$FRONT_PKI/$UEBRIGE_CA" ] || { fehler "Übrige Namen: CA fehlt (deploy/proxy/pki/$UEBRIGE_CA)"; return; }
+    ca=(--cacert "$FRONT_PKI/$UEBRIGE_CA")
+  fi
+  code=$($CURL -s --noproxy '*' "${ca[@]}" -o /dev/null -w '%{http_code}' --resolve "$name:$port:$host" \
+    "https://$name:$port/" 2>/dev/null || true)
+  case "$code" in
+    000 | "") fehler "Übrige Namen: $UEBRIGE nicht erreichbar bzw. Zertifikat nicht vertraut (Firewall, AUTOMATO_FRONT_UEBRIGE_CA)" ;;
+    5*) warn "Übrige Namen: $UEBRIGE antwortet mit HTTP $code (für einen Namen, den es nicht gibt)" ;;
+    *) ok "Übrige Namen: $UEBRIGE erreichbar, Zertifikat vertraut (HTTP $code)" ;;
+  esac
+}
+
 pruefe_ziele() {
   titel "Ziele (vom Proxy aus)"
   if ! proxy_laeuft; then
@@ -970,6 +1065,7 @@ pruefe_ziele() {
   ziel_melden "Automato (Oberfläche, -doc)" "$schema://web-ui:5173/api/health"
   [ -z "$MAGISTER" ] || ziel_melden "Magister (-um)" "$MAGISTER/"
   [ -z "$CMDB" ] || ziel_melden "CMDB (-cmdb)" "$CMDB/"
+  [ -z "$UEBRIGE" ] || pruefe_uebrige
   [ -z "$NETBOX" ] || info "NetBox-Host $NETBOX: je Kunde unter „Kunden“"
   tor_an || return 0
   info "Keycloak: unter „Anmelde-Tor“"
@@ -993,6 +1089,11 @@ cmd_pruefen() {
   [ -n "$INTERN" ] && ok "Intern start.$INTERN und $INTERN nur aus: $MGMT${WAF:+ (nie über die WAF)}" || warn "AUTOMATO_FRONT_DOMAIN_INT leer – kein Portal"
   [ -n "$NETBOX" ] && ok "NetBox-Host: $NETBOX" || warn "AUTOMATO_FRONT_NETBOX leer – keine Weiterleitung zur NetBox"
   [ -n "$MAGISTER" ] && ok "Magister: $MAGISTER" || info "Magister (-um) aus"
+  if [ -n "$UEBRIGE" ]; then
+    ok "Übrige Namen unter $DOMAIN an: $UEBRIGE${UEBRIGE_CA:+ (CA $UEBRIGE_CA)}"
+  else
+    info "Übrige Namen unter $DOMAIN: „Unbekannte Adresse“ (AUTOMATO_FRONT_UEBRIGE leer)"
+  fi
   [ -n "$CMDB" ] && ok "CMDB: $CMDB" || info "CMDB (-cmdb) aus"
   # Kunden-Adressen aus jedem Netz (z. B. FortiGate-VIP, die die Adresse des Besuchers weitergibt):
   # dann muss die Oberfläche selbst auf das Management-Netz beschränkt sein (1.5.0)

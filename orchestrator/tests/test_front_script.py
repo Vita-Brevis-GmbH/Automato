@@ -95,7 +95,13 @@ def front(tmp_path):
     pki.mkdir()
     env_file = tmp_path / "env"
     env_file.write_text(ENV)
-    curl = _stub(bin_dir / "curl", 'echo "${FRONT_CURL_CODE:-200}"\n')
+    curl = _stub(  # 1.10.0: die übrigen Namen (Name, den es nicht gibt) mit eigenem Code
+        bin_dir / "curl",
+        'case "$*" in\n'
+        '  *gibt-es-nicht-front-pruefen*) echo "${FRONT_CURL_UEBRIGE:-200}"; exit 0 ;;\n'
+        "esac\n"
+        'echo "${FRONT_CURL_CODE:-200}"\n',
+    )
     env = {
         **os.environ,
         "AUTOMATO_ENV_FILE": str(env_file),
@@ -690,3 +696,87 @@ def test_pruefen_adressen_und_ziele(front):
     verboten = "wget: server returned error: HTTP/1.1 403"
     out = front("pruefen", FRONT_DNS=dns, FRONT_WGET_OUT=verboten)
     assert "Magister (-um) erreichbar (https://magister.int.example.ch/, HTTP 403)" in out.stdout
+
+
+def test_uebrige_namen_an_magister(front):
+    """1.10.0 (ADR 0053): übrige Namen der Kunden-Domain gehen an die Plattform dahinter (Magister)
+    statt „Unbekannte Adresse“ – Name und SNI bleiben, die Sperre nach Absender gilt."""
+    uebrige = "AUTOMATO_FRONT_UEBRIGE=10.0.20.10\nAUTOMATO_FRONT_UEBRIGE_CA=magister-root.pem\n"
+    front.env_file.write_text(DEV_ENV + uebrige)
+    _zertifikat(front.pki, "mgmt", "DNS:*.mgmt.example.ch")
+    _zertifikat(front.pki, "mgmt-int", "DNS:mgmt.int.example.ch,DNS:*.mgmt.int.example.ch")
+    _zertifikat(front.pki, "ui", "DNS:automato.int.example.ch")
+    assert front("kunde", "kunde-a", "Kunde A").returncode == 0
+
+    rest = (front.gen / "sites" / "_unbekannt.caddy").read_text()
+    kunden, intern = rest.split("\n*.mgmt.int.example.ch {")
+    kopf = "*.mgmt.example.ch {\n\timport front-uebrige\n\troute {\n\t\timport front-kunden-sperre"
+    assert kopf in kunden
+    assert "reverse_proxy https://10.0.20.10 {\n\t\t\theader_up Host {host}" in kunden
+    assert "tls_server_name {host}" in kunden
+    assert "tls_trust_pool file /etc/caddy/pki/magister-root.pem" in kunden
+    assert 'respond "Unbekannte Adresse"' not in kunden
+    assert 'respond "Unbekannte Adresse"' in intern
+    snippets = (front.gen / "snippets.caddy").read_text()
+    uebrig = snippets.split("(front-uebrige) {")[1].split("\n}\n")[0]
+    # Sperre wie für Kunden-Adressen, aber keine eigenen Kopfzeilen über die der Plattform
+    assert re.search(r"@front_fremd not remote_ip +10\.0\.10\.0/24", uebrig)
+    assert "header" not in uebrig
+
+    dns = "*.mgmt.example.ch 10.0.20.5\n"  # Wildcard auf den Front-Proxy: jetzt gewollt
+    out = front("pruefen", FRONT_DNS=dns, FRONT_CURL_UEBRIGE="404")
+    text = out.stdout + out.stderr
+    assert "Übrige Namen unter mgmt.example.ch an: 10.0.20.10 (CA magister-root.pem)" in text
+    assert "*.mgmt.example.ch zeigt auf diese VM – übrige Namen gehen an 10.0.20.10" in text
+    assert "Übrige Namen: CA fehlt (deploy/proxy/pki/magister-root.pem)" in text
+    assert "„Unbekannte Adresse“" not in text
+
+    shutil.copy(front.pki / "mgmt.crt", front.pki / "magister-root.pem")
+    out = front("pruefen", FRONT_DNS=dns, FRONT_CURL_UEBRIGE="404")
+    text = out.stdout + out.stderr
+    assert out.returncode == 0, text
+    assert "Übrige Namen: 10.0.20.10 erreichbar, Zertifikat vertraut (HTTP 404)" in text
+    aufrufe = front.log.read_text() if front.log.exists() else ""
+    assert "exec -T proxy wget" in aufrufe
+    out = front("pruefen", FRONT_DNS=dns, FRONT_CURL_UEBRIGE="000")
+    assert "Übrige Namen: 10.0.20.10 nicht erreichbar bzw. Zertifikat nicht vertraut" in out.stderr
+    # Wildcard bei Magister: übrige Namen kommen gar nicht über den Front-Proxy
+    out = front("adressen", FRONT_DNS="*.mgmt.example.ch 10.0.20.10\n")
+    assert "AUTOMATO_FRONT_UEBRIGE ungenutzt" in out.stdout
+
+    front.env_file.write_text(DEV_ENV + "AUTOMATO_FRONT_UEBRIGE=10.0.20.10 {\n")
+    assert "AUTOMATO_FRONT_UEBRIGE ungültig" in front("erzeugen").stderr
+
+
+def test_topologie_fuer_das_inventar(front):
+    """1.10.0 (ADR 0053): erzeugen schreibt Adressen und Ziele für den Orchestrator (Inventar fürs
+    Cockpit) – nur mit eingerichtetem Host-Agenten, nur Namen und Adressen."""
+    front.env_file.write_text(DEV_ENV + "AUTOMATO_FRONT_UEBRIGE=10.0.20.10\n")
+    assert front("kunde", "kunde-a", "Kunde A", "--doc").returncode == 0
+    topo = front.dir / "state" / "topologie.json"
+    assert not topo.exists()  # ohne Host-Agent kein Ordner, keine Datei
+
+    (front.dir / "state").mkdir()
+    out = front("kunde", "kunde-b", "Kunde B", FRONT_HOSTNAME="automato-vm.int.example.ch")
+    assert out.returncode == 0, out.stdout + out.stderr
+    data = json.loads(topo.read_text(encoding="utf-8"))
+    assert oct(topo.stat().st_mode & 0o777) == "0o644"
+    assert data["vm"] == {
+        "name": "automato-vm.int.example.ch",
+        "adressen": ["10.0.20.5", "172.17.0.1"],
+    }
+    assert data["oberflaeche"] == "https://automato.int.example.ch"
+    assert data["portal"] == "https://start.mgmt.int.example.ch"
+    assert (data["netbox_host"], data["uebrige"], data["tor"]) == (
+        "10.0.20.10:8444",
+        "10.0.20.10",
+        False,
+    )
+    assert data["magister"] == "https://magister.int.example.ch" and data["cmdb"] is None
+    kunden = {k["kurzname"]: k for k in data["kunden"]}
+    assert kunden["kunde-a"] == {
+        "kurzname": "kunde-a", "name": "Kunde A", "startseite": "https://kunde-a.mgmt.example.ch",
+        "netbox": "https://kunde-a-nb.mgmt.example.ch", "automato": "https://kunde-a-doc.mgmt.example.ch",
+        "magister": None, "cmdb": None,
+    }  # fmt: skip
+    assert kunden["kunde-b"]["automato"] is None

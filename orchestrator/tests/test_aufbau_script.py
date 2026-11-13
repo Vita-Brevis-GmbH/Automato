@@ -3,6 +3,7 @@ Container, Verbindungen aus dem Orchestrator-Container und die ufw-Regel zum Kop
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -355,3 +356,28 @@ def test_tls_intern_einrichten_und_pruefen(tmp_path):
     tls.issue(pki, [])
     after = _run(tmp_path, "pruefen", **env).stdout
     assert "eingeschaltet, Zertifikate noch" in after
+
+
+def test_cockpit_token_neu_in_env_und_einmal_angezeigt(tmp_path):
+    """1.10.0 (ADR 0053): cockpit-token legt ein neues Token in .env an, startet den Orchestrator
+    neu und zeigt es genau einmal; ein zweiter Aufruf ersetzt es."""
+    log = tmp_path / "calls.log"
+    stub = _stub(tmp_path / "token-compose", f'echo "$*" >> {log}\n')
+    env = {"AUTOMATO_ENV_FILE": str(tmp_path / "env"), "COMPOSE": str(stub)}
+    (tmp_path / "env").write_text("POSTGRES_PASSWORD=bleibt\n")
+    out = _run(tmp_path, "cockpit-token", **env)
+    assert out.returncode == 0, out.stdout + out.stderr
+    zeilen = (tmp_path / "env").read_text().splitlines()
+    assert zeilen[0] == "POSTGRES_PASSWORD=bleibt"
+    (token,) = (z.split("=", 1)[1] for z in zeilen if z.startswith("AUTOMATO_COCKPIT_TOKEN="))
+    assert re.fullmatch(r"[0-9a-f]{64}", token)
+    assert out.stdout.count(token) == 1 and "nie in Chat" in out.stdout
+    assert log.read_text().strip().endswith("up -d orchestrator")
+
+    neu = _run(tmp_path, "cockpit-token", **env)
+    zeilen = (tmp_path / "env").read_text().splitlines()
+    assert [z for z in zeilen if z.startswith("AUTOMATO_COCKPIT_TOKEN=")] != [
+        f"AUTOMATO_COCKPIT_TOKEN={token}"
+    ]
+    assert len([z for z in zeilen if z.startswith("AUTOMATO_COCKPIT_TOKEN=")]) == 1
+    assert token not in neu.stdout

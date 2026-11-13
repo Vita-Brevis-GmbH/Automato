@@ -85,6 +85,9 @@ class Settings(BaseSettings):
     # Domain der Kunden-Adressen (wie AUTOMATO_FRONT_DOMAIN im Front-Proxy) - nur fuer die
     # Anzeige der Adressen und Keycloak-Eintraege in der Oberflaeche
     front_domain: str = ""
+    # Inventar fuers Cockpit (1.10.0, ADR 0053): GET /inventory nur mit diesem Token (Bearer),
+    # erzeugt mit `deploy/aufbau.sh cockpit-token`. Leer = der Endpunkt gibt es nicht (404).
+    cockpit_token: str = ""
 
     # Zeitgesteuerte Laeufe je Quellsystem (Cron am Quellsystem). Aus = keine Hintergrund-
     # Schleife (Tests, Werkzeuge); docker-compose schaltet ihn fuer den Orchestrator ein.

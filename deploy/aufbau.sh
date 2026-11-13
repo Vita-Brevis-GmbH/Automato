@@ -24,6 +24,9 @@
 #                                         Dienst (deploy/tls/pki), AUTOMATO_INTERNAL_TLS=on in
 #                                         .env, Container neu starten; --erneuern = Zertifikate
 #                                         neu ausstellen (CA bleibt)
+#   deploy/aufbau.sh cockpit-token        Token, mit dem das Cockpit das Inventar holt (1.10.0,
+#                                         ADR 0053): neu in .env, Orchestrator neu starten, einmal
+#                                         anzeigen (ein früheres gilt danach nicht mehr)
 #
 # Die Verbindungen prueft der Orchestrator selbst (`automato check-connections`, wie System ->
 # Verbindungen im UI): Datenbank, Redis, Keycloak, jedes zentral gelesene Quellsystem - auf
@@ -37,7 +40,7 @@
 # antwortet die Login-Seite. Befund 0.40.0: NetBox war nach einem Neustart aus, Automato nicht.
 #
 # Exit 0 = alles erreichbar, 1 = mindestens ein Fehler. Aendert nur `firewall --anwenden`,
-# `netbox-start`, `backup-schluessel`, `docker-update`, `db-rollen`, `tls-intern` und
+# `netbox-start`, `backup-schluessel`, `docker-update`, `db-rollen`, `tls-intern`, `cockpit-token` und
 # `env ordnen` etwas. Einstellungen auch aus .env
 # (deploy/env.sh).
 # Profile ueber COMPOSE_PROFILES in .env (Standard nur "core"), wie deploy/update.sh.
@@ -552,6 +555,23 @@ cmd_backup_schluessel() {
   info "ohne sie ist keine Sicherung lesbar. Danach: deploy/update.sh"
 }
 
+# --- Inventar fürs Cockpit (1.10.0, ADR 0053) -----------------------------------------------
+cmd_cockpit_token() {
+  titel "Token für das Cockpit (Inventar)"
+  local token
+  token=$(openssl rand -hex 32 2>/dev/null) || { fehler "openssl fehlt"; return 1; }
+  setze_env AUTOMATO_COCKPIT_TOKEN "$token"
+  ok "in $ENV_DATEI eingetragen: AUTOMATO_COCKPIT_TOKEN (ein früheres gilt nicht mehr)"
+  if $COMPOSE "${PROFILES[@]}" up -d orchestrator >/dev/null 2>&1; then
+    ok "Orchestrator neu gestartet"
+  else
+    warn "Orchestrator nicht neu gestartet: $COMPOSE ${PROFILES[*]} up -d orchestrator"
+  fi
+  info "Im Cockpit bei der Automato-Instanz unter „Inventar aus Automato“ eintragen – nur dort,"
+  info "nie in Chat, Ticket oder Datei. Es steht nur in $ENV_DATEI und wird nur jetzt angezeigt:"
+  printf '\n    %s\n\n' "$token"
+}
+
 # --- Getrennte DB-Rollen (0.48.0) ----------------------------------------------------------
 db_rollen() {
   titel "Datenbank-Rollen"
@@ -689,6 +709,7 @@ case "${1:-pruefen}" in
   docker-update) cmd_docker_update ;;
   db-rollen) shift; cmd_db_rollen "${1:-}" ;;
   tls-intern) shift; cmd_tls_intern "${1:-}" ;;
+  cockpit-token) cmd_cockpit_token ;;
   env)
     shift
     case "${1:-}" in

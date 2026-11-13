@@ -7,6 +7,30 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 1.10.0 – 2026-11-13
+
+Ein Eingang für alles (Anwender 2026-11-13: „Die Magister Webseiten sollten doch über den Front
+Proxy reinkommen. Ich schlage vor, dass wir das System nun erweitern, damit wir einen schlauen
+Stand haben und dann umstellen und testen“; gewählt: übrige Namen an Magister, eine Prüfung für
+alles, Cockpit erfasst selbst). ADR 0053.
+
+- **Übrige Namen an die Plattform dahinter** (`deploy/front/front.sh`): mit
+  `AUTOMATO_FRONT_UEBRIGE=<ip>[:port]` (CA in `AUTOMATO_FRONT_UEBRIGE_CA`) leitet der Auffang
+  `*.<domain>` jeden Namen, den der Front-Proxy nicht selbst bedient, an z. B. Magister weiter
+  statt „Unbekannte Adresse“. Name und SNI bleiben, die Sperre nach Absender gilt, Kopfzeilen der
+  Anmeldung werden entfernt, die Antwort behält die Kopfzeilen der Plattform. Der Wildcard der
+  Domain zeigt dann auf den Front-Proxy; Magister trägt ihn als `PLATTFORM_WAF`.
+- **Prüfung:** `front.sh pruefen` meldet das Ziel (erreichbar, Zertifikat vertraut) und nimmt den
+  Wildcard auf diese VM als gewollt, wenn übrige Namen weitergehen.
+- **Inventar fürs Cockpit:** `front.sh erzeugen` schreibt `topologie.json` (VM, Oberfläche,
+  Portal, Kunden mit Adressen, NetBox-Host, Ziele) in den Ordner des Host-Agenten; der Orchestrator
+  gibt sie unter `GET /inventory` (über die Oberfläche `/api/inventory`) mit Version, Umgebung und
+  Keycloak-Issuer heraus – nur mit eigenem Token `AUTOMATO_COCKPIT_TOKEN` (Bearer), ohne Token
+  404. Neu: `deploy/aufbau.sh cockpit-token` (neues Token in `.env`, Orchestrator neu, einmal
+  angezeigt). Das Cockpit übernimmt daraus Hosts und Instanzen (vitabrevis-cockpit ADR 0004).
+- `.env.example` (Abschnitte Front-Proxy und „Inventar fürs Cockpit“), Anleitung
+  `docs/INSTALLATION-FRONT.md` (Abschnitte 5a und 10), `docs/STAND.md`.
+
 ## 1.9.2 – 2026-11-13
 
 Dev-Aufbau (Anwender 2026-11-13: Kundenseiten von Magister zeigen „Unbekannte Adresse“, „Bitte den

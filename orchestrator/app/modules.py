@@ -83,6 +83,7 @@ MODULES: tuple[Module, ...] = (
             "system",
             "health",
             "portal",
+            "inventory",
         ),
         store=(
             "aci_direction",
@@ -99,6 +100,7 @@ MODULES: tuple[Module, ...] = (
             "epg_locate",
             "external",
             "health",
+            "inventory",
             "nat",
             "objects",
             "parallel",

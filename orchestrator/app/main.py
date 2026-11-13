@@ -37,6 +37,7 @@ from app.api import (
     virtual,
     zones,
 )
+from app.api import inventory as inventory_api
 from app.api import modules as module_api
 from app.api import portal as portal_api
 from app.config import Settings, check_security_config, get_settings
@@ -148,6 +149,7 @@ def create_app() -> FastAPI:
     app.include_router(customers.router)
     app.include_router(customer_users.router)
     app.include_router(portal_api.router)  # Kunden-Portal (1.3.0, ADR 0050)
+    app.include_router(inventory_api.router)  # Inventar fuers Cockpit (1.10.0, ADR 0053)
     app.include_router(zones.router, dependencies=[Depends(modules.guard("design"))])
     app.include_router(cabling.router, dependencies=[Depends(modules.guard("analyse"))])
     app.include_router(data_quality.router, dependencies=[Depends(modules.guard("analyse"))])
