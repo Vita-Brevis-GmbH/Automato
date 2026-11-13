@@ -394,3 +394,9 @@ def test_namen_ohne_instanz_antworten_mit_404(host):
     out = host("sso", "alle")  # sso schreibt den Proxy neu – auch den Auffang
     assert out.returncode == 0, out.stdout + out.stderr
     assert (host.dir / "proxy" / "sites" / "_unbekannt.caddy").exists()
+    # init lädt einen laufenden Proxy neu – sonst bliebe der Auffang bis zum Neustart unwirksam
+    _zertifikat(host.dir / "proxy" / "pki", "*.mgmt.example.ch")
+    host.log.write_text("")
+    out = host("init")
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert "caddy reload --config /etc/caddy/Caddyfile" in host.log.read_text()

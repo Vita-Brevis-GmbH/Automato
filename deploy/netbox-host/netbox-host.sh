@@ -166,6 +166,8 @@ cmd_init() {
       proxyc restart proxy >/dev/null && info "Proxy aus der Neustart-Schleife geholt"
     fi
     proxyc up -d >/dev/null && ok "Proxy läuft (Port $PORT)"
+    # ein laufender Proxy liest Caddyfile und sites/ erst beim Neuladen (z. B. neuer Auffang)
+    proxy_reload
   else
     info "Proxy startet nach dem Zertifikat: netbox-host.sh init erneut"
   fi
