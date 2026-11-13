@@ -35,6 +35,10 @@ alles, Cockpit erfasst selbst). ADR 0053.
   API mit Token an die NetBox durch – vor der Sperre und dem Zugriff je Kunde, ohne Kopfzeilen der
   Anmeldung. `front.sh pruefen` geht je Kunde den Weg des NetBox-Syncs aus dem Orchestrator bis
   zur NetBox (Zertifikat, Weg, gesperrt).
+- **Portal unter der Domain der Kunden** (Anwender 2026-11-13: „start.dev-start-int… sollte
+  eigentlich start.dev-mgmt.int… sein“): `AUTOMATO_FRONT_DOMAIN_INT` darf gleich
+  `AUTOMATO_FRONT_DOMAIN` sein – dann nur das Portal `start.<domain>`, keine „Verwaltung“ auf der
+  Domain selbst und kein zweiter Auffang-Eintrag; `konsole` und `connect` als Kurznamen reserviert.
 - **Namen, die nicht über den Front-Proxy gehen:** zeigt der Wildcard auf diese VM und gehen die
   übrigen Namen an Magister, meldet `pruefen`, wenn `konsole.<domain>` (Port 4444) bzw.
   `connect.<domain>` (Connector, Port 46200) ebenfalls hier landen – sie brauchen einen eigenen

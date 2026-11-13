@@ -852,3 +852,31 @@ def test_automato_selbst_an_seine_netbox(front):
         assert text in out.stdout + out.stderr, antwort
     log = front.log.read_text()
     assert "exec -T orchestrator python -c" in log and "https://kunde-a-nb.mgmt.example.ch" in log
+
+
+def test_portal_unter_der_domain_der_kunden(front):
+    """1.10.0 (Anwender 2026-11-13: Portal unter start.<domain>): interne Domain = Domain der
+    Kunden – nur das Portal, keine Verwaltung auf der Domain selbst, nur ein Auffang-Eintrag."""
+    geteilt = DEV_ENV.replace(
+        "AUTOMATO_FRONT_DOMAIN_INT=mgmt.int.example.ch", "AUTOMATO_FRONT_DOMAIN_INT=mgmt.example.ch"
+    )
+    front.env_file.write_text(geteilt + "AUTOMATO_FRONT_UEBRIGE=10.0.20.10\n")
+    _zertifikat(front.pki, "mgmt", "DNS:*.mgmt.example.ch")
+    _zertifikat(front.pki, "mgmt-int", "DNS:*.mgmt.example.ch")
+    _zertifikat(front.pki, "ui", "DNS:automato.int.example.ch")
+    assert front("kunde", "kunde-a", "Kunde A").returncode == 0
+    intern = (front.gen / "sites" / "_intern.caddy").read_text()
+    assert "start.mgmt.example.ch {\n\timport front-intern" in intern
+    assert "\nmgmt.example.ch {" not in intern and "Verwaltung" not in intern
+    rest = (front.gen / "sites" / "_unbekannt.caddy").read_text()
+    assert rest.count("*.mgmt.example.ch {") == 1 and "import front-uebrige" in rest
+
+    out = front("pruefen", FRONT_DNS="*.mgmt.example.ch 10.0.20.5\n")
+    text = out.stdout + out.stderr
+    assert "Portal start.mgmt.example.ch (Domain der Kunden) nur aus: 10.0.10.0/24" in text
+    assert "mgmt-int.crt gültig bis" in text and "deckt" not in text
+    assert "OK      start.mgmt.example.ch → 10.0.20.5 (Portal)" in text
+    assert "Verwaltung, leitet aufs Portal" not in text
+
+    for name in ("start", "konsole", "connect"):
+        assert f"Kurzname '{name}' ist reserviert" in front("kunde", name, "X").stderr

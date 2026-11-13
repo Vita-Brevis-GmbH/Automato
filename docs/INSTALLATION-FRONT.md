@@ -104,6 +104,12 @@ AUTOMATO_FRONT_TOR=an
 # AUTOMATO_FRONT_INTERN_ROLLEN=admin operator
 ```
 
+`AUTOMATO_FRONT_DOMAIN_INT` darf seit 1.10.0 auch **gleich** `AUTOMATO_FRONT_DOMAIN` sein (z. B. im
+Dev alles unter einer internen Domain): dann gibt es nur das Portal `start.<domain>` – keine
+„Verwaltung“ auf der Domain selbst, nur ein Auffang-Eintrag; `start`, `konsole` und `connect` sind
+als Kurznamen reserviert. Im Client `automato-front` des Realms von Automato dann die Rückkehr-
+Adresse `https://start.<domain>/oauth2/callback` (zeigt `front.sh tor`).
+
 ## 4. Starten
 
 ```bash

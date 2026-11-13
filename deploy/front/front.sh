@@ -162,6 +162,11 @@ lade_tor() {  # Anmelde-Tor (1.4.0, ADR 0051)
   return 0
 }
 
+# Interne Domain = Domain der Kunden (1.10.0, Anwender 2026-11-13: Portal unter start.<domain>):
+# dann nur das Portal start.<domain>, keine „Verwaltung“ auf der Domain selbst und kein zweiter
+# Auffang-Eintrag (*.<domain> gibt es schon für die Kunden bzw. die übrigen Namen)
+intern_geteilt() { [ -n "${INTERN:-}" ] && [ "$INTERN" = "$DOMAIN" ]; }
+
 realm_ok() {  # wie das Kunden-Portal (store/portal.py): Name eines Keycloak-Realms, nie "master"
   [[ "${1:-}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] && [ "$1" != master ]
 }
@@ -184,7 +189,7 @@ kurzname() {  # wie deploy/netbox-host/netbox-host.sh (DNS-Label, Platz für "-c
   [ -n "$k" ] || abbruch "Kurzname des Kunden fehlt"
   [[ "$k" =~ ^[a-z0-9]([a-z0-9-]{0,40}[a-z0-9])?$ ]] \
     || abbruch "Kurzname '$k' ungültig: nur a-z, 0-9 und '-', nicht am Anfang/Ende, höchstens 42 Zeichen"
-  case "$k" in start | www | proxy | alle | konfig | mgmt) abbruch "Kurzname '$k' ist reserviert" ;; esac
+  case "$k" in start | www | proxy | alle | konfig | mgmt | konsole | connect) abbruch "Kurzname '$k' ist reserviert" ;; esac
   case "$k" in *-nb | *-doc | *-um | *-cmdb) abbruch "Kurzname '$k' ist reserviert (endet wie ein Werkzeug: -nb, -doc, -um, -cmdb)" ;; esac
 }
 
@@ -652,7 +657,9 @@ cmd_erzeugen() {
     else
       printf '*.%s {\n\timport front-kunden\n\troute {\n\t\timport front-kunden-sperre\n\t\trespond "Unbekannte Adresse" 404\n\t}\n}\n' "$DOMAIN"
     fi
-    [ -z "$INTERN" ] || printf '\n*.%s {\n\timport front-intern\n\troute {\n\t\timport front-intern-sperre\n\t\trespond "Unbekannte Adresse" 404\n\t}\n}\n' "$INTERN"
+    if [ -n "$INTERN" ] && ! intern_geteilt; then
+      printf '\n*.%s {\n\timport front-intern\n\troute {\n\t\timport front-intern-sperre\n\t\trespond "Unbekannte Adresse" 404\n\t}\n}\n' "$INTERN"
+    fi
   } >"$g/sites/_unbekannt.caddy"
   if [ -n "$INTERN" ]; then
     # Portal: mit Anmelde-Tor nur für die Rollen AUTOMATO_FRONT_INTERN_ROLLEN im Realm von Automato
@@ -683,6 +690,8 @@ start.$INTERN {
 $portal
 	}
 }
+EOF
+    intern_geteilt || cat >>"$g/sites/_intern.caddy" <<EOF
 
 # Verwaltung (Cockpit, Version 2) – bis dahin das Portal (nach der Sperre: route hält die Reihenfolge)
 $INTERN {
@@ -987,7 +996,8 @@ adressen() {  # je Zeile Name<TAB>Zweck<TAB>Zertifikat: jede Adresse, die dieser
   fi
   if [ -n "$INTERN" ]; then
     printf 'start.%s\tPortal\t%s\n' "$INTERN" "$FRONT_PKI/mgmt-int.crt"
-    printf '%s\tVerwaltung, leitet aufs Portal\t%s\n' "$INTERN" "$FRONT_PKI/mgmt-int.crt"
+    intern_geteilt ||
+      printf '%s\tVerwaltung, leitet aufs Portal\t%s\n' "$INTERN" "$FRONT_PKI/mgmt-int.crt"
   fi
   for k in $(kunden); do
     lies_kunde "$k"
@@ -1075,7 +1085,7 @@ pruefe_adressen() {
   done < <(adressen)
   [ "$anzahl" -gt 0 ] || info "noch keine Adressen"
   pruefe_wildcard "$DOMAIN" kunden
-  [ -z "$INTERN" ] || pruefe_wildcard "$INTERN" intern
+  [ -z "$INTERN" ] || intern_geteilt || pruefe_wildcard "$INTERN" intern
 }
 
 vom_proxy() {  # $1 URL: Antwort aus dem Proxy-Container – ok, HTTP-Code, exec (geht nicht) oder aus
@@ -1198,7 +1208,13 @@ cmd_pruefen() {
   titel "Einstellungen"
   ok "Kunden-Adressen *.$DOMAIN nur aus: $KUNDEN_ALLOW"
   [ -n "$WAF" ] && ok "WAF: $WAF (X-Forwarded-For wird übernommen)" || warn "AUTOMATO_FRONT_WAF leer – Adresse der Benutzer unbekannt"
-  [ -n "$INTERN" ] && ok "Intern start.$INTERN und $INTERN nur aus: $MGMT${WAF:+ (nie über die WAF)}" || warn "AUTOMATO_FRONT_DOMAIN_INT leer – kein Portal"
+  if intern_geteilt; then
+    ok "Portal start.$INTERN (Domain der Kunden) nur aus: $MGMT${WAF:+ (nie über die WAF)}"
+  elif [ -n "$INTERN" ]; then
+    ok "Intern start.$INTERN und $INTERN nur aus: $MGMT${WAF:+ (nie über die WAF)}"
+  else
+    warn "AUTOMATO_FRONT_DOMAIN_INT leer – kein Portal"
+  fi
   [ -n "$NETBOX" ] && ok "NetBox-Host: $NETBOX" || warn "AUTOMATO_FRONT_NETBOX leer – keine Weiterleitung zur NetBox"
   [ -n "$MAGISTER" ] && ok "Magister: $MAGISTER" || info "Magister (-um) aus"
   if [ -n "$UEBRIGE" ]; then
@@ -1229,7 +1245,11 @@ cmd_pruefen() {
 
   titel "Zertifikate"
   pruefe_zertifikat mgmt "*.$DOMAIN"
-  [ -z "$INTERN" ] || pruefe_zertifikat mgmt-int "$INTERN" "*.$INTERN"
+  if intern_geteilt; then
+    pruefe_zertifikat mgmt-int "*.$INTERN"
+  elif [ -n "$INTERN" ]; then
+    pruefe_zertifikat mgmt-int "$INTERN" "*.$INTERN"
+  fi
 
   titel "Proxy"
   if proxy_laeuft; then
