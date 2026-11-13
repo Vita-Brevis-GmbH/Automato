@@ -22,7 +22,9 @@
 #   front.sh entfernen <kunde> --ja                                 Kunde aus dem Front-Proxy nehmen
 #   front.sh liste                                                  Kunden mit ihren Werkzeugen
 #   front.sh erzeugen                                               alles neu erzeugen, Proxy neu laden
-#   front.sh pruefen                                                Einstellungen, Zertifikate, Wege
+#   front.sh pruefen                                                Einstellungen, Zertifikate, Adressen,
+#                                                                   Ziele und Wege
+#   front.sh adressen                                               nur die Adressen: DNS, Proxy, Zertifikat
 #   front.sh sync [--immer]                                         Kunden aus der Oberfläche übernehmen
 #   front.sh agent                                                  Host-Agent einrichten (systemd)
 #   front.sh tor [<realm>]                                          Anmelde-Tor: Stand bzw. Client-Secret
@@ -48,8 +50,8 @@
 # erzeugt: deploy/front/generated/, Client-Secrets: deploy/front/tor/ (alles nicht im Repo).
 # Zertifikate: deploy/proxy/pki/mgmt.crt|key (Kunden-Adressen) und mgmt-int.crt|key (intern).
 # Kurzname: Kleinbuchstaben, Ziffern und Bindestrich (DNS-Label), nicht auf -nb/-doc/-um/-cmdb endend.
-# Für Tests ersetzbar: DOCKER, CURL, IPTABLES, SYSTEMCTL, FRONT_DIR, FRONT_PKI, FRONT_STATE,
-# FRONT_TOR_DIR, FRONT_SYSTEMD_DIR, AUTOMATO_ENV_FILE, FRONT_SKIP_ROOT=1.
+# Für Tests ersetzbar: DOCKER, CURL, IPTABLES, SYSTEMCTL, GETENT, FRONT_DIR, FRONT_PKI, FRONT_STATE,
+# FRONT_TOR_DIR, FRONT_SYSTEMD_DIR, AUTOMATO_ENV_FILE, FRONT_LOKALE_IPS, FRONT_SKIP_ROOT=1.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -59,6 +61,7 @@ FRONT_PKI=${FRONT_PKI:-$REPO_DIR/deploy/proxy/pki}
 DOCKER=${DOCKER:-docker}
 IPTABLES=${IPTABLES:-iptables}
 CURL=${CURL:-curl}
+GETENT=${GETENT:-getent}  # DNS dieser VM (1.9.2: pruefen, adressen)
 SYSTEMCTL=${SYSTEMCTL:-systemctl}
 FRONT_STATE=${FRONT_STATE:-$FRONT_DIR/state}  # Soll-Stand der Oberfläche (1.3.0)
 FRONT_TOR_DIR=${FRONT_TOR_DIR:-$FRONT_DIR/tor}  # Client-Secrets des Anmelde-Tors (1.4.0, nur root)
@@ -821,6 +824,166 @@ pruefe_zertifikat() {  # $1 Datei-Name ohne Endung, $2.. Namen, die es abdecken 
   fi
 }
 
+# --- Adressen und Ziele (1.9.2) --------------------------------------------------------------------
+# Kommt eine Adresse hier an (DNS), kennt der Proxy sie (sonst „Unbekannte Adresse“), deckt das
+# Zertifikat sie ab – und erreicht der Proxy, wohin er weiterleitet?
+eigene_ips() {  # IPv4-Adressen dieser VM, mit Leerzeichen
+  local ips=${FRONT_LOKALE_IPS:-} liste=()
+  [ -n "$ips" ] || ips=$(hostname -I 2>/dev/null || true)
+  read -ra liste <<<"$ips"
+  printf '%s\n' "${liste[@]}" | grep -E '^[0-9]+(\.[0-9]+){3}$' | tr '\n' ' ' | sed 's/ $//' || true
+}
+
+dns_v4() {  # A-Einträge eines Namens aus Sicht dieser VM, mit Leerzeichen (leer = unbekannt)
+  $GETENT ahostsv4 "$1" 2>/dev/null | awk '{print $1}' | sort -u | tr '\n' ' ' | sed 's/ $//' || true
+}
+
+ist_lokal() {  # $1 Adressen (mit Leerzeichen): ist eine davon diese VM?
+  local a
+  for a in $1; do [[ " $LOKAL " == *" $a "* ]] && return 0; done
+  return 1
+}
+
+deckt() {  # $1 Zertifikat, $2 Name: steht der Name oder sein Wildcard im Zertifikat?
+  local namen
+  namen=$(openssl x509 -in "$1" -noout -ext subjectAltName 2>/dev/null | tr ',' '\n' | sed -n 's/^ *DNS://p' || true)
+  grep -qxF "$2" <<<"$namen" || grep -qxF "*.${2#*.}" <<<"$namen"
+}
+
+ui_zertifikat() {  # Zertifikat der Oberfläche auf der VM (leer = von Caddy selbst erzeugt)
+  local crt=${AUTOMATO_UI_TLS:-}
+  crt=${crt%% *}
+  case "$crt" in
+    /etc/caddy/pki/*) printf '%s/%s' "$FRONT_PKI" "${crt#/etc/caddy/pki/}" ;;
+  esac
+}
+
+adressen() {  # je Zeile Name<TAB>Zweck<TAB>Zertifikat: jede Adresse, die dieser Proxy bedient
+  local k ui=${AUTOMATO_UI_HOST:-} c=$FRONT_PKI/mgmt.crt
+  if [ -n "$ui" ] && [ "$ui" != localhost ] && ! [[ "$ui" =~ ^[0-9.]+$|: ]]; then
+    printf '%s\tOberfläche von Automato\t%s\n' "$ui" "$(ui_zertifikat)"
+  fi
+  if [ -n "$INTERN" ]; then
+    printf 'start.%s\tPortal\t%s\n' "$INTERN" "$FRONT_PKI/mgmt-int.crt"
+    printf '%s\tVerwaltung, leitet aufs Portal\t%s\n' "$INTERN" "$FRONT_PKI/mgmt-int.crt"
+  fi
+  for k in $(kunden); do
+    lies_kunde "$k"
+    printf '%s.%s\t%s: Startseite\t%s\n' "$k" "$DOMAIN" "$k" "$c"
+    if [ -n "$NETBOX" ]; then printf '%s-nb.%s\t%s: NetBox\t%s\n' "$k" "$DOMAIN" "$k" "$c"; fi
+    if [ "$DOC" = ja ]; then printf '%s-doc.%s\t%s: Automato\t%s\n' "$k" "$DOMAIN" "$k" "$c"; fi
+    if [ "$UM" = ja ] && [ -n "$MAGISTER" ]; then
+      printf '%s-um.%s\t%s: Benutzerverwaltung (Magister)\t%s\n' "$k" "$DOMAIN" "$k" "$c"
+    fi
+    if [ "$CMDB_AN" = ja ] && [ -n "$CMDB" ]; then
+      printf '%s-cmdb.%s\t%s: CMDB\t%s\n' "$k" "$DOMAIN" "$k" "$c"
+    fi
+  done
+  return 0
+}
+
+im_proxy() {  # $1 Name: hat der Proxy einen eigenen Eintrag (sonst antwortet „Unbekannte Adresse“)?
+  [ "$1" != "${AUTOMATO_UI_HOST:-}" ] || return 0  # Caddyfile von Automato
+  grep -qxF "$1 {" "$(gen)"/sites/*.caddy 2>/dev/null
+}
+
+pruefe_wildcard() {  # $1 Domain, $2 kunden|intern: wohin zeigt ein Name, den es nicht gibt?
+  local ips
+  ips=$(dns_v4 "gibt-es-nicht-front-pruefen.$1")
+  if [ -z "$ips" ]; then
+    info "kein Wildcard *.$1 im DNS – jede Adresse oben braucht einen eigenen Eintrag"
+  elif ! ist_lokal "$ips"; then
+    info "*.$1 → $ips (nicht diese VM) – die Adressen oben brauchen je einen eigenen Eintrag"
+  elif [ "$2" = kunden ]; then
+    warn "*.$1 zeigt auf diese VM: jeder andere Name unter $1 landet hier und bekommt „Unbekannte Adresse“"
+    info "richtig nur, wenn die Domain allein diesem Front-Proxy gehört; teilt sie sich die Domain mit"
+    info "einer anderen Plattform (z. B. Kundenseiten von Magister): den Wildcard dort lassen und je"
+    info "Adresse oben einen eigenen Eintrag auf diese VM"
+  else
+    ok "*.$1 zeigt auf diese VM"
+  fi
+}
+
+pruefe_adressen() {
+  local name zweck crt ips anzahl=0
+  LOKAL=$(eigene_ips)
+  titel "Adressen (DNS dieser VM; diese VM: ${LOKAL:-unbekannt})"
+  while IFS=$'\t' read -r name zweck crt; do
+    anzahl=$((anzahl + 1))
+    if ! im_proxy "$name"; then
+      fehler "$name ($zweck): fehlt im Front-Proxy – front.sh erzeugen"
+      continue
+    fi
+    if [ -n "$crt" ] && [ -s "$crt" ] && ! deckt "$crt" "$name"; then
+      fehler "$name ($zweck): Zertifikat ${crt##*/} deckt den Namen nicht ab"
+      continue
+    fi
+    ips=$(dns_v4 "$name")
+    if [ -z "$ips" ]; then
+      warn "$name ($zweck): nicht im DNS – A-Eintrag auf ${LOKAL:-diese VM}"
+    elif ist_lokal "$ips"; then
+      ok "$name → $ips ($zweck)"
+    elif [ -n "$WAF" ]; then
+      info "$name → $ips ($zweck; über WAF bzw. VIP)"
+    else
+      warn "$name → $ips, nicht diese VM – $zweck kommt hier nicht an"
+    fi
+  done < <(adressen)
+  [ "$anzahl" -gt 0 ] || info "noch keine Adressen"
+  pruefe_wildcard "$DOMAIN" kunden
+  [ -z "$INTERN" ] || pruefe_wildcard "$INTERN" intern
+}
+
+vom_proxy() {  # $1 URL: Antwort aus dem Proxy-Container – ok, HTTP-Code, exec (geht nicht) oder aus
+  local aus
+  if aus=$(dc exec -T proxy wget -q -T 5 -O /dev/null --no-check-certificate "$1" 2>&1); then
+    echo ok
+  elif [[ "$aus" =~ HTTP/[0-9.]+\ ([0-9]{3}) ]]; then
+    echo "${BASH_REMATCH[1]}"
+  elif [[ "$aus" == *"OCI runtime exec failed"* ]]; then
+    echo exec
+  else
+    echo aus
+  fi
+}
+
+ziel_melden() {  # $1 Ziel, $2 URL
+  local code
+  code=$(vom_proxy "$2")
+  case "$code" in
+    ok) ok "$1 erreichbar ($2)" ;;
+    exec) warn "$1: im Proxy-Container lässt sich nichts starten (docker exec) – Proxy neu erzeugen: docker compose up -d --force-recreate proxy" ;;
+    aus) fehler "$1 nicht erreichbar ($2) – Name, Firewall bzw. läuft der Dienst?" ;;
+    5*) fehler "$1 antwortet mit HTTP $code ($2)" ;;
+    *) ok "$1 erreichbar ($2, HTTP $code)" ;;
+  esac
+}
+
+pruefe_ziele() {
+  titel "Ziele (vom Proxy aus)"
+  if ! proxy_laeuft; then
+    info "Proxy läuft nicht – Ziele nicht geprüft"
+    return 0
+  fi
+  local schema=http
+  [ "${AUTOMATO_INTERNAL_TLS:-off}" != on ] || schema=https
+  ziel_melden "Automato (Oberfläche, -doc)" "$schema://web-ui:5173/api/health"
+  [ -z "$MAGISTER" ] || ziel_melden "Magister (-um)" "$MAGISTER/"
+  [ -z "$CMDB" ] || ziel_melden "CMDB (-cmdb)" "$CMDB/"
+  [ -z "$NETBOX" ] || info "NetBox-Host $NETBOX: je Kunde unter „Kunden“"
+  tor_an || return 0
+  info "Keycloak: unter „Anmelde-Tor“"
+}
+
+cmd_adressen() {
+  root_noetig
+  lade_conf
+  pruefe_adressen
+  echo
+  if [ "$FEHLER" -gt 0 ]; then echo "Es gibt Fehler (siehe oben)."; return 1; fi
+  if [ "$WARNUNGEN" -gt 0 ]; then echo "Alles in Ordnung ($WARNUNGEN Warnungen)."; else echo "Alles in Ordnung."; fi
+}
+
 cmd_pruefen() {
   root_noetig
   lade_conf
@@ -874,6 +1037,9 @@ cmd_pruefen() {
   else
     info "Firewall: DOCKER-USER nicht lesbar – Sperre von Hand prüfen (iptables -L DOCKER-USER)"
   fi
+
+  pruefe_adressen
+  pruefe_ziele
 
   titel "Anmelde-Tor"
   if tor_an; then
@@ -1212,6 +1378,7 @@ case "${1:-}" in
   liste) cmd_liste ;;
   erzeugen) root_noetig; cmd_erzeugen ;;
   pruefen) cmd_pruefen ;;
+  adressen) cmd_adressen ;;
   sync) shift; cmd_sync "$@" ;;
   agent) cmd_agent ;;
   tor) shift; cmd_tor "$@" ;;

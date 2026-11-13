@@ -33,13 +33,29 @@ case "$*" in
     [ -z "${FRONT_GETENT_ORCH:-}" ] || echo "$FRONT_GETENT_ORCH  ${!#}"; exit 0 ;;
   *"exec -T collector getent hosts "*)
     [ -z "${FRONT_GETENT_COLL:-}" ] || echo "$FRONT_GETENT_COLL  ${!#}"; exit 0 ;;
-  *"exec -T proxy wget "*) [ "${FRONT_WGET_FAIL:-}" != 1 ] || exit 1; exit 0 ;;
+  *"exec -T proxy wget "*)
+    [ -z "${FRONT_WGET_OUT:-}" ] || { echo "$FRONT_WGET_OUT" >&2; exit 1; }
+    [ "${FRONT_WGET_FAIL:-}" != 1 ] || exit 1; exit 0 ;;
   "compose -p automato-tor "*"ps --status running --services"*)
     f=""; vor=""; for a in "$@"; do [ "$vor" = -f ] && f=$a; vor=$a; done
     sed -n 's/^  \(tor-[^:]*\):$/\1/p' "$f" ;;
   *"ps --status running --services"*) echo proxy ;;
 esac
 exit 0
+"""
+
+# DNS der VM (1.9.2): FRONT_DNS = Zeilen "<name> <ip>", "*.<domain> <ip>" für einen Wildcard
+GETENT = r"""
+[ "$1" = ahostsv4 ] || exit 2
+while read -r name ip; do
+  [ "$name" = "$2" ] && { echo "$ip       STREAM $2"; exit 0; }
+done <<< "${FRONT_DNS:-}"
+while read -r name ip; do
+  case "$name" in
+    "*."*) [[ "$2" == *".${name#\*.}" ]] && { echo "$ip       STREAM $2"; exit 0; } ;;
+  esac
+done <<< "${FRONT_DNS:-}"
+exit 2
 """
 
 IPTABLES = r"""
@@ -90,6 +106,8 @@ def front(tmp_path):
         "DOCKER": str(_stub(bin_dir / "docker", DOCKER)),
         "IPTABLES": str(_stub(bin_dir / "iptables", IPTABLES)),
         "CURL": str(curl),
+        "GETENT": str(_stub(bin_dir / "getent", GETENT)),
+        "FRONT_LOKALE_IPS": "10.0.20.5 172.17.0.1",
         # Host-Agent (1.5.0: pruefen fragt systemd) – Vorgabe: läuft
         "SYSTEMCTL": str(_stub(bin_dir / "systemctl", 'exit "${FRONT_AGENT_RC:-0}"\n')),
     }
@@ -588,3 +606,87 @@ def test_pruefen_host_agent_namen_und_keycloak(front):
     assert "AUTOMATO_UI_ALLOW leer" not in text and "zentraler Worker" not in text
     assert "Keycloak für Realm vb vom Proxy aus erreichbar" in text
     assert "läuft (automato-front-sync.path)" in text
+
+
+DEV_ENV = """AUTOMATO_FRONT_DOMAIN=mgmt.example.ch
+AUTOMATO_FRONT_DOMAIN_INT=mgmt.int.example.ch
+AUTOMATO_FRONT_MGMT=10.0.10.0/24
+AUTOMATO_FRONT_NETBOX=10.0.20.10:8444
+AUTOMATO_FRONT_MAGISTER=https://magister.int.example.ch
+AUTOMATO_UI_HOST=automato.int.example.ch
+AUTOMATO_UI_TLS="/etc/caddy/pki/ui.crt /etc/caddy/pki/ui.key"
+"""
+
+
+def test_pruefen_adressen_und_ziele(front):
+    """1.9.2: jede Adresse im DNS auf diese VM, im Proxy und im Zertifikat – und ein Wildcard, der
+    fremde Namen (z. B. Kundenseiten von Magister in derselben Domain) hierher holt, fällt auf."""
+    front.env_file.write_text(DEV_ENV)
+    _zertifikat(front.pki, "mgmt", "DNS:*.mgmt.example.ch")
+    _zertifikat(front.pki, "mgmt-int", "DNS:mgmt.int.example.ch,DNS:*.mgmt.int.example.ch")
+    _zertifikat(front.pki, "ui", "DNS:automato.int.example.ch")
+    assert front("kunde", "kunde-a", "Kunde A", "--doc", "--um").returncode == 0
+
+    # Wildcard der geteilten Domain zeigt auf diese VM (der Fehler aus dem Dev-Aufbau)
+    dns = ("*.mgmt.example.ch 10.0.20.5\nautomato.int.example.ch 10.0.20.5\n"
+           "start.mgmt.int.example.ch 10.0.20.5\n")  # fmt: skip
+    out = front("pruefen", FRONT_DNS=dns)
+    text = out.stdout + out.stderr
+    assert out.returncode == 0, text
+    assert "diese VM: 10.0.20.5 172.17.0.1" in text
+    for name, zweck in [("automato.int.example.ch", "Oberfläche von Automato"),
+                        ("start.mgmt.int.example.ch", "Portal"),
+                        ("kunde-a.mgmt.example.ch", "kunde-a: Startseite"),
+                        ("kunde-a-nb.mgmt.example.ch", "kunde-a: NetBox"),
+                        ("kunde-a-doc.mgmt.example.ch", "kunde-a: Automato"),
+                        ("kunde-a-um.mgmt.example.ch",
+                         "kunde-a: Benutzerverwaltung (Magister)")]:  # fmt: skip
+        assert f"OK      {name} → 10.0.20.5 ({zweck})" in text
+    assert "mgmt.int.example.ch (Verwaltung, leitet aufs Portal): nicht im DNS" in text
+    assert "*.mgmt.example.ch zeigt auf diese VM: jeder andere Name unter mgmt.example.ch" in text
+    assert "Kundenseiten von Magister" in text
+    assert "kein Wildcard *.mgmt.int.example.ch im DNS" in text
+    assert "Automato (Oberfläche, -doc) erreichbar (http://web-ui:5173/api/health)" in text
+    assert "Magister (-um) erreichbar (https://magister.int.example.ch/)" in text
+    assert "NetBox-Host 10.0.20.10:8444: je Kunde unter „Kunden“" in text
+
+    # richtig: Wildcard bei der anderen Plattform, eigene Einträge – einer fehlt
+    dns = ("*.mgmt.example.ch 10.0.20.10\nkunde-a.mgmt.example.ch 10.0.20.5\n"
+           "kunde-a-nb.mgmt.example.ch 10.0.20.5\n")  # fmt: skip
+    out = front("adressen", FRONT_DNS=dns)
+    text = out.stdout + out.stderr
+    assert out.returncode == 0, text
+    assert "OK      kunde-a-nb.mgmt.example.ch → 10.0.20.5" in text
+    assert "kunde-a-doc.mgmt.example.ch → 10.0.20.10, nicht diese VM – kunde-a: Automato" in text
+    assert "*.mgmt.example.ch → 10.0.20.10 (nicht diese VM)" in text
+    assert "zeigt auf diese VM" not in text and "Ziele" not in text  # nur die Adressen
+
+    # mit WAF zeigen die Namen auf die WAF bzw. VIP: kein Fehler, nur Hinweis
+    front.env_file.write_text(DEV_ENV + "AUTOMATO_FRONT_WAF=10.0.40.1/32\n")
+    out = front("adressen", FRONT_DNS="*.mgmt.example.ch 203.0.113.7\n")
+    waf = "kunde-a.mgmt.example.ch → 203.0.113.7 (kunde-a: Startseite; über WAF bzw. VIP)"
+    assert waf in out.stdout
+    front.env_file.write_text(DEV_ENV)
+
+    # Zertifikat der Oberfläche passt nicht, ein Kunde fehlt im erzeugten Proxy
+    _zertifikat(front.pki, "ui", "DNS:anderer.int.example.ch")
+    (front.gen / "sites" / "kunde-a.caddy").unlink()
+    out = front("adressen", FRONT_DNS="*.mgmt.example.ch 10.0.20.5\n")
+    assert out.returncode == 1
+    ui = "automato.int.example.ch (Oberfläche von Automato): Zertifikat ui.crt deckt"
+    assert ui in out.stderr
+    assert "kunde-a.mgmt.example.ch (kunde-a: Startseite): fehlt im Front-Proxy" in out.stderr
+
+    # Ziele: Serverfehler, kein Weg, docker exec geht nicht
+    front("erzeugen")
+    for wget, erwartet in [
+        ("wget: server returned error: HTTP/1.1 502 Bad Gateway", "antwortet mit HTTP 502"),
+        ("wget: bad address 'magister.int.example.ch'", "Magister (-um) nicht erreichbar"),
+        ("OCI runtime exec failed: exec failed: unable to start container process: procReady "
+         "not received", "im Proxy-Container lässt sich nichts starten"),
+    ]:  # fmt: skip
+        out = front("pruefen", FRONT_DNS=dns, FRONT_WGET_OUT=wget)
+        assert erwartet in out.stdout + out.stderr, wget
+    verboten = "wget: server returned error: HTTP/1.1 403"
+    out = front("pruefen", FRONT_DNS=dns, FRONT_WGET_OUT=verboten)
+    assert "Magister (-um) erreichbar (https://magister.int.example.ch/, HTTP 403)" in out.stdout

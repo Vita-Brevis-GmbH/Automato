@@ -7,6 +7,27 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 1.9.2 – 2026-11-13
+
+Dev-Aufbau (Anwender 2026-11-13: Kundenseiten von Magister zeigen „Unbekannte Adresse“, „Bitte den
+Front Proxy mit einem Script prüfen, dass alle Adressen da sind und auch einen Check einbinden, dass
+er alles erreicht“).
+
+- **`front.sh pruefen` prüft die Adressen** (`deploy/front/front.sh`, neuer Abschnitt): jede
+  Adresse, die der Proxy bedient – Oberfläche, Portal, je Kunde Startseite, `-nb`, `-doc`, `-um`,
+  `-cmdb` –, ob sie im erzeugten Proxy steht, ob das Zertifikat sie abdeckt und ob sie im DNS auf
+  diese VM zeigt (mit WAF: Hinweis auf WAF bzw. VIP).
+- **Wildcard der Domain:** zeigt `*.<domain>` auf diese VM, meldet `pruefen` eine Warnung – jeder
+  andere Name der Domain landet dann hier und bekommt „Unbekannte Adresse“. Genau das traf die
+  Kundenseiten von Magister im Dev, die unter derselben Domain liegen.
+- **Ziele vom Proxy aus:** der Proxy-Container fragt Automato (`web-ui`, `/api/health`), Magister
+  (`-um`) und die CMDB ab; Serverfehler, kein Weg und ein Proxy, in dem `docker exec` nicht mehr
+  geht, je mit eigener Meldung. NetBox und Keycloak wie bisher unter „Kunden“ bzw. „Anmelde-Tor“.
+- **`front.sh adressen`:** nur die Adressen, ohne die übrigen Prüfungen.
+- `deploy/env.sh` liest `AUTOMATO_UI_HOST` und `AUTOMATO_UI_TLS` aus `.env` (Oberfläche als
+  Adresse des Proxys; `aufbau.sh tls-intern` nimmt den Namen damit auch ohne Umgebungsvariable).
+- Anleitung `docs/INSTALLATION-FRONT.md` (Abschnitt 7).
+
 ## 1.9.1 – 2026-11-12
 
 Dev-Aufbau mit zwei VMs (Anwender 2026-11-12: „Netbox muss entweder auf dem Magister VM oder auf

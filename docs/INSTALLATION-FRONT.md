@@ -222,6 +222,19 @@ zentraler Worker die NetBox-Adresse gleich auflösen. Im Browser aus dem
 Management-Netz: `https://start.mgmt.int.example.ch` (Portal), über die WAF
 `https://kunde-a.mgmt.example.ch` und `https://kunde-a-nb.mgmt.example.ch`.
 
+**Adressen und Ziele (1.9.2):** `pruefen` zeigt jede Adresse, die der Proxy bedient (Oberfläche,
+Portal, je Kunde Startseite und Werkzeuge) – ob sie im erzeugten Proxy steht, ob das Zertifikat sie
+abdeckt und wohin sie im DNS dieser VM zeigt (diese VM; mit WAF die WAF bzw. VIP). Dazu der
+Wildcard: zeigt `*.<domain>` auf diese VM, landet **jeder** andere Name der Domain hier und bekommt
+„Unbekannte Adresse“ – teilt sich der Front-Proxy die Domain mit einer anderen Plattform (z. B.
+Dev: Kundenseiten von Magister unter derselben Domain), bleibt der Wildcard dort und jede Adresse
+des Front-Proxys bekommt einen eigenen Eintrag. Unter „Ziele“ fragt der Proxy-Container Automato
+(`web-ui`), Magister (`AUTOMATO_FRONT_MAGISTER`) und die CMDB ab. Nur die Adressen, schnell:
+
+```bash
+sudo deploy/front/front.sh adressen
+```
+
 ## 8. Automato an die NetBox eines Kunden
 
 `netbox-host.sh token kunde-a` auf dem NetBox-Host (Lese- und Schreib-Token werden nur einmal
