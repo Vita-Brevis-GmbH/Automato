@@ -2,6 +2,7 @@
 CA ist ohne die Datei in deploy/trust nicht vertraut, mit ihr schon - PEM oder DER, die
 bisherigen CAs bleiben, eine kaputte Datei wird uebergangen."""
 
+import ipaddress
 import ssl
 import threading
 from collections.abc import Iterator
@@ -36,7 +37,10 @@ def _ca_und_server(ordner: Path) -> tuple[x509.Certificate, Path, Path]:
         .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")]))
         .issuer_name(name).public_key(key.public_key()).serial_number(x509.random_serial_number())
         .not_valid_before(jetzt - timedelta(minutes=1)).not_valid_after(jetzt + timedelta(days=1))
-        .add_extension(x509.SubjectAlternativeName([x509.DNSName("localhost")]), critical=False)
+        .add_extension(
+            x509.SubjectAlternativeName([x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]),
+            critical=False,
+        )
         .sign(ca_key, hashes.SHA256())
     )  # fmt: skip
     crt, schluessel = ordner / "server.pem", ordner / "server-key.pem"
@@ -71,7 +75,8 @@ def server(tmp_path) -> Iterator[tuple[str, x509.Certificate]]:
     srv.socket = kontext.wrap_socket(srv.socket, server_side=True)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     try:
-        yield f"https://localhost:{srv.server_address[1]}/", ca
+        # die IP, nicht localhost: das löst in der CI zuerst auf ::1 auf (Verbindung abgelehnt)
+        yield f"https://127.0.0.1:{srv.server_address[1]}/", ca
     finally:
         srv.shutdown()
 
@@ -87,10 +92,14 @@ def _umgebung(monkeypatch, tmp_path):
 
 
 def _abruf(url: str) -> str:
+    """Status, `tls` nur bei einem nicht vertrauten Zertifikat - eine abgelehnte Verbindung ist
+    etwas anderes und soll den Test nicht still bestehen lassen."""
     try:
         return str(httpx.get(url, timeout=5).status_code)
-    except httpx.ConnectError:
-        return "tls"
+    except httpx.ConnectError as exc:
+        if isinstance(exc.__cause__, ssl.SSLError) or "CERTIFICATE_VERIFY_FAILED" in str(exc):
+            return "tls"
+        return f"verbindung: {exc}"
 
 
 @pytest.mark.parametrize("form", ["pem", "der"])
