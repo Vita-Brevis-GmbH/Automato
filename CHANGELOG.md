@@ -7,6 +7,23 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 1.12.0 – 2026-11-13
+
+Magister unter `<kunde>-um` (Anwender 2026-11-13: „die Magister Plattformen sollen alle umbenannt
+werden nach kunde-um … das Login soll erst auf Keycloak geändert werden, wenn sie mit einem Kunden
+verknüpft wurden“).
+
+- **`<kunde>-um` immer zu Magister:** wie die übrigen Namen mit Name und SNI des Aufrufs (Magister
+  findet daran den Mandanten), Ziel `AUTOMATO_FRONT_MAGISTER` bzw. – leer – das der übrigen Namen
+  (`AUTOMATO_FRONT_UEBRIGE`), CA `AUTOMATO_FRONT_MAGISTER_CA` (neu) bzw. die der übrigen Namen.
+  Bisher ging `-um` nur mit `AUTOMATO_FRONT_MAGISTER` und ohne Name und SNI an Magister; im Dev
+  fehlte die Kachel deshalb trotz gewähltem Werkzeug.
+- **Kachel „Magister“** auf der Startseite (statt „Benutzerverwaltung“), in `adressen`, `liste`, der
+  Topologie und den Callbacks des Anmelde-Tors, sobald es ein Ziel gibt.
+- **Anmeldung:** ein Mandant, der im Kundenregister mit einem Kunden verknüpft ist (Werkzeug
+  Magister), liegt unter `<kunde>-um` hinter dem Anmelde-Tor; ein nicht verknüpfter erreicht man
+  weiter als übrigen Namen ohne Tor, mit der Anmeldung von Magister.
+
 ## 1.11.0 – 2026-11-13
 
 Freigaben aus dem Cockpit (Anwender 2026-11-13: „starte mal P2“ nach dem Vorschlag „Ein Ort für

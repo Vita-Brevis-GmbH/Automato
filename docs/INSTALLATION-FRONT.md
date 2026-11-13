@@ -11,7 +11,7 @@ Kunden / Mitarbeitende ──▶ WAF (TLS mit dem öffentlichen Wildcard) ──
    <kunde>.mgmt.example.ch        Startseite (Kacheln)
    <kunde>-nb.mgmt.example.ch     ──▶ NetBox-Host (docs/INSTALLATION-NETBOX-HOST.md)
    <kunde>-doc.mgmt.example.ch    ──▶ Oberfläche von Automato (nur mit --doc)
-   <kunde>-um.mgmt.example.ch     ──▶ Magister, Benutzerverwaltung (nur mit --um)
+   <kunde>-um.mgmt.example.ch     ──▶ Magister des Kunden (nur mit --um; Mandant mit dieser Adresse)
    <kunde>-cmdb.mgmt.example.ch   ──▶ CMDB (später, nur mit --cmdb)
 Management-Netz ──▶ Automato-VM :443 direkt
    start.mgmt.int.example.ch      Portal mit allen Kunden
@@ -94,7 +94,7 @@ AUTOMATO_FRONT_WAF=10.0.40.1/32          # Adresse der WAF
 AUTOMATO_FRONT_MGMT=10.0.10.0/24         # Management-Netz
 AUTOMATO_FRONT_NETBOX=10.0.30.20         # NetBox-Host
 # AUTOMATO_FRONT_NETBOX_CA=ca.crt        # nur wenn der NetBox-Host ein Zertifikat der eigenen CA hat
-# AUTOMATO_FRONT_MAGISTER=https://…      # später: Benutzerverwaltung (-um)
+# AUTOMATO_FRONT_MAGISTER=https://…      # Magister (-um); leer = wie AUTOMATO_FRONT_UEBRIGE
 # AUTOMATO_FRONT_KUNDEN_ALLOW=           # leer = WAF + Management-Netz
 # Anmelde-Tor (1.4.0, Abschnitt 6)
 AUTOMATO_FRONT_TOR=an
@@ -162,7 +162,12 @@ sudo deploy/front/front.sh entfernen kunde-a --ja             # NetBox und Daten
   Rechten aus dem Portal (Mandant, Kunden, Rolle). Realm anlegen mit
   `deploy/keycloak/make_realm.py --realm kunde-a --ui-url https://kunde-a-doc.mgmt.example.ch` und
   in der Admin-Konsole importieren (`deploy/keycloak/PROD-INSTALL.md`, Abschnitt 13).
-- **`--um`, `--cmdb`:** wirken erst mit `AUTOMATO_FRONT_MAGISTER` bzw. `AUTOMATO_FRONT_CMDB`.
+- **`--um`:** `<kunde>-um.<domain>` geht an Magister (`AUTOMATO_FRONT_MAGISTER`, sonst das Ziel der
+  übrigen Namen `AUTOMATO_FRONT_UEBRIGE`, seit 1.12.0) – mit Name und SNI des Aufrufs, hinter dem
+  Anmelde-Tor. Magister findet den Mandanten an diesem Namen: der Mandant braucht die Adresse
+  `<kunde>-um.<domain>` (im Cockpit „Adresse ändern“). CA mit `AUTOMATO_FRONT_MAGISTER_CA` bzw.
+  der der übrigen Namen.
+- **`--cmdb`:** wirkt erst mit `AUTOMATO_FRONT_CMDB`.
 - **Kunde von Hand → Portal:** wird im Kunden-Portal ein Kunde mit demselben Kurznamen gespeichert,
   gilt ab dann der Eintrag aus dem Portal (Werkzeuge, Realm, Zugriff und Kacheln – eigene Kacheln
   vorher dort eintragen). `front.sh liste` zeigt die Quelle (Portal bzw. Hand).

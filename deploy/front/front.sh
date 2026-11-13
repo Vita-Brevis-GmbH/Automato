@@ -7,7 +7,7 @@
 #   <kunde>.<domain>        Startseite des Kunden (Kacheln zu seinen Werkzeugen)
 #   <kunde>-nb.<domain>     NetBox des Kunden (NetBox-Host, AUTOMATO_FRONT_NETBOX) – ohne --ohne-nb
 #   <kunde>-doc.<domain>    Automato (diese VM) – nur mit --doc
-#   <kunde>-um.<domain>     Benutzerverwaltung (Magister) – nur mit --um und AUTOMATO_FRONT_MAGISTER
+#   <kunde>-um.<domain>     Magister des Kunden – mit --um, Ziel AUTOMATO_FRONT_MAGISTER bzw. _UEBRIGE
 #   <kunde>-cmdb.<domain>   CMDB – nur mit --cmdb und AUTOMATO_FRONT_CMDB
 #   start.<intern>          Portal mit allen Kunden (nur Management-Netz)
 #   <intern>                Verwaltung (Cockpit, Version 2) – bis dahin Weiterleitung aufs Portal
@@ -126,6 +126,21 @@ lade_conf() {
   for u in "$MAGISTER" "$CMDB"; do
     [ -z "$u" ] || [[ "$u" =~ ^https?://[A-Za-z0-9.:/_-]+$ ]] || abbruch "Adresse ungültig: '$u' (http(s)://name[:port][/pfad])"
   done
+  # Magister des Kunden (<kunde>-um, 1.12.0): Magister findet den Mandanten am Namen – also wie die
+  # übrigen Namen mit Host und SNI des Aufrufs. Ziel AUTOMATO_FRONT_MAGISTER, sonst das der übrigen
+  # Namen (dort steht Magister ohnehin); CA AUTOMATO_FRONT_MAGISTER_CA bzw. die der übrigen Namen
+  MAGISTER_CA=${AUTOMATO_FRONT_MAGISTER_CA:-}
+  [ -z "$MAGISTER_CA" ] || [[ "$MAGISTER_CA" =~ ^[A-Za-z0-9._-]+$ ]] || abbruch "AUTOMATO_FRONT_MAGISTER_CA ungültig (Dateiname in deploy/proxy/pki)"
+  UM_SCHEMA=https UM_ZIEL="" UM_CA=""
+  if [ -n "$MAGISTER" ]; then
+    UM_SCHEMA=${MAGISTER%%://*}
+    UM_ZIEL=${MAGISTER#*://}
+    UM_ZIEL=${UM_ZIEL%%/*}
+    UM_CA=$MAGISTER_CA
+  elif [ -n "$UEBRIGE" ]; then
+    UM_ZIEL=$UEBRIGE
+    UM_CA=$UEBRIGE_CA
+  fi
   lade_tor
 }
 
@@ -330,7 +345,7 @@ kacheln() {  # Kacheln der Startseite eines Kunden (Titel\tURL\tBeschreibung)
   lies_kunde "$k"
   [ "$NB" != ja ] || printf 'NetBox\thttps://%s-nb.%s\tIPAM, Geräte, Verkabelung\n' "$k" "$DOMAIN"
   [ "$DOC" != ja ] || printf 'Dokumentation\thttps://%s-doc.%s\tFirewall-Regeln, Applikationen, Wege\n' "$k" "$DOMAIN"
-  [ "$UM" != ja ] || [ -z "$MAGISTER" ] || printf 'Benutzerverwaltung\thttps://%s-um.%s\tBenutzer und Rechte\n' "$k" "$DOMAIN"
+  [ "$UM" != ja ] || [ -z "$UM_ZIEL" ] || printf 'Magister\thttps://%s-um.%s\tBenutzer, Gruppen und Rechte\n' "$k" "$DOMAIN"
   [ "$CMDB_AN" != ja ] || [ -z "$CMDB" ] || printf 'CMDB\thttps://%s-cmdb.%s\tLizenzen und Geräte\n' "$k" "$DOMAIN"
   [ ! -f "$(kdir)/$k.links.tsv" ] || cat "$(kdir)/$k.links.tsv"
 }
@@ -517,10 +532,18 @@ schreibe_kunde() {  # Caddy-Einträge eines Kunden
       $'\t\thandle @front_api {\n'"$(printf '%s' "$ui" | sed 's/^/\t/')"$'\n\t\t}'
     printf '}\n'
   fi
-  if [ "$UM" = ja ] && [ -n "$MAGISTER" ]; then
+  if [ "$UM" = ja ] && [ -n "$UM_ZIEL" ]; then
+    # Magister des Kunden: Name bleibt (Magister findet daran den Mandanten), hinter dem Tor
+    local um_trust="" um_ziel
+    [ -z "$UM_CA" ] || um_trust=$'\n\t\t\t\ttls_trust_pool file /etc/caddy/pki/'"$UM_CA"
+    if [ "$UM_SCHEMA" = https ]; then
+      um_ziel=$'\t\t'"reverse_proxy https://$UM_ZIEL {"$'\n\t\t\theader_up Host {host}'"$ident"$'\n\t\t\ttransport http {\n\t\t\t\ttls_server_name {host}'"$um_trust"$'\n\t\t\t}\n\t\t}'
+    else
+      um_ziel=$'\t\t'"reverse_proxy http://$UM_ZIEL {"$'\n\t\t\theader_up Host {host}'"$ident"$'\n\t\t}'
+    fi
     printf '\n%s-um.%s {\n\timport front-kunden\n' "$k" "$DOMAIN"
     zugriff_matcher
-    route_kunde $'\t\t'"reverse_proxy $MAGISTER {$ident"$'\n\t\t}'
+    route_kunde "$um_ziel"
     printf '}\n'
   fi
   if [ "$CMDB_AN" = ja ] && [ -n "$CMDB" ]; then
@@ -581,7 +604,7 @@ schreibe_topologie() {
     local nb="" doc="" um="" cm="" w=""
     [ -z "$NETBOX" ] || [ "$NB" != ja ] || nb="https://$k-nb.$DOMAIN"
     [ "$DOC" != ja ] || doc="https://$k-doc.$DOMAIN"
-    [ "$UM" != ja ] || [ -z "$MAGISTER" ] || um="https://$k-um.$DOMAIN"
+    [ "$UM" != ja ] || [ -z "$UM_ZIEL" ] || um="https://$k-um.$DOMAIN"
     [ "$CMDB_AN" != ja ] || [ -z "$CMDB" ] || cm="https://$k-cmdb.$DOMAIN"
     # 1.11.0 (ADR 0054): Herkunft und gewählte Werkzeuge, Zugriff, Netze, Realm – fürs Cockpit
     [ "$DOC" != ja ] || w+=" doc"
@@ -590,7 +613,7 @@ schreibe_topologie() {
     [ "$CMDB_AN" != ja ] || w+=" cmdb"
     printf '%s\n' "$k$sep${NAME//$sep/}${sep}https://$k.$DOMAIN$sep$nb$sep$doc$sep$um$sep$cm$sep$QUELLE$sep${w# }$sep$ZUGRIFF$sep$NETZE$sep$REALM"
   done | python3 -I -c "$TOPOLOGIE_PY" "$vm" "$(eigene_ips)" "${ui:+https://$ui}" "$portal" "$DOMAIN" \
-    "$NETBOX" "$UEBRIGE" "$MAGISTER" "$CMDB" "$TOR" >"$tmp" || { rm -f "$tmp"; return 0; }
+    "$NETBOX" "$UEBRIGE" "${UM_ZIEL:+$UM_SCHEMA://$UM_ZIEL}" "$CMDB" "$TOR" >"$tmp" || { rm -f "$tmp"; return 0; }
   chmod 644 "$tmp"
   mv -f "$tmp" "$FRONT_STATE/topologie.json"
 }
@@ -637,6 +660,7 @@ cmd_erzeugen() {
   # eine fehlende oder leere CA-Datei liesse den Proxy jede Verbindung dorthin ablehnen (1.10.0)
   ca_pruefen AUTOMATO_FRONT_NETBOX_CA "$NETBOX_CA"
   ca_pruefen AUTOMATO_FRONT_UEBRIGE_CA "$UEBRIGE_CA"
+  ca_pruefen AUTOMATO_FRONT_MAGISTER_CA "$MAGISTER_CA"
   if tor_an; then ca_pruefen AUTOMATO_FRONT_KEYCLOAK_CA "$KC_CA"; fi
   local g k www name abmelden
   EIGENE_NETZE=$(eigene_netze)
@@ -842,7 +866,7 @@ werkzeuge() {  # Kurzliste der Werkzeuge eines Kunden
   [ -z "$NETBOX" ] || [ "$NB" != ja ] || w="NetBox"
   [ "$DOC" != ja ] || w="${w:+$w, }Doku"
   if [ "$UM" = ja ]; then
-    if [ -n "$MAGISTER" ]; then w="${w:+$w, }Benutzer"; else w="${w:+$w, }Benutzer (aus)"; fi
+    if [ -n "$UM_ZIEL" ]; then w="${w:+$w, }Magister"; else w="${w:+$w, }Magister (aus)"; fi
   fi
   if [ "$CMDB_AN" = ja ]; then
     if [ -n "$CMDB" ]; then w="${w:+$w, }CMDB"; else w="${w:+$w, }CMDB (aus)"; fi
@@ -896,7 +920,7 @@ cmd_kunde() {
     ok "Dokumentation https://$k-doc.$DOMAIN"
     info "Keycloak (Client automato-web): Valid redirect URI https://$k-doc.$DOMAIN/* und Web origin https://$k-doc.$DOMAIN ergänzen"
   fi
-  [ "$um" != ja ] || { [ -n "$MAGISTER" ] && ok "Benutzerverwaltung https://$k-um.$DOMAIN → $MAGISTER" || warn "--um gesetzt, aber AUTOMATO_FRONT_MAGISTER leer – bleibt aus"; }
+  [ "$um" != ja ] || { [ -n "$UM_ZIEL" ] && ok "Magister https://$k-um.$DOMAIN → $UM_ZIEL (Mandant mit dieser Adresse)" || warn "--um gesetzt, aber weder AUTOMATO_FRONT_MAGISTER noch _UEBRIGE – bleibt aus"; }
   [ "$cmdb" != ja ] || { [ -n "$CMDB" ] && ok "CMDB https://$k-cmdb.$DOMAIN → $CMDB" || warn "--cmdb gesetzt, aber AUTOMATO_FRONT_CMDB leer – bleibt aus"; }
   if tor_an; then
     if [ -z "$realm" ]; then warn "ohne --realm gesperrt (Anmelde-Tor an)"
@@ -1028,8 +1052,8 @@ adressen() {  # je Zeile Name<TAB>Zweck<TAB>Zertifikat: jede Adresse, die dieser
     printf '%s.%s\t%s: Startseite\t%s\n' "$k" "$DOMAIN" "$k" "$c"
     if [ -n "$NETBOX" ] && [ "$NB" = ja ]; then printf '%s-nb.%s\t%s: NetBox\t%s\n' "$k" "$DOMAIN" "$k" "$c"; fi
     if [ "$DOC" = ja ]; then printf '%s-doc.%s\t%s: Automato\t%s\n' "$k" "$DOMAIN" "$k" "$c"; fi
-    if [ "$UM" = ja ] && [ -n "$MAGISTER" ]; then
-      printf '%s-um.%s\t%s: Benutzerverwaltung (Magister)\t%s\n' "$k" "$DOMAIN" "$k" "$c"
+    if [ "$UM" = ja ] && [ -n "$UM_ZIEL" ]; then
+      printf '%s-um.%s\t%s: Magister\t%s\n' "$k" "$DOMAIN" "$k" "$c"
     fi
     if [ "$CMDB_AN" = ja ] && [ -n "$CMDB" ]; then
       printf '%s-cmdb.%s\t%s: CMDB\t%s\n' "$k" "$DOMAIN" "$k" "$c"
@@ -1243,7 +1267,13 @@ cmd_pruefen() {
     warn "AUTOMATO_FRONT_DOMAIN_INT leer – kein Portal"
   fi
   [ -n "$NETBOX" ] && ok "NetBox-Host: $NETBOX" || warn "AUTOMATO_FRONT_NETBOX leer – keine Weiterleitung zur NetBox"
-  [ -n "$MAGISTER" ] && ok "Magister: $MAGISTER" || info "Magister (-um) aus"
+  if [ -n "$MAGISTER" ]; then
+    ok "Magister (-um): $UM_ZIEL${UM_CA:+ (CA $UM_CA)}"
+  elif [ -n "$UEBRIGE" ]; then
+    ok "Magister (-um): wie die übrigen Namen an $UEBRIGE"
+  else
+    info "Magister (-um) aus (AUTOMATO_FRONT_MAGISTER bzw. _UEBRIGE leer)"
+  fi
   if [ -n "$UEBRIGE" ]; then
     ok "Übrige Namen unter $DOMAIN an: $UEBRIGE${UEBRIGE_CA:+ (CA $UEBRIGE_CA)}"
   else
@@ -1589,7 +1619,7 @@ tor_adressen() {  # Valid redirect URIs des Clients automato-front in einem Real
     printf '            https://%s.%s/oauth2/callback\n' "$k" "$DOMAIN"
     [ -z "$NETBOX" ] || [ "$NB" != ja ] || printf '            https://%s-nb.%s/oauth2/callback\n' "$k" "$DOMAIN"
     [ "$DOC" != ja ] || printf '            https://%s-doc.%s/oauth2/callback\n' "$k" "$DOMAIN"
-    [ "$UM" != ja ] || [ -z "$MAGISTER" ] || printf '            https://%s-um.%s/oauth2/callback\n' "$k" "$DOMAIN"
+    [ "$UM" != ja ] || [ -z "$UM_ZIEL" ] || printf '            https://%s-um.%s/oauth2/callback\n' "$k" "$DOMAIN"
     [ "$CMDB_AN" != ja ] || [ -z "$CMDB" ] || printf '            https://%s-cmdb.%s/oauth2/callback\n' "$k" "$DOMAIN"
   done
   if [ "$realm" = "$HAUPT_REALM" ] && [ -n "$INTERN" ]; then

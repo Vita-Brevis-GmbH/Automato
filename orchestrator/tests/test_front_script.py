@@ -206,16 +206,33 @@ def test_werkzeuge_nur_mit_freischaltung(front):
     site = (front.gen / "sites" / "kunde-a.caddy").read_text()
     assert "kunde-a-doc.mgmt.example.ch {" in site and "respond @internal 404" in site
     assert "-um." not in site  # --um ohne Adresse von Magister bleibt aus
-    assert "AUTOMATO_FRONT_MAGISTER leer" in out.stdout
+    assert "weder AUTOMATO_FRONT_MAGISTER noch _UEBRIGE" in out.stdout
     assert "Valid redirect URI https://kunde-a-doc.mgmt.example.ch/*" in out.stdout
 
     front.env_file.write_text(ENV + "AUTOMATO_FRONT_MAGISTER=https://magister.int.example.ch\n")
     assert front("erzeugen").returncode == 0
     site = (front.gen / "sites" / "kunde-a.caddy").read_text()
     assert "kunde-a-um.mgmt.example.ch {" in site
-    assert "reverse_proxy https://magister.int.example.ch" in site
+    um = site.split("kunde-a-um.mgmt.example.ch {")[1]
+    # 1.12.0: Magister findet den Mandanten am Namen – Host und SNI des Aufrufs bleiben
+    assert "reverse_proxy https://magister.int.example.ch {" in um
+    assert "header_up Host {host}" in um and "tls_server_name {host}" in um
     seite = (front.gen / "www" / "kunde-a" / "index.html").read_text()
-    assert "Benutzerverwaltung" in seite and "Dokumentation" in seite
+    assert "Magister" in seite and "https://kunde-a-um.mgmt.example.ch" in seite
+    assert "Dokumentation" in seite
+
+    # ohne AUTOMATO_FRONT_MAGISTER: wie die übrigen Namen (dort steht Magister), mit deren CA
+    _zertifikat(front.pki, "magister-root", "DNS:magister.example.ch")
+    (front.pki / "magister-root.crt").rename(front.pki / "magister-root.pem")
+    front.env_file.write_text(
+        ENV + "AUTOMATO_FRONT_UEBRIGE=10.0.20.10\nAUTOMATO_FRONT_UEBRIGE_CA=magister-root.pem\n"
+    )
+    assert front("erzeugen").returncode == 0
+    um = (
+        (front.gen / "sites" / "kunde-a.caddy").read_text().split("kunde-a-um.mgmt.example.ch {")[1]
+    )
+    assert "reverse_proxy https://10.0.20.10 {" in um and "header_up Host {host}" in um
+    assert "tls_trust_pool file /etc/caddy/pki/magister-root.pem" in um
 
 
 def test_eigene_ca_fuer_den_netbox_host(front):
@@ -686,8 +703,7 @@ def test_pruefen_adressen_und_ziele(front):
                         ("kunde-a.mgmt.example.ch", "kunde-a: Startseite"),
                         ("kunde-a-nb.mgmt.example.ch", "kunde-a: NetBox"),
                         ("kunde-a-doc.mgmt.example.ch", "kunde-a: Automato"),
-                        ("kunde-a-um.mgmt.example.ch",
-                         "kunde-a: Benutzerverwaltung (Magister)")]:  # fmt: skip
+                        ("kunde-a-um.mgmt.example.ch", "kunde-a: Magister")]:  # fmt: skip
         assert f"OK      {name} → 10.0.20.5 ({zweck})" in text
     assert "mgmt.int.example.ch (Verwaltung, leitet aufs Portal): nicht im DNS" in text
     assert "*.mgmt.example.ch zeigt auf diese VM: jeder andere Name unter mgmt.example.ch" in text
