@@ -298,14 +298,50 @@ html() {  # Text für HTML maskieren
 }
 
 # --- Seiten ------------------------------------------------------------------------------------
-# Abmelden mit Anmelde-Tor (1.12.1): das Tor löscht sein Cookie und schickt den Browser über die
-# Abmeldeseite von Keycloak zurück auf $2 – so endet auch die Sitzung in Keycloak, statt dass der
-# nächste Aufruf still wieder anmeldet. $1 Realm, $2 Adresse danach (Post-Logout-URI des Clients)
-abmelde_url() {
-  local realm=$1 zurueck=$2 ziel
-  [ -n "$KC" ] || { printf '/oauth2/sign_out'; return 0; }
-  ziel="$KC/realms/$realm/protocol/openid-connect/logout?client_id=$TOR_CLIENT&post_logout_redirect_uri=$(url_kodiert "$zurueck")"
-  printf '/oauth2/sign_out?rd=%s' "$(url_kodiert "$ziel")"
+# Abmelden mit Anmelde-Tor (1.12.2): das Tor löscht sein Cookie und beendet die Sitzung in
+# Keycloak selbst (--backend-logout-url), dann zeigt $1 die Seite „Abgemeldet“ ausserhalb des Tors.
+# 1.12.1 schickte den Browser noch über die Abmeldeseite von Keycloak zurück auf die Startseite –
+# im Dev-Test blieb er dort stehen, ohne dass sichtbar war, dass er abgemeldet ist.
+abmelde_url() {  # $1 Adresse der Seite „Abgemeldet“ (Domain des Tors, --whitelist-domain)
+  printf '/oauth2/sign_out?rd=%s' "$(url_kodiert "$1")"
+}
+
+ABGEMELDET=/abgemeldet
+
+# Route „Abgemeldet“ vor dem Tor: $1 Ordner der statischen Seiten
+abgemeldet_route() {
+  printf '\t\thandle %s {\n\t\t\troot * %s\n\t\t\trewrite * %s.html\n\t\t\timport front-seite\n\t\t}' \
+    "$ABGEMELDET" "$1" "$ABGEMELDET"
+}
+
+abgemeldet_seite() {  # HTML der Seite „Abgemeldet“: $1 Titel (Kunde bzw. Portal)
+  cat <<SEITE
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Abgemeldet · signed out – $(html "$1")</title>
+<style>
+:root { color-scheme: light dark; --bg:#f6f7f9; --card:#fff; --fg:#1d2330; --muted:#5b6473; --line:#dfe3ea; --accent:#2457c5; }
+@media (prefers-color-scheme: dark) { :root { --bg:#14171d; --card:#1d222b; --fg:#e7eaf0; --muted:#9aa3b2; --line:#2c3340; --accent:#7aa2ff; } }
+body { margin:0; font: 16px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; background:var(--bg); color:var(--fg); }
+main { max-width: 520px; margin: 12vh auto 0; padding: 28px 24px; background:var(--card); border:1px solid var(--line); border-radius:10px; }
+h1 { margin: 0 0 8px; font-size: 1.4rem; }
+p { margin: 0 0 18px; color: var(--muted); }
+a.knopf { display:inline-block; padding:8px 14px; border-radius:8px; background:var(--accent); color:#fff; text-decoration:none; }
+</style>
+</head>
+<body>
+<main>
+<h1>Abgemeldet · signed out</h1>
+<p>$(html "$1"): Sie sind abgemeldet, auch bei der Anmeldung (Keycloak). · You are signed out.</p>
+<a class="knopf" href="/">Wieder anmelden · sign in again</a>
+</main>
+</body>
+</html>
+SEITE
 }
 
 url_kodiert() { python3 -I -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$1"; }
@@ -510,7 +546,7 @@ schreibe_kunde() {  # Caddy-Einträge eines Kunden
   printf '# Kunde %s (front.sh) – nicht von Hand ändern\n' "$k"
   printf '%s.%s {\n\timport front-kunden\n' "$k" "$DOMAIN"
   zugriff_matcher
-  route_kunde $'\t\t'"root * /srv/front/$k"$'\n\t\timport front-seite'
+  route_kunde $'\t\t'"root * /srv/front/$k"$'\n\t\timport front-seite' "" "$(abgemeldet_route "/srv/front/$k")"
   printf '}\n'
   if [ -n "$NETBOX" ] && [ "$NB" = ja ]; then
     nb_ziel() {  # NetBox auf dem NetBox-Host; $1 = Zeile(n) für den Benutzer
@@ -531,7 +567,7 @@ schreibe_kunde() {  # Caddy-Einträge eines Kunden
     fi
     route_kunde "$(nb_ziel "$ident")" \
       $'\t\thandle @front_nb_token {\n'"$(nb_ziel "" | sed 's/^/\t/')"$'\n\t\t}' \
-      $'\t\tredir /logout/ '"$(abmelde_url "$REALM" "https://$k.$DOMAIN/")"' 302' "$eigen"
+      $'\t\tredir /logout/ '"$(abmelde_url "https://$k.$DOMAIN$ABGEMELDET")"' 302' "$eigen"
     printf '}\n'
   fi
   if [ "$DOC" = ja ]; then
@@ -689,8 +725,9 @@ cmd_erzeugen() {
     lies_kunde "$k"
     tor_fuer_kunde
     abmelden=""
-    [ -z "$TOR_DIENST" ] || abmelden=$(abmelde_url "$REALM" "https://$k.$DOMAIN/")
+    [ -z "$TOR_DIENST" ] || abmelden=$(abmelde_url "https://$k.$DOMAIN$ABGEMELDET")
     kacheln "$k" | seite "$NAME" "Werkzeuge · tools" "$abmelden" >"$www/$k/index.html"
+    abgemeldet_seite "$NAME" >"$www/$k$ABGEMELDET.html"
   done
   # Unbekannte Namen unter den Domains (z. B. <kunde>-doc ohne --doc): 404 statt einer leeren
   # Antwort; die bekannten Namen sind genauer und gehen vor. Mit AUTOMATO_FRONT_UEBRIGE (1.10.0,
@@ -717,8 +754,8 @@ cmd_erzeugen() {
     abmelden=""
     if tor_an; then
       if [ -n "$HAUPT_REALM" ] && tor_bereit "$HAUPT_REALM"; then
-        portal=$'\t\timport front-tor tor-intern\n'"$portal"
-        abmelden=$(abmelde_url "$HAUPT_REALM" "https://start.$INTERN/")
+        portal="$(abgemeldet_route /srv/front/_portal)"$'\n\t\timport front-tor tor-intern\n'"$portal"
+        abmelden=$(abmelde_url "https://start.$INTERN$ABGEMELDET")
       else
         portal=$'\t\timport front-gesperrt'
       fi
@@ -731,6 +768,7 @@ cmd_erzeugen() {
         printf '%s\thttps://%s.%s\t%s\n' "$name" "$k" "$DOMAIN" "$(werkzeuge "$k")"
       done
     } | seite "Kunden" "Portal · alle Kunden" "$abmelden" >"$www/_portal/index.html"
+    abgemeldet_seite "Portal" >"$www/_portal$ABGEMELDET.html"
     cat >"$g/sites/_intern.caddy" <<EOF
 # Interne Adressen (front.sh) – nicht von Hand ändern
 start.$INTERN {
@@ -811,10 +849,6 @@ tor_dienst_yaml() {  # $1 Container, $2 Realm, $3 erlaubte Rollen (leer = alle B
     --silence-ping-logging=true
   )
   [ -z "$INTERN" ] || args+=("--whitelist-domain=$INTERN" "--whitelist-domain=.$INTERN")
-  # Abmelden über die Abmeldeseite von Keycloak (1.12.1): rd zeigt dorthin
-  local kc_host=${KC#*://}
-  kc_host=${kc_host%%/*}
-  [ -z "$kc_host" ] || args+=("--whitelist-domain=$kc_host")
   for rolle in $rollen; do args+=("--allowed-role=$rolle"); done
   [ -z "$KC_CA" ] || args+=(--provider-ca-file=/etc/automato-tor/ca.crt --use-system-trust-store=true)
   printf '  %s:\n    <<: *tor\n    env_file: ["%s"]\n' "$dienst" "$(tor_env "$realm")"

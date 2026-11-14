@@ -241,7 +241,9 @@ zweite Maske an: Automato selbst, NetBox über den Benutzer vom Tor
 - **Benutzer für die Werkzeuge:** `X-Automato-User` (`<benutzer>@<realm>`), `X-Automato-Realm`,
   `X-Automato-Groups` (`automato-lesen`, Realm-Rollen als `role:<rolle>`); nur das Tor setzt sie,
   vom Absender werden sie immer entfernt. Magister vertraut ihnen nur von dieser VM.
-- **Abmelden:** „Abmelden“ auf der Startseite bzw. in NetBox beendet auch die Keycloak-Sitzung.
+- **Abmelden:** „Abmelden“ auf der Startseite, im Portal bzw. in NetBox beendet auch die
+  Keycloak-Sitzung (das Tor meldet sich dort ab) und zeigt die Seite „Abgemeldet“
+  (`/abgemeldet`, vor dem Tor) mit „Wieder anmelden“ (1.12.2).
 - **Sitzung:** 12 h, alle 5 min bei Keycloak erneuert.
 - **Keycloak erreichbar:** die Anmeldeseite für alle Benutzer (Kunden über die WAF); dieser Proxy
   braucht Keycloak für Token und Schlüssel (`AUTOMATO_FRONT_KEYCLOAK_INTERN`).

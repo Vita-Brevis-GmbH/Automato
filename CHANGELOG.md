@@ -7,6 +7,21 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 1.12.2 – 2026-11-14
+
+Korrektur aus dem Test des Anmelde-Tors (Anwender 2026-11-14: „Wenn ich mich im Portal ein Logout
+mache, bleibe ich auf der Seite … Will ich weiter klicken muss ich mich zwar neu einloggen, aber es
+ist nicht schön“).
+
+- **Abmelden zeigt die Seite „Abgemeldet“:** „Abmelden“ auf der Startseite, im Portal und in NetBox
+  (`/logout/`) löscht das Cookie des Tors, das Tor beendet die Sitzung in Keycloak selbst
+  (`--backend-logout-url`), danach zeigt `https://<kunde>.<domain>/abgemeldet` bzw.
+  `https://start.<intern>/abgemeldet` „Abgemeldet“ mit „Wieder anmelden“. Die Seite liegt vor dem
+  Tor (nach der Sperre nach Absender und dem Zugriff je Kunde). Der Umweg des Browsers über die
+  Abmeldeseite von Keycloak aus 1.12.1 entfällt, und mit ihm Keycloak als erlaubtes Ziel des Tors.
+  Geprüft mit Caddy, dem oauth2-proxy des Tors und Keycloak 26: „Wieder anmelden“ verlangt die
+  Anmeldung neu.
+
 ## 1.12.1 – 2026-11-13
 
 Korrekturen aus dem Test des Anmelde-Tors (Anwender 2026-11-13).

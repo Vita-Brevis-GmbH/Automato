@@ -448,7 +448,14 @@ def test_abmelden_beendet_auch_keycloak(tor):
         r, _ = _folgen(c, "https://vb.mgmt.example.ch/")
         assert r.status_code == 200
         vorher = len(tor.logouts)
-        r = c.get("https://vb.mgmt.example.ch/oauth2/sign_out")
-        assert r.status_code == 302
+        # 1.12.2: der Link der Startseite; das Tor beendet die Keycloak-Sitzung selbst und zeigt
+        # die Seite „Abgemeldet“ ausserhalb des Tors (Fund aus dem Dev-Test: Browser blieb stehen)
+        link = r.text.split('href="/oauth2/sign_out')[1].split('"')[0]
+        r, weg = _folgen(c, "https://vb.mgmt.example.ch/oauth2/sign_out" + link)
+        assert weg[-1] == "https://vb.mgmt.example.ch/abgemeldet"
+        assert r.status_code == 200 and "Abgemeldet" in r.text
         assert len(tor.logouts) == vorher + 1 and tor.logouts[-1].get("id_token_hint")
         assert c.get("https://vb.mgmt.example.ch/").status_code == 302  # wieder abgemeldet
+        # NetBox: /logout/ landet auf derselben Seite
+        r = c.get("https://vb-nb.mgmt.example.ch/logout/")
+        assert r.status_code == 302 and "abgemeldet" in r.headers["location"]
