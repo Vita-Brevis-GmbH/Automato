@@ -2260,6 +2260,28 @@ Client-Zertifikat und die passenden Zeilen der `agent.env`.
     `zurueck` nur einmal. Beide nehmen dieselbe Sperre (`.betrieb.lock`).
   - Von Hand z. B. `sudo deploy/betrieb.sh stand`. Einrichten (Schlüssel, Secret, GHCR
     öffentlich): `deploy/release/README.md`.
+- **Eigene Automato-Instanz je Kunde** (1.16.0, ADR 0061): wählt der Betreiber im Cockpit beim
+  Kunden „eigene Automato-Instanz“, legt der Host-Agent auf der VM des Front-Proxys einen eigenen
+  Stack an – `git clone` nach `<basisordner>/<instanz>` (z. B. `/opt/automato/instanzen/kunde-a`),
+  Commit des Manifests, dann `deploy/betrieb.sh installieren …`. Die Instanz hat eine eigene `.env`
+  (auf dem Host erzeugt, 0600: Geheimnisse, Projekt `automato-<instanz>`, OIDC auf den Realm des
+  Kunden), keine Ports auf dem Host und ist nur über `https://<kunde>-doc.<domain>` erreichbar
+  (Front-Proxy, hinter dem Anmelde-Tor; Netz `automato-front-instanzen`, Anschluss
+  `automato-<instanz>-web-ui:5173`). Läuft sie nicht, antwortet die Adresse 503.
+  - In der Instanz gehen `stand`, `sichern`, `aktualisieren`, `zurueck`, `neustart` wie oben (im
+    Ordner der Instanz, z. B. `cd /opt/automato/instanzen/kunde-a && sudo deploy/betrieb.sh stand`);
+    `docker compose ps|logs` dort zeigt nur die Instanz. Sicherungen unter
+    `/var/backups/automato/instanzen/<instanz>`, mit der age-Identität des Hosts.
+  - `deploy/betrieb.sh entfernen --ja` (Abbau im Cockpit): Sicherung → Container und Volumes
+    der Instanz → Ordner nach `<basisordner>/archiv/<instanz>-<zeit>`; ohne gelungene Sicherung
+    wird nichts gelöscht. In der Hauptinstanz lehnt `entfernen` immer ab.
+  - Scheitert `installieren`, räumt es Container, Volumes und `.env` der neuen Instanz selbst weg.
+    Reste einer früheren Instanz gleichen Namens meldet es nur (Exit 3) – ansehen mit
+    `docker ps -a --filter label=com.docker.compose.project=automato-<instanz>` (bzw. `docker
+    volume ls …`), dann von Hand entfernen.
+  - `sudo deploy/front/front.sh pruefen` zeigt je Kunde, ob seine Instanz im Netz läuft, und
+    Instanzen ohne Kunden (Altlast, nur gemeldet). Voraussetzung: der Proxy der Hauptinstanz läuft
+    mit ≥ 1.16.0 (`docker compose up -d proxy` legt das Netz an).
 - **Aufbau prüfen** (0.40.0, nach dem Muster von Magisters `plattform-aufbau.sh`):
   - `deploy/aufbau.sh pruefen` – Werkzeuge (docker, compose, curl, git, python3), Docker-Dienst,
     Container (läuft, Health), `/health`, die Verbindungen aus dem Orchestrator-Container

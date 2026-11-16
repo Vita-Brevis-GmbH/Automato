@@ -382,6 +382,17 @@ warnt, wenn Orchestrator und Worker verschieden auflösen.
   `.env` und `deploy/proxy/pki` sichern (wie die Konfiguration in `INSTALLATION-PROD.md` 7).
 - **Update auf 1.4.0:** `update.sh` startet den Proxy im neuen Netz `automato-front-tor`; danach
   `sudo deploy/front/front.sh erzeugen`. Ohne `AUTOMATO_FRONT_TOR=an` bleibt alles wie in 1.3.
+- **Eigene Automato-Instanzen je Kunde (1.16.0, ADR 0061):** das Update auf 1.16.0 startet den
+  Proxy zusätzlich im Netz `automato-front-instanzen` (intern, ohne Weg nach aussen; gehört dem
+  Projekt der Hauptinstanz – nicht von Hand mit `docker network create` anlegen). Hat ein Kunde
+  aus dem Cockpit eine eigene Instanz (`automato_instanz` in den Freigaben), geht
+  `<kunde>-doc.<domain>` hinter dem Tor an deren Anschluss `automato-<instanz>-web-ui:5173`; läuft
+  er nicht, antwortet die Adresse 503 („Automato-Instanz nicht erreichbar“), nie die Hauptinstanz.
+  Der Timer von `front.sh sync` erzeugt neu, sobald eine Instanz startet bzw. weg ist (höchstens 10
+  Minuten); sofort: `sudo deploy/front/front.sh sync --immer`. `front.sh pruefen` zeigt je Kunde
+  den Stand und Instanzen ohne Kunden. Die Instanz braucht im Realm des Kunden den Client
+  `automato-web` mit Redirect-URI `https://<kunde>-doc.<domain>/*` (das Cockpit trägt ihn ein;
+  von Hand: `deploy/keycloak/make_realm.py --ui-url https://<kunde>-doc.<domain>`).
 
 ## 10. Inventar fürs Cockpit (1.10.0, ADR 0053)
 
@@ -427,6 +438,10 @@ Chat, Ticket oder Datei). Ein erneutes `cockpit-token` macht das alte ungültig.
   mit `hat_daten` und den Stand der Löschaufträge. Daraus zeigt das Cockpit auf „Aufräumen“
   Altlasten. Mit den Freigaben schickt das Cockpit je Kunde `gesperrt` und nach der Frist
   `entfernen` (Abschnitt 5).
+- **Eigene Instanzen (1.16.0, ADR 0061):** je Kunde `automato_instanz` (Name oder null) und unter
+  `ist.front.instanzen` die Instanzen, deren Anschluss auf der VM läuft. Das Cockpit koppelt eine
+  neue Instanz über ihre eigene Adresse (`https://<kunde>-doc.<domain>/api/kopplung`) mit dem
+  Einmal-Code, den es dem Auftrag `installieren` mitgegeben hat (Abschnitt 9).
 - Das Cockpit erreicht die Oberfläche: seine Adresse steht in `AUTOMATO_UI_ALLOW`, und es vertraut
   dem Zertifikat (im Cockpit `deploy/certs/inventory-ca.pem`, wenn es eine interne CA ist). Das
   gilt auch für das Einlösen des Codes (`POST /api/kopplung`, höchstens 10 Versuche je Minute).

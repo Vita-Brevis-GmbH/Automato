@@ -934,6 +934,14 @@ VM mit Tang/vTPM bzw. der Passphrase.
   login ghcr.io`) – Anleitung `deploy/release/README.md`. Dann aktualisiert der Host-Agent des
   Cockpits über `deploy/betrieb.sh` mit fertigen, signierten Images; `deploy/update.sh` bleibt der
   Bau von Hand (BETRIEB, Abschnitt 4b).
+- **Eigene Automato-Instanzen je Kunde** (1.16.0, ADR 0061): nur auf der VM des Front-Proxys. Der
+  Host-Agent des Cockpits braucht dafür beim Einrichten die Vorlage `automato-instanz` mit einem
+  Basisordner (z. B. `sudo install -d -m 750 /opt/automato/instanzen`) und die git-Adresse des
+  Repos; der Proxy muss mit ≥ 1.16.0 laufen (`docker compose up -d proxy` legt das Netz
+  `automato-front-instanzen` an), Docker Compose ≥ 2.24. Die Instanzen nutzen die age-Identität
+  des Hosts (`/root/automato-backup.agekey`, wie `aufbau.sh backup-schluessel`) – zusätzlich
+  getrennt aufbewahren. Speicher: je Instanz eine eigene Datenbank und eigene Container (BETRIEB,
+  Abschnitt 4b).
 - **Neustart der VM:** Variante A braucht die Passphrase an der Konsole; danach starten alle
   Container von selbst (`restart: unless-stopped`), Kontrolle mit `sudo deploy/aufbau.sh status`.
 - **Zertifikate:** Oberfläche (eigene CA) vor Ablauf ersetzen und `docker compose … restart
