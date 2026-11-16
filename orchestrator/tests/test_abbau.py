@@ -633,3 +633,40 @@ def test_ist_im_inventar(api, session_factory):
         s.query(IstMeldung).delete()
         s.commit()
     assert _ist_entfernen(api)["kunde-a"]["teile"]["netbox"]["grund"] == "netbox_host"
+
+
+def test_verwaiste_netbox_instanz_nur_teil_netbox(api, session_factory):
+    """ADR 0059 Nachtrag 2: eine NetBox-Instanz ohne Portal-Kunden (Altlast, z. B. von Hand
+    angelegt) loescht Automato auf Auftrag des Cockpits - nur den Teil NetBox; ohne Meldung des
+    NetBox-Hosts bzw. fuer einen Kunden aus der Oberflaeche nie."""
+    # ohne Meldung des NetBox-Hosts: unbekannt, abgelehnt wie bisher
+    r = _put(api, [], entfernen=[{"kurzname": "alt-b", "netbox": True}])
+    assert r.json()["entfernen"]["abgelehnt"] == [{"kurzname": "alt-b",
+                                                   "grund": "nicht_vom_cockpit"}]  # fmt: skip
+    assert _stand(api, ["alt-b"], ohne_freigabe=["alt-b"]).status_code == 200
+    r = _put(api, [], entfernen=[{"kurzname": "alt-b", "netbox": True, "automato_kunde": True,
+                                  "tor": True}])  # fmt: skip
+    assert r.json()["entfernen"] == {
+        "angenommen": ["alt-b"],
+        "abgelehnt": [{"kurzname": "alt-b", "grund": "nicht_vom_cockpit", "teil": "automato_kunde"},
+                      {"kurzname": "alt-b", "grund": "nicht_vom_cockpit", "teil": "tor"}],
+    }  # fmt: skip
+    with session_factory() as s:
+        a = s.query(AbbauAuftrag).one()
+        assert (a.netbox, a.automato_kunde, a.tor, a.realm) == (True, False, False, None)
+    assert [e["kurzname"] for e in _loeschen(api)] == ["alt-b"]
+    # Agent loescht (mit Sicherung) und meldet: erledigt
+    assert _stand(api, [], geloescht=["alt-b"]).status_code == 200
+    _put(api, [], entfernen=[{"kurzname": "alt-b", "netbox": True}])
+    e = _ist_entfernen(api)["alt-b"]
+    assert e["teile"]["netbox"] | {"zeit": None} == {"stand": "erledigt", "grund": "geloescht",
+                                                     "zeit": None}  # fmt: skip
+    assert _loeschen(api) == []
+
+    # Kunde aus der Oberflaeche mit gleichnamiger Instanz: nie
+    r = _ui(api, "post", "/portal/customers", json={"short_name": "ui-kunde", "name": "UI"})
+    assert r.status_code in (200, 201), r.text
+    assert _stand(api, ["ui-kunde"]).status_code == 200
+    r = _put(api, [], entfernen=[{"kurzname": "ui-kunde", "netbox": True}])
+    assert r.json()["entfernen"]["abgelehnt"] == [{"kurzname": "ui-kunde", "grund": "oberflaeche"}]
+    assert _loeschen(api) == []

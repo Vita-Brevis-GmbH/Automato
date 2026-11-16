@@ -7,6 +7,18 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 1.14.1 – 2026-11-16
+
+Korrektur aus dem Test des Abbaus (Anwender 2026-11-16: „Löschauftrag: test-a (abgelehnt) …
+nicht_vom_cockpit“):
+
+- **Verwaiste NetBox-Instanzen** (auf dem NetBox-Host, ohne Kunden in Automato) entfernt Automato
+  jetzt auf Auftrag des Cockpits (Seite Aufräumen → Abbau planen): nur der Teil NetBox, wie immer
+  mit Sicherung durch den Agenten des NetBox-Hosts und je Auftrag einmal; Teile `automato_kunde`
+  und `tor` für solche Namen weiter abgelehnt. Ohne Meldung des NetBox-Hosts bzw. für Kunden aus
+  der Oberfläche unverändert nie (ADR 0059 Nachtrag 1.14.1).
+- `netbox-host.sh sync`: der Hinweis zu Instanzen ohne Freigabe nennt die Seite Aufräumen.
+
 ## 1.14.0 – 2026-11-16
 
 Kunden, Portale, Benutzer und Rollen nur aus dem Cockpit (Anwender 2026-11-16: „die Rollen und User

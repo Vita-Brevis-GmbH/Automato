@@ -243,6 +243,15 @@ def _vom_cockpit_entfernt(session: Session, kurzname: str) -> tuple[str | None, 
     return None, realm if isinstance(realm, str) and portal.REALM.fullmatch(realm) else None
 
 
+def _verwaiste_netbox(session: Session, kurzname: str) -> bool:
+    """ADR 0059 Nachtrag 2: meldet der Agent des NetBox-Hosts eine Instanz dieses Namens? Nur fuer
+    Kurznamen ohne Portal-Kunden (prueft der Aufrufer) - eine solche Instanz ist eine Altlast, die
+    das Cockpit ausdruecklich (Frist, Auftrag) entfernen darf; der Agent sichert vorher."""
+    meldung = ist_stand.netbox_meldung(session)
+    d = meldung.daten if meldung is not None and isinstance(meldung.daten, dict) else {}
+    return kurzname in (d.get("instanzen") or []) or kurzname in (d.get("ohne_freigabe") or [])
+
+
 def _frueherer_realm(session: Session, kurzname: str, aktuell: str | None) -> str | None:
     """Realm, den der Portal-Kunde vor seinem jetzigen hatte (bzw. zuletzt, wenn er jetzt keinen
     hat) - aus dem Verlauf `portal.customer.*` im Audit (Anlegen nennt den Realm, Aendern nur einen
@@ -453,6 +462,17 @@ def anwenden(session: Session, plan: Plan, settings: Settings, akteur: str = AKT
                 realm = vorher.realm  # in dieser Anfrage entfernt: sein Realm
             elif a is None:
                 grund, realm = _vom_cockpit_entfernt(session, e.kurzname)
+                if grund == NICHT_VOM_COCKPIT and wuensche["netbox"] \
+                        and _verwaiste_netbox(session, e.kurzname):  # fmt: skip
+                    # ADR 0059 Nachtrag 2: verwaiste NetBox-Instanz (kein Portal-Kunde dieses
+                    # Namens) - nur der Teil NetBox, die uebrigen gehoeren zu einem Kunden
+                    grund = None
+                    for teil in ("automato_kunde", "tor"):
+                        if wuensche[teil]:
+                            erg.abgelehnt.append(
+                                {"kurzname": e.kurzname, "grund": NICHT_VOM_COCKPIT, "teil": teil}
+                            )
+                            wuensche[teil] = False
             else:
                 realm = a.realm
             if grund:

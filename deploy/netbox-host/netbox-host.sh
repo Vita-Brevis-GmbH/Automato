@@ -972,7 +972,7 @@ cmd_sync() {
   for k in $(kunden); do
     case "$gewollt" in *" $k "*) ;; *)
       verwaist="$verwaist $k"
-      warn "$k: in Automato ohne NetBox freigegeben – bleibt; entfernen: Abbau im Cockpit (Kunde entfernen bzw. NetBox abwählen) bzw. von Hand netbox-host.sh loeschen $k --ja"
+      warn "$k: in Automato ohne NetBox freigegeben – bleibt; entfernen: Abbau im Cockpit (Kunde entfernen, NetBox abwählen bzw. Seite Aufräumen) oder von Hand netbox-host.sh loeschen $k --ja"
       ;;
     esac
   done

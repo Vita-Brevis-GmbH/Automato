@@ -181,3 +181,19 @@ Betreiber bei einem **bleibenden** Kunden ein Werkzeug ab (z. B. NetBox), blieb 
   erledigt meldet (`geloescht`, `nicht_vorhanden`, `entfernt`, … bzw. `aufgehoben`); „von Hand“
   entfällt für NetBox, Automato und Tor.
 - `front.sh` bleibt unverändert (es entfernt Tor-Geheimnisse ohnehin je Realm).
+
+## Nachtrag 1.14.1 (2026-11-16): verwaiste NetBox-Instanzen auf Auftrag des Cockpits
+
+Anlass: Der Anwender plante im Cockpit (Seite Aufräumen) den Abbau einer NetBox-Instanz, zu der es
+keinen Kunden mehr gab (von Hand angelegt, nie vom Cockpit); Automato lehnte ab
+(`nicht_vom_cockpit`), die Instanz blieb.
+
+- Ein Eintrag in `entfernen` darf einen Kurznamen ohne Portal-Kunden nennen, wenn die letzte
+  Meldung des NetBox-Hosts eine Instanz dieses Namens zeigt (`instanzen` bzw. `ohne_freigabe`).
+  Dann gilt **nur der Teil NetBox** (Agent des NetBox-Hosts, immer mit Sicherung, je Auftrag
+  einmal); `automato_kunde` und `tor` werden mit `{"grund": "nicht_vom_cockpit", "teil": …}`
+  abgelehnt – sie hängen an einem Kunden, den es nie vom Cockpit gab.
+- Unverändert: nie für einen Portal-Kunden aus der Oberfläche (`oberflaeche`), nie für einen
+  Kurznamen, den es als Portal-Kunden mit NetBox gibt, ohne Meldung des NetBox-Hosts weiterhin
+  `nicht_vom_cockpit`. „Nie still löschen“ bleibt: gelöscht wird nur auf den ausdrücklichen Auftrag
+  aus dem Cockpit (Abbau-Plan, Frist, Bestätigung).
