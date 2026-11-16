@@ -21,7 +21,8 @@
 #   netbox-host.sh pruefen                      Proxy, Zertifikat, Instanzen, Sicherungen
 #   netbox-host.sh sso <kunde|alle>             Anmeldung über das Anmelde-Tor einrichten (1.4.0)
 #   netbox-host.sh agent <automato-adresse>     Agent einrichten: NetBox je Kunde aus Automato (1.11.0)
-#   netbox-host.sh sync                         einmal abgleichen (das tut der Agent alle 5 Minuten)
+#   netbox-host.sh sync [--takt]                einmal abgleichen (der Agent jede Minute mit --takt:
+#                                               ohne Änderung in Automato nur alle 5 Minuten voll)
 #
 # Seit 1.11.0 (ADR 0054) legt der Agent die NetBox je Kunde selbst an: er holt aus Automato die
 # Kunden mit dem Werkzeug NetBox (GET /api/netbox-host, eigenes Token) und ruft für jeden ohne
@@ -627,6 +628,43 @@ setze_conf() {  # KEY=wert in host.conf setzen bzw. anhängen (Wert ohne Anführ
   fi
 }
 
+# systemd-Units des Agenten (1.15.1): jede Minute `sync --takt` – ein Lauf ohne Änderung in Automato
+# endet nach der Abfrage (billig), voller Abgleich bei Änderung bzw. spätestens alle 5 Minuten.
+agent_units() {
+  local skript="$SCRIPT_DIR/netbox-host.sh"
+  install -d -m 755 "$NBH_SYSTEMD_DIR"
+  printf '%s\n' \
+    '[Unit]' \
+    'Description=NetBox-Host: NetBox je Kunde aus Automato anlegen (ADR 0054)' \
+    'After=docker.service network-online.target' \
+    '' \
+    '[Service]' \
+    'Type=oneshot' \
+    "ExecStart=$skript sync --takt" >"$NBH_SYSTEMD_DIR/netbox-host-sync.service"
+  printf '%s\n' \
+    '[Unit]' \
+    'Description=NetBox-Host: Kunden aus Automato jede Minute abfragen' \
+    '' \
+    '[Timer]' \
+    'OnBootSec=2min' \
+    'OnUnitActiveSec=1min' \
+    'Unit=netbox-host-sync.service' \
+    '' \
+    '[Install]' \
+    'WantedBy=timers.target' >"$NBH_SYSTEMD_DIR/netbox-host-sync.timer"
+}
+
+# Units aus einer älteren Version (Takt 5 Minuten) beim Abgleich nachführen – ohne neues `agent`.
+agent_units_nachfuehren() {
+  local timer="$NBH_SYSTEMD_DIR/netbox-host-sync.timer"
+  [ -f "$timer" ] || return 0
+  grep -qx 'OnUnitActiveSec=1min' "$timer" && return 0
+  agent_units
+  $SYSTEMCTL daemon-reload || return 0
+  $SYSTEMCTL restart --no-block netbox-host-sync.timer || true
+  info "Agent: Takt auf jede Minute umgestellt (1.15.1)"
+}
+
 cmd_agent() {
   root_noetig
   lade_conf
@@ -645,31 +683,11 @@ cmd_agent() {
   setze_conf AUTOMATO_URL "$url"
   ok "Automato: $url, Token in $(token_datei) (nur root)"
   [ -z "$AUTOMATO_CA" ] || [ -s "$AUTOMATO_CA" ] || warn "AUTOMATO_CA=$AUTOMATO_CA fehlt oder ist leer"
-  local skript="$SCRIPT_DIR/netbox-host.sh"
-  install -d -m 755 "$NBH_SYSTEMD_DIR"
-  printf '%s\n' \
-    '[Unit]' \
-    'Description=NetBox-Host: NetBox je Kunde aus Automato anlegen (ADR 0054)' \
-    'After=docker.service network-online.target' \
-    '' \
-    '[Service]' \
-    'Type=oneshot' \
-    "ExecStart=$skript sync" >"$NBH_SYSTEMD_DIR/netbox-host-sync.service"
-  printf '%s\n' \
-    '[Unit]' \
-    'Description=NetBox-Host: Kunden aus Automato alle 5 Minuten abgleichen' \
-    '' \
-    '[Timer]' \
-    'OnBootSec=2min' \
-    'OnUnitActiveSec=5min' \
-    'Unit=netbox-host-sync.service' \
-    '' \
-    '[Install]' \
-    'WantedBy=timers.target' >"$NBH_SYSTEMD_DIR/netbox-host-sync.timer"
+  agent_units
   $SYSTEMCTL daemon-reload
   $SYSTEMCTL enable --now netbox-host-sync.timer
   $SYSTEMCTL start --no-block netbox-host-sync.service || true
-  ok "Agent eingerichtet: alle 5 Minuten netbox-host.sh sync (systemd)"
+  ok "Agent eingerichtet: jede Minute netbox-host.sh sync --takt (systemd; voller Abgleich bei Änderung, sonst alle 5 Minuten)"
   info "Log: journalctl -u netbox-host-sync -f; Stand: netbox-host.sh pruefen"
 }
 
@@ -907,7 +925,9 @@ stand_melden() {  # $1 ohne Freigabe: Ist-Stand an Automato (ADR 0059) – nur K
   return 0
 }
 
-cmd_sync() {
+cmd_sync() {  # [--takt]: vom Timer – ohne Änderung in Automato nur alle 5 Minuten voll abgleichen
+  local takt=0
+  [ "${1:-}" != "--takt" ] || takt=1
   root_noetig
   lade_conf
   [ -n "$AUTOMATO_URL" ] || abbruch "Agent nicht eingerichtet – netbox-host.sh agent https://<automato>"
@@ -934,7 +954,18 @@ cmd_sync() {
     abbruch "Antwort von Automato unbekannt: $liste"
   fi
   loeschen=$(python3 -I -c "$NBH_LOESCHEN_PY" <"$antwort" 2>/dev/null || true)  # ADR 0059
+  agent_units_nachfuehren
+  # 1.15.1: dieselbe Antwort wie beim letzten fehlerfreien Abgleich vor weniger als 5 Minuten -
+  # im Takt nichts zu tun (der volle Abgleich prüft SSO, Zugang und Container je Kunde)
+  local pruef marke="$NBH_DIR/.letzter-abgleich"
+  pruef=$(sha256sum <"$antwort" | cut -d' ' -f1)
   rm -f "$antwort"
+  if [ "$takt" = 1 ] && [ -f "$marke" ] && [ "$(cat "$marke")" = "$pruef" ] \
+    && [ -n "$(find "$marke" -mmin -5 2>/dev/null)" ]; then
+    info "Automato unverändert – voller Abgleich spätestens 5 Minuten nach dem letzten"
+    return 0
+  fi
+  rm -f "$marke"
   local gewollt=" "
   # die Liste über fd 3: docker compose exec im Abgleich liest sonst stdin (die übrigen Kunden)
   while IFS=$'\t' read -r -u 3 k name zugang; do
@@ -986,6 +1017,8 @@ cmd_sync() {
     return 1
   fi
   sync_status ja "$angelegt" "" "$verwaist" "$n" "${LOESCHEN_FEHL:+nicht gelöscht:$LOESCHEN_FEHL}"
+  # nur nach einem Abgleich ohne Fehler: der Takt wiederholt sonst jede Minute
+  [ -n "$LOESCHEN_FEHL" ] || (umask 077 && printf '%s\n' "$pruef" >"$marke")
   ok "Abgleich fertig ($n Kunden mit NetBox)"
 }
 
@@ -1264,6 +1297,6 @@ case "${1:-}" in
   pruefen) cmd_pruefen ;;
   sso) shift; cmd_sso "$@" ;;
   agent) shift; cmd_agent "$@" ;;
-  sync) cmd_sync ;;
+  sync) shift; cmd_sync "$@" ;;
   *) sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

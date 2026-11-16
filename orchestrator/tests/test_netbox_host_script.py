@@ -487,8 +487,8 @@ def test_agent_richtet_den_abgleich_ein(host):
     conf = (host.dir / "host.conf").read_text()
     assert "AUTOMATO_URL=https://automato.int.example.ch\n" in conf and TOKEN not in conf
     systemd = host.dir.parent / "systemd"
-    assert "netbox-host.sh sync" in (systemd / "netbox-host-sync.service").read_text()
-    assert "OnUnitActiveSec=5min" in (systemd / "netbox-host-sync.timer").read_text()
+    assert "netbox-host.sh sync --takt" in (systemd / "netbox-host-sync.service").read_text()
+    assert "OnUnitActiveSec=1min" in (systemd / "netbox-host-sync.timer").read_text()
     assert "systemctl enable --now netbox-host-sync.timer" in host.log.read_text()
     # erneut: Adresse ersetzt, nicht doppelt
     host("agent", "https://automato2.int.example.ch", NBH_TOKEN=TOKEN)
@@ -753,3 +753,29 @@ def test_sync_richtet_sso_ein_wo_es_fehlt(host):
     out = host("sync")
     assert "der Proxy entfernt gefälschte Anmelde-Kopfzeilen nicht" in out.stdout
     assert not datei.exists()
+
+
+def test_sync_im_takt_nur_bei_aenderung_voll(host):
+    """1.15.1: der Timer ruft jede Minute `sync --takt`; dieselbe Antwort wie beim letzten
+    fehlerfreien Abgleich (juenger als 5 Minuten) endet nach der Abfrage, eine geaenderte gleicht
+    sofort voll ab. Units einer aelteren Version (5 Minuten) werden dabei nachgefuehrt."""
+    assert host("agent", "https://automato.int.example.ch", NBH_TOKEN=TOKEN).returncode == 0
+    systemd = host.dir.parent / "systemd"
+    timer = systemd / "netbox-host-sync.timer"
+    timer.write_text(timer.read_text().replace("OnUnitActiveSec=1min", "OnUnitActiveSec=5min"))
+    _antwort(host, [{"kurzname": "kunde-a", "name": "Kunde A"}])
+    voll = host("sync", "--takt")
+    assert voll.returncode == 0, voll.stdout + voll.stderr
+    assert "OnUnitActiveSec=1min" in timer.read_text() and "Takt auf jede Minute" in voll.stdout
+    assert (host.dir / ".letzter-abgleich").exists()
+    vorher = host.log.read_text()
+    gleich = host("sync", "--takt")
+    assert gleich.returncode == 0 and "Automato unverändert" in gleich.stdout
+    assert "compose" not in host.log.read_text()[len(vorher) :]  # kein Abgleich je Kunde
+    # ohne --takt (von Hand) immer voll
+    assert "Automato unverändert" not in host("sync").stdout
+    # geaendert: sofort voll
+    _antwort(host, [{"kurzname": "kunde-a", "name": "Kunde A"},
+                    {"kurzname": "kunde-b", "name": "B"}])  # fmt: skip
+    neu = host("sync", "--takt")
+    assert "Automato unverändert" not in neu.stdout and "kunde-b" in neu.stdout
