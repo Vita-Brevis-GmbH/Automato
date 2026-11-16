@@ -195,6 +195,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # Echter Keycloak für das Anmelde-Tor (test_front_tor_keycloak_e2e.py), früh gestartet, damit
+      # er hochfährt, während die Images bauen. Im Netz des Tors mit Alias keycloak (wie
+      # AUTOMATO_FRONT_KEYCLOAK_INTERN in Betrieb), für Browser und Issuer 127.0.0.1:8180 mit
+      # festem Hostnamen wie in Betrieb. Admin nur mit Testwerten - NUR TEST (Wegwerf-Container).
+      # Nicht unter services: - Keycloak braucht den Befehl start-dev, services: nimmt keinen.
+      - name: Keycloak für das Anmelde-Tor starten (nur Test)
+        run: |
+          docker network create automato-front-tor
+          docker run -d --name keycloak --network automato-front-tor --network-alias keycloak \
+            -p 127.0.0.1:8180:8080 \
+            -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD=nur-test-nur-test \
+            quay.io/keycloak/keycloak:26.4 start-dev --hostname=http://127.0.0.1:8180
       - name: Compose-Konfiguration (alle Profile)
         run: >-
           docker compose --env-file .env.example --profile core --profile collectors
@@ -222,13 +234,31 @@ jobs:
       # gefälschte Kopfzeilen, NetBox-API mit Token, Sperre ohne Realm, Portal nur admin/operator
       - uses: astral-sh/setup-uv@v3
       # 1.6.0 (ADR 0052): Agent-Zugang aus dem Web-UI durch das echte mTLS-Agent-Gateway
-      - name: Anmelde-Tor und Agent-Gateway Ende zu Ende (Caddy + oauth2-proxy + Test-IdP)
+      # 1.12.2: dieselbe Kette auch gegen den echten Keycloak von oben (Realms aus make_realm.py,
+      # Formular von Keycloak, Rollen aus dem Token, Abmelden beendet die Sitzung in Keycloak)
+      - name: Keycloak bereit
+        run: |
+          for _ in $(seq 1 90); do
+            curl -fsS http://127.0.0.1:8180/realms/master > /dev/null 2>&1 && exit 0
+            sleep 2
+          done
+          docker logs keycloak | tail -50
+          exit 1
+      - name: Anmelde-Tor und Agent-Gateway Ende zu Ende (Caddy + oauth2-proxy + Test-IdP/Keycloak)
         env:
           AUTOMATO_TEST_TOR: "1"
+          AUTOMATO_TEST_KEYCLOAK_URL: http://127.0.0.1:8180
+          AUTOMATO_TEST_KEYCLOAK_INTERN: http://keycloak:8080
+          AUTOMATO_TEST_KEYCLOAK_ADMIN: admin
+          AUTOMATO_TEST_KEYCLOAK_ADMIN_PASSWORD: nur-test-nur-test  # nur Test, Wegwerf-Container
         run: |
           uv sync --all-packages
           uv run --package orchestrator pytest orchestrator/tests/test_front_tor_e2e.py \
-            orchestrator/tests/test_agent_gateway_e2e.py -q
+            orchestrator/tests/test_agent_gateway_e2e.py \
+            orchestrator/tests/test_front_tor_keycloak_e2e.py -q -rs
+      - name: Protokoll von Keycloak (bei Fehler)
+        if: failure()
+        run: docker logs keycloak 2>&1 | tail -100
 
   # UI-Tests im Browser (Playwright): Orchestrator mit Beispieldaten + Vite, alle Ansichten und
   # die Kernablaeufe (Suche, NAT-Links, Findings, Dienste, Standorte, Alle einlesen).
