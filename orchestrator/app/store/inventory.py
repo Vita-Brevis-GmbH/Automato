@@ -110,17 +110,23 @@ def _kunden(topo: dict) -> list[dict]:
     return out
 
 
+def installation(settings: Settings, topo: dict | None = None) -> dict:
+    """Version, Umgebung und Adresse der Oberflaeche (auch in der Antwort der Kopplung, 1.13.0)."""
+    topo = _topologie(settings.front_state_dir) if topo is None else topo
+    return {
+        "version": __version__,
+        "umgebung": settings.environment,
+        "oberflaeche": _text(topo.get("oberflaeche")),
+    }
+
+
 def inventory(settings: Settings) -> dict:
     """Antwort von `GET /inventory` - Vertrag v1 (`VERTRAG`)."""
     topo = _topologie(settings.front_state_dir)
     issuer = settings.oidc_issuer if settings.auth_mode == "oidc" else ""
     return {
         "vertrag": VERTRAG,
-        "automato": {
-            "version": __version__,
-            "umgebung": settings.environment,
-            "oberflaeche": _text(topo.get("oberflaeche")),
-        },
+        "automato": installation(settings, topo),
         "keycloak": {"issuer": _text(issuer)},
         "front": _front(topo),
         "kunden": _kunden(topo),

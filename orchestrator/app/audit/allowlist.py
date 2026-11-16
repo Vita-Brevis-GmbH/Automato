@@ -225,6 +225,14 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "portal.customer.created": _PORTAL,
     "portal.customer.updated": _PORTAL,
     "portal.customer.deleted": _PORTAL,
+    # Kopplung mit dem Cockpit (1.13.0, ADR 0057): nie Code oder Token, nur Zeiten, Zaehler und
+    # der Name, den das Cockpit meldet
+    "cockpit.kopplung.code": frozenset({"bis", "ersetzt"}),
+    "cockpit.kopplung.code_verworfen": frozenset(),
+    "cockpit.kopplung.abgelaufen": frozenset(),
+    "cockpit.kopplung.fehlversuch": frozenset({"versuch", "gesperrt"}),
+    "cockpit.kopplung.gekoppelt": frozenset({"name", "ersetzt", "code_von"}),
+    "cockpit.kopplung.entkoppelt": frozenset({"name"}),
     # Zuordnung Benutzer -> Kunde in Automato (0.53.0, ADR 0018 Schritt 4); seit den feineren
     # Rollen mit Herkunft (Betreuer bzw. Kunden-Admin) und den Kunden-Rollen des Handelnden
     "customer_user.assigned": frozenset(

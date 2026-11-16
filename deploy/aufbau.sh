@@ -24,9 +24,14 @@
 #                                         Dienst (deploy/tls/pki), AUTOMATO_INTERNAL_TLS=on in
 #                                         .env, Container neu starten; --erneuern = Zertifikate
 #                                         neu ausstellen (CA bleibt)
-#   deploy/aufbau.sh cockpit-token        Token, mit dem das Cockpit das Inventar holt (1.10.0,
-#                                         ADR 0053): neu in .env, Orchestrator neu starten, einmal
-#                                         anzeigen (ein früheres gilt danach nicht mehr)
+#   deploy/aufbau.sh cockpit-kopplung [status|verwerfen|entkoppeln]
+#                                         Einmal-Code für die Kopplung mit dem Cockpit (1.13.0,
+#                                         ADR 0057): wie in der Oberfläche (Kunden-Portal →
+#                                         Cockpit), einmal angezeigt, 15 Minuten gültig; das
+#                                         Cockpit holt damit sein Token selbst
+#   deploy/aufbau.sh cockpit-token        früherer Weg (1.10.0, ADR 0053): Token für das Cockpit
+#                                         neu in .env, Orchestrator neu starten, einmal anzeigen
+#                                         (ein früheres gilt danach nicht mehr) - besser koppeln
 #   deploy/aufbau.sh netbox-host-token    Token für den Agenten des NetBox-Hosts (1.11.0, ADR
 #                                         0054): GET /api/netbox-host, sonst wie cockpit-token
 #
@@ -43,7 +48,7 @@
 #
 # Exit 0 = alles erreichbar, 1 = mindestens ein Fehler. Aendert nur `firewall --anwenden`,
 # `netbox-start`, `backup-schluessel`, `docker-update`, `db-rollen`, `tls-intern`, `cockpit-token`,
-# `netbox-host-token` und
+# `cockpit-kopplung` (ausser `status`), `netbox-host-token` und
 # `env ordnen` etwas. Einstellungen auch aus .env
 # (deploy/env.sh).
 # Profile ueber COMPOSE_PROFILES in .env (Standard nur "core"), wie deploy/update.sh.
@@ -578,6 +583,30 @@ neues_token() {  # $1 Schlüssel in .env, $2 Titel, $3 wo eintragen
 cmd_cockpit_token() {
   neues_token AUTOMATO_COCKPIT_TOKEN "Token für das Cockpit (Inventar, Freigaben)" \
     "Im Cockpit bei der Automato-Instanz unter „Inventar aus Automato“ eintragen"
+  info "Seit 1.13.0 besser: deploy/aufbau.sh cockpit-kopplung (Einmal-Code, nichts in .env)."
+}
+
+# --- Kopplung mit dem Cockpit (1.13.0, ADR 0057) ---------------------------------------------
+# Der Orchestrator erzeugt den Code (nur als Hash gespeichert) und zeigt ihn einmal; das Cockpit
+# löst ihn ein und bekommt sein Token direkt von Automato - nichts mehr in .env, kein Neustart.
+cmd_cockpit_kopplung() {
+  local args=()
+  case "${1:-}" in
+    "") titel "Einmal-Code für die Kopplung mit dem Cockpit" ;;
+    status) titel "Kopplung mit dem Cockpit"; args=(--status) ;;
+    verwerfen) titel "Offenen Code verwerfen"; args=(--verwerfen) ;;
+    entkoppeln) titel "Vom Cockpit entkoppeln"; args=(--entkoppeln) ;;
+    *) echo "cockpit-kopplung [status|verwerfen|entkoppeln]" >&2; return 2 ;;
+  esac
+  if ! $COMPOSE "${PROFILES[@]}" exec -T orchestrator automato cockpit-kopplung "${args[@]}"; then
+    fehler "Orchestrator antwortet nicht – läuft er? deploy/aufbau.sh status"
+    return 1
+  fi
+  # nur nachsehen, ob es eines gibt - das Token selbst kommt nie in die Umgebung des Skripts
+  if [ -z "${1:-}" ] && grep -qE '^AUTOMATO_COCKPIT_TOKEN=.+' "$ENV_DATEI" 2>/dev/null; then
+    info "AUTOMATO_COCKPIT_TOKEN in $ENV_DATEI gilt weiter – nach dem Koppeln dort leeren und"
+    info "den Orchestrator neu starten ($COMPOSE up -d orchestrator)."
+  fi
 }
 
 cmd_netbox_host_token() {  # 1.11.0, ADR 0054
@@ -723,6 +752,7 @@ case "${1:-pruefen}" in
   db-rollen) shift; cmd_db_rollen "${1:-}" ;;
   tls-intern) shift; cmd_tls_intern "${1:-}" ;;
   cockpit-token) cmd_cockpit_token ;;
+  cockpit-kopplung) shift; cmd_cockpit_kopplung "${1:-}" ;;
   netbox-host-token) cmd_netbox_host_token ;;
   env)
     shift
@@ -733,5 +763,5 @@ case "${1:-pruefen}" in
     esac
     ;;
   -h | --help) sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//' ;;
-  *) echo "Unbekannter Befehl: $1 (pruefen, firewall [--anwenden], status, netbox-start, backup-schluessel, docker-update, db-rollen [--neu], tls-intern [--erneuern], env [ordnen])" >&2; exit 2 ;;
+  *) echo "Unbekannter Befehl: $1 (pruefen, firewall [--anwenden], status, netbox-start, backup-schluessel, docker-update, db-rollen [--neu], tls-intern [--erneuern], cockpit-kopplung [status|verwerfen|entkoppeln], cockpit-token, netbox-host-token, env [ordnen])" >&2; exit 2 ;;
 esac

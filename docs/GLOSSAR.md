@@ -24,6 +24,8 @@ Neue Texte halten sich an diese Liste, damit derselbe Begriff überall gleich he
 | Mandant | Tenant |
 | Umgebung | Environment |
 | Kunde, Kunden-Benutzer | Customer, customer user |
+| Kopplung, koppeln, entkoppeln (mit dem Cockpit) | Pairing, pair, unpair |
+| Einmal-Code (zum Koppeln) | Pairing code |
 | Kunden-Rolle (Lesen, Triage, Editor, Kunden-Admin) | Customer role (read, triage, editor, customer admin) |
 | pflegbar (Applikation) | editable |
 | Ausschnitt (eines Kunden) | Scope |

@@ -3598,6 +3598,31 @@ export const updatePortalCustomer = (id: number, body: PortalCustomerIn) =>
   sendJSON<PortalCustomer>(`/api/portal/customers/${id}`, "PUT", body);
 export const deletePortalCustomer = (id: number) =>
   sendJSON<{ deleted: number; note: string | null }>(`/api/portal/customers/${id}`, "DELETE");
+
+// Kopplung mit dem Cockpit (1.13.0, ADR 0057): Einmal-Code statt Token kopieren. Der Code kommt nur
+// in der Antwort von createCockpitCode (einmal), das Token bekommt nur das Cockpit (POST /kopplung).
+export interface CockpitCoupling {
+  peer: "cockpit";
+  coupled: boolean;
+  name: string | null; // vom Cockpit gemeldet
+  coupled_at: string | null;
+  coupled_by: string | null; // wer den Code erzeugt hat
+  last_used: string | null;
+  code: { expires: string; failures: number } | null; // offener Code (ohne den Code selbst)
+  code_minutes: number;
+  max_failures: number;
+  env_token: boolean; // AUTOMATO_COCKPIT_TOKEN in .env gilt zusätzlich
+}
+export interface CockpitCode {
+  code: string; // XXXX-XXXX-XXXX, nur in dieser Antwort
+  expires: string;
+  minutes: number;
+  max_failures: number;
+}
+export const fetchCockpitCoupling = () => getJSON<CockpitCoupling>("/api/kopplung/cockpit");
+export const createCockpitCode = () => sendJSON<CockpitCode>("/api/kopplung/cockpit/code", "POST");
+export const withdrawCockpitCode = () => sendJSON<CockpitCoupling>("/api/kopplung/cockpit/code", "DELETE");
+export const uncoupleCockpit = () => sendJSON<CockpitCoupling>("/api/kopplung/cockpit", "DELETE");
 export const previewCustomer = (tenantId: number, selectors: CustomerSelector[], customerId?: number) =>
   sendJSON<CustomerPreview>("/api/customers/preview", "POST", { tenant_id: tenantId, selectors, customer_id: customerId ?? null });
 export const fetchCustomerSuggestions = (tenantId: number) =>
