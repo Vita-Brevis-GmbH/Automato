@@ -929,6 +929,11 @@ VM mit Tang/vTPM bzw. der Passphrase.
   sichert vorher, baut, startet, prüft `/health`;
   bei Problemen `sudo deploy/update.sh --rollback` (BETRIEB, Abschnitt 4b). Mit
   `AUTOMATO_DOCKER_UPDATE=1` kommt Docker dabei mit.
+- **Update aus dem Cockpit** (1.15.0, ADR 0060): öffentlichen Herausgeber-Schlüssel nach
+  `/etc/automato/herausgeber.pub` legen und die GHCR-Pakete öffentlich stellen (bzw. `docker
+  login ghcr.io`) – Anleitung `deploy/release/README.md`. Dann aktualisiert der Host-Agent des
+  Cockpits über `deploy/betrieb.sh` mit fertigen, signierten Images; `deploy/update.sh` bleibt der
+  Bau von Hand (BETRIEB, Abschnitt 4b).
 - **Neustart der VM:** Variante A braucht die Passphrase an der Konsole; danach starten alle
   Container von selbst (`restart: unless-stopped`), Kontrolle mit `sudo deploy/aufbau.sh status`.
 - **Zertifikate:** Oberfläche (eigene CA) vor Ablauf ersetzen und `docker compose … restart

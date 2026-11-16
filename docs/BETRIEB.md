@@ -2240,6 +2240,26 @@ Client-Zertifikat und die passenden Zeilen der `agent.env`.
   laufen beim Start (`alembic upgrade head`). Schlägt etwas fehl: `deploy/update.sh --rollback`
   setzt Code **und** Datenbank auf den Stand vor dem Update zurück (ADR 0013). Am Ende prüft
   `deploy/aufbau.sh pruefen` den Aufbau (nur Hinweis, kein Abbruch).
+- **Update aus dem Cockpit** (1.15.0, ADR 0060): Der Host-Agent des Cockpits ruft
+  `deploy/betrieb.sh` auf – `stand`, `sichern`, `aktualisieren`, `zurueck`, `neustart`; Antwort
+  eine Zeile JSON (Fortschritt auf stderr), Exit 0 ok, 1 fehlgeschlagen und wieder auf dem alten
+  Stand, 2 von Hand (die Meldung nennt den Schritt), 3 abgelehnt (nichts geändert), 4 belegt.
+  - `aktualisieren` baut nicht, sondern nimmt die Images aus GHCR, die das **signierte Manifest**
+    des gewählten Kanals nennt (`stable` = Tag `v<X.Y.Z>`, `latest` = `main`, `dev` =
+    Entwicklungs-Branch), nur per Digest. Ablauf: Signatur prüfen (Schlüssel aus
+    `/etc/automato/herausgeber.pub`, sonst `deploy/release/herausgeber.pub`; ohne Schlüssel,
+    ohne gültige Signatur oder mit älterer Version abgelehnt) → Sicherung wie `update.sh` →
+    Commit des Manifests (losgelöst) und Images holen → starten → `/health` bis 5 Minuten →
+    sonst selbst zurück (Code, Images, Datenbank aus der eben gemachten Sicherung).
+  - Die gepinnten Images stehen in `.automato-images.env` (nicht von Hand ändern); `docker compose
+    up -d` von Hand nimmt dieselben. `deploy/update.sh` baut weiterhin aus git und entfernt sie
+    (danach Quelle „git“). Nach einem Update aus dem Cockpit ist der Checkout losgelöst:
+    `update.sh main` bzw. mit Tag.
+  - `betrieb.sh zurueck` und `update.sh --rollback` gehen auf denselben Stand vor dem letzten
+    Update (Code bzw. Images **und** Datenbank – Daten seit dem Update gehen verloren);
+    `zurueck` nur einmal. Beide nehmen dieselbe Sperre (`.betrieb.lock`).
+  - Von Hand z. B. `sudo deploy/betrieb.sh stand`. Einrichten (Schlüssel, Secret, GHCR
+    öffentlich): `deploy/release/README.md`.
 - **Aufbau prüfen** (0.40.0, nach dem Muster von Magisters `plattform-aufbau.sh`):
   - `deploy/aufbau.sh pruefen` – Werkzeuge (docker, compose, curl, git, python3), Docker-Dienst,
     Container (läuft, Health), `/health`, die Verbindungen aus dem Orchestrator-Container
