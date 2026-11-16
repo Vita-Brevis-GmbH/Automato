@@ -75,6 +75,10 @@ services:
   # (`automato db-roles`, idempotent). Der Orchestrator startet erst, wenn sie fertig ist.
   # App-Rolle einmal einrichten: deploy/aufbau.sh db-rollen (AUTOMATO_DB_USER/_PASSWORD in .env).
   migrate:
+    # Images (1.15.0, ADR 0060): nach einem Update aus dem signierten Manifest (deploy/betrieb.sh)
+    # per Digest aus GHCR (AUTOMATO_IMAGE_<DIENST> aus .automato-images.env ueber deploy/env.sh),
+    # sonst wie bisher der lokal gebaute Stand <projekt>-<dienst> (deploy/update.sh)
+    image: ${AUTOMATO_IMAGE_MIGRATE:-${COMPOSE_PROJECT_NAME:-automato}-migrate}
     build:
       context: .
       dockerfile: orchestrator/Dockerfile
@@ -99,6 +103,7 @@ services:
     command: ["sh", "-c", "alembic upgrade head && automato db-roles"]
 
   orchestrator:
+    image: ${AUTOMATO_IMAGE_ORCHESTRATOR:-${COMPOSE_PROJECT_NAME:-automato}-orchestrator}
     build:
       context: .
       dockerfile: orchestrator/Dockerfile
@@ -206,6 +211,7 @@ services:
       retries: 10
 
   collector:
+    image: ${AUTOMATO_IMAGE_COLLECTOR:-${COMPOSE_PROJECT_NAME:-automato}-collector}
     build:
       context: .
       dockerfile: collectors/Dockerfile
@@ -234,6 +240,7 @@ services:
   # /api an den Orchestrator weiter (web-ui/frontend/deploy/Caddyfile). Vite-Server nur mit
   # AUTOMATO_UI_TARGET=dev (.env, z. B. im Labor).
   web-ui:
+    image: ${AUTOMATO_IMAGE_WEB_UI:-${COMPOSE_PROJECT_NAME:-automato}-web-ui}
     build:
       context: web-ui/frontend
       target: ${AUTOMATO_UI_TARGET:-prod}
