@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Betriebs-Einstellungen aus der .env des Repos (0.42.0) - fuer update.sh, aufbau.sh und die
 # Sicherung. Einmal in .env eingetragen, gelten sie bei jedem Aufruf; ein Update vergisst keine
 # Angabe (Muster: Magisters plattform-aufbau.sh). Eine Umgebungsvariable geht vor.
@@ -46,6 +47,23 @@ setze_env() {  # $1 = Schluessel, $2 = Wert, $3 = Datei (Standard .env): ersetze
 }
 
 env_aus_datei
+
+# Gepinnte Images (1.15.0, ADR 0060): nach einem Update aus dem signierten Manifest
+# (deploy/betrieb.sh) stehen die eigenen Images je Dienst - nur per Digest - in
+# .automato-images.env (gitignored, bewusst nicht in .env); docker-compose.yml nimmt sie ueber
+# AUTOMATO_IMAGE_<DIENST>, ohne sie den lokal gebauten Stand. Nur diese Datei zaehlt (alte Werte
+# aus der Umgebung fallen weg); deploy/update.sh (Bau aus git) entfernt sie wieder.
+IMAGES_DATEI=${AUTOMATO_IMAGES_FILE:-.automato-images.env}  # andere Datei nur fuer Tests
+images_laden() {
+  local v schluessel wert
+  for v in $(compgen -v AUTOMATO_IMAGE_) $(compgen -v AUTOMATO_MANIFEST_); do unset "$v"; done
+  [ -f "$IMAGES_DATEI" ] || return 0
+  while IFS='=' read -r schluessel wert; do
+    [[ $wert =~ ^[A-Za-z0-9._:/@+-]{1,300}$ ]] || continue
+    export "$schluessel=$wert"
+  done < <(grep -E '^AUTOMATO_(IMAGE|MANIFEST)_[A-Z0-9_]+=' "$IMAGES_DATEI" || true)
+}
+images_laden
 
 # Profile fuer docker compose (1.6.0): COMPOSE_PROFILES liest Compose selbst - die Skripte geben
 # dann kein --profile an (das ersetzte COMPOSE_PROFILES); ohne nur "core". AUTOMATO_COMPOSE_PROFILES
