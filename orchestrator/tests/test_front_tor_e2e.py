@@ -320,7 +320,9 @@ def tor(tmp_path_factory):  # noqa: C901 - ein Aufbau, Schritt für Schritt
         socket.getaddrinfo = echt
         for c in namen:
             _run("docker", "rm", "-f", c, check=False)
-        _run("docker", "compose", "-p", PROJEKT, "-f", str(compose), "down", check=False)
+        # --remove-orphans: Container von Realms, die ein Test per sync schon herausnahm
+        _run("docker", "compose", "-p", PROJEKT, "-f", str(compose), "down", "--remove-orphans",
+             check=False)  # fmt: skip
         if netz_neu:
             _run("docker", "network", "rm", NETZ, check=False)
         idp.server.shutdown()
