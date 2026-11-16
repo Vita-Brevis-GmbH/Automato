@@ -82,6 +82,15 @@ case "$*" in
     cp "$NBH_LOG.zugang" "$o"
     cat "$NBH_LOG.zugang-code" 2>/dev/null || printf 200
     exit 0 ;;
+  */api/netbox-host/stand*)
+    # ADR 0059: Ist-Stand an Automato – Inhalt (stdin) festhalten, HTTP-Code aus
+    # "$NBH_LOG.stand-code" (Vorgabe 200)
+    o=""; vor=""
+    for a in "$@"; do [ "$vor" = -o ] && o=$a; vor=$a; done
+    cat >> "$NBH_LOG.stand"; echo >> "$NBH_LOG.stand"
+    echo '{"vertrag": 1, "status": "gespeichert"}' > "$o"
+    cat "$NBH_LOG.stand-code" 2>/dev/null || printf 200
+    exit 0 ;;
   */api/netbox-host*)
     [ -f "$NBH_LOG.automato-aus" ] && exit 7
     o=""; vor=""

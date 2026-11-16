@@ -175,6 +175,22 @@ sudo deploy/front/front.sh entfernen kunde-a --ja             # NetBox und Daten
   gilt ab dann der Eintrag aus dem Portal (Werkzeuge, Realm, Zugriff und Kacheln – eigene Kacheln
   vorher dort eintragen). `front.sh liste` zeigt die Quelle (Portal bzw. Hand).
 
+**Gesperrt und Abbau aus dem Cockpit (1.14.0, ADR 0059):** merkt der Betreiber einen Kunden im Cockpit zum
+Entfernen vor, ist er bis zum Ablauf der Frist **gesperrt**: jede Adresse des Kunden (Startseite,
+NetBox auch mit Token, Doku, Magister, CMDB) antwortet nach der Sperre nach Absender und dem
+Zugriff mit 403 „Zugang gesperrt“; Benutzer seines Realms bekommen in Automato keine Rechte. Daten,
+Realm und Client-Secret bleiben – rückgängig im Cockpit, solange die Frist läuft. Das Kunden-Portal
+markiert ihn („Zugang gesperrt“), das Portal `start.<intern>` ebenso, `front.sh liste` nennt ihn.
+
+Nach der Frist nimmt das Cockpit den Kunden heraus (wie bisher) und schickt einen Löschauftrag. Für
+den Front-Proxy steht dann `tor_entfernen` im Soll-Stand: `front.sh sync` entfernt das Tor-Geheimnis
+(`tor/<realm>.env`) des Realms – nur, wenn kein Kunde ihn mehr nutzt (auch keiner von Hand), nie den
+Realm von Automato selbst, je Auftrag nur einmal (`tor/<realm>.entfernt`). Der Container des Tors
+fällt schon weg, sobald kein Kunde den Realm nutzt. **Verwaiste Tor-Dateien ohne Auftrag** (Realm
+ohne Kunden) entfernt `front.sh` nie selbst: `pruefen` meldet sie unter „Abbau und Altlasten“, das
+Cockpit sieht sie im Inventar (`ist.front.tor_verwaist`); entfernen über den Abbau im Cockpit bzw.
+von Hand (`sudo rm deploy/front/tor/<realm>.env`, danach `front.sh erzeugen`).
+
 **Zugriff je Kunde (1.5.0):** im Kunden-Portal bzw. mit `--zugriff`:
 
 | Zugriff | Wer erreicht die Adressen des Kunden | Von Hand |
@@ -281,7 +297,8 @@ Einstellungen (seit 1.5.0: Warnung, wenn Kunden-Adressen aus jedem Netz erreichb
 `AUTOMATO_UI_ALLOW` leer ist), Host-Agent (läuft, Ordner gehört dem Orchestrator, von Hand angelegte
 Kunden), beide Zertifikate (passt der Schlüssel, deckt es die Namen ab, 30 Tage vor Ablauf eine
 Warnung), Proxy, Anmelde-Tor (Client-Secrets, Container, gesperrte Kunden, Keycloak vom Proxy aus
-erreichbar), je Kunde Startseite (mit Tor: Weiterleitung zur Anmeldung; bei Zugriff „intern“ bzw.
+erreichbar), Abbau und Altlasten (1.14.0, ADR 0059: gesperrte Kunden, Tor-Geheimnisse ohne Kunden,
+Container des Tors ohne Realm, abgelehnte Aufträge), je Kunde Startseite (mit Tor: Weiterleitung zur Anmeldung; bei Zugriff „intern“ bzw.
 „Netze“ 404 für diese VM), Zugriff, Weg zur NetBox (von dieser VM aus) und ob Orchestrator und
 zentraler Worker die NetBox-Adresse gleich auflösen. Im Browser aus dem
 Management-Netz: `https://start.mgmt.int.example.ch` (Portal), über die WAF
@@ -403,6 +420,12 @@ Chat, Ticket oder Datei). Ein erneutes `cockpit-token` macht das alte ungültig.
   darf damit Kunden des Kunden-Portals anlegen, ändern und entfernen, seit 1.13.0 auch Mandant,
   Kunden und Rolle wählen (ADR 0054 Nachtrag) – nur im Cockpit hinterlegen. Seit 1.13.0 (ADR 0055) liefert es damit auch das
   Client-Secret des Anmelde-Tors versiegelt (Abschnitt 6).
+- **Ist-Stand (1.14.0, ADR 0059):** das Inventar nennt unter `ist` auch, was die Instanzen wirklich haben –
+  Front-Proxy (Kunden, gesperrte, Tor-Geheimnisse und -Container, verwaiste; aus `status.json`),
+  NetBox-Host (Instanzen, ohne Freigabe, gelöscht; Meldung seines Agenten), die Kunden in Automato
+  mit `hat_daten` und den Stand der Löschaufträge. Daraus zeigt das Cockpit auf „Aufräumen“
+  Altlasten. Mit den Freigaben schickt das Cockpit je Kunde `gesperrt` und nach der Frist
+  `entfernen` (Abschnitt 5).
 - Das Cockpit erreicht die Oberfläche: seine Adresse steht in `AUTOMATO_UI_ALLOW`, und es vertraut
   dem Zertifikat (im Cockpit `deploy/certs/inventory-ca.pem`, wenn es eine interne CA ist). Das
   gilt auch für das Einlösen des Codes (`POST /api/kopplung`, höchstens 10 Versuche je Minute).

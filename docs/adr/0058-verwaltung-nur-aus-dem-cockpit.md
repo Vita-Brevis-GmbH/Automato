@@ -16,7 +16,8 @@ Ergänzt ADR 0018 (Kunden, Kunden-Rollen), ADR 0050 (Kunden-Portal, Realm je Kun
 (Freigaben aus dem Cockpit, mit Nachträgen) und ADR 0057 (Kopplung). Vertrag mit dem Cockpit:
 `docs/vertraege/freigaben.md` und `inventar.md` dort (v1, nur neue optionale Felder). Gegenstück im
 Cockpit: Benutzer des Realms lesen („Sync vom Keycloak“) und Rollen je Werkzeug vergeben; der Abbau
-mit Frist (`gesperrt`, `entfernen`) und der Ist-Stand (`ist`) sind eigene Teile desselben Vertrags.
+mit Frist (`gesperrt`, `entfernen`) und der Ist-Stand (`ist`) sind eigene Teile desselben Vertrags
+(ADR 0059, ebenfalls 1.14.0).
 
 ## Kontext
 
@@ -47,7 +48,7 @@ mit Frist (`gesperrt`, `entfernen`) und der Ist-Stand (`ist`) sind eigene Teile 
    – **idempotent**: dieselbe Anfrage legt keinen zweiten an, ändert nichts und schreibt kein Audit.
    Neu angelegt: Audit `customer.created` mit Akteur `cockpit`, `quelle: cockpit` und dem
    Portal-Kunden. Wechselt der Mandant, entsteht dort ein neuer; der alte bleibt (Abbau mit Frist,
-   eigener Teil). Wird der Kunde in Automato gelöscht, fällt die Verknüpfung mit, und die nächste
+   ADR 0059). Wird der Kunde in Automato gelöscht, fällt die Verknüpfung mit, und die nächste
    Anfrage legt ihn wieder an (Soll-Stand des Cockpits).
    - **Name belegt:** gibt es im Mandanten schon einen Kunden mit diesem Namen, heisst der neue
      „<Name> (<Kurzname>)“. Ein bestehender Kunde wird **nie still übernommen** – dafür wählt ihn

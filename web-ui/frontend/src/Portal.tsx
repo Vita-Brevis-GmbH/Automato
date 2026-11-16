@@ -359,6 +359,18 @@ export default function Portal({ tenants }: { tenants: Tenant[] }) {
                             {L("im Cockpit übernehmen", "take over in the cockpit")}
                           </span>
                         )}
+                        {c.gesperrt && (
+                          <span
+                            className="chip warn portal-gesperrt"
+                            style={{ marginLeft: 6 }}
+                            title={L(
+                              "Im Cockpit zum Entfernen vorgemerkt: der Front-Proxy sperrt alle Adressen des Kunden, Daten bleiben bis zum Ablauf der Frist",
+                              "Marked for removal in the cockpit: the front proxy blocks all addresses of the customer, data stays until the grace period ends",
+                            )}
+                          >
+                            {L("Zugang gesperrt", "access blocked")}
+                          </span>
+                        )}
                       </td>
                       <td>{tools(c)}</td>
                       <td>

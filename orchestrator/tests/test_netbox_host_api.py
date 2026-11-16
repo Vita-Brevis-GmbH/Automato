@@ -118,6 +118,7 @@ def test_nur_kunden_mit_netbox(client, session_factory):
         "domain": "mgmt.example.ch",
         "kunden": [{"kurzname": "kunde-a", "name": "Kunde A", "zugang": "kein_mandant"},
                    {"kurzname": "kunde-b", "name": "Kunde B", "zugang": "kein_mandant"}],
+        "loeschen": [],  # ADR 0059: keine Loeschauftraege
     }  # fmt: skip
     assert "kb" not in r.text  # kein Realm, kein Mandant
 

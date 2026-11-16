@@ -13,6 +13,10 @@ Mandanten aus dem Kunden-Portal (`app.credentials`). Vorhandene Zugangsdaten ble
 NetBox gilt als angebunden, sobald irgendein Quellsystem NetBox mit ihrem Namen
 `<kurzname>-nb.<domain>` Zugangsdaten hat (auch von Hand, auch bei einem anderen Mandanten).
 Ein Quellsystem NetBox des Mandanten mit einer anderen Adresse aendert der NetBox-Host nie.
+
+Loeschauftraege (ADR 0059): `loeschen` nennt die NetBox-Instanzen, die das Cockpit nach seiner
+Frist abbauen laesst (`store/abbau.py`, je `kurzname` und `auftrag`); der Agent sichert, loescht
+und meldet seinen Stand mit `PUT /netbox-host/stand`. Selbst entfernt er weiterhin nie etwas.
 """
 
 import hmac
@@ -26,9 +30,11 @@ from app import audit, credentials
 from app.i18n import L
 from app.models import PortalCustomer, ReferenceRole, SourceSystem
 from app.models.source_system import Platform
+from app.store import abbau
 
 #: Fassung der Antwort (Gegenstueck: NBH_KUNDEN_PY in deploy/netbox-host/netbox-host.sh);
-#: `zugang` je Kunde ist seit 1.13.0 ein optionales Feld (aeltere Agenten ignorieren es)
+#: `zugang` je Kunde ist seit 1.13.0 ein optionales Feld (aeltere Agenten ignorieren es), ebenso
+#: `loeschen` (ADR 0059)
 VERTRAG = 1
 
 # Zugang fuer Automato je Kunde (1.13.0, ADR 0056)
@@ -111,6 +117,8 @@ def kunden(session: Session, domain: str) -> dict:
              "zugang": zugang(pc, domain, quellen).stand}
             for pc in rows
         ],
+        # ADR 0059: Loeschauftraege aus dem Cockpit (nur offene, nie fuer einen Portal-Kunden)
+        "loeschen": abbau.netbox_loeschen(session),
     }  # fmt: skip
 
 

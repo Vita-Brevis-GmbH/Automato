@@ -29,6 +29,10 @@ Ohne Eintrag im Kunden-Portal beides `null` (unbekannt).
 Seit 1.14.0 (ADR 0058) je Kunde in `zuordnung` der Kunde, den Automato fuer das Cockpit im
 Mandanten angelegt hat (`kunde_angelegt`, Id oder null), und die Benutzer mit Rolle aus dem
 Cockpit (`benutzer`: aktueller Stand bzw. null = keine Aussage).
+
+Ebenfalls seit 1.14.0 (ADR 0059) der Ist-Stand der Instanzen (`ist`: Front-Proxy, NetBox-Host,
+Kunden in Automato, Loeschauftraege - `store/ist_stand.py`) und je Kunde, ob der Front-Proxy ihn
+sperrt (`gesperrt`, aus `topologie.json`; null bei einem aelteren front.sh).
 """
 
 import hashlib
@@ -48,7 +52,7 @@ from app import __version__
 from app.auth import capabilities as caps
 from app.config import Settings
 from app.models import Customer, PortalCustomer, Tenant
-from app.store import portal, verwaltung
+from app.store import ist_stand, portal, verwaltung
 
 TOPOLOGIE = "topologie.json"
 #: Fassung der Antwort (Vertrag im Cockpit: docs/vertraege/inventar.md)
@@ -200,6 +204,8 @@ def _herkunft(k: dict) -> dict:
         "zugriff": zugriff,
         "netze": _netze(k.get("netze")) if zugriff == "netze" else [],
         "realm": _realm(k.get("realm")),
+        # 1.14.0 (ADR 0059): vom Front-Proxy gesperrt (zum Entfernen vorgemerkt); null = unbekannt
+        "gesperrt": k.get("gesperrt") if isinstance(k.get("gesperrt"), bool) else None,
     }
 
 
@@ -322,4 +328,6 @@ def inventory(settings: Settings, session: Session | None = None) -> dict:
         "front": _front(topo, settings.front_state_dir),
         "kunden": _kunden(topo, portal_kunden, live,
                           verwaltung.angelegt_je_kunde(session) if session else None),
+        # 1.14.0 (ADR 0059): Ist-Stand der Instanzen (Altlasten, Stand der Loeschauftraege)
+        "ist": ist_stand.ist(session, settings) if session else None,
     }  # fmt: skip

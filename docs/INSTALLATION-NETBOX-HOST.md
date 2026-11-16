@@ -186,7 +186,8 @@ Browser öffnen (Zertifikat der eigenen CA).
 Statt `neu` von Hand legt der Agent die NetBox je Kunde selbst an: alle 5 Minuten holt er aus
 Automato die Kunden mit dem Werkzeug NetBox (Kunden-Portal bzw. Kundenregister des Cockpits) und
 ruft für jeden ohne Instanz `neu` auf. Entfernt wird nie selbst – eine NetBox, die in Automato
-nicht mehr freigegeben ist, meldet er nur (`pruefen`); entfernen bleibt `loeschen <kunde> --ja`.
+nicht mehr freigegeben ist, meldet er nur (`pruefen`); entfernen bleibt `loeschen <kunde> --ja` bzw.
+seit 1.14.0 (ADR 0059) der Abbau im Cockpit (4c).
 
 Auf der **Automato-VM** ein eigenes Token für den NetBox-Host erzeugen (wird einmal angezeigt):
 
@@ -250,6 +251,27 @@ Quellsysteme → + Quellsystem „NetBox“ eintragen. Erneut aufrufen ersetzt d
 die der Agent übergeben hat (dann in Automato von Hand nachführen). Die Automato-VM muss der
 eigenen CA vertrauen (`docs/INSTALLATION-PROD.md` 6.3) und in `ALLOW` stehen.
 
+### 4c. Abbau aus dem Cockpit: Löschaufträge (1.14.0, ADR 0059)
+
+Entfernt der Betreiber einen Kunden im Cockpit, ist er zuerst bis zum Ablauf der Frist gesperrt
+(Front-Proxy: „Zugang gesperrt“, die NetBox bleibt unverändert). Danach schickt das Cockpit
+Automato einen Löschauftrag; Automato nennt ihn dem Agenten beim nächsten Abgleich (`loeschen` in
+`GET /api/netbox-host`). Der Agent
+
+- löscht **nur diese** NetBox-Instanzen – wie `loeschen <kunde> --ja`, also immer erst mit einer
+  frischen Sicherung (ohne `AGE_RECIPIENT` bzw. wenn die Sicherung scheitert, wird nichts gelöscht,
+  der nächste Abgleich versucht es wieder); die Sicherungen bleiben in `BACKUP_DIR/<kunde>/`;
+- löscht **nie** einen Kunden, den Automato noch freigibt, und nie, wenn Automato eine andere
+  Domain nennt als `host.conf`;
+- führt jeden Auftrag **nur einmal** aus (`/opt/netbox-host/geloescht/<kunde>` hält die Kennung):
+  wird danach unter demselben Namen von Hand wieder eine NetBox angelegt, bleibt sie;
+- meldet nach jedem Abgleich seinen **Ist-Stand** an Automato (`PUT /api/netbox-host/stand`, nur
+  Kurznamen und Zeit: Instanzen, ohne Freigabe, gelöscht, nicht gelöscht). Daraus sieht das
+  Cockpit, dass der Abbau erledigt ist, und auf der Seite „Aufräumen“ Instanzen ohne Kunden.
+
+`pruefen` zeigt im Abschnitt „Agent“, was auf Auftrag gelöscht wurde und was nicht. Wiederholen,
+Sicherung prüfen: `journalctl -u netbox-host-sync`, `ls BACKUP_DIR/<kunde>/`.
+
 ## 5. Betrieb
 
 | Befehl | Wirkung |
@@ -259,7 +281,7 @@ eigenen CA vertrauen (`docs/INSTALLATION-PROD.md` 6.3) und in `ALLOW` stehen.
 | `sichern <kunde\|alle\|konfig>` | je Kunde Datenbank (`pg_dump`) und Medien, verschlüsselt mit age, nach `BACKUP_DIR/<kunde>/`; `alle` (täglich 02:17 per cron) sichert dazu die **Konfiguration** (`host.conf`, Proxy mit Zertifikat, Secrets je Kunde) nach `BACKUP_DIR/_konfig/`; älter als `BACKUP_KEEP_DAYS` wird gelöscht |
 | `wiederherstellen <kunde> <datei.sql.gz.age>` | NetBox stoppen, Datenbank (und Medien derselben Sicherung) einspielen, starten – einmal pro Jahr testen |
 | `update <kunde\|alle>` | erst sichern, dann netbox-docker und NetBox in der Version aus `host.conf` holen, starten, prüfen. Neue Version zuerst bei einem Kunden |
-| `loeschen <kunde> --ja` | letzte Sicherung, dann Container, Daten und Proxy-Eintrag entfernen; die Sicherungen bleiben |
+| `loeschen <kunde> --ja` | letzte Sicherung, dann Container, Daten und Proxy-Eintrag entfernen; die Sicherungen bleiben. Ohne Rückfrage nur der Agent für Löschaufträge aus Automato (4c) |
 | `sso <kunde\|alle>` | Anmeldung über das Anmelde-Tor einrichten bzw. nachführen (1.4.0): Proxy-Vorlage übernehmen, NetBox-Einstellungen schreiben, NetBox neu starten, Gruppen und Rechte anlegen; mit `SSO=aus` entfernen. Seit 1.13.0 richtet der Agent fehlende Anmeldungen selbst ein |
 | `token <kunde>` | Notweg: Lese- und Sync-Benutzer mit neuen Tokens, angezeigt zum Eintragen in Automato (seit 1.13.0 übergibt der Agent den Zugang selbst, 4b) |
 

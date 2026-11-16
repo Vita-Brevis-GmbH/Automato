@@ -65,6 +65,12 @@
 # lehnen dann ab; nur mit ausdrücklichem --trotzdem (Notweg, mit Warnung) ändern sie von Hand – das
 # Cockpit kennt solche Kunden nicht (Altlast), bis es sie übernimmt.
 #
+# Ebenfalls seit 1.14.0 (ADR 0059, Abbau aus dem Cockpit) sperrt `gesperrt` im Soll-Stand alle
+# Adressen eines Kunden („Zugang gesperrt“, SPERRE=ja in kunden/<k>.conf; Daten bleiben), und
+# `tor_entfernen` lässt `sync` das Tor-Geheimnis eines Realms entfernen, den kein Kunde mehr nutzt
+# (nie den Realm von Automato, je Auftrag nur einmal: tor/<realm>.entfernt). Verwaiste Tor-Dateien
+# ohne Auftrag meldet der Front-Proxy nur (status.json → ist, front.sh pruefen) – nie still gelöscht.
+#
 # Einstellungen: AUTOMATO_FRONT_* in .env (siehe .env.example). Kunden: deploy/front/kunden/,
 # erzeugt: deploy/front/generated/, Client-Secrets und Empfangsschlüssel: deploy/front/tor/ (alles
 # nicht im Repo).
@@ -268,10 +274,10 @@ kunden() {  # alle Kurznamen
   return 0
 }
 
-lies_kunde() {  # setzt NAME, DOC, NB, UM, CMDB_AN, QUELLE, REALM, ZUGRIFF, NETZE aus kunden/<k>.conf
+lies_kunde() {  # setzt NAME, DOC, NB, UM, CMDB_AN, QUELLE, REALM, ZUGRIFF, NETZE, SPERRE aus kunden/<k>.conf
   local k=$1
-  # NB fehlt in Dateien vor 1.11.0: NetBox wie bisher an
-  NAME=$k DOC=nein NB=ja UM=nein CMDB_AN=nein QUELLE=befehl REALM="" ZUGRIFF=ueberall NETZE=""
+  # NB fehlt in Dateien vor 1.11.0: NetBox wie bisher an; SPERRE (ADR 0059) fehlt: nicht gesperrt
+  NAME=$k DOC=nein NB=ja UM=nein CMDB_AN=nein QUELLE=befehl REALM="" ZUGRIFF=ueberall NETZE="" SPERRE=nein
   # shellcheck disable=SC1090 # mit printf %q geschrieben (kunde)
   . "$(kdir)/$k.conf"
 }
@@ -538,6 +544,11 @@ schreibe_snippets() {
 	respond "Anmeldung nicht eingerichtet · sign-in not set up" 403
 }
 
+# Kunde zum Entfernen vorgemerkt (Cockpit, ADR 0059): alle Adressen gesperrt, Daten bleiben
+(front-zugang-gesperrt) {
+	respond "Zugang gesperrt · access blocked" 403
+}
+
 # Statische Seite: nichts nachladen, nichts einbetten
 (front-seite) {
 	header Content-Security-Policy "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
@@ -557,11 +568,17 @@ tor_fuer_kunde() {  # setzt TOR_DIENST (Container des Tors; leer = ohne Tor bzw.
 }
 
 route_kunde() {  # route einer Kunden-Adresse: $1 Ziel, $2 vor dem Tor (immer), $3 vor dem Tor (nur mit Tor),
-  # $4 noch vor der Sperre nach Absender (Automato selbst an seine NetBox, 1.10.0)
+  # $4 noch vor der Sperre nach Absender (Automato selbst an seine NetBox, 1.10.0). Kunde gesperrt
+  # (SPERRE=ja, ADR 0059): nach der Sperre nach Absender und dem Zugriff nur „Zugang gesperrt“ –
+  # auch für die NetBox-API mit Token und Automato selbst
   printf '\troute {\n'
-  [ -z "${4:-}" ] || printf '%s\n' "$4"
+  [ "${SPERRE:-nein}" = ja ] || [ -z "${4:-}" ] || printf '%s\n' "$4"
   printf '\t\timport front-kunden-sperre\n'
   zugriff_sperre
+  if [ "${SPERRE:-nein}" = ja ]; then
+    printf '\t\timport front-zugang-gesperrt\n\t}\n'
+    return
+  fi
   [ -z "${2:-}" ] || printf '%s\n' "$2"
   if [ -n "$GESPERRT" ]; then
     printf '\t\timport front-gesperrt\n\t}\n'
@@ -701,7 +718,7 @@ schreibe_topologie() {
     [ "$NB" != ja ] || w+=" nb"
     [ "$UM" != ja ] || w+=" um"
     [ "$CMDB_AN" != ja ] || w+=" cmdb"
-    printf '%s\n' "$k$sep${NAME//$sep/}${sep}https://$k.$DOMAIN$sep$nb$sep$doc$sep$um$sep$cm$sep$QUELLE$sep${w# }$sep$ZUGRIFF$sep$NETZE$sep$REALM"
+    printf '%s\n' "$k$sep${NAME//$sep/}${sep}https://$k.$DOMAIN$sep$nb$sep$doc$sep$um$sep$cm$sep$QUELLE$sep${w# }$sep$ZUGRIFF$sep$NETZE$sep$REALM$sep$SPERRE"
   done | python3 -I -c "$TOPOLOGIE_PY" "$vm" "$(eigene_ips)" "${ui:+https://$ui}" "$portal" "$DOMAIN" \
     "$NETBOX" "$UEBRIGE" "${UM_ZIEL:+$UM_SCHEMA://$UM_ZIEL}" "$CMDB" "$TOR" "$pub" "$kennung" \
     "$TOR_EMPFANG_ALG" >"$tmp" || { rm -f "$tmp"; return 0; }
@@ -715,13 +732,19 @@ import json, sys
 from datetime import datetime, timezone
 vm, ips, ui, portal, domain, netbox, uebrige, magister, cmdb, tor, pub, kennung, alg = sys.argv[1:14]
 felder = ("kurzname", "name", "startseite", "netbox", "automato", "magister", "cmdb",
-          "quelle", "werkzeuge", "zugriff", "netze", "realm")
+          "quelle", "werkzeuge", "zugriff", "netze", "realm", "gesperrt")
 listen = ("werkzeuge", "netze")  # mit Leerzeichen getrennt
+def wert(feld, w):
+    if feld in listen:
+        return w.split()
+    if feld == "gesperrt":  # ADR 0059: zum Entfernen vorgemerkt
+        return w == "ja"
+    return w or None
 kunden = []
 for zeile in sys.stdin.read().splitlines():
     teile = zeile.split("\x1f")
     if len(teile) == len(felder):
-        kunden.append({f: (w.split() if f in listen else (w or None)) for f, w in zip(felder, teile)})
+        kunden.append({f: wert(f, w) for f, w in zip(felder, teile)})
 empfang = None  # 1.13.0 (ADR 0055): öffentlicher Schlüssel, mit dem das Cockpit Client-Secrets versiegelt
 if pub and kennung:
     try:
@@ -762,7 +785,7 @@ cmd_erzeugen() {
   ca_pruefen AUTOMATO_FRONT_UEBRIGE_CA "$UEBRIGE_CA"
   ca_pruefen AUTOMATO_FRONT_MAGISTER_CA "$MAGISTER_CA"
   if tor_an; then ca_pruefen AUTOMATO_FRONT_KEYCLOAK_CA "$KC_CA"; fi
-  local g k www name abmelden
+  local g k www name abmelden beschreibung
   EIGENE_NETZE=$(eigene_netze)
   [ -z "$EIGENE_NETZE" ] || netze "Docker-Netze von Automato" "$EIGENE_NETZE"
   g=$(gen)
@@ -817,7 +840,10 @@ cmd_erzeugen() {
       for k in $(kunden); do
         lies_kunde "$k"
         name=$NAME
-        printf '%s\thttps://%s.%s\t%s\n' "$name" "$k" "$DOMAIN" "$(werkzeuge "$k")"
+        beschreibung=$(werkzeuge "$k")
+        # ADR 0059: zum Entfernen vorgemerkt
+        [ "$SPERRE" != ja ] || beschreibung="Zugang gesperrt (zum Entfernen vorgemerkt) · $beschreibung"
+        printf '%s\thttps://%s.%s\t%s\n' "$name" "$k" "$DOMAIN" "$beschreibung"
       done
     } | seite "Kunden" "Portal · alle Kunden" "$abmelden" >"$www/_portal/index.html"
     abgemeldet_seite "Portal" >"$www/_portal$ABGEMELDET.html"
@@ -1085,10 +1111,11 @@ cmd_entfernen() {
 cmd_liste() {
   lade_conf
   local k
-  local quelle
+  local quelle gesperrt=""
   printf '%-20s %-28s %-16s %-14s %-8s %s\n' KUNDE WERKZEUGE REALM ZUGRIFF QUELLE STARTSEITE
   for k in $(kunden); do
     lies_kunde "$k"
+    [ "$SPERRE" != ja ] || gesperrt+="$k "
     case "$QUELLE" in
       oberflaeche) quelle=Portal ;;
       cockpit) quelle=Cockpit ;;
@@ -1097,6 +1124,7 @@ cmd_liste() {
     printf '%-20s %-28s %-16s %-14s %-8s https://%s.%s\n' "$k" "$(werkzeuge "$k")" "${REALM:-–}" \
       "$(zugriff_text | cut -c1-14)" "$quelle" "$k" "$DOMAIN"
   done
+  [ -z "$gesperrt" ] || printf '\nZugang gesperrt (zum Entfernen vorgemerkt, ADR 0059): %s\n' "$gesperrt"
 }
 
 pruefe_zertifikat() {  # $1 Datei-Name ohne Endung, $2.. Namen, die es abdecken muss
@@ -1506,6 +1534,31 @@ for v in tor.get("verworfen") or [] if isinstance(tor, dict) else []:
     warn "aus – Startseiten und Werkzeuge ohne Anmeldung davor (AUTOMATO_FRONT_TOR=an, ADR 0051)"
   fi
 
+  # ADR 0059: gesperrte Kunden und Altlasten – nur gemeldet, nie still entfernt
+  titel "Abbau und Altlasten"
+  local zeile_abbau
+  front_ist
+  for k in $IST_GESPERRT; do info "$k: Zugang gesperrt – zum Entfernen vorgemerkt (Cockpit), Daten bleiben"; done
+  for r in $IST_VERWAIST; do
+    warn "Realm $r: Tor-Geheimnis ohne Kunden ($FRONT_TOR_DIR/$r.env) – bleibt; entfernt der Abbau im Cockpit bzw. von Hand"
+  done
+  for r in $IST_FREMD; do
+    warn "Container $r des Anmelde-Tors gehört zu keinem Realm – front.sh erzeugen hält ihn an (bei laufendem Proxy)"
+  done
+  while IFS= read -r zeile_abbau; do
+    [ -z "$zeile_abbau" ] || warn "Tor-Geheimnis nicht entfernt: $zeile_abbau"
+  done < <(python3 -I -c 'import json, re, sys
+try:
+    ist = json.load(open(sys.argv[1], encoding="utf-8")).get("ist") or {}
+except (OSError, ValueError, AttributeError):
+    ist = {}
+for v in ist.get("tor_entfernen_abgelehnt") or [] if isinstance(ist, dict) else []:
+    if isinstance(v, dict):
+        r, g = str(v.get("realm") or "?"), str(v.get("grund") or "")
+        if re.fullmatch(r"[A-Za-z0-9._?-]{1,64}", r) and re.fullmatch(r"[a-z_]{1,40}", g):
+            print(f"Realm {r} ({g})")' "$FRONT_STATE/status.json" 2>/dev/null || true)
+  [ -n "$IST_GESPERRT$IST_VERWAIST$IST_FREMD" ] || ok "keine gesperrten Kunden, keine verwaisten Tor-Dateien oder -Container"
+
   titel "Kunden"
   local code ca=() orch coll
   [ -z "$NETBOX_CA" ] || ca=(--cacert "$FRONT_PKI/$NETBOX_CA")
@@ -1521,6 +1574,10 @@ for v in tor.get("verworfen") or [] if isinstance(tor, dict) else []:
       *) fehler "$k: Startseite antwortet nicht (HTTP ${code:-–})" ;;
     esac
     [ "$ZUGRIFF" = ueberall ] || info "$k: Zugriff $(zugriff_text)"
+    if [ "$SPERRE" = ja ]; then  # ADR 0059: alle Adressen antworten „Zugang gesperrt“ (403)
+      info "$k: Zugang gesperrt (zum Entfernen vorgemerkt) – Wege zur NetBox nicht geprüft"
+      continue
+    fi
     [ -n "$NETBOX" ] || continue
     if [ "$NB" != ja ]; then
       info "$k: ohne NetBox (NB=nein)"
@@ -1570,7 +1627,7 @@ for v in tor.get("verworfen") or [] if isinstance(tor, dict) else []:
 # --- Host-Agent: Kunden aus der Oberfläche (1.3.0, ADR 0050) ---------------------------------
 sync_anwenden() {  # läuft in einer Subshell: abbruch beendet nur diese
   lade_conf
-  local soll=$1 zeilen art k a b c d e f g h i
+  local soll=$1 zeilen art k a b c d e f g h i j
   local -A gewollt=()
   install -d -m 750 "$(kdir)"
   rm -f "$(kdir)"/*.neu
@@ -1589,13 +1646,14 @@ for kunde in data.get("kunden") or []:
     netze = " ".join(clean(n) for n in kunde.get("netze") or [])
     nb = "ja" if kunde.get("nb", True) else "nein"  # 1.11.0; ältere Oberfläche: NetBox an
     quelle = "cockpit" if kunde.get("quelle") == "cockpit" else "oberflaeche"  # 1.11.0
+    gesperrt = "ja" if kunde.get("gesperrt") is True else "nein"  # ADR 0059
     print(SEP.join(["K", k, clean(kunde.get("name"))] + flags
-                   + [clean(kunde.get("realm")), zugriff, netze, nb, quelle]))
+                   + [clean(kunde.get("realm")), zugriff, netze, nb, quelle, gesperrt]))
     for link in kunde.get("links") or []:
         print(SEP.join(["L", k, clean(link.get("title")), clean(link.get("url")), clean(link.get("text"))]))
 PY
   ) || abbruch "soll.json nicht lesbar ($soll)"
-  while IFS=$'\x1f' read -r art k a b c d e f g h i; do
+  while IFS=$'\x1f' read -r art k a b c d e f g h i j; do
     case "$art" in
       K)
         kurzname "$k"
@@ -1605,8 +1663,9 @@ PY
         zugriff_pruefen "${f:-ueberall}" "$g"
         [ "$h" = nein ] || h=ja
         [ "$i" = cockpit ] || i=oberflaeche
-        printf 'NAME=%q\nDOC=%q\nNB=%q\nUM=%q\nCMDB_AN=%q\nREALM=%q\nZUGRIFF=%q\nNETZE=%q\nQUELLE=%q\n' \
-          "$a" "$b" "$h" "$c" "$d" "$e" "${f:-ueberall}" "$g" "$i" >"$(kdir)/$k.conf.neu"
+        [ "$j" = ja ] || j=nein
+        printf 'NAME=%q\nDOC=%q\nNB=%q\nUM=%q\nCMDB_AN=%q\nREALM=%q\nZUGRIFF=%q\nNETZE=%q\nQUELLE=%q\nSPERRE=%q\n' \
+          "$a" "$b" "$h" "$c" "$d" "$e" "${f:-ueberall}" "$g" "$i" "$j" >"$(kdir)/$k.conf.neu"
         : >"$(kdir)/$k.links.tsv.neu"
         gewollt[$k]=1
         ;;
@@ -1633,6 +1692,9 @@ PY
   # 1.13.0 (ADR 0055): versiegelte Client-Secrets aus dem Cockpit – nach den Kunden (Realm eines
   # Kunden aus dem Cockpit), vor dem Erzeugen (Container des Tors mit dem neuen Secret)
   if tor_an; then tor_geheimnisse_uebernehmen "$soll"; fi
+  # ADR 0059: Tor-Geheimnisse von Realms ohne Kunden auf Auftrag des Cockpits – nach den Kunden
+  # (welche Realms noch genutzt werden), auch mit Tor aus (Reste von früher)
+  tor_entfernen_uebernehmen "$soll"
   cmd_erzeugen
   [ "$FEHLER" -eq 0 ] || exit 1
 }
@@ -1667,12 +1729,39 @@ status_schreiben() {  # $1 = ok|fehler|behalten (nur den Stand des Tors erneuern
   if [ -z "${TOR:-}" ] && (lade_conf) >/dev/null 2>&1; then lade_conf; fi
   TOR=${TOR:-aus} TOR_BEREIT="" TOR_FEHLT="" TOR_GESPERRT="" TOR_COCKPIT=""
   if [ "$TOR" = an ]; then tor_uebersicht; fi
-  # TOR_VERWORFEN (nur in sync): Datei mit „Realm<TAB>Grund“ je verworfenem Geheimnis aus dem Cockpit
+  front_ist  # ADR 0059: Ist-Stand fürs Inventar (Kunden, gesperrt, Tor-Dateien und -Container)
+  # TOR_VERWORFEN (nur in sync): Datei mit „Realm<TAB>Grund“ je verworfenem Geheimnis aus dem Cockpit;
+  # TOR_ABBAU (nur in sync, ADR 0059): „entfernt<TAB>Realm“ bzw. „abgelehnt<TAB>Realm<TAB>Grund“
   if ! python3 -I - "$1" "${2:-}" "${3:-}" "$(kunden | tr '\n' ' ')" "$TOR" "$TOR_BEREIT" "$TOR_FEHLT" \
-    "$TOR_GESPERRT" "${HAUPT_REALM:-}" "$TOR_COCKPIT" "${TOR_VERWORFEN:-}" "$ziel" >"$tmp" <<'PY'
+    "$TOR_GESPERRT" "${HAUPT_REALM:-}" "$TOR_COCKPIT" "${TOR_VERWORFEN:-}" "$ziel" \
+    "$IST_GESPERRT" "$IST_DATEIEN" "$IST_DIENSTE" "$IST_FREMD" "$IST_VERWAIST" "${TOR_ABBAU:-}" >"$tmp" <<'PY'
 import json, sys
 from datetime import datetime, timezone
 art, summe, meldung, kunden, tor, bereit, fehlt, gesperrt, haupt, cockpit, verworfen_datei, ziel = sys.argv[1:13]
+ist_gesperrt, dateien, dienste, fremd, verwaist, abbau_datei = sys.argv[13:19]
+abbau = None  # ADR 0059: was dieser sync auf Auftrag entfernt bzw. abgelehnt hat
+if abbau_datei:
+    try:
+        zeilen = open(abbau_datei, encoding="utf-8").read().splitlines()
+    except OSError:
+        zeilen = []
+    abbau = {"tor_entfernt": [], "tor_entfernen_abgelehnt": []}
+    for zeile in zeilen:
+        teile = zeile.split("\t")
+        if teile[0] == "entfernt" and len(teile) == 2:
+            abbau["tor_entfernt"].append(teile[1])
+        elif teile[0] == "abgelehnt" and len(teile) == 3:
+            abbau["tor_entfernen_abgelehnt"].append({"realm": teile[1], "grund": teile[2]})
+# Ist-Stand fürs Inventar (ADR 0059): nur Namen, nie Inhalte
+ist = {
+    "kunden": kunden.split(),
+    "gesperrt": ist_gesperrt.split(),
+    "tor_realms_dateien": sorted(set(dateien.split())),
+    "tor_dienste": sorted(set(dienste.split())),
+    "tor_dienste_fremd": sorted(set(fremd.split())),
+    "tor_verwaist": sorted(set(verwaist.split())),
+    **(abbau or {"tor_entfernt": [], "tor_entfernen_abgelehnt": []}),
+}
 verworfen = None
 if verworfen_datei:
     try:
@@ -1706,7 +1795,13 @@ if art == "behalten":  # nach erzeugen bzw. tor-empfang: das Ergebnis des letzte
         vorher = alt.get("tor") if isinstance(alt.get("tor"), dict) else {}
         liste = vorher.get("verworfen")
         stand_tor["verworfen"] = liste if isinstance(liste, list) else []
+    if abbau is None:  # was der letzte sync auf Auftrag entfernt hat, bleibt
+        vorher = alt.get("ist") if isinstance(alt.get("ist"), dict) else {}
+        for feld in ("tor_entfernt", "tor_entfernen_abgelehnt"):
+            liste = vorher.get(feld)
+            ist[feld] = liste if isinstance(liste, list) else []
     alt["tor"] = stand_tor
+    alt["ist"] = ist
     print(json.dumps(alt, ensure_ascii=False))
     sys.exit(0)
 print(json.dumps({
@@ -1716,6 +1811,7 @@ print(json.dumps({
     "meldung": meldung,
     "kunden": kunden.split(),
     "tor": stand_tor,
+    "ist": ist,
 }, ensure_ascii=False))
 PY
   then
@@ -1724,6 +1820,89 @@ PY
   fi
   chmod 644 "$tmp"
   mv -f "$tmp" "$ziel"
+}
+
+# --- Abbau aus dem Cockpit und Ist-Stand (ADR 0059) ---------------------------------------------
+front_ist() {  # setzt IST_GESPERRT (Kunden), IST_DATEIEN (Realms mit tor/<realm>.env), IST_DIENSTE (Realms
+               # mit Container des Tors), IST_FREMD (Container ohne bekannten Realm), IST_VERWAIST (Realms
+               # mit Datei, aber ohne Kunden – nie der Realm von Automato); mit Leerzeichen
+  local f r k dienst
+  local -A realm_von=() benutzt=()
+  IST_GESPERRT="" IST_DATEIEN="" IST_DIENSTE="" IST_FREMD="" IST_VERWAIST=""
+  for k in $(kunden); do
+    lies_kunde "$k"
+    [ "$SPERRE" != ja ] || IST_GESPERRT+="$k "
+    if [ -n "$REALM" ]; then
+      benutzt[$REALM]=1
+      realm_von[$(tor_dienst "$REALM")]=$REALM
+    fi
+  done
+  for f in "$FRONT_TOR_DIR"/*.env; do
+    [ -f "$f" ] || continue
+    r=$(basename "$f" .env)
+    realm_ok "$r" || continue
+    IST_DATEIEN+="$r "
+    realm_von[$(tor_dienst "$r")]=$r
+    if [ -z "${benutzt[$r]:-}" ] && [ "$r" != "${HAUPT_REALM:-}" ]; then IST_VERWAIST+="$r "; fi
+  done
+  # Container des Projekts automato-tor (laufend oder nicht); tor-intern ist das Tor des Portals
+  while IFS= read -r dienst; do
+    [[ "$dienst" =~ ^tor-[a-z0-9-]{1,60}$ ]] && [ "$dienst" != tor-intern ] || continue
+    if [ -n "${realm_von[$dienst]:-}" ]; then IST_DIENSTE+="${realm_von[$dienst]} "; else IST_FREMD+="$dienst "; fi
+  done < <($DOCKER ps -a --filter label=com.docker.compose.project=automato-tor \
+    --format '{{.Label "com.docker.compose.service"}}' 2>/dev/null | sort -u || true)
+  return 0
+}
+
+tor_abbau() {  # $1 entfernt|abgelehnt, $2 Realm, $3 Grund – für status.json (nur in sync)
+  [ -z "${TOR_ABBAU:-}" ] || printf '%s\t%s%s\n' "$1" "$2" "${3:+$'\t'$3}" >>"$TOR_ABBAU"
+}
+
+tor_entfernen_uebernehmen() {  # $1 soll.json: Tor-Geheimnisse auf Auftrag des Cockpits entfernen
+  local soll=$1 zeilen realm auftrag k marke
+  local -A benutzt=()
+  zeilen=$(python3 -I - "$soll" <<'PY'
+import json, re, sys
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+eintraege = data.get("tor_entfernen") if isinstance(data, dict) else None
+for e in eintraege if isinstance(eintraege, list) else []:
+    if not isinstance(e, dict):
+        continue
+    realm, auftrag = e.get("realm"), e.get("auftrag")
+    if isinstance(realm, str) and isinstance(auftrag, str) and re.fullmatch(r"[0-9a-f]{32}", auftrag) \
+            and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", realm):
+        print(realm + "\t" + auftrag)
+PY
+  ) || { warn "soll.json: tor_entfernen nicht lesbar – nichts entfernt"; return 0; }
+  [ -n "$zeilen" ] || return 0
+  for k in $(kunden); do  # nach dem Übernehmen der Kunden: wer nutzt welchen Realm (auch von Hand)
+    lies_kunde "$k"
+    [ -z "$REALM" ] || benutzt[$REALM]=1
+  done
+  while IFS=$'\t' read -r realm auftrag; do
+    realm_ok "$realm" || continue
+    if [ "$realm" = "${HAUPT_REALM:-}" ]; then
+      warn "Realm $realm ist der Realm von Automato – Tor-Geheimnis bleibt (Auftrag aus dem Cockpit abgelehnt)"
+      tor_abbau abgelehnt "$realm" haupt_realm
+      continue
+    fi
+    if [ -n "${benutzt[$realm]:-}" ]; then
+      warn "Realm $realm wird noch von einem Kunden genutzt – Tor-Geheimnis bleibt (Auftrag aus dem Cockpit abgelehnt)"
+      tor_abbau abgelehnt "$realm" in_verwendung
+      continue
+    fi
+    # je Auftrag nur einmal: ein danach von Hand bzw. für einen neuen Kunden hinterlegtes bleibt
+    marke="$FRONT_TOR_DIR/$realm.entfernt"
+    if [ -f "$marke" ] && [ "$(cat "$marke")" = "$auftrag" ]; then continue; fi
+    if [ -e "$(tor_env "$realm")" ] || [ -e "$FRONT_TOR_DIR/$realm.siegel" ]; then
+      rm -f "$(tor_env "$realm")" "$FRONT_TOR_DIR/$realm.siegel"
+      ok "Realm $realm: Tor-Geheimnis entfernt (Abbau aus dem Cockpit, kein Kunde nutzt den Realm)"
+      tor_abbau entfernt "$realm"
+    fi
+    install -d -m 700 "$FRONT_TOR_DIR"
+    (umask 077 && printf '%s\n' "$auftrag" >"$marke")
+  done <<<"$zeilen"
+  return 0
 }
 
 cmd_sync() {
@@ -1743,15 +1922,16 @@ print(d.get("soll_sha256", "") if d.get("ok") else "")' "$FRONT_STATE/status.jso
   fi
   fehlertext=$(mktemp)
   TOR_VERWORFEN=$(mktemp)  # Geheimnisse aus dem Cockpit, die sync verwirft (Realm und Grund, 1.13.0)
+  TOR_ABBAU=$(mktemp)  # Tor-Geheimnisse, die sync auf Auftrag entfernt bzw. ablehnt (ADR 0059)
   if (sync_anwenden "$soll") 2>"$fehlertext"; then rc=0; else rc=$?; fi
   cat "$fehlertext" >&2
   if [ "$rc" -eq 0 ]; then
     status_schreiben ok "$summe" "übernommen"
-    rm -f "$fehlertext" "$TOR_VERWORFEN"
+    rm -f "$fehlertext" "$TOR_VERWORFEN" "$TOR_ABBAU"
     ok "Kunden aus der Oberfläche übernommen"
   else
     status_schreiben fehler "$summe" "$(grep -m1 'FEHLER' "$fehlertext" | sed -E 's/^ *FEHLER:? *//' || true)"
-    rm -f "$fehlertext" "$TOR_VERWORFEN"
+    rm -f "$fehlertext" "$TOR_VERWORFEN" "$TOR_ABBAU"
     abbruch "Kunden aus der Oberfläche nicht übernommen (Meldung in status.json)"
   fi
 }

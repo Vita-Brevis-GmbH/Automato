@@ -2464,7 +2464,8 @@ Client-Zertifikat und die passenden Zeilen der `agent.env`.
   nicht mehr. Der globale Admin kann weiterhin zuordnen (Notzugang). `front.sh kunde|link|entfernen`
   lehnen bei verbundenem Cockpit ab; nur im Notfall mit `--trotzdem` (Warnung „am Cockpit
   vorbei“; das Cockpit sieht den Kunden mit Herkunft „Hand“ und kann ihn übernehmen bzw.
-  abbauen). Nach dem Update `alembic upgrade head` (Migration `0086_cockpit_verwaltung`).
+  abbauen). Nach dem Update `alembic upgrade head` (1.14.0: Migrationen `0086_cockpit_verwaltung`
+  und `0087` für den Abbau).
 - **Kopplung mit dem Cockpit** (1.13.0, ADR 0057): Administration → Kunden-Portal, Karte
   „Cockpit“ (nur Admin) → „Code zum Koppeln erzeugen“ und den Code im Cockpit bei der
   Automato-Instanz unter „Koppeln“ eingeben (15 Minuten, einmal, höchstens 5 Fehlversuche; nur
@@ -2486,6 +2487,19 @@ Client-Zertifikat und die passenden Zeilen der `agent.env`.
   Zugangsdaten bleiben immer. Erneuern: beim Quellsystem „Alle hinterlegten Tokens entfernen“ –
   der Agent liefert beim nächsten Abgleich (5 Minuten) neue. Zeitplan wie bei jedem Quellsystem
   setzen. Stand auf dem NetBox-Host: `netbox-host.sh pruefen` (Abschnitt „Agent“).
+- **Abbau aus dem Cockpit** (1.14.0, ADR 0059): einen Kunden entfernt man im Cockpit (Abbau-Plan, Frist).
+  Während der Frist ist er **gesperrt** – im Kunden-Portal markiert („Zugang gesperrt“), jede
+  Adresse des Kunden antwortet „Zugang gesperrt“, Benutzer seines Realms haben in Automato keine
+  Rechte; Daten bleiben, rückgängig im Cockpit. Nach der Frist nimmt das Cockpit ihn heraus und
+  schickt einen **Löschauftrag**: die NetBox löscht der Agent des NetBox-Hosts (immer mit Sicherung
+  vorher, Sicherungen bleiben), das Tor-Geheimnis des Realms entfernt der Front-Proxy (nur, wenn
+  kein anderer Kunde den Realm nutzt), den Kunden in Automato entfernt Automato nur, wenn es ihn
+  für diesen Portal-Kunden angelegt hat und ihm **keine Daten** zugeordnet sind (Selektoren,
+  Zugehörigkeit, Benutzer, Zonen, Anordnung des Zonenplans) – sonst bleibt er und das Inventar
+  meldet `hat_daten` (Daten von Hand entfernen bzw. den Kunden behalten). Kunden aus der
+  Oberfläche nimmt der Abbau nie. Audit `portal.abbau.*` (angenommen, Fortschritt, erledigt,
+  aufgehoben), entfernte Kunden in Automato als `customer.deleted` mit Akteur `cockpit`. Den
+  Ist-Stand aller Instanzen (Altlasten) zeigt das Cockpit auf „Aufräumen“.
 - Agent-Tokens werden nur gehasht gespeichert und einmalig angezeigt. Produktiv sprechen
   Agenten nur über das **mTLS-Agent-Gateway** (`deploy/agent-gateway`, Modus `bind`:
   Zertifikat und Token gehören zum selben Agenten); Port 8000 nicht in Agent-Netze freigeben.

@@ -41,6 +41,10 @@ Seit 1.14.0 (ADR 0058, `store/verwaltung.py`) je Kunde optional `benutzer` (Keyc
 -> Kunden-Rolle; gesetzt haben nur diese Benutzer des Realms Rechte, null = alle mit der
 Standard-Rolle) und `zuordnung.kunde_anlegen` (Automato legt im Mandanten einen Kunden mit dem
 Namen des Portal-Kunden an und nimmt ihn zu den Kunden - idempotent, Audit `customer.created`).
+
+Ebenfalls seit 1.14.0 (ADR 0059) je Kunde optional `gesperrt` (Vorgabe false) - zum Entfernen
+vorgemerkt, der Front-Proxy sperrt alle Adressen, Daten bleiben. Die Loeschauftraege (`entfernen`,
+oberste Ebene) prueft und fuehrt `store/abbau.py` (vor bzw. nach `uebernehmen`, `api/freigaben.py`).
 """
 
 import base64
@@ -67,9 +71,10 @@ WERKZEUGE = ("doc", "nb", "um", "cmdb")
 AKTEUR = "cockpit"
 #: Felder, deren Autor das Cockpit ist (alles andere bleibt in Automato); mit `zuordnung` auch
 #: Mandant, Kunden und Standard-Rolle (1.13.0) - `scope_source` haelt fest, wer sie setzt; mit
-#: `kacheln` auch die weiteren Kacheln (`links_source`)
+#: `kacheln` auch die weiteren Kacheln (`links_source`); seit 1.14.0 die Benutzer mit Rolle
+#: (`users`, ADR 0058) und die Sperre waehrend der Frist (`gesperrt`, ADR 0059)
 FELDER = ("name", "doc", "nb", "um", "cmdb", "realm", "access", "access_nets", "scope_source",
-          "links", "links_source", "users")  # fmt: skip
+          "links", "links_source", "users", "gesperrt")  # fmt: skip
 FELDER_ZUORDNUNG = ("tenant_id", "customer_ids", "default_role")
 MAX_ZUORDNUNG_KUNDEN = 2000
 #: versiegelte Client-Secrets (1.13.0, ADR 0055): Kennung des Empfangsschluessels, Chiffrat
@@ -269,10 +274,13 @@ def _freigabe(session: Session, roh: dict) -> Freigabe:
     realm = roh.get("realm")
     if realm is not None and not isinstance(realm, str):
         raise portal.PortalError(L("realm ist kein Text", "realm is not a string"))
+    gesperrt = roh.get("gesperrt")  # 1.14.0 (ADR 0059): zum Entfernen vorgemerkt (Vorgabe false)
+    if gesperrt is not None and not isinstance(gesperrt, bool):
+        raise portal.PortalError(L("gesperrt ist nicht true/false", "gesperrt is not true/false"))
     werte = {"name": name, "doc": "doc" in tools, "nb": "nb" in tools, "um": "um" in tools,
              "cmdb": "cmdb" in tools, "realm": portal.check_realm(realm), "access": access,
              "access_nets": nets, **_zuordnung(session, roh.get("zuordnung")),
-             **_kacheln(roh.get("kacheln")),
+             **_kacheln(roh.get("kacheln")), "gesperrt": bool(gesperrt),
              "users": verwaltung.check_benutzer(roh.get("benutzer"))}  # fmt: skip
     return Freigabe(kurz, werte, _kunde_anlegen(roh.get("zuordnung")))
 
@@ -437,6 +445,8 @@ def _wert(pc: PortalCustomer, feld: str) -> object:
         return value or portal.SCOPE_AUTOMATO
     if feld == "links":
         return list(value or [])
+    if feld == "gesperrt":
+        return bool(value)
     return value
 
 

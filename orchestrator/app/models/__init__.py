@@ -5,6 +5,7 @@ Phase 1 - Mandant, Zonen, Adressobjekte, Services, Regeln, Findings.
 Die ACI-Tabellen (epg*) und nat_rule folgen mit ihrer Phase.
 """
 
+from app.models.abbau import AbbauAuftrag, IstMeldung
 from app.models.agent import Agent
 from app.models.agent_check import AgentCheck
 from app.models.application import (
@@ -113,6 +114,7 @@ from app.models.virtual import Portgroup, Vm, VmIp, VmNic
 from app.models.zone import Zone
 
 __all__ = [
+    "AbbauAuftrag",
     "ADDRESS_CATEGORIES",
     "CRITICALITIES",
     "PURPOSES",
@@ -135,6 +137,7 @@ __all__ = [
     "CollectorRun",
     "CockpitCustomer",
     "Coupling",
+    "IstMeldung",
     "DataChange",
     "DataState",
     "DeviceObject",

@@ -91,7 +91,7 @@ def test_inventar_aus_der_topologie(client, tmp_path):
         "kurzname": "kunde-a", "name": "Kunde A", "startseite": "https://kunde-a.mgmt.example.ch",
         "netbox": "https://kunde-a-nb.mgmt.example.ch", "automato": None, "magister": None,
         "cmdb": None, "quelle": None, "werkzeuge": None, "zugriff": None, "netze": [],
-        "realm": None, "automato_zugeordnet": None, "zuordnung": None,
+        "realm": None, "gesperrt": None, "automato_zugeordnet": None, "zuordnung": None,
         "kacheln": None, "kacheln_von": None, "benutzer": None,  # 1.14.0
     }]  # fmt: skip
 

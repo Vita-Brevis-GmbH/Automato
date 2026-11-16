@@ -269,9 +269,11 @@ def realm_scopes(session: Session, main_realm: str | None) -> dict[str, RealmSco
     selbst: dessen Benutzer melden sich wie bisher an). Nur Kunden, die es noch gibt
     (`live_customers`)."""
     out: dict[str, RealmScope] = {}
+    # gesperrt (1.14.0, ADR 0059, zum Entfernen vorgemerkt): der Realm gibt in Automato keine
+    # Rechte mehr
     kunden = [pc for pc in session.scalars(
         select(PortalCustomer).where(PortalCustomer.realm.is_not(None))
-    ) if pc.realm and pc.realm != main_realm]  # fmt: skip
+    ) if pc.realm and pc.realm != main_realm and not pc.gesperrt]  # fmt: skip
     live = live_customers(session, (pc.tenant_id for pc in kunden))
     for pc in kunden:
         out[pc.realm] = RealmScope(
@@ -362,6 +364,8 @@ def out(pc: PortalCustomer, domain: str = "", live: dict[int, set[int]] | None =
         # 1.14.0 (ADR 0058): Benutzer des Realms mit Rolle aus dem Cockpit (None = alle mit der
         # Standard-Rolle)
         "users": list(pc.users) if pc.users is not None else None,
+        # 1.14.0 (ADR 0059): vom Cockpit zum Entfernen vorgemerkt - Front-Proxy sperrt alle Adressen
+        "gesperrt": bool(pc.gesperrt),
         "assigned": assigned(pc, live),
         "addresses": addresses,
         "updated_by": pc.updated_by,
@@ -385,7 +389,11 @@ def desired(session: Session, cockpit: bool = False) -> dict:
     (ADR 0055) mit den versiegelten Client-Secrets des Anmelde-Tors aus dem Cockpit
     (`tor_geheimnisse`, nur Chiffrat; nur, wenn es welche gibt). Seit 1.14.0 (ADR 0058) mit
     `verwaltung: cockpit`, wenn ein Cockpit verbunden ist (`cockpit`) - dann aendert `front.sh`
-    Kunden von Hand nur noch mit `--trotzdem`."""
+    Kunden von Hand nur noch mit `--trotzdem`. Ebenfalls seit 1.14.0 (ADR 0059) je Kunde
+    `gesperrt` (nur, wenn gesperrt) und die Tor-Geheimnisse, die `front.sh sync` auf Auftrag des
+    Cockpits entfernt (`tor_entfernen`, nur, wenn es welche gibt)."""
+    from app.store import abbau  # spaet: abbau nutzt portal
+
     kunden = listing(session)
     data = {
         "version": 1,
@@ -394,7 +402,8 @@ def desired(session: Session, cockpit: bool = False) -> dict:
             {"kurzname": pc.short_name, "name": pc.name, "doc": pc.doc, "nb": pc.nb,
              "um": pc.um, "cmdb": pc.cmdb, "realm": pc.realm or "",
              "zugriff": pc.access or "ueberall", "netze": list(pc.access_nets or []),
-             "links": list(pc.links or []), "quelle": pc.source or SOURCE_UI}
+             "links": list(pc.links or []), "quelle": pc.source or SOURCE_UI,
+             **({"gesperrt": True} if pc.gesperrt else {})}
             for pc in kunden
         ],
     }  # fmt: skip
@@ -409,6 +418,9 @@ def desired(session: Session, cockpit: bool = False) -> dict:
     )  # fmt: skip
     if tor:
         data["tor_geheimnisse"] = tor
+    entfernen = abbau.tor_entfernen(session)
+    if entfernen:
+        data["tor_entfernen"] = entfernen
     if cockpit:
         data["verwaltung"] = "cockpit"
     return data

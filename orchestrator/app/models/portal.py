@@ -34,6 +34,10 @@ in Automato dann nur lesbar).
 
 Benutzer und Rollen aus dem Cockpit (1.14.0, ADR 0058): `users` = Keycloak-Benutzernamen des
 Kunden-Realms mit ihrer Kunden-Rolle; gesetzt haben nur diese Benutzer Rechte (`auth/oidc.py`).
+
+Gesperrt (1.14.0, ADR 0059): `gesperrt` = das Cockpit hat den Kunden zum Entfernen vorgemerkt
+(Frist des Cockpits) - der Front-Proxy sperrt alle seine Adressen („Zugang gesperrt“), Benutzer
+seines Realms bekommen in Automato keine Rechte; Daten und Einstellungen bleiben unveraendert.
 """
 
 from datetime import UTC, datetime
@@ -85,6 +89,8 @@ class PortalCustomer(Base):
     # [{"benutzer", "rolle"}] - None = keine Aussage (alle Benutzer des Realms mit der
     # Standard-Rolle); gesetzt, auch leer: nur diese Benutzer haben Rechte
     users: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # zum Entfernen vorgemerkt (Cockpit, ADR 0059): Front-Proxy sperrt alle Adressen, Daten bleiben
+    gesperrt: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     updated_by: Mapped[str | None] = mapped_column(String(200), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)

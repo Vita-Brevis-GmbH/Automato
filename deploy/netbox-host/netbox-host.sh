@@ -27,6 +27,12 @@
 # Kunden mit dem Werkzeug NetBox (GET /api/netbox-host, eigenes Token) und ruft für jeden ohne
 # Instanz `neu` auf. Entfernt wird nie selbst – eine NetBox ohne Freigabe meldet er nur.
 #
+# Seit 1.14.0 (ADR 0059, Abbau aus dem Cockpit) nennt Automato zusätzlich Löschaufträge
+# (`loeschen`: Kunden, die das Cockpit nach Ablauf seiner Frist entfernt hat). Nur diese löscht der Agent ohne Rückfrage
+# – wie `loeschen <kunde> --ja`, also nie ohne frische Sicherung –, je Auftrag nur einmal
+# (geloescht/<kunde>), nie einen Kunden, der noch freigegeben ist, und nie bei fremder Domain. Nach
+# jedem Abgleich meldet er seinen Ist-Stand (PUT /api/netbox-host/stand: nur Kurznamen und Zeit).
+#
 # Seit 1.13.0 (ADR 0056) ist eine NetBox danach ohne Handgriffe fertig: der Agent richtet die
 # Anmeldung über das Tor ein, wo sie fehlt (SSO=an; Neustart nur bei neuen Einstellungen), und
 # übergibt Automato den Zugang (Lese- und Sync-Token) mit PUT /api/netbox-host/zugang. Tokens
@@ -688,6 +694,38 @@ for k in daten["kunden"][:1000]:
 PY
 )
 
+# Löschaufträge aus der Antwort von Automato (ADR 0059): je Zeile "kurzname<TAB>auftrag"; fehlt das Feld
+# (Automato älter), keine
+NBH_LOESCHEN_PY=$(cat <<'PY'
+import json, re, sys
+daten = json.load(sys.stdin)
+liste = daten.get("loeschen") if isinstance(daten, dict) else None
+for e in liste[:1000] if isinstance(liste, list) else []:
+    if not isinstance(e, dict):
+        continue
+    kurz, auftrag = e.get("kurzname"), e.get("auftrag")
+    if isinstance(kurz, str) and re.fullmatch(r"[a-z0-9]([a-z0-9-]{0,40}[a-z0-9])?", kurz) \
+            and isinstance(auftrag, str) and re.fullmatch(r"[0-9a-f]{32}", auftrag):
+        print(kurz + "\t" + auftrag)
+PY
+)
+
+# Ist-Stand für Automato (ADR 0059): nur Kurznamen und Zeit
+NBH_STAND_PY=$(cat <<'PY'
+import json, sys
+from datetime import datetime, timezone
+instanzen, verwaist, geloescht, fehl = sys.argv[1:5]
+print(json.dumps({
+    "vertrag": 1,
+    "zeit": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    "instanzen": sorted(set(instanzen.split())),
+    "ohne_freigabe": sorted(set(verwaist.split())),
+    "geloescht": sorted(set(geloescht.split())),
+    "loeschen_fehlgeschlagen": sorted(set(fehl.split())),
+}))
+PY
+)
+
 # Antwort auf PUT /api/netbox-host/zugang: nur der Stand (nie der Inhalt ausgeben)
 NBH_ZUGANG_PY=$(cat <<'PY'
 import json, sys
@@ -707,7 +745,8 @@ PY
 NBH_STATUS_PY=$(cat <<'PY'
 import json, sys
 from datetime import datetime, timezone
-ok, angelegt, fehl, verwaist, kunden, meldung, zugang, offen, klaeren, sso = (sys.argv[1:] + [""] * 10)[:10]
+ok, angelegt, fehl, verwaist, kunden, meldung, zugang, offen, klaeren, sso, geloescht, loeschen_fehl, \
+    gemeldet = (sys.argv[1:] + [""] * 13)[:13]
 print(json.dumps({
     "zeit": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     "ok": ok == "ja",
@@ -720,6 +759,10 @@ print(json.dumps({
     "zugang_offen": offen.split(),
     "zugang_klaeren": klaeren.split(),
     "sso_eingerichtet": sso.split(),
+    # ADR 0059: Löschaufträge aus Automato (Abbau im Cockpit) und ob der Stand gemeldet ist
+    "geloescht": geloescht.split(),
+    "loeschen_fehlgeschlagen": loeschen_fehl.split(),
+    "stand_gemeldet": gemeldet == "ja",
 }, ensure_ascii=False))
 PY
 )
@@ -727,7 +770,8 @@ PY
 sync_status() {  # $1 ok ja|nein, $2 angelegt, $3 fehlgeschlagen, $4 ohne Freigabe, $5 Anzahl, $6 Meldung
   local tmp
   tmp=$(mktemp "$NBH_DIR/.sync-status-XXXXXX")
-  python3 -I -c "$NBH_STATUS_PY" "$@" "$ZUGANG_NEU" "$ZUGANG_OFFEN" "$ZUGANG_KLAEREN" "$SSO_NEU" >"$tmp" \
+  python3 -I -c "$NBH_STATUS_PY" "$@" "$ZUGANG_NEU" "$ZUGANG_OFFEN" "$ZUGANG_KLAEREN" "$SSO_NEU" \
+    "$GELOESCHT" "$LOESCHEN_FEHL" "$STAND_GEMELDET" >"$tmp" \
     && chmod 600 "$tmp" && mv -f "$tmp" "$(status_datei)" || rm -f "$tmp"
 }
 
@@ -737,6 +781,9 @@ ZUGANG_OFFEN=""
 ZUGANG_KLAEREN=""
 ZUGANG_FEHL=""
 SSO_NEU=""
+GELOESCHT=""  # ADR 0059: auf Auftrag gelöscht
+LOESCHEN_FEHL=""
+STAND_GEMELDET=nein
 NBH_KOPF=""
 NBH_CA=()
 
@@ -802,6 +849,60 @@ zugang_abgleichen() {  # <kunde> <stand aus GET /api/netbox-host>
   esac
 }
 
+# --- Abbau aus dem Cockpit (ADR 0059) ------------------------------------------------------------
+loeschen_abarbeiten() {  # $1 Zeilen "kurzname<TAB>auftrag", $2 freigegebene Kurznamen (" a b "), $3 Domain passt (1|0)
+  local k auftrag marke
+  [ -n "$1" ] || return 0
+  titel "Löschaufträge aus Automato (Abbau im Cockpit)"
+  if [ "$3" != 1 ]; then
+    warn "Domain von Automato passt nicht zu diesem Host – keine Löschaufträge ausgeführt"
+    return 0
+  fi
+  install -d -m 700 "$NBH_DIR/geloescht"
+  # über fd 4: loeschen (docker compose) liest sonst stdin
+  while IFS=$'\t' read -r -u 4 k auftrag; do
+    [ -n "$k" ] || continue
+    case "$2" in *" $k "*)
+      warn "$k: in Automato noch freigegeben – nicht gelöscht"
+      LOESCHEN_FEHL="$LOESCHEN_FEHL $k"
+      continue ;;
+    esac
+    # je Auftrag nur einmal: was danach unter diesem Namen entsteht, bleibt
+    marke="$NBH_DIR/geloescht/$k"
+    if [ -f "$marke" ] && [ "$(cat "$marke")" = "$auftrag" ]; then
+      [ ! -d "$(kdir "$k")" ] || warn "$k: nach dem Löschen wieder angelegt – bleibt (Auftrag schon ausgeführt), von Hand klären"
+      continue
+    fi
+    if [ ! -d "$(kdir "$k")" ]; then
+      info "$k: keine NetBox auf diesem Host – nichts zu löschen"
+    elif bash "$SCRIPT_DIR/netbox-host.sh" loeschen "$k" --ja; then
+      GELOESCHT="$GELOESCHT $k"
+      ok "$k: gesichert und gelöscht (Abbau aus dem Cockpit) – Sicherungen bleiben in $BACKUP_DIR/$k"
+    else
+      LOESCHEN_FEHL="$LOESCHEN_FEHL $k"
+      fehler "$k: nicht gelöscht (ohne Sicherung wird nichts gelöscht) – der nächste Abgleich versucht es wieder"
+      continue
+    fi
+    (umask 077 && printf '%s\n' "$auftrag" >"$marke")
+  done 4<<<"$1"
+}
+
+stand_melden() {  # $1 ohne Freigabe: Ist-Stand an Automato (ADR 0059) – nur Kurznamen und Zeit
+  local antwort code
+  antwort=$(mktemp "$NBH_DIR/.antwort-XXXXXX")
+  code=$(python3 -I -c "$NBH_STAND_PY" "$(kunden | tr '\n' ' ')" "$1" "$GELOESCHT" "$LOESCHEN_FEHL" \
+    | $CURL -sS --noproxy '*' "${NBH_CA[@]}" --max-time 30 -X PUT -H "@$NBH_KOPF" \
+      -H 'Content-Type: application/json' --data-binary @- -o "$antwort" -w '%{http_code}' \
+      "$AUTOMATO_URL/api/netbox-host/stand" 2>/dev/null) || code=${code:-000}
+  rm -f "$antwort"
+  case "${code:-000}" in
+    200) STAND_GEMELDET=ja ;;
+    404) info "Automato nimmt den Ist-Stand noch nicht an (älter als der Abbau aus dem Cockpit)" ;;
+    *) warn "Ist-Stand nicht an Automato gemeldet (HTTP ${code:-000}) – der nächste Abgleich meldet wieder" ;;
+  esac
+  return 0
+}
+
 cmd_sync() {
   root_noetig
   lade_conf
@@ -810,7 +911,7 @@ cmd_sync() {
   exec 9>"$NBH_DIR/.sync.lock"
   $FLOCK -n 9 || { info "Abgleich läuft schon"; return 0; }
   titel "Kunden aus Automato ($AUTOMATO_URL)"
-  local antwort liste k name zugang domain="" domain_ok=1 angelegt="" fehl="" verwaist="" n=0 meldung=""
+  local antwort liste loeschen k name zugang domain="" domain_ok=1 angelegt="" fehl="" verwaist="" n=0 meldung=""
   NBH_KOPF=$(mktemp "$NBH_DIR/.kopf-XXXXXX")
   trap 'rm -f "$NBH_KOPF"' EXIT
   antwort=$(mktemp "$NBH_DIR/.antwort-XXXXXX")
@@ -828,6 +929,7 @@ cmd_sync() {
     sync_status nein "" "" "" 0 "Antwort von Automato unbekannt"
     abbruch "Antwort von Automato unbekannt: $liste"
   fi
+  loeschen=$(python3 -I -c "$NBH_LOESCHEN_PY" <"$antwort" 2>/dev/null || true)  # ADR 0059
   rm -f "$antwort"
   local gewollt=" "
   # die Liste über fd 3: docker compose exec im Abgleich liest sonst stdin (die übrigen Kunden)
@@ -862,21 +964,24 @@ cmd_sync() {
       zugang_abgleichen "$k" "${zugang:--}"
     fi
   done 3<<<"$liste"
+  loeschen_abarbeiten "$loeschen" "$gewollt" "$domain_ok"
   for k in $(kunden); do
     case "$gewollt" in *" $k "*) ;; *)
       verwaist="$verwaist $k"
-      warn "$k: in Automato ohne NetBox freigegeben – bleibt; entfernen nur von Hand: netbox-host.sh loeschen $k --ja"
+      warn "$k: in Automato ohne NetBox freigegeben – bleibt; entfernen: Abbau im Cockpit bzw. von Hand netbox-host.sh loeschen $k --ja"
       ;;
     esac
   done
   [ "$n" -gt 0 ] || info "Automato nennt keine Kunden mit NetBox"
+  stand_melden "$verwaist"
   if [ -n "$fehl" ] || [ "$FEHLER" -gt 0 ]; then
     [ -z "$fehl" ] || meldung="Anlegen von${fehl}"
     [ -z "$ZUGANG_FEHL" ] || meldung="${meldung:+$meldung; }Zugang für Automato nicht übergeben:${ZUGANG_FEHL}"
+    [ -z "$LOESCHEN_FEHL" ] || meldung="${meldung:+$meldung; }nicht gelöscht:${LOESCHEN_FEHL}"
     sync_status nein "$angelegt" "$fehl" "$verwaist" "$n" "${meldung:-siehe Log}"
     return 1
   fi
-  sync_status ja "$angelegt" "" "$verwaist" "$n" ""
+  sync_status ja "$angelegt" "" "$verwaist" "$n" "${LOESCHEN_FEHL:+nicht gelöscht:$LOESCHEN_FEHL}"
   ok "Abgleich fertig ($n Kunden mit NetBox)"
 }
 
@@ -899,22 +1004,28 @@ teile = [("ok" if s.get("ok") else "fehler"), s.get("zeit") or "?", str(s.get("k
 for feld in ("fehlgeschlagen", "ohne_freigabe"):
     teile.append(" ".join(s.get(feld) or []))
 teile.append(s.get("meldung") or "")
-for feld in ("zugang_uebergeben", "zugang_offen", "zugang_klaeren", "sso_eingerichtet"):
+for feld in ("zugang_uebergeben", "zugang_offen", "zugang_klaeren", "sso_eingerichtet", "geloescht",
+             "loeschen_fehlgeschlagen"):
     teile.append(" ".join(s.get(feld) or []))
+teile.append("ja" if s.get("stand_gemeldet") else "nein")
 print("\x1f".join(teile))
 PY
   ); then
     warn "noch kein Abgleich – Log: journalctl -u netbox-host-sync"
     return 0
   fi
-  local erfolg zeit anzahl fehl verwaist meldung zugang offen klaeren sso
-  IFS=$'\x1f' read -r erfolg zeit anzahl fehl verwaist meldung zugang offen klaeren sso <<<"$stand"
+  local erfolg zeit anzahl fehl verwaist meldung zugang offen klaeren sso geloescht nicht_geloescht gemeldet
+  IFS=$'\x1f' read -r erfolg zeit anzahl fehl verwaist meldung zugang offen klaeren sso geloescht nicht_geloescht \
+    gemeldet <<<"$stand"
   if [ "$erfolg" = ok ]; then
     ok "letzter Abgleich $zeit: $anzahl Kunden mit NetBox"
   else
     fehler "letzter Abgleich $zeit fehlgeschlagen: ${meldung:-Anlegen von $fehl} – journalctl -u netbox-host-sync"
   fi
-  [ -z "$verwaist" ] || warn "ohne Freigabe in Automato: $verwaist (bleiben, bis Sie sie von Hand entfernen)"
+  [ -z "$verwaist" ] || warn "ohne Freigabe in Automato: $verwaist (bleiben, bis der Abbau im Cockpit sie entfernt bzw. Sie von Hand)"
+  [ -z "$geloescht" ] || ok "auf Auftrag aus Automato gelöscht (mit Sicherung): $geloescht"
+  [ -z "$nicht_geloescht" ] || fehler "Löschauftrag nicht ausgeführt: $nicht_geloescht – journalctl -u netbox-host-sync"
+  [ "$gemeldet" = ja ] || info "Ist-Stand nicht an Automato gemeldet (Automato älter bzw. nicht erreichbar)"
   [ -z "$sso" ] || ok "Anmeldung über das Tor eingerichtet: $sso"
   [ -z "$zugang" ] || ok "Zugang an Automato übergeben: $zugang"
   [ -z "$offen" ] || info "in Automato noch ohne Mandant (Zugang folgt): $offen"

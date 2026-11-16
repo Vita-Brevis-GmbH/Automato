@@ -89,6 +89,7 @@ MODULES: tuple[Module, ...] = (
             "kopplung",
         ),
         store=(
+            "abbau",
             "aci_direction",
             "aci_relevance",
             "aci_shared",
@@ -105,6 +106,7 @@ MODULES: tuple[Module, ...] = (
             "freigaben",
             "health",
             "inventory",
+            "ist_stand",
             "kopplung",
             "nat",
             "netbox_host",
