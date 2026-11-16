@@ -230,6 +230,16 @@ def _mandanten(session: Session) -> list[dict]:
             for t in mandanten]  # fmt: skip
 
 
+def installation(settings: Settings, topo: dict | None = None) -> dict:
+    """Version, Umgebung und Adresse der Oberflaeche (auch in der Antwort der Kopplung, 1.13.0)."""
+    topo = _topologie(settings.front_state_dir) if topo is None else topo
+    return {
+        "version": __version__,
+        "umgebung": settings.environment,
+        "oberflaeche": _text(topo.get("oberflaeche")),
+    }
+
+
 def inventory(settings: Settings, session: Session | None = None) -> dict:
     """Antwort von `GET /inventory` - Vertrag v1 (`VERTRAG`)."""
     topo = _topologie(settings.front_state_dir)
@@ -240,9 +250,7 @@ def inventory(settings: Settings, session: Session | None = None) -> dict:
     return {
         "vertrag": VERTRAG,
         "automato": {
-            "version": __version__,
-            "umgebung": settings.environment,
-            "oberflaeche": _text(topo.get("oberflaeche")),
+            **installation(settings, topo),
             # 1.13.0 (ADR 0054 Nachtrag): Auswahl fuer die Zuordnung im Cockpit
             "mandanten": _mandanten(session) if session else [],
             "rollen": list(caps.CUSTOMER_ROLES),

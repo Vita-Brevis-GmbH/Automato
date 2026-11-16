@@ -51,6 +51,37 @@ Vorschlag, Mandant und Kunden im Cockpit zu wählen: „Ja gerne“). ADR 0054 N
   `automato.rollen` und je Kunde `automato_zugeordnet` und `zuordnung` – die Auswahl und der
   Stand für das Cockpit.
 
+NetBox ohne Handgriffe und Kopplung mit dem Cockpit (Anwender 2026-11-16: „alles solche Dinge in das
+globale Cockpit holen“, Cockpit ADR 0011 Stufen B und C; „go für die nächsten 4-5 Punkte“).
+ADR 0056, 0057, R27.
+
+- **NetBox ohne Handgriffe** (ADR 0056): der Agent des NetBox-Hosts (`netbox-host.sh sync`) macht
+  eine NetBox fertig. **Anmeldung über das Tor:** bei `SSO=an` richtet er sie bei jeder Instanz
+  ein, der sie fehlt oder deren Einstellungen veraltet sind, und startet nur dann neu (Stand je
+  Instanz `sso-stand`; nie, solange der Proxy gefälschte Anmelde-Kopfzeilen nicht entfernt).
+  **Zugang für Automato:** `GET /netbox-host` nennt je Kunde `zugang` (`fehlt`, `vorhanden`,
+  `kein_mandant`, `andere_adresse`, `keine_adresse`); nur bei `fehlt` legt der Agent
+  `automato-collector` und `automato-sync` mit neuen Tokens an und liefert sie mit
+  `PUT /netbox-host/zugang` (Token des NetBox-Hosts). Automato speichert sie verschlüsselt wie von
+  Hand am Quellsystem NetBox beim Mandanten des Portal-Kunden (`https://<kunde>-nb.<domain>`, neu
+  „NetBox“ bzw. ein vorhandenes ohne Tokens) – vorhandene Zugangsdaten bleiben immer, ohne
+  Mandant entstehen keine Tokens. Audit `source.netbox_host_access` nur mit Kunde, Quellsystem und
+  Herkunft; Tokens nie in Befehlszeile, Datei, Ausgabe, Antwort oder Log (auch `token` übergibt
+  sie jetzt über die Umgebung). `pruefen` zeigt Anmeldung eingerichtet, Zugang übergeben, ohne
+  Mandant, von Hand klären. Erneuern: in Automato „Alle hinterlegten Tokens entfernen“.
+  `netbox-host.sh token` bleibt Notweg; Kunden-Portal → Einrichtung nennt den Agenten.
+- **Kopplung mit dem Cockpit über einen Einmal-Code** (ADR 0057): im Kunden-Portal erzeugt die
+  Karte „Cockpit“ (nur Admin) einen Einmal-Code (`XXXX-XXXX-XXXX`, 15 Minuten, einmal, höchstens
+  5 Fehlversuche, ein offener Code), nur einmal angezeigt und nur als Hash gespeichert. Das
+  Cockpit löst ihn mit `POST /api/kopplung` ein und bekommt einmal ein neues Token (nur als Hash,
+  Tabelle `coupling`, Migration `0084`). Jeder Fehlschlag ergibt dieselbe Antwort, höchstens 10
+  Versuche je Minute (`429`). Inventar und Freigaben nehmen das gekoppelte Token oder wie bisher
+  `AUTOMATO_COCKPIT_TOKEN` (künftig leer lassen). „Entkoppeln“ macht es ungültig, ein neues
+  Koppeln ersetzt es; die Karte zeigt, mit welchem Cockpit gekoppelt ist und wann es zuletzt kam.
+  Ohne Oberfläche: `sudo deploy/aufbau.sh cockpit-kopplung [status|verwerfen|entkoppeln]`. Im
+  Audit `cockpit.kopplung.*` ohne Code und Token. Vertrag fürs Cockpit: `docs/vertraege/kopplung.md`
+  im Cockpit (v1).
+
 ## 1.12.2 – 2026-11-14
 
 Korrektur aus dem Test des Anmelde-Tors (Anwender 2026-11-14: „Wenn ich mich im Portal ein Logout

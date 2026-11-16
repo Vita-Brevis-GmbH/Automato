@@ -18,6 +18,7 @@ from app.models.application import (
 from app.models.audit import AuditLog
 from app.models.base import Base
 from app.models.collector_run import CollectorRun, RunStatus
+from app.models.coupling import Coupling
 from app.models.customer import (
     CUSTOMER_USER_ORIGINS,
     CUSTOMER_USER_ROLES,
@@ -131,6 +132,7 @@ __all__ = [
     "AuditLog",
     "Base",
     "CollectorRun",
+    "Coupling",
     "DataChange",
     "DataState",
     "DeviceObject",

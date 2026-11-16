@@ -2424,7 +2424,7 @@ Client-Zertifikat und die passenden Zeilen der `agent.env`.
   Wer nicht darf, sieht für alle Adressen des Kunden nur „Unbekannte Adresse“ (auch keine
   Anmeldung, keine NetBox-API). `front.sh liste` zeigt Zugriff und Quelle (Portal/Hand).
 - **Kunden aus dem Cockpit** (1.11.0, ADR 0054): das Kundenregister des Cockpits schickt seine
-  Kunden mit `PUT /api/freigaben` (Token wie das Inventar, `aufbau.sh cockpit-token`). Im
+  Kunden mit `PUT /api/freigaben` (Token wie das Inventar, seit 1.13.0 über die Kopplung). Im
   Kunden-Portal tragen sie „aus dem Cockpit“: Kurzname, Name, Werkzeuge, Zugriff und Realm nur
   lesbar, Entfernen nur im Cockpit; hier pflegt man Mandant, Kunden, Rolle und Kacheln. Ein
   vorhandener Kunde mit gleichem Kurznamen wird übernommen. `front.sh liste` zeigt Quelle
@@ -2435,6 +2435,16 @@ Client-Zertifikat und die passenden Zeilen der `agent.env`.
   Cockpit ohne Mandant bzw. ohne Kunden ist in der Liste markiert („noch kein Mandant – Benutzer
   haben keine Rechte“); seine Benutzer sehen nach der Anmeldung nur diese Meldung statt
   „Keine Berechtigung“.
+- **Kopplung mit dem Cockpit** (1.13.0, ADR 0057): Administration → Kunden-Portal, Karte
+  „Cockpit“ (nur Admin) → „Code zum Koppeln erzeugen“ und den Code im Cockpit bei der
+  Automato-Instanz unter „Koppeln“ eingeben (15 Minuten, einmal, höchstens 5 Fehlversuche; nur
+  dort eingeben, nie in Chat, Ticket oder Datei). Die Karte merkt die Kopplung selbst und zeigt
+  danach „Gekoppelt mit …“ und wann das Cockpit zuletzt kam. „Entkoppeln“ macht das Token des
+  Cockpits sofort ungültig; ein neues Koppeln ersetzt es. Ohne Oberfläche: `sudo deploy/aufbau.sh
+  cockpit-kopplung [status|verwerfen|entkoppeln]`. Ein Token in `.env`
+  (`AUTOMATO_COCKPIT_TOKEN`, früherer Weg `aufbau.sh cockpit-token`) gilt zusätzlich – nach dem
+  Koppeln dort leeren und den Orchestrator neu starten. Im Audit `cockpit.kopplung.*` (nie Code
+  oder Token).
 - **NetBox als Werkzeug** (1.11.0): im Kunden-Portal „NetBox (-nb)“ (Vorgabe an), von Hand
   `front.sh kunde … --ohne-nb`. Ohne NetBox keine Adresse `<kunde>-nb`, keine Kachel, keine
   Prüfung.

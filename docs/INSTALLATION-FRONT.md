@@ -369,20 +369,38 @@ VM, Front-Proxy mit Portal, Keycloak-Realm und je Kunde die NetBox – und führ
 Inventar nach. Grundlage ist `deploy/front/state/topologie.json`, die `front.sh erzeugen` (auch
 über den Host-Agenten) schreibt.
 
+**Koppeln (seit 1.13.0, ADR 0057):** in der Oberfläche unter Administration → Kunden-Portal,
+Karte „Cockpit“ → „Code zum Koppeln erzeugen“ (nur Admin) – oder auf der VM:
+
+```bash
+sudo deploy/aufbau.sh cockpit-kopplung              # Einmal-Code, einmal angezeigt
+sudo deploy/aufbau.sh cockpit-kopplung status       # gekoppelt? Code offen?
+sudo deploy/aufbau.sh cockpit-kopplung entkoppeln   # Token des Cockpits ungültig
+```
+
+Den Code (`XXXX-XXXX-XXXX`) im Cockpit bei der Automato-Instanz unter „Koppeln“ eingeben. Er gilt
+15 Minuten, einmal und höchstens bis zum fünften Fehlversuch; ein neuer Code ersetzt den offenen.
+Das Cockpit löst ihn mit `POST /api/kopplung` ein und bekommt sein Token direkt von Automato –
+kein Token in `.env`, kein Neustart. Ein neues Koppeln ersetzt das bisherige Token.
+
+**Früherer Weg (gilt weiter zusätzlich):**
+
 ```bash
 sudo deploy/aufbau.sh cockpit-token     # neues Token in .env, Orchestrator neu, einmal angezeigt
 ```
 
 Im Cockpit unter Inventar → Automato-Instanz → „Token hinterlegen“ eintragen (nur dort, nie in
-Chat, Ticket oder Datei). Ein erneutes `cockpit-token` macht das alte ungültig.
+Chat, Ticket oder Datei). Ein erneutes `cockpit-token` macht das alte ungültig. Nach dem Koppeln
+`AUTOMATO_COCKPIT_TOKEN` in `.env` leeren und den Orchestrator neu starten.
 
-- `GET /api/inventory` antwortet nur mit diesem Token (Bearer), nie mit einer Anmeldung von
-  Personen; ohne eingerichtetes Token `404`. Inhalt: nur Namen und Adressen.
+- `GET /api/inventory` antwortet nur mit dem gekoppelten Token bzw. dem aus `.env` (Bearer), nie
+  mit einer Anmeldung von Personen; ohne beides `404`. Inhalt: nur Namen und Adressen.
 - Seit 1.11.0 (ADR 0054) schickt das Cockpit mit demselben Token auch die **Freigaben**
   (`PUT /api/freigaben`): Kunden, Werkzeuge, Zugriff und Realm für das Kunden-Portal. Das Token
   darf damit Kunden des Kunden-Portals anlegen, ändern und entfernen, seit 1.13.0 auch Mandant,
   Kunden und Rolle wählen (ADR 0054 Nachtrag) – nur im Cockpit hinterlegen. Seit 1.13.0 (ADR 0055) liefert es damit auch das
   Client-Secret des Anmelde-Tors versiegelt (Abschnitt 6).
 - Das Cockpit erreicht die Oberfläche: seine Adresse steht in `AUTOMATO_UI_ALLOW`, und es vertraut
-  dem Zertifikat (im Cockpit `deploy/certs/inventory-ca.pem`, wenn es eine interne CA ist).
+  dem Zertifikat (im Cockpit `deploy/certs/inventory-ca.pem`, wenn es eine interne CA ist). Das
+  gilt auch für das Einlösen des Codes (`POST /api/kopplung`, höchstens 10 Versuche je Minute).
 

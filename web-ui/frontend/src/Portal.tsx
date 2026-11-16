@@ -13,6 +13,7 @@ import {
   Tenant,
   updatePortalCustomer,
 } from "./api";
+import CockpitKopplung from "./CockpitKopplung";
 import { L } from "./i18n";
 import { Empty, ErrorBox, fmtTime, Loading, Modal, Note, PageHead } from "./ui";
 
@@ -282,6 +283,9 @@ export default function Portal({ tenants }: { tenants: Tenant[] }) {
           </div>
         </div>
       )}
+
+      {/* Kopplung mit dem Cockpit (1.13.0, ADR 0057): Einmal-Code statt Token kopieren */}
+      <CockpitKopplung />
 
       <div className="card">
         <div className="card-body scroll">

@@ -398,3 +398,36 @@ def test_netbox_host_token_eigenes_token(tmp_path):
     assert re.fullmatch(r"[0-9a-f]{64}", token) and out.stdout.count(token) == 1
     assert "netbox-host.sh agent" in out.stdout
     assert log.read_text().strip().endswith("up -d orchestrator")
+
+
+def test_cockpit_kopplung_ueber_den_orchestrator(tmp_path):
+    """1.13.0 (ADR 0057): cockpit-kopplung laesst den Orchestrator den Einmal-Code erzeugen
+    (`automato cockpit-kopplung` im Container) - nichts in .env, kein Neustart; ein Token aus
+    .env wird nur erwaehnt, nie angezeigt."""
+    log = tmp_path / "calls.log"
+    stub = _stub(
+        tmp_path / "k-compose",
+        f'echo "$*" >> {log}\n'
+        'case "$*" in *cockpit-kopplung*) echo "    ABCD-EFGH-JKMN" ;; esac\n',
+    )
+    env = {"AUTOMATO_ENV_FILE": str(tmp_path / "env"), "COMPOSE": str(stub)}
+    (tmp_path / "env").write_text("AUTOMATO_COCKPIT_TOKEN=altes-token-geheim\n")
+    out = _run(tmp_path, "cockpit-kopplung", **env)
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert out.stdout.count("ABCD-EFGH-JKMN") == 1
+    assert "AUTOMATO_COCKPIT_TOKEN" in out.stdout and "altes-token-geheim" not in out.stdout
+    (aufruf,) = log.read_text().splitlines()
+    assert aufruf.endswith("exec -T orchestrator automato cockpit-kopplung")
+    assert (tmp_path / "env").read_text() == "AUTOMATO_COCKPIT_TOKEN=altes-token-geheim\n"
+
+    for arg, option in (("status", "--status"), ("verwerfen", "--verwerfen"),
+                        ("entkoppeln", "--entkoppeln")):  # fmt: skip
+        r = _run(tmp_path, "cockpit-kopplung", arg, **env)
+        assert r.returncode == 0 and "AUTOMATO_COCKPIT_TOKEN" not in r.stdout
+        assert log.read_text().splitlines()[-1].endswith(f"cockpit-kopplung {option}")
+    falsch = _run(tmp_path, "cockpit-kopplung", "loeschen", **env)
+    assert falsch.returncode == 2
+
+    kaputt = _stub(tmp_path / "kaputt-compose", "exit 1\n")
+    r = _run(tmp_path, "cockpit-kopplung", **{**env, "COMPOSE": str(kaputt)})
+    assert r.returncode == 1 and "Orchestrator antwortet nicht" in r.stdout

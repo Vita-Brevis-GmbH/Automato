@@ -39,6 +39,7 @@ from app.api import (
 )
 from app.api import freigaben as freigaben_api
 from app.api import inventory as inventory_api
+from app.api import kopplung as kopplung_api
 from app.api import modules as module_api
 from app.api import netbox_host as netbox_host_api
 from app.api import portal as portal_api
@@ -154,6 +155,7 @@ def create_app() -> FastAPI:
     app.include_router(inventory_api.router)  # Inventar fuers Cockpit (1.10.0, ADR 0053)
     app.include_router(freigaben_api.router)  # Freigaben aus dem Cockpit (1.11.0, ADR 0054)
     app.include_router(netbox_host_api.router)  # Kunden fuer den NetBox-Host (1.11.0, ADR 0054)
+    app.include_router(kopplung_api.router)  # Kopplung mit dem Cockpit (1.13.0, ADR 0057)
     app.include_router(zones.router, dependencies=[Depends(modules.guard("design"))])
     app.include_router(cabling.router, dependencies=[Depends(modules.guard("analyse"))])
     app.include_router(data_quality.router, dependencies=[Depends(modules.guard("analyse"))])
