@@ -279,9 +279,13 @@ sudo deploy/front/front.sh adressen
 
 ## 8. Automato an die NetBox eines Kunden
 
-1. `netbox-host.sh token kunde-a` auf dem NetBox-Host (Lese- und Schreib-Token werden nur einmal
-   angezeigt – direkt eintragen bzw. in den Tresor).
-2. In Automato beim Mandanten des Kunden → Quellsysteme → NetBox mit
+1. **Mit dem Agent des NetBox-Hosts** (seit 1.13.0, ADR 0056): nichts von Hand – sobald der Kunde
+   im Kunden-Portal einen Mandanten hat, übergibt der Agent Lese- und Schreib-Token, und Automato
+   legt beim Mandanten das Quellsystem NetBox mit `https://kunde-a-nb.mgmt.example.ch` an
+   (`docs/INSTALLATION-NETBOX-HOST.md` 4b). Weiter mit 3.
+   **Ohne Agent:** `netbox-host.sh token kunde-a` auf dem NetBox-Host (Lese- und Schreib-Token
+   werden nur einmal angezeigt – direkt eintragen bzw. in den Tresor).
+2. Ohne Agent: in Automato beim Mandanten des Kunden → Quellsysteme → NetBox mit
    `https://kunde-a-nb.mgmt.example.ch` und den beiden Token.
 3. **Zertifikat der internen CA** (1.10.0): stammt das Zertifikat des Front-Proxys bzw. der WAF von
    der eigenen CA, deren Stammzertifikat nach `deploy/trust/` (Orchestrator und zentraler Worker

@@ -59,17 +59,24 @@ function tools(c: PortalCustomer): string {
 
 const fromCockpit = (c: PortalCustomer | null) => c?.source === "cockpit";
 
-// Befehle für das, was der Agent (noch) nicht selbst macht: NetBox-Instanz, Keycloak-Realm und
-// seit 1.4.0 (ADR 0051) das Client-Secret des Anmelde-Tors je Realm
+// Befehle für das, was der Agent (noch) nicht selbst macht: Keycloak-Realm und seit 1.4.0
+// (ADR 0051) das Client-Secret des Anmelde-Tors je Realm. Die NetBox (Instanz, Anmeldung über das
+// Tor, Zugang für Automato) richtet seit 1.13.0 (ADR 0056) der Agent des NetBox-Hosts ein.
 function setupSteps(c: PortalCustomer, data: PortalListing): { title: string; cmd: string }[] {
   const steps: { title: string; cmd: string }[] = [];
   if (c.nb)
     steps.push({
       title: L(
-        "NetBox-Host: Instanz anlegen (einmal; bestehende Instanz: Anmeldung über das Tor mit „sso“)",
-        "NetBox host: create the instance (once; existing instance: sign-in via the gate with “sso”)",
+        "NetBox-Host: Instanz, Anmeldung über das Tor und Zugang für Automato (sobald ein Mandant gewählt ist) richtet der Agent ein – einmal je NetBox-Host „agent“; ohne Agent von Hand",
+        "NetBox host: the agent sets up the instance, sign-in via the gate and access for Automato (once a tenant is chosen) – once per NetBox host “agent”; without the agent by hand",
       ),
-      cmd: `sudo deploy/netbox-host/netbox-host.sh neu ${c.short_name}\nsudo deploy/netbox-host/netbox-host.sh sso ${c.short_name}`,
+      cmd: [
+        "sudo deploy/netbox-host/netbox-host.sh agent https://<automato>",
+        L("# ohne Agent:", "# without the agent:"),
+        `sudo deploy/netbox-host/netbox-host.sh neu ${c.short_name}`,
+        `sudo deploy/netbox-host/netbox-host.sh sso ${c.short_name}`,
+        `sudo deploy/netbox-host/netbox-host.sh token ${c.short_name}`,
+      ].join("\n"),
     });
   const domain = data.domain || "<domain>";
   const doc = c.addresses.doc ?? `https://${c.short_name}-doc.${domain}`;

@@ -126,6 +126,11 @@ ALLOWLIST: dict[str, frozenset[str]] = {
             "access",  # Wechsel des Zugangs (ADR 0033)
         }
     ),
+    # Zugang aus dem NetBox-Host (1.13.0, ADR 0056): nur Kunde, Quellsystem und Herkunft - die
+    # Tokens nie
+    "source.netbox_host_access": frozenset(
+        {"kunde", "source_id", "tenant_id", "name", "angelegt", "quelle"}
+    ),
     # Parallele Firewalls (0.18.0): Verbund gesetzt bzw. aufgeloest
     "source.parallel_group": frozenset({"tenant_id", "group", "source_ids"}),
     "source.parallel_rejected": frozenset({"tenant_id", "source_ids", "pairs"}),

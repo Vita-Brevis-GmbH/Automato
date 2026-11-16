@@ -67,6 +67,7 @@ Freigaben“, Kundenregister (ADR 0005 dort), Vertrag `docs/vertraege/freigaben.
   Befehl änderbar, entfernt, wenn sie im Soll-Stand fehlen.
 - Der NetBox-Host braucht HTTPS zur Oberfläche von Automato; sein Token erlaubt nur die Liste
   der Kurznamen (kein Schreiben, keine Realms). Die Tokens für Automato in der neuen NetBox
-  (`netbox-host.sh token`) bleiben ein Handgriff.
+  (`netbox-host.sh token`) bleiben ein Handgriff. *Seit 1.13.0 abgelöst (ADR 0056): der Agent
+  übergibt den Zugang selbst; dafür darf das Token Zugangsdaten für NetBox-Quellen setzen.*
 - Neue Felder im Vertrag nur optional; eine andere Bedeutung = `vertrag: 2`, zuerst in Automato,
   dann im Cockpit.

@@ -2375,8 +2375,8 @@ Client-Zertifikat und die passenden Zeilen der `agent.env`.
   (automatisch entsperrt über Clevis + Tang oder vTPM), gehärtetes Ubuntu und Docker, Automato
   mit Anmeldung, Agent-Gateway, Sicherung und Abnahme-Liste.
 - **NetBox je Kunde** (0.121.0, ADR 0044): `docs/INSTALLATION-NETBOX-HOST.md` – eigene VM, je Kunde
-  eine NetBox hinter einem Proxy mit Startseite; anlegen, an Automato anbinden (`token`), sichern,
-  aktualisieren und löschen mit `deploy/netbox-host/netbox-host.sh`.
+  eine NetBox hinter einem Proxy mit Startseite; anlegen, an Automato anbinden (seit 1.13.0 der
+  Agent, von Hand `token`), sichern, aktualisieren und löschen mit `deploy/netbox-host/netbox-host.sh`.
 - **Oberfläche nur aus erlaubten Netzen** (0.116.0, R14): `AUTOMATO_UI_ALLOW` in `.env`
   (Netze mit Leerzeichen getrennt, z. B. `"10.0.10.0/24 10.8.0.0/16"`; Vorgabe alles) – der
   Proxy antwortet anderen Quellen mit 403. Docker muss dafür die Quell-IP erhalten
@@ -2412,8 +2412,8 @@ Client-Zertifikat und die passenden Zeilen der `agent.env`.
   Werkzeugen eines Kunden zuerst die Anmeldung in seinem Realm (oauth2-proxy je Realm); danach
   ohne zweite Maske in Automato, NetBox (Rechte aus den Realm-Rollen admin/operator, sonst lesen)
   und Magister. Client-Secret je Realm: `sudo deploy/front/front.sh tor <realm>`; Stand:
-  `front.sh tor` und im Kunden-Portal. Kunden ohne Realm sind gesperrt. NetBox:
-  `netbox-host.sh sso <kunde|alle>` (`docs/INSTALLATION-FRONT.md` 6).
+  `front.sh tor` und im Kunden-Portal. Kunden ohne Realm sind gesperrt. NetBox: seit 1.13.0 der
+  Agent des NetBox-Hosts, von Hand `netbox-host.sh sso <kunde|alle>` (`docs/INSTALLATION-FRONT.md` 6).
 - **Zugriff je Kunde** (1.5.0): im Kunden-Portal *Zugriff* – überall (Vorgabe), nur intern
   (Management-Netz) oder nur aus diesen Netzen; von Hand `front.sh kunde … --zugriff intern|"<netze>"`.
   Wer nicht darf, sieht für alle Adressen des Kunden nur „Unbekannte Adresse“ (auch keine
@@ -2427,6 +2427,14 @@ Client-Zertifikat und die passenden Zeilen der `agent.env`.
 - **NetBox als Werkzeug** (1.11.0): im Kunden-Portal „NetBox (-nb)“ (Vorgabe an), von Hand
   `front.sh kunde … --ohne-nb`. Ohne NetBox keine Adresse `<kunde>-nb`, keine Kachel, keine
   Prüfung.
+- **NetBox ohne Handgriffe** (1.13.0, ADR 0056): der Agent des NetBox-Hosts legt die NetBox an,
+  richtet die Anmeldung über das Tor ein und übergibt Automato den Zugang (Lese- und Sync-Token),
+  sobald der Kunde im Kunden-Portal einen **Mandanten** hat. Automato legt dort das Quellsystem
+  „NetBox“ (`https://<kunde>-nb.<domain>`) an bzw. ergänzt eines mit dieser Adresse ohne Tokens;
+  Audit „Zugang aus dem NetBox-Host“ (`source.netbox_host_access`, ohne Tokens). Vorhandene
+  Zugangsdaten bleiben immer. Erneuern: beim Quellsystem „Alle hinterlegten Tokens entfernen“ –
+  der Agent liefert beim nächsten Abgleich (5 Minuten) neue. Zeitplan wie bei jedem Quellsystem
+  setzen. Stand auf dem NetBox-Host: `netbox-host.sh pruefen` (Abschnitt „Agent“).
 - Agent-Tokens werden nur gehasht gespeichert und einmalig angezeigt. Produktiv sprechen
   Agenten nur über das **mTLS-Agent-Gateway** (`deploy/agent-gateway`, Modus `bind`:
   Zertifikat und Token gehören zum selben Agenten); Port 8000 nicht in Agent-Netze freigeben.
