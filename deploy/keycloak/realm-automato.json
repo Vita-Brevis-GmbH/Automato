@@ -104,7 +104,7 @@
     {
       "clientId": "automato-front",
       "name": "Automato Anmelde-Tor (Front-Proxy)",
-      "description": "oauth2-proxy vor Startseite und Werkzeugen (ADR 0051); Secret nur auf der Automato-VM (front.sh tor)",
+      "description": "oauth2-proxy vor Startseite und Werkzeugen (ADR 0051); Secret im Klartext nur auf der Automato-VM (front.sh tor oder versiegelt aus dem Cockpit, ADR 0055)",
       "enabled": true,
       "publicClient": false,
       "clientAuthenticatorType": "client-secret",
@@ -140,6 +140,8 @@
   "users": [
     {
       "username": "automato-admin",
+      "firstName": "Automato",
+      "lastName": "Admin",
       "enabled": true,
       "emailVerified": true,
       "email": "admin@example.ch",

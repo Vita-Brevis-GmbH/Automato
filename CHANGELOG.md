@@ -98,6 +98,10 @@ ADR 0056, 0057, R27.
   Audit `cockpit.kopplung.*` ohne Code und Token. Vertrag fürs Cockpit: `docs/vertraege/kopplung.md`
   im Cockpit (v1).
 
+- **Realm-Vorlage:** `automato-admin` hat Vor- und Nachname („Automato Admin“) – Keycloak 26
+  fragt beim ersten Anmelden nicht mehr danach (Fund aus dem Test gegen echten Keycloak); die
+  Beschreibung von `automato-front` nennt die versiegelte Lieferung aus dem Cockpit (ADR 0055).
+
 ## 1.12.2 – 2026-11-14
 
 Korrektur aus dem Test des Anmelde-Tors (Anwender 2026-11-14: „Wenn ich mich im Portal ein Logout
