@@ -7,6 +7,31 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 1.16.0 – 2026-11-16
+
+Eigene Automato-Instanz je Kunde aus dem Cockpit (Anwender 2026-11-16: „Bitte weiter bis P5“,
+Cockpit-Roadmap P4 „Ausrollen“; Cockpit ADR 0016). ADR 0061, R30 neu.
+
+- **`deploy/betrieb.sh installieren`** (Host-Agent, frischer Checkout `<basisordner>/<instanz>`
+  auf dem Commit des Manifests): Signatur wie `aktualisieren`, `.env` mit neuen Geheimnissen auf
+  dem Host, Projekt `automato-<instanz>` ohne Ports (`deploy/instanz/compose.yml`), OIDC auf den
+  Realm des Kunden, Images per Digest, Health im Container, Einmal-Code der Kopplung nur als Hash
+  (`automato cockpit-kopplung --hinterlegen`); scheitert ein Schritt, räumt es selbst auf. In der
+  Instanz gehen `stand`, `sichern`, `aktualisieren`, `zurueck`, `neustart` wie gewohnt.
+- **`deploy/betrieb.sh entfernen --ja`:** nur in einer Instanz, nur nach gelungener Sicherung;
+  Container und Volumes weg, Ordner nach `<basisordner>/archiv/<instanz>-<zeit>`.
+- **Front-Proxy:** neues internes Netz `automato-front-instanzen` (Proxy der Hauptinstanz und je
+  Instanz ein gehärteter Anschluss `automato-<instanz>-web-ui`); mit `automato_instanz` in den
+  Freigaben geht `<kunde>-doc` hinter dem Tor an die Instanz, ohne laufenden Anschluss 503;
+  `front.sh sync` erzeugt neu, sobald Instanzen kommen oder gehen, `pruefen` zeigt sie.
+- **Freigaben und Inventar:** `automato_instanz` je Kunde (Migration `0088_automato_instanz`),
+  `ist.front.instanzen`.
+- Nur auf der VM des Front-Proxys (bis zum Proxmox-Adapter); Proxy einmal mit 1.16.0 starten.
+- **NetBox-Host schneller** (Rückmeldung 2026-11-16: „weshalb dies notwendig ist, ist zu
+  komplex“): der Agent fragt Automato jede Minute (`sync --takt`) und gleicht bei geänderter
+  Antwort sofort, sonst spätestens alle 5 Minuten voll ab; Units einer älteren Version führt der
+  Abgleich selbst nach.
+
 ## 1.15.0 – 2026-11-16
 
 Update aus dem Cockpit mit fertigen, signierten Images (Anwender 2026-11-16: „Bitte weiter bis P5“,
