@@ -7,6 +7,31 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 1.15.0 – 2026-11-16
+
+Update aus dem Cockpit mit fertigen, signierten Images (Anwender 2026-11-16: „Bitte weiter bis P5“,
+Cockpit-Roadmap P3 „Aktualisieren“; Cockpit ADR 0002 E4). ADR 0060, R29 neu.
+
+- **Images in GHCR je Kanal:** Job `images` (`images.yml`) baut nach grüner CI desselben Commits
+  die eigenen Dienste (aus `docker compose config`) nach
+  `ghcr.io/<owner>/automato-<dienst>:<version>` und `:<kanal>`; `stable` (Tag `v<X.Y.Z>`), `latest`
+  (`main`, `<VERSION>-latest.<sha7>`), `dev` (Entwicklungs-Branch, `<VERSION>-dev.<sha7>`), von Hand
+  wählbar; reine Doku-Stände bauen keine Images.
+- **Signiertes Manifest:** `manifest.json` (`vitabrevis-manifest/v1`, Images nur per Digest) und
+  `manifest.sig` (Ed25519, Secret `MANIFEST_SIGNING_KEY`) im Release `kanal-<kanal>` (bei `stable`
+  auch `v<X.Y.Z>`); ohne Secret ohne Signatur mit Warnung. `scripts/release_manifest.py`.
+- **`deploy/betrieb.sh`** für den Host-Agenten des Cockpits (Vertrag `betrieb/v1`): `stand`,
+  `sichern`, `aktualisieren`, `zurueck`, `neustart`; eine Zeile JSON, Exit 0–4, Sperre je Checkout.
+  `aktualisieren` prüft die Signatur (`/etc/automato/herausgeber.pub` bzw. Schlüssel des bisherigen
+  Checkouts), lehnt ältere Versionen ab, sichert, holt Commit und Images per Digest (kein Bau),
+  prüft `/health` bis 5 Minuten und fällt sonst selbst zurück (Code, Images, Datenbank).
+- **Gepinnte Images** in `.automato-images.env` (`AUTOMATO_IMAGE_<DIENST>` in
+  `docker-compose.yml`, sonst der lokal gebaute Stand); `docker compose up -d` von Hand nimmt
+  dieselben.
+- **`deploy/update.sh`** baut weiter aus git und entfernt die gepinnten Images; `--rollback` stellt
+  auch Images wieder her; gemeinsame Sperre und Stand (`deploy/lib-update.sh`).
+- Einrichten einmal: `deploy/release/README.md`.
+
 ## 1.14.1 – 2026-11-16
 
 Korrektur aus dem Test des Abbaus (Anwender 2026-11-16: „Löschauftrag: test-a (abgelehnt) …
