@@ -17,8 +17,10 @@ bewusst: lieber ein lückenhaftes als ein undichtes Log.
 _PORTAL = frozenset(
     {"short_name", "name", "doc", "nb", "um", "cmdb", "realm", "tenant_id", "customer_ids",
      "default_role", "access", "access_nets", "quelle", "uebernommen", "scope_source", "kacheln",
-     "links_source"}
+     "links_source", "gesperrt"}
 )  # fmt: skip
+# Abbau aus dem Cockpit (ADR 0059): gewuenschte Teile, Realm, Stand und Grund - nur Namen und Codes
+_ABBAU = frozenset({"netbox", "automato_kunde", "tor", "realm", "grund", "teil", "stand"})
 
 # action -> erlaubte detail-Keys. Nur unkritische, benannte Felder.
 ALLOWLIST: dict[str, frozenset[str]] = {
@@ -236,6 +238,12 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     # Client-Secret des Anmelde-Tors versiegelt aus dem Cockpit (1.13.0, ADR 0055): nur Realm und
     # Kennung des Empfangsschluessels - nie das Chiffrat
     "portal.tor_secret.updated": frozenset({"realm", "kennung"}),
+    # Loeschauftraege aus dem Cockpit (ADR 0059)
+    "portal.abbau.angenommen": _ABBAU,
+    "portal.abbau.geaendert": _ABBAU,
+    "portal.abbau.aufgehoben": _ABBAU,
+    "portal.abbau.fortschritt": _ABBAU,
+    "portal.abbau.erledigt": _ABBAU,
     # Kopplung mit dem Cockpit (1.13.0, ADR 0057): nie Code oder Token, nur Zeiten, Zaehler und
     # der Name, den das Cockpit meldet
     "cockpit.kopplung.code": frozenset({"bis", "ersetzt"}),

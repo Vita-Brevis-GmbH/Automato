@@ -264,9 +264,10 @@ def realm_scopes(session: Session, main_realm: str | None) -> dict[str, RealmSco
     selbst: dessen Benutzer melden sich wie bisher an). Nur Kunden, die es noch gibt
     (`live_customers`)."""
     out: dict[str, RealmScope] = {}
+    # gesperrt (ADR 0059, zum Entfernen vorgemerkt): der Realm gibt in Automato keine Rechte mehr
     kunden = [pc for pc in session.scalars(
         select(PortalCustomer).where(PortalCustomer.realm.is_not(None))
-    ) if pc.realm and pc.realm != main_realm]  # fmt: skip
+    ) if pc.realm and pc.realm != main_realm and not pc.gesperrt]  # fmt: skip
     live = live_customers(session, (pc.tenant_id for pc in kunden))
     for pc in kunden:
         out[pc.realm] = RealmScope(
@@ -340,6 +341,8 @@ def out(pc: PortalCustomer, domain: str = "", live: dict[int, set[int]] | None =
         "scope_source": pc.scope_source or SCOPE_AUTOMATO,
         # 1.13.0: Kacheln aus dem Cockpit (dann nur lesbar)
         "links_source": pc.links_source or SCOPE_AUTOMATO,
+        # ADR 0059: vom Cockpit zum Entfernen vorgemerkt - Front-Proxy sperrt alle Adressen
+        "gesperrt": bool(pc.gesperrt),
         "assigned": assigned(pc, live),
         "addresses": addresses,
         "updated_by": pc.updated_by,
@@ -361,7 +364,11 @@ def desired(session: Session) -> dict:
     gesperrt. Seit 1.5.0 mit dem Zugriff je Kunde (`zugriff`, `netze`), seit 1.11.0 mit NetBox
     als Werkzeug (`nb`) und der Herkunft (`quelle`: oberflaeche | cockpit, ADR 0054). Seit 1.13.0
     (ADR 0055) mit den versiegelten Client-Secrets des Anmelde-Tors aus dem Cockpit
-    (`tor_geheimnisse`, nur Chiffrat; nur, wenn es welche gibt)."""
+    (`tor_geheimnisse`, nur Chiffrat; nur, wenn es welche gibt). Seit ADR 0059 je Kunde
+    `gesperrt` (nur, wenn gesperrt) und die Tor-Geheimnisse, die `front.sh sync` auf Auftrag des
+    Cockpits entfernt (`tor_entfernen`, nur, wenn es welche gibt)."""
+    from app.store import abbau  # spaet: abbau nutzt portal
+
     kunden = listing(session)
     data = {
         "version": 1,
@@ -370,7 +377,8 @@ def desired(session: Session) -> dict:
             {"kurzname": pc.short_name, "name": pc.name, "doc": pc.doc, "nb": pc.nb,
              "um": pc.um, "cmdb": pc.cmdb, "realm": pc.realm or "",
              "zugriff": pc.access or "ueberall", "netze": list(pc.access_nets or []),
-             "links": list(pc.links or []), "quelle": pc.source or SOURCE_UI}
+             "links": list(pc.links or []), "quelle": pc.source or SOURCE_UI,
+             **({"gesperrt": True} if pc.gesperrt else {})}
             for pc in kunden
         ],
     }  # fmt: skip
@@ -385,6 +393,9 @@ def desired(session: Session) -> dict:
     )  # fmt: skip
     if tor:
         data["tor_geheimnisse"] = tor
+    entfernen = abbau.tor_entfernen(session)
+    if entfernen:
+        data["tor_entfernen"] = entfernen
     return data
 
 

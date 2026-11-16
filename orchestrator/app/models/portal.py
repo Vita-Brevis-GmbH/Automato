@@ -31,6 +31,10 @@ und Standard-Rolle pflegt Automato) oder `cockpit` (das Cockpit hat sie mit den 
 Kacheln aus dem Cockpit (1.13.0, ADR 0054 zweiter Nachtrag): `links_source` = `automato` (die
 weiteren Kacheln pflegt Automato) oder `cockpit` (das Cockpit hat sie mit den Freigaben gesetzt -
 in Automato dann nur lesbar).
+
+Gesperrt (ADR 0059): `gesperrt` = das Cockpit hat den Kunden zum Entfernen vorgemerkt (Frist des
+Cockpits) - der Front-Proxy sperrt alle seine Adressen („Zugang gesperrt“), Benutzer seines Realms
+bekommen in Automato keine Rechte; Daten und Einstellungen bleiben unveraendert.
 """
 
 from datetime import UTC, datetime
@@ -78,6 +82,8 @@ class PortalCustomer(Base):
     links_source: Mapped[str] = mapped_column(
         String(16), default="automato", server_default="automato"
     )
+    # zum Entfernen vorgemerkt (Cockpit, ADR 0059): Front-Proxy sperrt alle Adressen, Daten bleiben
+    gesperrt: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     updated_by: Mapped[str | None] = mapped_column(String(200), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)

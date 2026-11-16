@@ -9,6 +9,10 @@ Kunden-Portal nach (`store/freigaben.py`), schreibt danach den Soll-Stand fuer d
 Seit 1.13.0 (ADR 0055) optional mit den versiegelten Client-Secrets des Anmelde-Tors
 (`tor_geheimnisse`); die Kennung des Empfangsschluessels kommt aus dem Front-Status (wie das
 Inventar), die Antwort nennt uebernommene und abgelehnte Realms.
+
+Seit ADR 0059 optional `entfernen` (Loeschauftraege nach der Frist des Cockpits, `store/abbau.py`):
+geprueft vor den Kunden (alles oder nichts), angenommen bzw. abgelehnt danach; die Antwort nennt
+beides (`entfernen`, null ohne das Feld).
 """
 
 from typing import Annotated, Any
@@ -23,7 +27,7 @@ from app.auth.cockpit import require_cockpit_token
 from app.config import Settings, get_settings
 from app.db import get_session
 from app.i18n import L
-from app.store import freigaben, inventory, portal
+from app.store import abbau, freigaben, inventory, portal
 
 router = APIRouter(prefix="/freigaben", tags=["freigaben"])
 
@@ -47,16 +51,25 @@ def put_freigaben(
     session: Session = Depends(get_session, scope="function"),
     settings: Settings = Depends(get_settings),
 ):
+    fehler: list[dict] = []
+    ergebnis = None
+    try:  # ADR 0059: Loeschauftraege pruefen und den Stand vor dem Anwenden merken
+        plan = abbau.vorbereiten(session, data)
+    except freigaben.FreigabenFehler as exc:
+        fehler, plan = exc.fehler, None
     try:
         ergebnis = freigaben.uebernehmen(
             session, data, empfang=inventory.empfang_kennung(settings.front_state_dir)
         )
     except freigaben.FreigabenFehler as exc:
+        fehler = exc.fehler + fehler
+    if fehler or plan is None or ergebnis is None:
         session.rollback()
         return JSONResponse(
-            status_code=422, content={"vertrag": freigaben.VERTRAG, "fehler": exc.fehler}
+            status_code=422, content={"vertrag": freigaben.VERTRAG, "fehler": fehler}
         )
-    if ergebnis.etwas_geaendert:
+    abbau_erg = abbau.anwenden(session, plan, settings)
+    if ergebnis.etwas_geaendert or abbau_erg.geaendert:
         try:
             session.commit()
         except IntegrityError as exc:  # gleichzeitig in der Oberflaeche geaendert
@@ -67,4 +80,5 @@ def put_freigaben(
             )) from exc  # fmt: skip
         realms.invalidate()
     hinweis = _soll_stand(session, settings)
-    return {**ergebnis.antwort(), "front": freigaben.front(settings.front_state_dir, hinweis)}
+    return {**ergebnis.antwort(), "entfernen": abbau_erg.antwort(),
+            "front": freigaben.front(settings.front_state_dir, hinweis)}  # fmt: skip

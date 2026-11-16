@@ -876,7 +876,7 @@ def test_topologie_fuer_das_inventar(front):
         "magister": None, "cmdb": None,
         # 1.11.0 (ADR 0054): Herkunft und Auswahl fürs Cockpit
         "quelle": "befehl", "werkzeuge": ["doc", "nb"], "zugriff": "ueberall", "netze": [],
-        "realm": None,
+        "realm": None, "gesperrt": False,  # ADR 0059
     }  # fmt: skip
     assert kunden["kunde-b"]["automato"] is None
 

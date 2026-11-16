@@ -507,3 +507,34 @@ def test_client_secret_versiegelt_aus_dem_cockpit(tor):
             assert r.status_code == 200 and "Kunde D" in r.text  # Token mit dem Secret geholt
     finally:
         SECRETS.pop("kunde-d", None)
+
+
+def test_gesperrt_alle_adressen_auch_api_mit_token(tor):
+    """ADR 0059: ein zum Entfernen vorgemerkter Kunde (gesperrt aus dem Cockpit) - jede Adresse
+    antwortet „Zugang gesperrt“, auch die NetBox-API mit Token; rückgängig wieder mit Tor."""
+    state = tor.dir / "front" / "state"
+    state.mkdir(exist_ok=True)
+    kunde = {"kurzname": "kunde-e", "name": "Kunde E", "doc": True, "realm": "kunde-a",
+             "quelle": "cockpit", "links": []}  # fmt: skip
+
+    def anwenden(**mehr) -> None:
+        (state / "soll.json").write_text(json.dumps({"version": 1, "kunden": [{**kunde, **mehr}]}))
+        tor.front("sync", "--immer")
+        _run("docker", "exec", f"{PROJEKT}-front", "caddy", "reload", "--config",
+             "/etc/caddy/Caddyfile")  # fmt: skip
+
+    anwenden(gesperrt=True)
+    with _browser() as c:
+        for url in ("https://kunde-e.mgmt.example.ch/", "https://kunde-e-doc.mgmt.example.ch/",
+                    "https://kunde-e-nb.mgmt.example.ch/dcim/"):  # fmt: skip
+            r = c.get(url)
+            assert r.status_code == 403 and "Zugang gesperrt" in r.text, url
+        r = c.get("https://kunde-e-nb.mgmt.example.ch/api/x", headers={"Authorization": "Token t"})
+        assert r.status_code == 403 and "Zugang gesperrt" in r.text
+        assert "auth=" not in r.text  # nie bis zur NetBox
+        # die übrigen Kunden unverändert
+        assert c.get("https://kunde-a.mgmt.example.ch/").status_code == 302
+    anwenden()  # rückgängig (Frist nicht abgelaufen): wieder hinter dem Tor
+    with _browser() as c:
+        r = c.get("https://kunde-e.mgmt.example.ch/")
+        assert r.status_code == 302 and "/realms/kunde-a/" in r.headers["location"]

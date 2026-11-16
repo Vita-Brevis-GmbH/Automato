@@ -25,6 +25,10 @@ Ebenfalls seit 1.13.0 (ADR 0054 zweiter Nachtrag) je Kunde die weiteren Kacheln 
 (`kacheln`: Titel, Adresse, Text - Grenzen wie in `PUT /freigaben`) und wer sie setzt
 (`kacheln_von`: `cockpit` | `automato`) - so verliert das Cockpit beim Uebernehmen keine Kacheln.
 Ohne Eintrag im Kunden-Portal beides `null` (unbekannt).
+
+Seit ADR 0059 der Ist-Stand der Instanzen (`ist`: Front-Proxy, NetBox-Host, Kunden in Automato,
+Loeschauftraege - `store/ist_stand.py`) und je Kunde, ob der Front-Proxy ihn sperrt (`gesperrt`,
+aus `topologie.json`; null bei einem aelteren front.sh).
 """
 
 import hashlib
@@ -44,7 +48,7 @@ from app import __version__
 from app.auth import capabilities as caps
 from app.config import Settings
 from app.models import Customer, PortalCustomer, Tenant
-from app.store import portal
+from app.store import ist_stand, portal
 
 TOPOLOGIE = "topologie.json"
 #: Fassung der Antwort (Vertrag im Cockpit: docs/vertraege/inventar.md)
@@ -196,6 +200,8 @@ def _herkunft(k: dict) -> dict:
         "zugriff": zugriff,
         "netze": _netze(k.get("netze")) if zugriff == "netze" else [],
         "realm": _realm(k.get("realm")),
+        # ADR 0059: vom Front-Proxy gesperrt (zum Entfernen vorgemerkt); null = unbekannt
+        "gesperrt": k.get("gesperrt") if isinstance(k.get("gesperrt"), bool) else None,
     }
 
 
@@ -303,4 +309,6 @@ def inventory(settings: Settings, session: Session | None = None) -> dict:
         "keycloak": {"issuer": _text(issuer)},
         "front": _front(topo, settings.front_state_dir),
         "kunden": _kunden(topo, portal_kunden, live),
+        # ADR 0059: Ist-Stand der Instanzen (Altlasten, Stand der Loeschauftraege)
+        "ist": ist_stand.ist(session, settings) if session else None,
     }

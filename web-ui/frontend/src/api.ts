@@ -3571,6 +3571,8 @@ export interface PortalCustomer {
   assigned?: boolean | null;
   // 1.13.0: weitere Kacheln aus dem Cockpit (dann nur lesbar)
   links_source?: "automato" | "cockpit";
+  // ADR 0059: vom Cockpit zum Entfernen vorgemerkt – Front-Proxy sperrt alle Adressen, Daten bleiben
+  gesperrt?: boolean;
   addresses: Record<string, string>; // start, netbox, doc, um, cmdb (mit Domain)
   updated_by: string | null;
   updated_at: string | null;
@@ -3580,7 +3582,7 @@ export type PortalAccess = "ueberall" | "intern" | "netze";
 export type PortalSource = "oberflaeche" | "cockpit";
 export type PortalCustomerIn = Omit<
   PortalCustomer,
-  "id" | "addresses" | "updated_by" | "updated_at" | "note" | "source" | "scope_source" | "assigned" | "links_source"
+  "id" | "addresses" | "updated_by" | "updated_at" | "note" | "source" | "scope_source" | "assigned" | "links_source" | "gesperrt"
 >;
 export interface PortalAgent {
   configured: boolean;
