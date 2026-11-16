@@ -2501,6 +2501,17 @@ Client-Zertifikat und die passenden Zeilen der `agent.env`.
   Oberfläche nimmt der Abbau nie. Audit `portal.abbau.*` (angenommen, Fortschritt, erledigt,
   aufgehoben), entfernte Kunden in Automato als `customer.deleted` mit Akteur `cockpit`. Den
   Ist-Stand aller Instanzen (Altlasten) zeigt das Cockpit auf „Aufräumen“.
+- **Werkzeug abwählen entfernt auch die Instanz** (1.14.0, ADR 0059 Nachtrag): wählt der Betreiber
+  im Cockpit bei einem Kunden, der bleibt, ein Werkzeug ab, ist es während der Frist schon aus
+  (keine Adresse, keine Kachel), die Instanz bleibt. Nach der Frist schickt das Cockpit einen
+  Löschauftrag nur für dieses Werkzeug: **NetBox** abgewählt → der Agent des NetBox-Hosts löscht
+  die NetBox (mit Sicherung); **Automato** (`doc`) abgewählt → Automato entfernt den Kunden, den es
+  für ihn angelegt hat (nur ohne Daten, sonst `hat_daten`; nennt das Cockpit ihn noch in der
+  Zuordnung, bleibt er mit `zugeordnet`); **Realm gewechselt** → der Front-Proxy entfernt das
+  Tor-Geheimnis des früheren Realms (nur, wenn ihn kein Kunde mehr nutzt). Ein Werkzeug, das noch
+  gewählt ist, nimmt Automato nie ab (`aktiv`); wird es vor der Ausführung wieder gewählt, endet
+  der Auftrag für dieses Werkzeug (`aufgehoben`, die Instanz bleibt mit ihren Daten). Stand im
+  Inventar (`ist.entfernen`, je Teil).
 - Agent-Tokens werden nur gehasht gespeichert und einmalig angezeigt. Produktiv sprechen
   Agenten nur über das **mTLS-Agent-Gateway** (`deploy/agent-gateway`, Modus `bind`:
   Zertifikat und Token gehören zum selben Agenten); Port 8000 nicht in Agent-Netze freigeben.

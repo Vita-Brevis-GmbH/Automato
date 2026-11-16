@@ -256,15 +256,21 @@ eigenen CA vertrauen (`docs/INSTALLATION-PROD.md` 6.3) und in `ALLOW` stehen.
 Entfernt der Betreiber einen Kunden im Cockpit, ist er zuerst bis zum Ablauf der Frist gesperrt
 (Front-Proxy: „Zugang gesperrt“, die NetBox bleibt unverändert). Danach schickt das Cockpit
 Automato einen Löschauftrag; Automato nennt ihn dem Agenten beim nächsten Abgleich (`loeschen` in
-`GET /api/netbox-host`). Der Agent
+`GET /api/netbox-host`). Ebenso, wenn der Betreiber bei einem Kunden, der bleibt, nur **NetBox
+abwählt** (Teil-Abbau, ADR 0059 Nachtrag): während der Frist ist die Adresse `<kunde>-nb` schon
+weg, die NetBox bleibt (`pruefen` meldet sie „ohne Freigabe“); nach der Frist kommt der
+Löschauftrag. Wählt der Betreiber NetBox vorher wieder, ist der Auftrag aufgehoben – die NetBox
+bleibt mit ihren Daten. Der Agent
 
 - löscht **nur diese** NetBox-Instanzen – wie `loeschen <kunde> --ja`, also immer erst mit einer
   frischen Sicherung (ohne `AGE_RECIPIENT` bzw. wenn die Sicherung scheitert, wird nichts gelöscht,
   der nächste Abgleich versucht es wieder); die Sicherungen bleiben in `BACKUP_DIR/<kunde>/`;
-- löscht **nie** einen Kunden, den Automato noch freigibt, und nie, wenn Automato eine andere
-  Domain nennt als `host.conf`;
+- löscht **nie** einen Kunden, den Automato noch **mit NetBox** freigibt (`kunden` derselben
+  Antwort), und nie, wenn Automato eine andere Domain nennt als `host.conf` – einen Kunden, der in
+  Automato bleibt, aber ohne NetBox, löscht er auf Auftrag;
 - führt jeden Auftrag **nur einmal** aus (`/opt/netbox-host/geloescht/<kunde>` hält die Kennung):
-  wird danach unter demselben Namen von Hand wieder eine NetBox angelegt, bleibt sie;
+  wird danach unter demselben Namen von Hand wieder eine NetBox angelegt, bleibt sie. Wählt der
+  Betreiber NetBox später erneut und wieder ab, ist das ein neuer Auftrag (neue Kennung);
 - meldet nach jedem Abgleich seinen **Ist-Stand** an Automato (`PUT /api/netbox-host/stand`, nur
   Kurznamen und Zeit: Instanzen, ohne Freigabe, gelöscht, nicht gelöscht). Daraus sieht das
   Cockpit, dass der Abbau erledigt ist, und auf der Seite „Aufräumen“ Instanzen ohne Kunden.

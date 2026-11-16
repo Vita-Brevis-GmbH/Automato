@@ -212,13 +212,13 @@ def test_entfernen_nie_fuer_kunden_aus_der_oberflaeche(api, session_factory):
     _put(api, [_kunde("kunde-a")])
     r = _put(api, [_kunde("kunde-a")], entfernen=[
         {"kurzname": "ui-kunde", "netbox": True},  # aus der Oberflaeche
-        {"kurzname": "kunde-a", "netbox": True},  # steht noch in kunden[]
+        {"kurzname": "kunde-a", "netbox": True},  # steht noch in kunden[] und hat NetBox
         {"kurzname": "nie-da", "netbox": True},  # nie ein Kunde aus dem Cockpit
     ])  # fmt: skip
     assert r.status_code == 200, r.text
     assert r.json()["entfernen"] == {"angenommen": [], "abgelehnt": [
         {"kurzname": "ui-kunde", "grund": "oberflaeche"},
-        {"kurzname": "kunde-a", "grund": "in_kunden"},
+        {"kurzname": "kunde-a", "grund": "aktiv", "teil": "netbox"},
         {"kurzname": "nie-da", "grund": "nicht_vom_cockpit"},
     ]}  # fmt: skip
     with session_factory() as s:
@@ -427,7 +427,7 @@ def test_automato_kunde_nur_ohne_daten(api, session_factory, monkeypatch):
         "hat_daten": False, "daten": [], "zugeordnet": ["kunde-a"]}  # fmt: skip
     assert (ist[voll]["hat_daten"], ist[voll]["daten"]) == (True, ["selektoren"])
 
-    # waehrend kunde-a noch zugeordnet ist, kann ihn niemand entfernen lassen (in_kunden); danach:
+    # waehrend kunde-a noch `doc` hat, kann ihn niemand entfernen lassen (aktiv); danach:
     r = _put(api, [], entfernen=[{"kurzname": "kunde-a", "automato_kunde": True},
                                  {"kurzname": "kunde-b", "automato_kunde": True}])  # fmt: skip
     assert r.json()["entfernen"]["angenommen"] == ["kunde-a", "kunde-b"]

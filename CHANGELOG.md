@@ -41,6 +41,14 @@ ADR 0059, R28 neu.
 - **Ist-Stand der Instanzen im Inventar** (`ist`): Front-Proxy, NetBox-Host über
   `PUT /netbox-host/stand`, Kunden mit `hat_daten` (und `von_cockpit` für die angelegten), Stand
   der Aufträge; verwaiste Tor-Dateien nur gemeldet.
+- **Werkzeug abwählen entfernt auch die Instanz** (Anwender 2026-11-16: „dass das Cockpit alles
+  orchestriert, also die Tools zufügt aber auch entfernt“; ADR 0059 Nachtrag): `entfernen` gilt
+  jetzt auch für Kunden, die in `kunden[]` bleiben – nur für Teile, deren Werkzeug aus ist (NetBox
+  ohne `nb`: der Agent des NetBox-Hosts löscht sie mit Sicherung; Automato ohne `doc`: der
+  angelegte Kunde, nur ohne Daten; Tor des früheren Realms nach einem Wechsel). Ein noch gewähltes
+  Werkzeug lehnt Automato ab (`aktiv`, je Teil), vor der Ausführung wieder gewählt endet der Teil
+  (`aufgehoben`, die Instanz bleibt); Stand je Teil in `ist.entfernen`. Der Grund `in_kunden`
+  entfällt.
 - Migration `0087` (nach `0086_cockpit_verwaltung`).
 
 ## 1.13.0 – 2026-11-16

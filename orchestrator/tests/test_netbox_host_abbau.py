@@ -2,8 +2,10 @@
 den Ersatzprogrammen aus test_netbox_host_script.py.
 
 Der Agent loescht nur, was Automato als Loeschauftrag nennt (Abbau im Cockpit nach der Frist),
-nie ohne frische Sicherung, nie einen noch freigegebenen Kunden, nie bei fremder Domain und je
-Auftrag nur einmal; nach jedem Abgleich meldet er seinen Stand (nur Kurznamen und Zeit)."""
+nie ohne frische Sicherung, nie einen Kunden, den Automato noch mit NetBox freigibt (ein Kunde,
+dem das Cockpit NetBox abgewaehlt hat, steht nicht in `kunden` - Teil-Abbau, ganzer Weg mit
+Automato in test_abbau_teile.py), nie bei fremder Domain und je Auftrag nur einmal; nach jedem
+Abgleich meldet er seinen Stand (nur Kurznamen und Zeit)."""
 
 import json
 from pathlib import Path
@@ -41,7 +43,7 @@ def test_sync_loescht_nur_auf_auftrag_mit_sicherung(host, tmp_path):  # noqa: F8
     kunden = [{"kurzname": "kunde-a", "name": "Kunde A", "zugang": "vorhanden"}]
     _antwort_mit_loeschen(host, kunden, [
         {"kurzname": "kunde-x", "auftrag": AUFTRAG_X},
-        {"kurzname": "kunde-a", "auftrag": AUFTRAG_Y},  # noch freigegeben: nie
+        {"kurzname": "kunde-a", "auftrag": AUFTRAG_Y},  # noch mit NetBox freigegeben: nie
         {"kurzname": "Kunde Z", "auftrag": AUFTRAG_Y},  # ungueltig: uebergangen
         {"kurzname": "kunde-z", "auftrag": "kurz"},
     ])  # fmt: skip
@@ -49,7 +51,7 @@ def test_sync_loescht_nur_auf_auftrag_mit_sicherung(host, tmp_path):  # noqa: F8
     assert out.returncode == 0, out.stdout + out.stderr  # kunde-a: nur eine Warnung
     text = out.stdout + out.stderr
     assert "kunde-x: gesichert und gelöscht (Abbau aus dem Cockpit)" in text
-    assert "kunde-a: in Automato noch freigegeben – nicht gelöscht" in text
+    assert "kunde-a: in Automato noch mit NetBox freigegeben – nicht gelöscht" in text
     assert not (host.dir / "kunden" / "kunde-x").exists()
     assert (host.dir / "kunden" / "kunde-a" / "netbox").is_dir()
     assert not (host.dir / "proxy" / "sites" / "kunde-x-nb.caddy").exists()

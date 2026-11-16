@@ -28,10 +28,12 @@
 # Instanz `neu` auf. Entfernt wird nie selbst – eine NetBox ohne Freigabe meldet er nur.
 #
 # Seit 1.14.0 (ADR 0059, Abbau aus dem Cockpit) nennt Automato zusätzlich Löschaufträge
-# (`loeschen`: Kunden, die das Cockpit nach Ablauf seiner Frist entfernt hat). Nur diese löscht der Agent ohne Rückfrage
+# (`loeschen`: Kunden, die das Cockpit nach Ablauf seiner Frist entfernt hat bzw. denen es NetBox
+# abgewählt hat – der Kunde bleibt dann, nur ohne NetBox). Nur diese löscht der Agent ohne Rückfrage
 # – wie `loeschen <kunde> --ja`, also nie ohne frische Sicherung –, je Auftrag nur einmal
-# (geloescht/<kunde>), nie einen Kunden, der noch freigegeben ist, und nie bei fremder Domain. Nach
-# jedem Abgleich meldet er seinen Ist-Stand (PUT /api/netbox-host/stand: nur Kurznamen und Zeit).
+# (geloescht/<kunde>), nie einen Kunden, den Automato noch mit NetBox freigibt (`kunden` derselben
+# Antwort), und nie bei fremder Domain. Nach jedem Abgleich meldet er seinen Ist-Stand
+# (PUT /api/netbox-host/stand: nur Kurznamen und Zeit).
 #
 # Seit 1.13.0 (ADR 0056) ist eine NetBox danach ohne Handgriffe fertig: der Agent richtet die
 # Anmeldung über das Tor ein, wo sie fehlt (SSO=an; Neustart nur bei neuen Einstellungen), und
@@ -850,7 +852,9 @@ zugang_abgleichen() {  # <kunde> <stand aus GET /api/netbox-host>
 }
 
 # --- Abbau aus dem Cockpit (ADR 0059) ------------------------------------------------------------
-loeschen_abarbeiten() {  # $1 Zeilen "kurzname<TAB>auftrag", $2 freigegebene Kurznamen (" a b "), $3 Domain passt (1|0)
+# Gelöscht wird nur auf Auftrag und nur, wenn Automato den Kunden nicht (mehr) mit NetBox freigibt –
+# entfernt bzw. noch freigegeben, aber ohne NetBox (Werkzeug im Cockpit abgewählt, Teil-Abbau).
+loeschen_abarbeiten() {  # $1 Zeilen "kurzname<TAB>auftrag", $2 Kurznamen mit NetBox (" a b "), $3 Domain passt (1|0)
   local k auftrag marke
   [ -n "$1" ] || return 0
   titel "Löschaufträge aus Automato (Abbau im Cockpit)"
@@ -863,7 +867,7 @@ loeschen_abarbeiten() {  # $1 Zeilen "kurzname<TAB>auftrag", $2 freigegebene Kur
   while IFS=$'\t' read -r -u 4 k auftrag; do
     [ -n "$k" ] || continue
     case "$2" in *" $k "*)
-      warn "$k: in Automato noch freigegeben – nicht gelöscht"
+      warn "$k: in Automato noch mit NetBox freigegeben – nicht gelöscht"
       LOESCHEN_FEHL="$LOESCHEN_FEHL $k"
       continue ;;
     esac
@@ -968,7 +972,7 @@ cmd_sync() {
   for k in $(kunden); do
     case "$gewollt" in *" $k "*) ;; *)
       verwaist="$verwaist $k"
-      warn "$k: in Automato ohne NetBox freigegeben – bleibt; entfernen: Abbau im Cockpit bzw. von Hand netbox-host.sh loeschen $k --ja"
+      warn "$k: in Automato ohne NetBox freigegeben – bleibt; entfernen: Abbau im Cockpit (Kunde entfernen bzw. NetBox abwählen) bzw. von Hand netbox-host.sh loeschen $k --ja"
       ;;
     esac
   done

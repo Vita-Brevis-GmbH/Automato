@@ -182,8 +182,9 @@ Zugriff mit 403 „Zugang gesperrt“; Benutzer seines Realms bekommen in Automa
 Realm und Client-Secret bleiben – rückgängig im Cockpit, solange die Frist läuft. Das Kunden-Portal
 markiert ihn („Zugang gesperrt“), das Portal `start.<intern>` ebenso, `front.sh liste` nennt ihn.
 
-Nach der Frist nimmt das Cockpit den Kunden heraus (wie bisher) und schickt einen Löschauftrag. Für
-den Front-Proxy steht dann `tor_entfernen` im Soll-Stand: `front.sh sync` entfernt das Tor-Geheimnis
+Nach der Frist nimmt das Cockpit den Kunden heraus (wie bisher) und schickt einen Löschauftrag –
+bzw. für einen Kunden, der bleibt, nach einem Wechsel seines Realms für den früheren Realm (ADR 0059
+Nachtrag). Für den Front-Proxy steht dann `tor_entfernen` im Soll-Stand: `front.sh sync` entfernt das Tor-Geheimnis
 (`tor/<realm>.env`) des Realms – nur, wenn kein Kunde ihn mehr nutzt (auch keiner von Hand), nie den
 Realm von Automato selbst, je Auftrag nur einmal (`tor/<realm>.entfernt`). Der Container des Tors
 fällt schon weg, sobald kein Kunde den Realm nutzt. **Verwaiste Tor-Dateien ohne Auftrag** (Realm

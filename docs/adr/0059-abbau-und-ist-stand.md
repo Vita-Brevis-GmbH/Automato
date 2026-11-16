@@ -116,3 +116,68 @@ Verträge `freigaben.md` und `inventar.md` (v1, neue Felder optional). Ergänzt 
 - Vertrag v1 bleibt (nur optionale Felder); ein älteres Cockpit sendet weder `gesperrt` noch
   `entfernen`, ein älterer Agent ignoriert `loeschen` und meldet keinen Stand (der NetBox-Teil
   bleibt dann offen: `netbox_host`).
+
+## Nachtrag 1.14.0 (2026-11-16): Werkzeug abwählen entfernt auch die Instanz
+
+Anwender 2026-11-16: **„weiter müssen wir schauen, dass das Cockpit alles orchestriert, also die
+Tools zufügt aber auch entfernt, wir haben auf dem dev Server nun leichen liegen“**; zum Abbau mit
+Frist: „Einstellbar, aber sonst ok“.
+
+**Lücke:** `entfernen` galt nur für Kunden, die nicht mehr in `kunden[]` stehen. Wählte der
+Betreiber bei einem **bleibenden** Kunden ein Werkzeug ab (z. B. NetBox), blieb die Instanz liegen
+– der Agent des NetBox-Hosts meldete sie nur „ohne Freigabe“.
+
+**Entscheidung** (Vertrag v1 bleibt, nur neue Werte):
+
+1. **Teile bleibender Kunden.** Ein Eintrag in `entfernen` darf auch einen Kunden nennen, der in
+   `kunden[]` derselben Anfrage steht (bisher abgelehnt mit `in_kunden` – der Grund entfällt).
+   Dann gilt ein Teil nur, wenn sein Werkzeug bei diesem Kunden **aus** ist:
+   - `netbox` nur ohne `nb` → der Agent des NetBox-Hosts löscht die NetBox (mit Sicherung, je
+     Auftrag einmal, wie bisher). Seine Regel heisst jetzt „nie einen Kunden, den Automato noch
+     **mit NetBox** freigibt“ (`kunden` derselben Antwort) – das galt schon technisch, weil
+     `GET /netbox-host` nur Kunden mit NetBox nennt; Automato nennt den Auftrag auch nur dann
+     (`netbox_loeschen`).
+   - `automato_kunde` nur ohne `doc` und ohne `zuordnung.kunde_anlegen` in derselben Anfrage (dann
+     will das Cockpit den Kunden noch) → den für ihn angelegten Kunden entfernen, nur ohne Daten
+     (wie bisher). Die Zuordnung des bleibenden Portal-Kunden selbst zählt dabei nicht, solange
+     sie aus Automato stammt (das Cockpit sendet keine `zuordnung`); die Id fällt dort mit weg.
+     Nennt das Cockpit den Kunden selbst in `zuordnung.kunden`, bleibt er (`zugeordnet`) – sonst
+     wäre seine nächste Anfrage ungültig (unbekannter Kunde, `422`).
+   - `tor` für den **früheren** Realm des Kunden (Realm gewechselt bzw. entfernt; aus dem Verlauf
+     `portal.customer.*` im Audit) – entfernt wie bisher nur, wenn ihn kein Kunde mehr nutzt
+     (sonst erledigt mit `realm_in_verwendung`). Gab es nie einen anderen Realm und hat der Kunde
+     einen, ist das Tor in Verwendung (`aktiv`); ohne jeden Realm nichts zu tun (`kein_realm`).
+   - Für Kunden aus der Oberfläche weiterhin nie (`oberflaeche`, auch wenn das Cockpit ihn in
+     derselben Anfrage übernimmt – der Teil-Abbau gilt erst danach).
+2. **Abgelehnt je Teil.** Ein Teil, dessen Werkzeug an ist, steht in der Antwort als
+   `{"kurzname", "grund": "aktiv", "teil": "netbox"|"automato_kunde"|"tor"}`; die übrigen Teile
+   desselben Eintrags gelten (der Kurzname steht dann auch in `angenommen`). Im Inventar
+   (`ist.entfernen`) stehen abgelehnte Teile in `teile` mit Stand `abgelehnt`.
+3. **Wieder gewählt = aufgehoben, je Teil.** Nutzt der Kunde dieses Kurznamens das Werkzeug eines
+   noch offenen Teils (wieder), endet der Auftrag für diesen Teil: `erledigt` mit Grund
+   `aufgehoben` (Audit `portal.abbau.aufgehoben`, Grund `wieder_da`, je Teil), die Hosts bekommen
+   ihn nicht mehr, die Instanz bleibt mit ihren Daten. Schickt das Cockpit den Teil nach erneutem
+   Abwählen wieder, gilt er wieder – mit **neuer Kennung** (die Hosts führen jede Kennung nur
+   einmal aus). Ein schon **ausgeführter** Teil, dessen Werkzeug wieder an ist, fällt aus dem
+   Auftrag (die Instanz von jetzt ist eine andere); ein späterer Auftrag ist ein neuer. Hatte der
+   Agent den Auftrag beim Wiederwählen schon abgeholt und meldet die NetBox danach als gelöscht,
+   zeigt der Stand `geloescht` statt `aufgehoben`.
+   - Das gilt für jeden Auftrag, auch für den Abbau eines ganzen Kunden: Gibt es den Kurznamen
+     wieder als Portal-Kunden, enden nur die Teile, deren Werkzeug er nutzt (bisher: der ganze
+     Auftrag). Hat der neue Kunde keine NetBox, geht die des alten also trotzdem – sie gehört
+     ihm nicht.
+4. **Vom Teil- zum ganzen Abbau.** Je Kurzname gibt es einen Auftrag. Entfernt das Cockpit den
+   Kunden später ganz, wird der offene Auftrag zum ganzen: neue Teile kommen dazu (neue Kennung),
+   der Realm ist der des entfernten Kunden – ausser das Tor eines früheren Realms ist gerade noch
+   offen (dann bleibt dieser; das übrige Tor-Geheimnis meldet der Front-Proxy als verwaist).
+
+**Folgen:**
+
+- Der Schreibweg auf dem NetBox-Host wird nicht breiter, nur häufiger: er löscht weiterhin nur auf
+  Auftrag, nur mit Sicherung, nur Kunden ohne NetBox-Freigabe. Neu kann das Cockpit damit die
+  NetBox eines Kunden löschen lassen, der bleibt – nach seiner Frist, rückgängig bis dahin
+  (Werkzeug wieder wählen), wiederherstellbar aus der Sicherung (R28 ergänzt).
+- Das Cockpit sendet je abgewähltem Werkzeug genau dessen Teil, bis `ist.entfernen` den Teil als
+  erledigt meldet (`geloescht`, `nicht_vorhanden`, `entfernt`, … bzw. `aufgehoben`); „von Hand“
+  entfällt für NetBox, Automato und Tor.
+- `front.sh` bleibt unverändert (es entfernt Tor-Geheimnisse ohnehin je Realm).
