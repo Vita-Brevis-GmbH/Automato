@@ -1,0 +1,24 @@
+# Anschluss einer eigenen Automato-Instanz an den Front-Proxy (1.16.0, ADR 0061,
+# deploy/instanz/compose.yml): nimmt im Netz automato-front-instanzen an und leitet nur an die
+# Web-UI dieser Instanz weiter. Sperren, Anmelde-Tor und TLS nach aussen macht der Front-Proxy.
+{
+	admin off
+	auto_https off
+	persist_config off
+	servers {
+		protocols h1 h2c
+		# nur der Front-Proxy erreicht den Anschluss (internes Netz): seine X-Forwarded-* gelten
+		trusted_proxies static private_ranges
+	}
+}
+
+:5173 {
+	handle /healthz {
+		respond "ok" 200
+	}
+	handle {
+		reverse_proxy web-ui:5173 {
+			import /etc/caddy/automato-tls/upstream-{$AUTOMATO_INTERNAL_TLS:off}.caddy
+		}
+	}
+}

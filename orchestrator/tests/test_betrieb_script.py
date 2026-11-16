@@ -20,6 +20,7 @@ REPO = Path(__file__).resolve().parents[2]
 DATEIEN = (
     "deploy/betrieb.sh",
     "deploy/lib-update.sh",
+    "deploy/lib-instanz.sh",
     "deploy/env.sh",
     "deploy/update.sh",
     "scripts/release_manifest.py",

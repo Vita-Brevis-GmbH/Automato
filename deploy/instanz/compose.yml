@@ -1,0 +1,59 @@
+# Eigene Automato-Instanz je Kunde (1.16.0, ADR 0061) - Zusatz zu docker-compose.yml, gilt nur in
+# einer Instanz: deploy/betrieb.sh installieren schreibt in ihre .env
+#   COMPOSE_FILE=docker-compose.yml:deploy/instanz/compose.yml
+#   COMPOSE_PROJECT_NAME=automato-<instanz>, AUTOMATO_INSTANZ=<instanz>
+# Die Hauptinstanz liest diese Datei nie.
+#
+# - Keine Ports auf dem Host: mehrere Instanzen auf einem Host; erreichbar nur über den Front-Proxy.
+#   Health prüft deploy/env.sh im Container des Orchestrators (health_curl).
+# - Kein Kunden-Portal: den Soll-Stand des Front-Proxys schreibt nur die Hauptinstanz.
+# - Anschluss an den Front-Proxy: ein kleiner Caddy im gemeinsamen Netz automato-front-instanzen
+#   (gehört dem Compose-Projekt der Hauptinstanz, wie automato-front-tor) unter dem Namen
+#   automato-<instanz>-web-ui:5173; er leitet nur an die eigene Web-UI weiter. Die Web-UI selbst
+#   hängt bewusst nicht in diesem Netz: Docker gäbe ihr dort zusätzlich den Namen des Dienstes
+#   ("web-ui") - unter genau diesem Namen erreicht der Front-Proxy die Oberfläche der Hauptinstanz,
+#   er könnte sonst bei einer fremden Instanz landen.
+services:
+  orchestrator:
+    ports: !reset []
+    environment:
+      AUTOMATO_FRONT_STATE_DIR: ""
+
+  web-ui:
+    ports: !reset []
+
+  anschluss:
+    image: caddy:2-alpine
+    profiles: ["core"]
+    restart: unless-stopped
+    # gehärtet wie die eigenen Dienste (x-gehaertet in docker-compose.yml); Port 5173 braucht
+    # keine Capability
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /data
+      - /config
+    environment:
+      # TLS intern der Instanz (aufbau.sh tls-intern in der Instanz): zur Web-UI per HTTPS gegen
+      # die eigene CA; vom Front-Proxy bis hier HTTP im internen Netz (ADR 0061)
+      AUTOMATO_INTERNAL_TLS: ${AUTOMATO_INTERNAL_TLS:-off}
+    volumes:
+      - ./deploy/instanz/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./deploy/tls/caddy:/etc/caddy/automato-tls:ro
+      - ./deploy/tls/pki/client:/etc/automato/tls:ro
+    networks:
+      default:
+      front-instanzen:
+        aliases:
+          - automato-${AUTOMATO_INSTANZ:?AUTOMATO_INSTANZ fehlt (nur in einer eigenen Instanz)}-web-ui
+    depends_on:
+      - web-ui
+
+networks:
+  front-instanzen:
+    name: automato-front-instanzen
+    external: true

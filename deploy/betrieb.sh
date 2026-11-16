@@ -12,6 +12,20 @@
 #   deploy/betrieb.sh zurueck          auf den Stand vor dem letzten Update (einmal)
 #   deploy/betrieb.sh neustart         Container neu starten (ohne Bau, ohne neue Images) + Health
 #
+# Eigene Automato-Instanz je Kunde (1.16.0, ADR 0061, deploy/lib-instanz.sh) - im frischen
+# Checkout <basisordner>/<instanz>, den der Host-Agent auf den Commit des Manifests gestellt hat:
+#   deploy/betrieb.sh installieren --instanz <n> --version <v> --manifest <m> --signatur <s>
+#                                  --kunde <kurzname> --domain <domain> --issuer <realm-url>
+#                                  [--kopplung <einmal-code>]
+#                                      Manifest pruefen -> .env mit neuen Geheimnissen (Projekt
+#                                      automato-<n>, ohne Ports, OIDC auf den Realm des Kunden) ->
+#                                      Images per Digest -> starten -> Health -> Einmal-Code der
+#                                      Kopplung hinterlegen; scheitert ein Schritt: aufraeumen
+#   deploy/betrieb.sh entfernen --ja   nur in einer Instanz: Sicherung -> Container und Volumes
+#                                      entfernen -> Ordner nach <basisordner>/archiv/<n>-<zeit>
+# In einer Instanz gehen stand, sichern, aktualisieren, zurueck und neustart wie in der
+# Hauptinstanz; die Antwort nennt dann zusaetzlich "instanz".
+#
 # Exit: 0 ok · 1 fehlgeschlagen, laeuft wieder auf dem alten Stand · 2 fehlgeschlagen, Zustand
 # unklar (von Hand, die Meldung nennt den Schritt) · 3 abgelehnt, nichts geaendert · 4 belegt.
 #
@@ -43,6 +57,8 @@ ZEIT_RE='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
 PROFILES=(--profile core)
 # shellcheck source=deploy/lib-update.sh
 . deploy/lib-update.sh
+# shellcheck source=deploy/lib-instanz.sh
+. deploy/lib-instanz.sh
 
 AKTION="?"
 S_GESUND="" # true | false | leer = nicht geprueft
@@ -88,12 +104,12 @@ ende() { # $1 Exit-Code, $2 Meldung (fester Text, hoechstens 300 Zeichen) - Antw
   local erfolg=false meldung=${2:0:300}
   [ "$1" = 0 ] && erfolg=true
   stand_erheben
-  printf '{"format":"betrieb/v1","produkt":"automato","aktion":%s,"ok":%s,"meldung":%s,%s}\n' \
+  printf '{"format":"betrieb/v1","produkt":"automato","aktion":%s,"ok":%s,"meldung":%s,%s%s}\n' \
     "$(json_text "$AKTION")" "$erfolg" "$(json_text "$meldung")" \
     "$(printf '"stand":{"version":%s,"commit":%s,"quelle":%s,"kanal":%s,"gesund":%s,"zurueck_moeglich":%s,"vorher":%s,"letzte_sicherung":%s}' \
       "$(json_text "$S_VERSION")" "$(json_text "$S_COMMIT")" "$(json_text "$S_QUELLE")" \
       "$(json_text "$S_KANAL")" "${S_GESUND:-null}" "$S_ZURUECK" "$S_VORHER" \
-      "$(json_text "$S_SICHERUNG")")" >"$ANTWORT_DATEI"
+      "$(json_text "$S_SICHERUNG")")" "$(instanz_antwort)" >"$ANTWORT_DATEI"
   exit "$1"
 }
 
@@ -326,8 +342,8 @@ main() {
   local aktion=${1:-}
   shift || true
   case $aktion in
-    stand | sichern | aktualisieren | zurueck | neustart) ;;
-    *) ende 3 "Unbekannte Aktion – stand, sichern, aktualisieren, zurueck oder neustart" ;;
+    stand | sichern | aktualisieren | zurueck | neustart | installieren | entfernen) ;;
+    *) ende 3 "Unbekannte Aktion – stand, sichern, aktualisieren, zurueck, neustart, installieren oder entfernen" ;;
   esac
   if [[ ${BETRIEB_AUFTRAG:-} =~ ^[0-9A-Za-z-]{1,64}$ ]]; then
     echo "Auftrag $BETRIEB_AUFTRAG: $aktion"
@@ -346,11 +362,13 @@ main() {
     aktualisieren) aktualisieren "$@" ;;
     zurueck) zurueck ;;
     neustart) neustart ;;
+    installieren) installieren "$@" ;;
+    entfernen) entfernen "$@" ;;
   esac
 }
 
 case ${1:-} in
-  stand | sichern | aktualisieren | zurueck | neustart) AKTION=$1 ;;
+  stand | sichern | aktualisieren | zurueck | neustart | installieren | entfernen) AKTION=$1 ;;
   *) [[ ${1:-} =~ ^[a-z_-]{1,30}$ ]] && AKTION=$1 ;;
 esac
 # Die Aktion laeuft in einer Subshell mit stdout auf stderr: kein Programm (docker, git, ...)

@@ -71,6 +71,11 @@
 # (nie den Realm von Automato, je Auftrag nur einmal: tor/<realm>.entfernt). Verwaiste Tor-Dateien
 # ohne Auftrag meldet der Front-Proxy nur (status.json → ist, front.sh pruefen) – nie still gelöscht.
 #
+# Seit 1.16.0 (ADR 0061) kann ein Kunde aus dem Cockpit eine eigene Automato-Instanz haben
+# (soll.json: automato_instanz, INSTANZ=<n> in kunden/<k>.conf): <kunde>-doc geht dann hinter dem
+# Tor an deren Anschluss im Netz automato-front-instanzen (automato-<n>-web-ui:5173) – läuft er
+# nicht, antwortet die Adresse 503. Einzelheiten: deploy/front/instanzen.sh.
+#
 # Einstellungen: AUTOMATO_FRONT_* in .env (siehe .env.example). Kunden: deploy/front/kunden/,
 # erzeugt: deploy/front/generated/, Client-Secrets und Empfangsschlüssel: deploy/front/tor/ (alles
 # nicht im Repo).
@@ -99,6 +104,8 @@ TOR_EMPFANG_ALG=RSA-OAEP-256  # Siegel des Cockpits (1.13.0, ADR 0055): RSA-OAEP
 cd "$REPO_DIR"
 # shellcheck source=deploy/env.sh
 . "$REPO_DIR/deploy/env.sh"
+# shellcheck source=deploy/front/instanzen.sh
+. "$SCRIPT_DIR/instanzen.sh"  # eigene Automato-Instanzen je Kunde (1.16.0, ADR 0061)
 
 ok() { printf '  OK      %s\n' "$*"; }
 info() { printf '          %s\n' "$*"; }
@@ -274,10 +281,11 @@ kunden() {  # alle Kurznamen
   return 0
 }
 
-lies_kunde() {  # setzt NAME, DOC, NB, UM, CMDB_AN, QUELLE, REALM, ZUGRIFF, NETZE, SPERRE aus kunden/<k>.conf
+lies_kunde() {  # setzt NAME, DOC, NB, UM, CMDB_AN, QUELLE, REALM, ZUGRIFF, NETZE, SPERRE, INSTANZ aus kunden/<k>.conf
   local k=$1
-  # NB fehlt in Dateien vor 1.11.0: NetBox wie bisher an; SPERRE (ADR 0059) fehlt: nicht gesperrt
-  NAME=$k DOC=nein NB=ja UM=nein CMDB_AN=nein QUELLE=befehl REALM="" ZUGRIFF=ueberall NETZE="" SPERRE=nein
+  # NB fehlt in Dateien vor 1.11.0: NetBox wie bisher an; SPERRE (ADR 0059) fehlt: nicht gesperrt;
+  # INSTANZ (ADR 0061) fehlt: gemeinsame Instanz
+  NAME=$k DOC=nein NB=ja UM=nein CMDB_AN=nein QUELLE=befehl REALM="" ZUGRIFF=ueberall NETZE="" SPERRE=nein INSTANZ=""
   # shellcheck disable=SC1090 # mit printf %q geschrieben (kunde)
   . "$(kdir)/$k.conf"
 }
@@ -626,6 +634,11 @@ schreibe_kunde() {  # Caddy-Einträge eines Kunden
   fi
   if [ "$DOC" = ja ]; then
     local ui=$'\t\treverse_proxy web-ui:5173 {\n\t\t\timport /etc/caddy/automato-tls/upstream-{$AUTOMATO_INTERNAL_TLS:off}.caddy\n\t\t}'
+    if [ -n "$INSTANZ" ]; then  # ADR 0061: eigene Automato-Instanz (bzw. 503, wenn sie nicht läuft)
+      instanz_ziel "$INSTANZ"
+      ui=$INSTANZ_ZIEL
+      printf '\n# Dokumentation: eigene Automato-Instanz automato-%s (ADR 0061)' "$INSTANZ"
+    fi
     printf '\n%s-doc.%s {\n\timport front-kunden\n' "$k" "$DOMAIN"
     zugriff_matcher
     printf '\t@internal path /api/internal /api/internal/*\n\t@front_api path /api/*\n'
@@ -665,7 +678,9 @@ eigene_netze() {  # Docker-Netze von Orchestrator, Worker und Proxy (1.10.0): Ab
   for svc in orchestrator collector proxy; do
     id=$($DOCKER compose --profile core --profile collectors --profile proxy ps -q "$svc" 2>/dev/null | head -1 || true)
     [ -n "$id" ] || continue
-    for net in $($DOCKER inspect -f '{{range .NetworkSettings.Networks}}{{.NetworkID}} {{end}}' "$id" 2>/dev/null || true); do
+    # ohne das Netz der eigenen Instanzen (ADR 0061): deren Anschluss ist nicht Automato selbst
+    # shellcheck disable=SC2016 # Vorlage von docker inspect, keine Shell-Variablen
+    for net in $($DOCKER inspect -f '{{range $n, $v := .NetworkSettings.Networks}}{{if ne $n "'"$INSTANZ_NETZ"'"}}{{$v.NetworkID}} {{end}}{{end}}' "$id" 2>/dev/null || true); do
       netze+=" $($DOCKER network inspect -f '{{range .IPAM.Config}}{{.Subnet}} {{end}}' "$net" 2>/dev/null || true)"
     done
   done
@@ -718,7 +733,7 @@ schreibe_topologie() {
     [ "$NB" != ja ] || w+=" nb"
     [ "$UM" != ja ] || w+=" um"
     [ "$CMDB_AN" != ja ] || w+=" cmdb"
-    printf '%s\n' "$k$sep${NAME//$sep/}${sep}https://$k.$DOMAIN$sep$nb$sep$doc$sep$um$sep$cm$sep$QUELLE$sep${w# }$sep$ZUGRIFF$sep$NETZE$sep$REALM$sep$SPERRE"
+    printf '%s\n' "$k$sep${NAME//$sep/}${sep}https://$k.$DOMAIN$sep$nb$sep$doc$sep$um$sep$cm$sep$QUELLE$sep${w# }$sep$ZUGRIFF$sep$NETZE$sep$REALM$sep$SPERRE$sep$INSTANZ"
   done | python3 -I -c "$TOPOLOGIE_PY" "$vm" "$(eigene_ips)" "${ui:+https://$ui}" "$portal" "$DOMAIN" \
     "$NETBOX" "$UEBRIGE" "${UM_ZIEL:+$UM_SCHEMA://$UM_ZIEL}" "$CMDB" "$TOR" "$pub" "$kennung" \
     "$TOR_EMPFANG_ALG" >"$tmp" || { rm -f "$tmp"; return 0; }
@@ -732,7 +747,7 @@ import json, sys
 from datetime import datetime, timezone
 vm, ips, ui, portal, domain, netbox, uebrige, magister, cmdb, tor, pub, kennung, alg = sys.argv[1:14]
 felder = ("kurzname", "name", "startseite", "netbox", "automato", "magister", "cmdb",
-          "quelle", "werkzeuge", "zugriff", "netze", "realm", "gesperrt")
+          "quelle", "werkzeuge", "zugriff", "netze", "realm", "gesperrt", "automato_instanz")
 listen = ("werkzeuge", "netze")  # mit Leerzeichen getrennt
 def wert(feld, w):
     if feld in listen:
@@ -744,7 +759,10 @@ kunden = []
 for zeile in sys.stdin.read().splitlines():
     teile = zeile.split("\x1f")
     if len(teile) == len(felder):
-        kunden.append({f: wert(f, w) for f, w in zip(felder, teile)})
+        kunde = {f: wert(f, w) for f, w in zip(felder, teile)}
+        if not kunde["automato_instanz"]:  # ADR 0061: nur mit eigener Automato-Instanz
+            del kunde["automato_instanz"]
+        kunden.append(kunde)
 empfang = None  # 1.13.0 (ADR 0055): öffentlicher Schlüssel, mit dem das Cockpit Client-Secrets versiegelt
 if pub and kennung:
     try:
@@ -1011,7 +1029,7 @@ werkzeuge() {  # Kurzliste der Werkzeuge eines Kunden
   local k=$1 w=""
   lies_kunde "$k"
   [ -z "$NETBOX" ] || [ "$NB" != ja ] || w="NetBox"
-  [ "$DOC" != ja ] || w="${w:+$w, }Doku"
+  [ "$DOC" != ja ] || w="${w:+$w, }Doku${INSTANZ:+ (Instanz $INSTANZ)}"
   if [ "$UM" = ja ]; then
     if [ -n "$UM_ZIEL" ]; then w="${w:+$w, }Magister"; else w="${w:+$w, }Magister (aus)"; fi
   fi
@@ -1558,6 +1576,7 @@ for v in ist.get("tor_entfernen_abgelehnt") or [] if isinstance(ist, dict) else 
         if re.fullmatch(r"[A-Za-z0-9._?-]{1,64}", r) and re.fullmatch(r"[a-z_]{1,40}", g):
             print(f"Realm {r} ({g})")' "$FRONT_STATE/status.json" 2>/dev/null || true)
   [ -n "$IST_GESPERRT$IST_VERWAIST$IST_FREMD" ] || ok "keine gesperrten Kunden, keine verwaisten Tor-Dateien oder -Container"
+  pruefe_instanzen  # ADR 0061
 
   titel "Kunden"
   local code ca=() orch coll
@@ -1627,8 +1646,8 @@ for v in ist.get("tor_entfernen_abgelehnt") or [] if isinstance(ist, dict) else 
 # --- Host-Agent: Kunden aus der Oberfläche (1.3.0, ADR 0050) ---------------------------------
 sync_anwenden() {  # läuft in einer Subshell: abbruch beendet nur diese
   lade_conf
-  local soll=$1 zeilen art k a b c d e f g h i j
-  local -A gewollt=()
+  local soll=$1 zeilen art k a b c d e f g h i j l
+  local -A gewollt=() instanz_von=()
   install -d -m 750 "$(kdir)"
   rm -f "$(kdir)"/*.neu
   # JSON nur lesen und in Zeilen wandeln (Trenner 0x1f) – geprüft wird danach wie bei `kunde`
@@ -1647,13 +1666,14 @@ for kunde in data.get("kunden") or []:
     nb = "ja" if kunde.get("nb", True) else "nein"  # 1.11.0; ältere Oberfläche: NetBox an
     quelle = "cockpit" if kunde.get("quelle") == "cockpit" else "oberflaeche"  # 1.11.0
     gesperrt = "ja" if kunde.get("gesperrt") is True else "nein"  # ADR 0059
+    instanz = clean(kunde.get("automato_instanz") or "")  # ADR 0061: eigene Automato-Instanz
     print(SEP.join(["K", k, clean(kunde.get("name"))] + flags
-                   + [clean(kunde.get("realm")), zugriff, netze, nb, quelle, gesperrt]))
+                   + [clean(kunde.get("realm")), zugriff, netze, nb, quelle, gesperrt, instanz]))
     for link in kunde.get("links") or []:
         print(SEP.join(["L", k, clean(link.get("title")), clean(link.get("url")), clean(link.get("text"))]))
 PY
   ) || abbruch "soll.json nicht lesbar ($soll)"
-  while IFS=$'\x1f' read -r art k a b c d e f g h i j; do
+  while IFS=$'\x1f' read -r art k a b c d e f g h i j l; do
     case "$art" in
       K)
         kurzname "$k"
@@ -1664,8 +1684,13 @@ PY
         [ "$h" = nein ] || h=ja
         [ "$i" = cockpit ] || i=oberflaeche
         [ "$j" = ja ] || j=nein
-        printf 'NAME=%q\nDOC=%q\nNB=%q\nUM=%q\nCMDB_AN=%q\nREALM=%q\nZUGRIFF=%q\nNETZE=%q\nQUELLE=%q\nSPERRE=%q\n' \
-          "$a" "$b" "$h" "$c" "$d" "$e" "${f:-ueberall}" "$g" "$i" "$j" >"$(kdir)/$k.conf.neu"
+        if [ -n "$l" ]; then  # ADR 0061: eine Instanz gehört genau einem Kunden
+          instanz_pruefen "$l"
+          [ -z "${instanz_von[$l]:-}" ] || abbruch "Automato-Instanz '$l' doppelt (Kunden ${instanz_von[$l]} und $k)"
+          instanz_von[$l]=$k
+        fi
+        printf 'NAME=%q\nDOC=%q\nNB=%q\nUM=%q\nCMDB_AN=%q\nREALM=%q\nZUGRIFF=%q\nNETZE=%q\nQUELLE=%q\nSPERRE=%q\nINSTANZ=%q\n' \
+          "$a" "$b" "$h" "$c" "$d" "$e" "${f:-ueberall}" "$g" "$i" "$j" "$l" >"$(kdir)/$k.conf.neu"
         : >"$(kdir)/$k.links.tsv.neu"
         gewollt[$k]=1
         ;;
@@ -1734,11 +1759,12 @@ status_schreiben() {  # $1 = ok|fehler|behalten (nur den Stand des Tors erneuern
   # TOR_ABBAU (nur in sync, ADR 0059): „entfernt<TAB>Realm“ bzw. „abgelehnt<TAB>Realm<TAB>Grund“
   if ! python3 -I - "$1" "${2:-}" "${3:-}" "$(kunden | tr '\n' ' ')" "$TOR" "$TOR_BEREIT" "$TOR_FEHLT" \
     "$TOR_GESPERRT" "${HAUPT_REALM:-}" "$TOR_COCKPIT" "${TOR_VERWORFEN:-}" "$ziel" \
-    "$IST_GESPERRT" "$IST_DATEIEN" "$IST_DIENSTE" "$IST_FREMD" "$IST_VERWAIST" "${TOR_ABBAU:-}" >"$tmp" <<'PY'
+    "$IST_GESPERRT" "$IST_DATEIEN" "$IST_DIENSTE" "$IST_FREMD" "$IST_VERWAIST" "${TOR_ABBAU:-}" \
+    "$IST_INSTANZEN" >"$tmp" <<'PY'
 import json, sys
 from datetime import datetime, timezone
 art, summe, meldung, kunden, tor, bereit, fehlt, gesperrt, haupt, cockpit, verworfen_datei, ziel = sys.argv[1:13]
-ist_gesperrt, dateien, dienste, fremd, verwaist, abbau_datei = sys.argv[13:19]
+ist_gesperrt, dateien, dienste, fremd, verwaist, abbau_datei, instanzen = sys.argv[13:20]
 abbau = None  # ADR 0059: was dieser sync auf Auftrag entfernt bzw. abgelehnt hat
 if abbau_datei:
     try:
@@ -1761,6 +1787,7 @@ ist = {
     "tor_dienste_fremd": sorted(set(fremd.split())),
     "tor_verwaist": sorted(set(verwaist.split())),
     **(abbau or {"tor_entfernt": [], "tor_entfernen_abgelehnt": []}),
+    "instanzen": sorted(set(instanzen.split())),  # ADR 0061: eigene Automato-Instanzen
 }
 verworfen = None
 if verworfen_datei:
@@ -1829,6 +1856,7 @@ front_ist() {  # setzt IST_GESPERRT (Kunden), IST_DATEIEN (Realms mit tor/<realm
   local f r k dienst
   local -A realm_von=() benutzt=()
   IST_GESPERRT="" IST_DATEIEN="" IST_DIENSTE="" IST_FREMD="" IST_VERWAIST=""
+  IST_INSTANZEN=$(instanzen_da | tr '\n' ' ')  # ADR 0061: eigene Automato-Instanzen auf der VM
   for k in $(kunden); do
     lies_kunde "$k"
     [ "$SPERRE" != ja ] || IST_GESPERRT+="$k "
@@ -1917,8 +1945,11 @@ cmd_sync() {
 d = json.load(open(sys.argv[1], encoding="utf-8"))
 print(d.get("soll_sha256", "") if d.get("ok") else "")' "$FRONT_STATE/status.json" 2>/dev/null || true)
   if [ "$summe" = "$alt" ] && [ "${1:-}" != "--immer" ]; then
-    info "Soll-Stand unverändert – nichts zu tun"
-    return 0
+    if ! instanzen_geaendert; then
+      info "Soll-Stand unverändert – nichts zu tun"
+      return 0
+    fi
+    info "Eigene Automato-Instanz gestartet bzw. weg (ADR 0061) – Front-Proxy neu erzeugen"
   fi
   fehlertext=$(mktemp)
   TOR_VERWORFEN=$(mktemp)  # Geheimnisse aus dem Cockpit, die sync verwirft (Realm und Grund, 1.13.0)

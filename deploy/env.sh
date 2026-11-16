@@ -13,7 +13,8 @@ AUTOMATO_FRONT_DOMAIN AUTOMATO_FRONT_DOMAIN_INT AUTOMATO_FRONT_WAF AUTOMATO_FRON
 AUTOMATO_FRONT_KUNDEN_ALLOW AUTOMATO_FRONT_NETBOX AUTOMATO_FRONT_NETBOX_CA AUTOMATO_FRONT_MAGISTER AUTOMATO_FRONT_MAGISTER_CA \
 AUTOMATO_FRONT_CMDB AUTOMATO_FRONT_UEBRIGE AUTOMATO_FRONT_UEBRIGE_CA AUTOMATO_FRONT_TOR AUTOMATO_FRONT_TOR_IMAGE AUTOMATO_FRONT_KEYCLOAK \
 AUTOMATO_FRONT_KEYCLOAK_INTERN AUTOMATO_FRONT_KEYCLOAK_CA AUTOMATO_FRONT_INTERN_ROLLEN \
-AUTOMATO_OIDC_ISSUER AUTOMATO_OIDC_JWKS_URL AUTOMATO_UI_ALLOW AUTOMATO_UI_HOST AUTOMATO_UI_TLS"
+AUTOMATO_OIDC_ISSUER AUTOMATO_OIDC_JWKS_URL AUTOMATO_UI_ALLOW AUTOMATO_UI_HOST AUTOMATO_UI_TLS \
+AUTOMATO_INSTANZ AUTOMATO_INSTANZ_KUNDE AUTOMATO_INSTANZ_DOMAIN"
 
 ENV_DATEI=${AUTOMATO_ENV_FILE:-.env}  # andere Datei nur fuer Tests
 
@@ -90,6 +91,13 @@ standard_health_url() {
   else echo "http://127.0.0.1:8000/health"; fi
 }
 health_curl() {  # wie curl, mit TLS intern gegen die interne CA
+  # Eigene Instanz (1.16.0, ADR 0061): ohne Port auf dem Host - /health im Container des
+  # Orchestrators (python -m app.serve --check), Antwort wie /health
+  if [ -n "${AUTOMATO_INSTANZ:-}" ]; then
+    ${COMPOSE:-docker compose} exec -T orchestrator python -m app.serve --check >/dev/null 2>&1 &&
+      echo '{"status":"ok"}'
+    return
+  fi
   if [ "${AUTOMATO_INTERNAL_TLS:-off}" = "on" ] && [ -r "$TLS_PKI/client/ca.crt" ]; then
     curl --cacert "$TLS_PKI/client/ca.crt" "$@"
   else

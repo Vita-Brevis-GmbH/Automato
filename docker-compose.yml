@@ -302,6 +302,9 @@ services:
       # Anmelde-Tor (1.4.0, ADR 0051): deploy/front/front.sh startet je Realm einen oauth2-proxy
       # (Projekt automato-tor) in diesem Netz; der Proxy fragt ihn vor jeder Kunden-Adresse
       - front-tor
+      # Eigene Automato-Instanzen je Kunde (1.16.0, ADR 0061): ihr Anschluss hängt in diesem Netz
+      # (deploy/instanz/compose.yml); front.sh leitet <kunde>-doc dorthin
+      - front-instanzen
     depends_on:
       - web-ui
 
@@ -370,3 +373,8 @@ networks:
   # Anmelde-Tor (1.4.0): eigenes Netz zwischen Proxy und den Containern des Tors
   front-tor:
     name: automato-front-tor
+  # Eigene Automato-Instanzen (1.16.0, ADR 0061): nur der Proxy und je Instanz ihr Anschluss, ohne
+  # Weg nach aussen; gehört diesem Projekt wie front-tor (eine Instanz nimmt es als external)
+  front-instanzen:
+    name: automato-front-instanzen
+    internal: true

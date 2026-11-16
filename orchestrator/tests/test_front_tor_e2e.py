@@ -540,3 +540,58 @@ def test_gesperrt_alle_adressen_auch_api_mit_token(tor):
     with _browser() as c:
         r = c.get("https://kunde-e.mgmt.example.ch/")
         assert r.status_code == 302 and "/realms/kunde-a/" in r.headers["location"]
+
+
+def test_eigene_automato_instanz_hinter_dem_tor(tor):
+    """1.16.0 (ADR 0061): ein Kunde mit eigener Automato-Instanz - <kunde>-doc geht hinter dem Tor
+    an deren Anschluss (automato-<n>-web-ui:5173) statt an die Hauptinstanz, die API ohne Tor (sie
+    prüft das Token selbst); läuft der Anschluss nicht, antwortet die Adresse 503. Der Anschluss ist
+    hier ein Echo im Netz des Tors (im Betrieb: Netz automato-front-instanzen)."""
+    state = tor.dir / "front" / "state"
+    state.mkdir(exist_ok=True)
+    stub, da = tor.dir / "docker", tor.dir / "instanz-da"
+    alt = stub.read_text()
+    stub.write_text(
+        '#!/usr/bin/env bash\ncase "$*" in\n  *"ps --status running"*) echo proxy ;;\n'
+        '  *"label=com.docker.compose.service=anschluss"*)\n'
+        f'    [ ! -f "{da}" ] || echo automato-e2e ;;\n'
+        "esac\n"
+    )
+    conf = tor.dir / "instanz.caddy"
+    conf.write_text(':5173 {\n\trespond "instanz user={http.request.header.X-Automato-User} '
+                    'path={uri}"\n}\n')  # fmt: skip
+    name = f"{PROJEKT}-instanz-e2e"
+    kunde = {"kurzname": "kunde-f", "name": "Kunde F", "doc": True, "realm": "kunde-a",
+             "quelle": "cockpit", "links": [], "automato_instanz": "e2e"}  # fmt: skip
+
+    def anwenden() -> None:
+        (state / "soll.json").write_text(json.dumps({"version": 1, "kunden": [kunde]}))
+        tor.front("sync")
+        _run("docker", "exec", f"{PROJEKT}-front", "caddy", "reload", "--config",
+             "/etc/caddy/Caddyfile")  # fmt: skip
+
+    try:
+        _run("docker", "run", "-d", "--name", name, "--network", NETZ, "--network-alias",
+             "automato-e2e-web-ui", "-v", f"{conf}:/etc/caddy/Caddyfile:ro", CADDY)  # fmt: skip
+        da.write_text("")
+        anwenden()
+        with _browser() as c:
+            r = c.get("https://kunde-f-doc.mgmt.example.ch/api/auth/config")
+            assert r.status_code == 200 and "instanz user= path=/api/auth/config" in r.text
+            assert "doc user=" not in r.text  # nie die Hauptinstanz
+            assert c.get("https://kunde-f-doc.mgmt.example.ch/api/internal/x").status_code == 404
+            r = c.get("https://kunde-f-doc.mgmt.example.ch/")
+            assert r.status_code == 302 and "/realms/kunde-a/" in r.headers["location"]
+            r, _ = _folgen(c, "https://kunde-f-doc.mgmt.example.ch/regeln?x=1")
+            assert r.status_code == 200 and "instanz user= path=/regeln?x=1" in r.text
+        # Anschluss weg: der nächste sync (Timer) erzeugt neu - 503, nie die Hauptinstanz
+        da.unlink()
+        _run("docker", "rm", "-f", name)
+        anwenden()
+        with _browser() as c:
+            r = c.get("https://kunde-f-doc.mgmt.example.ch/api/auth/config")
+            assert r.status_code == 503 and "Automato-Instanz nicht erreichbar" in r.text
+    finally:
+        _run("docker", "rm", "-f", name, check=False)
+        da.unlink(missing_ok=True)
+        stub.write_text(alt)
