@@ -22,8 +22,13 @@ pytestmark = pytest.mark.skipif(
     not shutil.which("bash") or not shutil.which("openssl"), reason="bash/openssl fehlen"
 )
 
+# 1.13.0: Tokens für Automato kommen nur über die Umgebung (-e NAME ohne Wert) – der Ersatz hält
+# fest, was ankam, damit die Tests sie mit der Anfrage an Automato vergleichen können
 DOCKER = r"""
 echo "$PWD|$*" >> "$NBH_LOG"
+[ -z "${NBH_LESE_TOKEN:-}" ] || echo "$NBH_LESE_TOKEN" >> "$NBH_LOG.lese"
+[ -z "${SYNC_TOKEN:-}" ] || echo "$SYNC_TOKEN" >> "$NBH_LOG.sync"
+case "$*" in *NBH_LESE_TOKEN*) [ -f "$NBH_LOG.netbox-aus" ] && { cat >/dev/null; exit 1; } ;; esac
 if [ "$1" = network ]; then [ "$2" = inspect ] && exit 1; exit 0; fi
 [ "$1" = compose ] || exit 0
 shift
@@ -32,6 +37,7 @@ case "$*" in
   ps*restarting*) [ -f "$NBH_LOG.restarting" ] && echo proxy; exit 0 ;;
   ps*--services*) echo proxy ;;
   ps*) echo "netbox running" ;;
+  restart*) [ -f "$NBH_LOG.restart-aus" ] && exit 1; exit 0 ;;
   *pg_dump*) echo "SQL-DUMP" ;;
   *tar*-cf*) echo "MEDIEN" ;;
   *manage.py*|*psql*|*-xf*) cat >/dev/null ;;
@@ -61,6 +67,21 @@ exit 1
 CURL = r"""
 echo "curl $*" >> "$NBH_LOG.curl"
 case "$*" in
+  */api/netbox-host/zugang*)
+    # 1.13.0: Zugang für Automato – Inhalt der Anfrage (stdin) festhalten, Antwort und HTTP-Code
+    # aus "$NBH_LOG.zugang" bzw. "$NBH_LOG.zugang-code" (Vorgabe: übernommen, 200)
+    [ -f "$NBH_LOG.automato-aus" ] && { echo 000; exit 7; }
+    o=""; vor=""
+    for a in "$@"; do
+      [ "$vor" = -o ] && o=$a
+      [ "$vor" = -H ] && case "$a" in @*) cat "${a#@}" >> "$NBH_LOG.kopf" ;; esac
+      vor=$a
+    done
+    cat >> "$NBH_LOG.put"; echo >> "$NBH_LOG.put"
+    [ -f "$NBH_LOG.zugang" ] || echo '{"status": "uebernommen"}' > "$NBH_LOG.zugang"
+    cp "$NBH_LOG.zugang" "$o"
+    cat "$NBH_LOG.zugang-code" 2>/dev/null || printf 200
+    exit 0 ;;
   */api/netbox-host*)
     [ -f "$NBH_LOG.automato-aus" ] && exit 7
     o=""; vor=""
@@ -340,11 +361,16 @@ def test_token_legt_benutzer_fuer_automato_an(host):
     out = host("token", "kunde-a")
     assert out.returncode == 0, out.stdout + out.stderr
     assert "https://kunde-a-nb.mgmt.example.ch" in out.stdout
-    assert re.search(r"Lese-Token:\s+[0-9a-f]{40}", out.stdout)
-    assert re.search(r"Schreib-Token:\s+[0-9a-f]{40}", out.stdout)
+    lese = re.search(r"Lese-Token:\s+([0-9a-f]{40})", out.stdout)
+    sync = re.search(r"Schreib-Token:\s+([0-9a-f]{40})", out.stdout)
+    assert lese and sync
     shells = [z for z in host.log.read_text().splitlines() if "manage.py shell" in z]
     # Admin und Gruppen der Anmeldung bei "neu", Lese-Benutzer, Sync-Benutzer (sync-user.sh)
     assert len(shells) == 4
+    # 1.13.0: die Tokens nur über die Umgebung an docker, nie in der Befehlszeile (ps)
+    assert Path(f"{host.log}.lese").read_text().split() == [lese.group(1)]
+    assert Path(f"{host.log}.sync").read_text().split() == [sync.group(1)]
+    assert lese.group(1) not in host.log.read_text() and sync.group(1) not in host.log.read_text()
 
 
 def test_update_sichert_vorher_und_setzt_version(host, tmp_path):
@@ -476,7 +502,7 @@ def test_sync_legt_fehlende_netbox_an_und_entfernt_nie(host):
     out = host("sync")
     assert out.returncode == 0, out.stdout + out.stderr
     assert "kunde-a: NetBox vorhanden" in out.stdout
-    assert "kunde-b: angelegt – Tokens für Automato: netbox-host.sh token kunde-b" in out.stdout
+    assert "kunde-b: angelegt" in out.stdout
     assert (host.dir / "kunden" / "kunde-b" / "netbox").is_dir()
     assert "NAME=Kunde\\ B" in (host.dir / "kunden" / "kunde-b" / "kunde.conf").read_text()
     pw = host.dir / "kunden" / "kunde-b" / "admin-passwort"
@@ -520,3 +546,201 @@ def test_ohne_agent_wie_bisher(host):
     out = host("pruefen")
     assert "nicht eingerichtet – NetBox je Kunde von Hand" in out.stdout
     assert host("sync").returncode == 1
+
+
+# --- 1.13.0 (ADR 0056): SSO und Zugang für Automato ohne Handgriffe -----------------------------
+
+
+def _alle_dateien(wurzel: Path) -> str:
+    """Inhalt aller Dateien unter NBH_DIR und der Protokolle – dort darf kein Token stehen
+    (ausser im Inhalt der Anfrage an Automato, den der Ersatz für curl festhält)."""
+    teile = []
+    for p in wurzel.rglob("*"):
+        if p.is_file() and not p.name.endswith(".put"):
+            teile.append(p.read_text(errors="replace"))
+    return "\n".join(teile)
+
+
+def _anfragen(host) -> list[dict]:
+    datei = Path(f"{host.log}.put")
+    if not datei.exists():
+        return []
+    return [json.loads(z) for z in datei.read_text().splitlines() if z.strip()]
+
+
+def test_sync_uebergibt_den_zugang_nur_wenn_automato_ihn_annimmt(host, tmp_path):
+    assert host("neu", "kunde-a").returncode == 0
+    assert host("neu", "kunde-c").returncode == 0
+    host("agent", "https://automato.int.example.ch", NBH_TOKEN=TOKEN)
+    _antwort(host, [
+        {"kurzname": "kunde-a", "name": "Kunde A", "zugang": "fehlt"},  # vorhandene NetBox
+        {"kurzname": "kunde-b", "name": "Kunde B", "zugang": "fehlt"},  # neue NetBox
+        {"kurzname": "kunde-c", "name": "Kunde C", "zugang": "vorhanden"},
+        {"kurzname": "kunde-d", "name": "Kunde D", "zugang": "kein_mandant"},
+        {"kurzname": "kunde-e", "name": "Kunde E", "zugang": "andere_adresse"},
+    ])  # fmt: skip
+    out = host("sync")
+    assert out.returncode == 0, out.stdout + out.stderr
+    anfragen = _anfragen(host)
+    assert [a["kurzname"] for a in anfragen] == ["kunde-a", "kunde-b"]  # nur „fehlt“
+    lese = Path(f"{host.log}.lese").read_text().split()
+    sync = Path(f"{host.log}.sync").read_text().split()
+    # an Automato gehen genau die Tokens, die die NetBox eben bekommen hat
+    assert [a["lesen"] for a in anfragen] == lese and [a["sync"] for a in anfragen] == sync
+    tokens = lese + sync
+    assert len(set(tokens)) == 4 and all(re.fullmatch(r"[0-9a-f]{40}", t) for t in tokens)
+    assert "kunde-a: Zugang für Automato übergeben" in out.stdout
+    assert "kunde-c: Zugang für Automato vorhanden" in out.stdout
+    assert "kunde-d: in Automato noch ohne Mandant" in out.stdout
+    assert "kunde-e: der Mandant in Automato hat ein Quellsystem NetBox mit" in out.stdout
+    # Klartext nirgends: nicht in der Ausgabe, nicht in Befehlszeilen (docker, curl), nicht in
+    # Status- oder sonstigen Dateien des NetBox-Hosts
+    curl = Path(f"{host.log}.curl").read_text()
+    protokolle = out.stdout + out.stderr + host.log.read_text() + curl
+    for t in tokens:
+        assert t not in protokolle
+        assert t not in _alle_dateien(host.dir)
+    assert "-X PUT" in curl and "--data-binary @-" in curl  # Inhalt über stdin
+    assert Path(f"{host.log}.kopf").read_text().count(f"Authorization: Bearer {TOKEN}") == 3
+    assert not list(host.dir.glob(".kopf-*")) and not list(host.dir.glob(".antwort-*"))
+    stand = json.loads((host.dir / "sync-status.json").read_text())
+    assert stand["ok"] is True
+    assert stand["zugang_uebergeben"] == ["kunde-a", "kunde-b"]
+    assert (stand["zugang_offen"], stand["zugang_klaeren"]) == (["kunde-d"], ["kunde-e"])
+    p = host("pruefen")
+    assert "Zugang an Automato übergeben: kunde-a kunde-b" in p.stdout
+    assert "in Automato noch ohne Mandant (Zugang folgt): kunde-d" in p.stdout
+    assert "Zugang für Automato von Hand klären: kunde-e" in p.stdout
+
+    # nächster Abgleich: Automato meldet „vorhanden“ – keine neuen Tokens
+    Path(f"{host.log}.put").unlink()
+    _antwort(host, [{"kurzname": k, "name": k, "zugang": "vorhanden"}
+                    for k in ("kunde-a", "kunde-b")])  # fmt: skip
+    assert host("sync").returncode == 0
+    assert _anfragen(host) == []
+    assert len(Path(f"{host.log}.lese").read_text().split()) == 2
+
+
+def test_sync_zugang_abgelehnt_oder_fehler(host):
+    assert host("neu", "kunde-a").returncode == 0
+    host("agent", "https://automato.int.example.ch", NBH_TOKEN=TOKEN)
+    _antwort(host, [{"kurzname": "kunde-a", "name": "Kunde A", "zugang": "fehlt"}])
+    # Mandant inzwischen entfernt: nicht übernommen, kein Fehler, nächster Abgleich fragt neu
+    Path(f"{host.log}.zugang").write_text('{"status": "kein_mandant", "detail": "x"}')
+    Path(f"{host.log}.zugang-code").write_text("409")
+    out = host("sync")
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert "kunde-a: in Automato noch ohne Mandant" in out.stdout
+    assert json.loads((host.dir / "sync-status.json").read_text())["zugang_offen"] == ["kunde-a"]
+    # von Hand eingetragen, während der Agent lief: bleibt, Hinweis zum Prüfen
+    Path(f"{host.log}.zugang").write_text('{"status": "vorhanden"}')
+    Path(f"{host.log}.zugang-code").write_text("200")
+    out = host("sync")
+    assert out.returncode == 0
+    assert "Automato hat inzwischen einen anderen Zugang (bleibt)" in out.stdout + out.stderr
+    # Automato nimmt nicht an (Fehler): Abgleich nicht in Ordnung, beim nächsten wieder
+    Path(f"{host.log}.zugang").write_text("kein JSON")
+    Path(f"{host.log}.zugang-code").write_text("500")
+    out = host("sync")
+    assert out.returncode == 1
+    assert "kunde-a: Zugang für Automato nicht übergeben (HTTP 500)" in out.stderr
+    stand = json.loads((host.dir / "sync-status.json").read_text())
+    assert stand["ok"] is False
+    assert "Zugang für Automato nicht übergeben: kunde-a" in stand["meldung"]
+    assert "Zugang für Automato nicht übergeben: kunde-a" in host("pruefen").stderr
+    # NetBox antwortet nicht: keine Benutzer, nichts an Automato
+    Path(f"{host.log}.put").unlink()
+    Path(f"{host.log}.netbox-aus").write_text("")
+    out = host("sync")
+    assert out.returncode == 1
+    assert "kunde-a: Benutzer für Automato nicht angelegt" in out.stderr
+    assert _anfragen(host) == []
+    for t in Path(f"{host.log}.lese").read_text().split():
+        assert t not in out.stdout + out.stderr
+
+
+def test_sync_ohne_zugang_bei_anderer_domain_oder_altem_automato(host):
+    assert host("neu", "kunde-a").returncode == 0
+    host("agent", "https://automato.int.example.ch", NBH_TOKEN=TOKEN)
+    _antwort(host, [{"kurzname": "kunde-a", "name": "A", "zugang": "fehlt"}],
+             domain="andere.example.ch")  # fmt: skip
+    out = host("sync")
+    assert "kein Zugang für Automato" in out.stdout + out.stderr
+    _antwort(host, [{"kurzname": "kunde-a", "name": "A"}])  # Automato vor 1.13.0
+    out = host("sync")
+    assert out.returncode == 0
+    assert "Automato meldet den Zugang nicht" in out.stdout
+    assert _anfragen(host) == [] and not Path(f"{host.log}.lese").exists()
+
+
+def test_sync_richtet_sso_ein_wo_es_fehlt(host):
+    assert host("neu", "kunde-a").returncode == 0
+    k = host.dir / "kunden" / "kunde-a"
+    datei = k / "netbox" / "configuration" / "zz_automato_sso.py"
+    stand = k / "sso-stand"
+    assert stand.read_text().strip() == "ok"  # neu richtet alles ein
+    host("agent", "https://automato.int.example.ch", NBH_TOKEN=TOKEN)
+    _antwort(host, [{"kurzname": "kunde-a", "name": "Kunde A", "zugang": "vorhanden"}])
+
+    def neustarts() -> int:
+        return host.log.read_text().count("restart netbox netbox-worker")
+
+    def shells() -> int:
+        return host.log.read_text().count("manage.py shell")
+
+    # Instanz ohne Anmeldung über das Tor (vor 1.4.0 angelegt): einrichten und neu starten
+    datei.unlink()
+    stand.unlink()
+    host.log.write_text("")
+    out = host("sync")
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert datei.exists() and stand.read_text().strip() == "ok"
+    assert neustarts() == 1 and shells() == 1
+    assert "Anmeldung über den Realm" in out.stdout
+    status = json.loads((host.dir / "sync-status.json").read_text())
+    assert status["sso_eingerichtet"] == ["kunde-a"]
+    assert "Anmeldung über das Tor eingerichtet: kunde-a" in host("pruefen").stdout
+
+    # schon eingerichtet: nichts, kein Neustart
+    host.log.write_text("")
+    assert host("sync").returncode == 0
+    assert neustarts() == 0 and shells() == 0
+
+    # vor 1.13.0 mit sso eingerichtet (ohne Stand): nur die Rechte, kein Neustart
+    stand.unlink()
+    host.log.write_text("")
+    assert host("sync").returncode == 0
+    assert neustarts() == 0 and shells() == 1 and stand.read_text().strip() == "ok"
+
+    # Einstellungen aus einer älteren Fassung: neu schreiben, neu starten
+    datei.write_text("REMOTE_AUTH_ENABLED = True\n")
+    host.log.write_text("")
+    assert host("sync").returncode == 0
+    assert neustarts() == 1 and "HTTP_X_AUTOMATO_GROUPS" in datei.read_text()
+
+    # Neustart fehlgeschlagen: der nächste Abgleich startet wieder neu
+    datei.unlink()
+    Path(f"{host.log}.restart-aus").write_text("")
+    out = host("sync")
+    assert "NetBox nicht neu gestartet – der nächste Abgleich versucht es wieder" in out.stdout
+    assert datei.exists() and stand.read_text().strip() == "neustart"
+    Path(f"{host.log}.restart-aus").unlink()
+    host.log.write_text("")
+    assert host("sync").returncode == 0
+    assert neustarts() == 1 and stand.read_text().strip() == "ok"
+
+    # SSO=aus: der Agent richtet nichts ein und entfernt nichts (das tut nur sso <kunde|alle>)
+    datei.unlink()
+    host.log.write_text("")
+    conf = host.dir / "host.conf"
+    conf.write_text(conf.read_text() + "SSO=aus\n")
+    assert host("sync").returncode == 0
+    assert not datei.exists() and neustarts() == 0
+    conf.write_text(conf.read_text().replace("SSO=aus\n", ""))
+
+    # ohne Entfernen gefälschter Kopfzeilen im Proxy nie einrichten
+    caddy = host.dir / "proxy" / "Caddyfile"
+    caddy.write_text(caddy.read_text().replace("X-Automato-User", "X-Anders"))
+    out = host("sync")
+    assert "der Proxy entfernt gefälschte Anmelde-Kopfzeilen nicht" in out.stdout
+    assert not datei.exists()

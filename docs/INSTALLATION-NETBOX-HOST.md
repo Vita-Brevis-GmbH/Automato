@@ -209,19 +209,46 @@ sudo deploy/netbox-host/netbox-host.sh pruefen      # Abschnitt „Agent“
   übergibt es als Kopfzeile aus einer Datei, nicht in der Befehlszeile.
 - Das Passwort des Benutzers `admin` einer neuen NetBox liegt in
   `/opt/netbox-host/kunden/<kunde>/admin-passwort` (nur root): in den Tresor, dann löschen.
-- Die Tokens für Automato (`token <kunde>`, unten) bleiben ein Handgriff.
 - Log: `journalctl -u netbox-host-sync -f`; einmal sofort: `sudo deploy/netbox-host/netbox-host.sh sync`.
 
-**Anbinden an Automato:**
+### 4b. Ohne Handgriffe: Anmeldung und Zugang für Automato (seit 1.13.0, ADR 0056)
+
+Bei jedem Abgleich macht der Agent eine NetBox fertig:
+
+- **Anmeldung über das Tor:** bei `SSO=an` richtet er sie bei jeder Instanz ein, der sie fehlt
+  oder deren Einstellungen veraltet sind (wie `sso <kunde>`), und startet nur dann ihre NetBox neu.
+  Instanzen, die schon eingerichtet sind, bleiben ohne Neustart. Entfernt der Proxy gefälschte
+  Anmelde-Kopfzeilen nicht (alte Proxy-Vorlage), richtet er nichts ein und warnt: `init`.
+- **Zugang für Automato:** sobald der Kunde in Automato einen **Mandanten** hat (Kunden-Portal
+  bzw. Cockpit) und dieser noch keinen Zugang zu der NetBox hat, legt er `automato-collector`
+  (nur lesen) und `automato-sync` (schreibt nur die Objekttypen des Syncs, ADR 0010) mit neuen
+  Tokens an und übergibt sie Automato. Automato speichert sie verschlüsselt beim Mandanten am
+  Quellsystem NetBox (`https://<kunde>-nb.<domain>`, über den Front-Proxy; ein vorhandenes
+  Quellsystem mit dieser Adresse ohne Tokens bekommt sie, sonst ein neues „NetBox“). Die Tokens
+  stehen nirgends auf dem NetBox-Host, in keiner Ausgabe und in keinem Log.
+- **Nie überschrieben:** hat Automato schon einen Zugang zu dieser NetBox (von Hand eingetragen,
+  auch mit Port oder bei einem anderen Mandanten), bleibt er. Hat der Mandant ein Quellsystem
+  NetBox mit einer anderen Adresse, übergibt der Agent nichts („von Hand klären“).
+- **Ohne Mandant** erzeugt der Agent keine Tokens; er versucht es bei jedem Abgleich wieder.
+
+`pruefen` zeigt im Abschnitt „Agent“ den letzten Abgleich: Anmeldung eingerichtet, Zugang
+übergeben, noch ohne Mandant (Zugang folgt), von Hand klären. Danach in Automato: Zeitplan des
+Quellsystems wie bei jedem anderen setzen. Automato muss dem Zertifikat des Front-Proxys
+vertrauen (`docs/INSTALLATION-FRONT.md` 8, `deploy/trust/`).
+
+**Zugang erneuern:** in Automato beim Quellsystem NetBox „Alle hinterlegten Tokens entfernen“ –
+der Agent übergibt beim nächsten Abgleich neue (die alten ersetzt er in NetBox).
+
+**Notweg von Hand** (ohne Agent bzw. Automato vor 1.13.0):
 
 ```bash
 sudo deploy/netbox-host/netbox-host.sh token kunde-a
 ```
 
-legt `automato-collector` (nur lesen) und `automato-sync` (schreibt nur die Objekttypen des
-Syncs, ADR 0010) an und zeigt Adresse und Tokens. In Automato beim Mandanten des Kunden →
-Quellsysteme → + Quellsystem „NetBox“ eintragen. Erneut aufrufen ersetzt die Tokens. Die
-Automato-VM muss der eigenen CA vertrauen (`docs/INSTALLATION-PROD.md` 6.3) und in `ALLOW` stehen.
+legt dieselben Benutzer an und zeigt Adresse und Tokens. In Automato beim Mandanten des Kunden →
+Quellsysteme → + Quellsystem „NetBox“ eintragen. Erneut aufrufen ersetzt die Tokens – auch die,
+die der Agent übergeben hat (dann in Automato von Hand nachführen). Die Automato-VM muss der
+eigenen CA vertrauen (`docs/INSTALLATION-PROD.md` 6.3) und in `ALLOW` stehen.
 
 ## 5. Betrieb
 
@@ -233,7 +260,8 @@ Automato-VM muss der eigenen CA vertrauen (`docs/INSTALLATION-PROD.md` 6.3) und 
 | `wiederherstellen <kunde> <datei.sql.gz.age>` | NetBox stoppen, Datenbank (und Medien derselben Sicherung) einspielen, starten – einmal pro Jahr testen |
 | `update <kunde\|alle>` | erst sichern, dann netbox-docker und NetBox in der Version aus `host.conf` holen, starten, prüfen. Neue Version zuerst bei einem Kunden |
 | `loeschen <kunde> --ja` | letzte Sicherung, dann Container, Daten und Proxy-Eintrag entfernen; die Sicherungen bleiben |
-| `sso <kunde\|alle>` | Anmeldung über das Anmelde-Tor einrichten bzw. nachführen (1.4.0): Proxy-Vorlage übernehmen, NetBox-Einstellungen schreiben, NetBox neu starten, Gruppen und Rechte anlegen |
+| `sso <kunde\|alle>` | Anmeldung über das Anmelde-Tor einrichten bzw. nachführen (1.4.0): Proxy-Vorlage übernehmen, NetBox-Einstellungen schreiben, NetBox neu starten, Gruppen und Rechte anlegen; mit `SSO=aus` entfernen. Seit 1.13.0 richtet der Agent fehlende Anmeldungen selbst ein |
+| `token <kunde>` | Notweg: Lese- und Sync-Benutzer mit neuen Tokens, angezeigt zum Eintragen in Automato (seit 1.13.0 übergibt der Agent den Zugang selbst, 4b) |
 
 Alle Befehle mit `sudo deploy/netbox-host/netbox-host.sh …` im Ordner `/opt/netbox-host/automato`.
 Das Werkzeug selbst aktualisieren: `sudo git pull`, danach `init` (übernimmt die Proxy-Vorlage).
@@ -246,7 +274,7 @@ Das Werkzeug selbst aktualisieren: `sudo git pull`, danach `init` (übernimmt di
   `X-Automato-User` (`<benutzer>@<realm>`) und die Realm-Rollen; dieser Proxy nimmt die Kopfzeilen
   nur von `FRONT` an und entfernt sie bei allen anderen. Rechte: Realm-Rolle **admin** = Superuser,
   **operator** = bearbeiten, alle anderen lesen. `SSO=an` in `host.conf` (Vorgabe); neue Instanzen
-  richtet `neu` ein, bestehende `sso <kunde|alle>`. Lokale Konten (`admin`, Token-Benutzer) bleiben
+  richtet `neu` ein, bestehende der Agent (4b) bzw. `sso <kunde|alle>`. Lokale Konten (`admin`, Token-Benutzer) bleiben
   für den Notfall und melden sich direkt aus dem Management-Netz mit Passwort an.
 
 ## 6. Grenzen
@@ -256,5 +284,5 @@ Das Werkzeug selbst aktualisieren: `sudo git pull`, danach `init` (übernimmt di
   aus dem Management-Netz.
 - Ein Update ändert das Schema der Datenbank – zurück geht es nur über `wiederherstellen` mit der
   Sicherung, die `update` vorher anlegt.
-- `token` legt klassische Tokens an (NetBox 4.6); für spätere Versionen die Tokens in NetBox
-  erzeugen und in Automato eintragen.
+- `token` und der Agent legen klassische Tokens an (NetBox 4.6); für spätere Versionen die
+  Tokens in NetBox erzeugen und in Automato eintragen.
