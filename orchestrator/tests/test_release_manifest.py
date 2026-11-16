@@ -257,3 +257,17 @@ def test_dienste_des_repos_wie_im_workflow(tmp_path):
     images = {n: s.get("image") for n, s in json.loads(out.stdout)["services"].items()}
     projekt = json.loads(out.stdout)["name"]
     assert images["web-ui"] == f"{projekt}-web-ui"
+
+
+def test_eigene_dienste_mit_image_variable():
+    """Jeder Dienst mit build: nimmt gepinnte Images (betrieb.sh), sonst den lokalen Namen wie
+    bisher - ein neuer eigener Dienst ohne diese Zeile wuerde nach einem Update aus dem Cockpit
+    still der alte gebaute Stand bleiben."""
+    yaml = pytest.importorskip("yaml")
+    dienste = yaml.safe_load((REPO / "docker-compose.yml").read_text())["services"]
+    eigene = {name: d for name, d in dienste.items() if "build" in d}
+    assert set(eigene) == {"migrate", "orchestrator", "collector", "web-ui"}
+    for name, dienst in eigene.items():
+        var = "AUTOMATO_IMAGE_" + name.upper().replace("-", "_")
+        lokal = "${COMPOSE_PROJECT_NAME:-automato}-" + name
+        assert dienst.get("image") == "${" + var + ":-" + lokal + "}", name
