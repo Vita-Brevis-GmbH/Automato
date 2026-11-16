@@ -509,3 +509,107 @@ def test_tor_geheimnis_gilt_nur_fuer_seinen_realm(api, session_factory, tmp_path
     _put(api, [_kunde("kunde-a", realm="rb")], tor_geheimnisse=[_siegel("rb")])
     assert _put(api, []).json()["entfernt"] == ["kunde-a"]
     assert "tor_geheimnisse" not in json.loads((tmp_path / "soll.json").read_text())
+
+
+# --- Zuordnung in Automato aus dem Cockpit (1.13.0, ADR 0054 Nachtrag) ------------------------
+
+
+def test_zuordnung_aus_dem_cockpit_idempotent_und_nur_lesbar(api, session_factory, tmp_path):
+    with session_factory() as s:
+        tid, cid = _tenant(s)
+        s.commit()
+    zuordnung = {"mandant": tid, "kunden": [cid], "rolle": "triage"}
+    r = _put(api, [_kunde("kunde-a", werkzeuge=["doc"], realm="kunde-a", zuordnung=zuordnung)])
+    assert r.status_code == 200, r.text
+    with session_factory() as s:
+        pc = s.query(PortalCustomer).one()
+        assert (pc.tenant_id, pc.customer_ids, pc.default_role, pc.scope_source) == (
+            tid, [cid], "triage", "cockpit")  # fmt: skip
+    created = [d for _, act, _, d in _audit(session_factory) if act == "portal.customer.created"]
+    assert created[0]["tenant_id"] == tid and created[0]["customer_ids"] == [cid]
+    assert created[0]["scope_source"] == "cockpit"
+    # dieselbe Anfrage: nichts, kein Audit; die Zuordnung steht nicht im Soll-Stand (nur Automato)
+    anzahl = len(_audit(session_factory))
+    r = _put(api, [_kunde("kunde-a", werkzeuge=["doc"], realm="kunde-a", zuordnung=zuordnung)])
+    assert r.json()["unveraendert"] == 1 and len(_audit(session_factory)) == anzahl
+    assert "tenant_id" not in json.dumps(_soll(tmp_path))
+
+    # in der Oberflaeche nur lesbar: Aendern 409, unveraendert speichern geht (Kacheln)
+    pc = api.get("/portal/customers").json()["customers"][0]
+    assert (pc["scope_source"], pc["assigned"]) == ("cockpit", True)
+    body = {k: pc[k] for k in ("short_name", "name", "doc", "nb", "um", "cmdb", "realm",
+                               "tenant_id", "customer_ids", "default_role", "access")}  # fmt: skip
+    for aenderung in ({"default_role": "editor"}, {"customer_ids": []}, {"tenant_id": None}):
+        r = api.put(f"/portal/customers/{pc['id']}", json={**body, **aenderung})
+        assert r.status_code == 409 and "aus dem Cockpit" in r.json()["detail"], aenderung
+    links = [{"title": "Handbuch", "url": "https://h.example.ch", "text": ""}]
+    r = api.put(f"/portal/customers/{pc['id']}", json={**body, "links": links})
+    assert r.status_code == 200, r.text
+
+    # wieder ohne zuordnung: der Stand bleibt, die Felder sind in Automato wieder aenderbar
+    r = _put(api, [_kunde("kunde-a", werkzeuge=["doc"], realm="kunde-a")])
+    assert r.json()["geaendert"] == ["kunde-a"]
+    upd = [d for _, act, _, d in _audit(session_factory) if act == "portal.customer.updated"]
+    assert upd[-1] == {"scope_source": "automato", "quelle": "cockpit"}
+    with session_factory() as s:
+        pc_db = s.query(PortalCustomer).one()
+        assert (pc_db.tenant_id, pc_db.default_role, pc_db.scope_source) == (
+            tid, "triage", "automato")  # fmt: skip
+    r = api.put(f"/portal/customers/{pc['id']}", json={**body, "default_role": "editor"})
+    assert r.status_code == 200 and r.json()["scope_source"] == "automato"
+
+
+def test_ohne_zuordnung_bleiben_die_felder_in_automato(api, session_factory):
+    """Aelteres Cockpit ohne `zuordnung`: Automato bleibt Autor (wie 1.11.0)."""
+    with session_factory() as s:
+        tid, cid = _tenant(s)
+        s.add(PortalCustomer(short_name="kunde-a", name="A", doc=True, realm="kunde-a",
+                             tenant_id=tid, customer_ids=[cid], default_role="editor",
+                             links=[]))  # fmt: skip
+        s.commit()
+    r = _put(api, [_kunde("kunde-a", werkzeuge=["doc"], realm="kunde-a", zuordnung=None)])
+    assert r.json()["uebernommen"] == ["kunde-a"]
+    with session_factory() as s:
+        pc = s.query(PortalCustomer).one()
+        assert (pc.tenant_id, pc.customer_ids, pc.default_role, pc.scope_source) == (
+            tid, [cid], "editor", "automato")  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("zuordnung", "grund"),
+    [
+        ("x", "kein Objekt"),
+        ({"kunden": [], "rolle": "viewer"}, "mandant"),
+        ({"mandant": True, "kunden": [], "rolle": "viewer"}, "mandant"),
+        ({"mandant": "1", "kunden": [], "rolle": "viewer"}, "mandant"),
+        ({"mandant": 999, "kunden": [], "rolle": "viewer"}, "unbekannt"),
+        ({"mandant": 0, "kunden": [], "rolle": "viewer"}, "mandant"),
+        ({"mandant": "T", "kunden": "C", "rolle": "viewer"}, "keine Liste"),
+        ({"mandant": "T", "kunden": ["C", "C"], "rolle": "viewer"}, "eindeutige"),
+        ({"mandant": "T", "kunden": ["F"], "rolle": "viewer"}, "gehören nicht zum Mandanten"),
+        ({"mandant": "T", "kunden": [], "rolle": "admin"}, "Rolle 'admin'"),
+        ({"mandant": "T", "kunden": [], "rolle": None}, "Rolle"),
+    ],
+)
+def test_zuordnung_wird_geprueft(api, session_factory, tmp_path, zuordnung, grund):
+    with session_factory() as s:
+        tid, cid = _tenant(s)
+        fremd = Tenant(name="fremd", ipam_type=IpamType.NETBOX, dns_type=DnsType.ACTIVE_DIRECTORY)
+        s.add(fremd)
+        s.flush()
+        fid = Customer(tenant_id=fremd.id, name="Fremder Kunde")
+        s.add(fid)
+        s.commit()
+        fid = fid.id
+    if isinstance(zuordnung, dict):  # Platzhalter: T = Mandant, C = Kunde, F = fremder Kunde
+        werte = {"T": tid, "C": cid, "F": fid}
+        zuordnung = {k: ([werte.get(x, x) for x in v] if isinstance(v, list)
+                         else werte.get(v, v) if isinstance(v, str) and v in werte else v)
+                     for k, v in zuordnung.items()}  # fmt: skip
+    r = _put(api, [_kunde("kunde-a", realm="kunde-a", zuordnung=zuordnung)])
+    assert r.status_code == 422, r.text
+    fehler = r.json()["fehler"]
+    assert len(fehler) == 1 and grund in fehler[0]["grund"] and fehler[0]["kurzname"] == "kunde-a"
+    with session_factory() as s:
+        assert s.query(PortalCustomer).count() == 0
+    assert not (tmp_path / "soll.json").exists()

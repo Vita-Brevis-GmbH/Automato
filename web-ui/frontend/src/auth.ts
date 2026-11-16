@@ -275,6 +275,8 @@ export interface Me {
   customerRoles: Record<string, CustomerRole>;
   customers: { id: number; name: string }[];
   logins: string[]; // eigene Kennungen laut Orchestrator (eigene Zuordnung erkennen)
+  // Kunden-Realm ohne Zuordnung in Automato (1.13.0): Meldung des Servers, sonst nichts laden
+  missingAssignment?: string | null;
 }
 
 export const DEV_ME: Me = {
@@ -469,6 +471,7 @@ export function withServer(me: Me, s: ServerMe): Me {
     customerRoles: s.customer_roles ?? {},
     customers: s.customers.map((c) => ({ id: c.id, name: c.name })),
     logins: s.logins ?? [],
+    missingAssignment: s.zuordnung_fehlt?.meldung ?? null,
   };
 }
 

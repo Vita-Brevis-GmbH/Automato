@@ -2427,7 +2427,13 @@ Client-Zertifikat und die passenden Zeilen der `agent.env`.
   Kunden-Portal tragen sie „aus dem Cockpit“: Kurzname, Name, Werkzeuge, Zugriff und Realm nur
   lesbar, Entfernen nur im Cockpit; hier pflegt man Mandant, Kunden, Rolle und Kacheln. Ein
   vorhandener Kunde mit gleichem Kurznamen wird übernommen. `front.sh liste` zeigt Quelle
-  „Cockpit“; von Hand nicht änderbar.
+  „Cockpit“; von Hand nicht änderbar. Seit 1.13.0 kann das Cockpit auch **Mandant, Kunden und
+  Rolle** wählen (Liste aus dem Inventar von Automato): dann stehen sie im Kunden-Portal „aus dem
+  Cockpit“ und sind hier nur lesbar; schickt das Cockpit keine Zuordnung, pflegt man sie wie
+  bisher hier. Mandanten und Kunden selbst legt man weiterhin in Automato an. Ein Kunde aus dem
+  Cockpit ohne Mandant bzw. ohne Kunden ist in der Liste markiert („noch kein Mandant – Benutzer
+  haben keine Rechte“); seine Benutzer sehen nach der Anmeldung nur diese Meldung statt
+  „Keine Berechtigung“.
 - **NetBox als Werkzeug** (1.11.0): im Kunden-Portal „NetBox (-nb)“ (Vorgabe an), von Hand
   `front.sh kunde … --ohne-nb`. Ohne NetBox keine Adresse `<kunde>-nb`, keine Kachel, keine
   Prüfung.

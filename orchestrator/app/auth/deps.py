@@ -91,15 +91,38 @@ def require_role(required: str):
     return dep
 
 
+def assignment_missing_text(principal: Principal) -> str:
+    """Meldung fuer Benutzer eines Kunden-Realms ohne Zuordnung in Automato (1.13.0)."""
+    kurz, name = principal.realm_customer or ("?", "?")
+    return L(
+        f"Für {name} ({kurz}) ist in Automato noch kein Mandant zugeordnet. Ein Admin trägt ihn "
+        f"unter Administration → Kunden-Portal → {kurz} ein (Mandant, Kunden, Rolle) – bei "
+        "Kunden aus dem Cockpit im Cockpit beim Kunden.",
+        f"No tenant is assigned to {name} ({kurz}) in Automato yet. An admin sets it under "
+        f"Administration → Customer portal → {kurz} (tenant, customers, role) – for customers from "
+        "the cockpit in the cockpit at the customer.",
+    )
+
+
+#: auch ohne Zuordnung erreichbar (die Oberflaeche zeigt damit die Meldung statt Fehlern)
+_OHNE_ZUORDNUNG = frozenset({("GET", "/auth/me")})
+
+
 def _customer_gate(request: Request, principal: Principal, required: str) -> None:
     """Kunden-Benutzer: nur freigegebene Endpunkte, je mit der benoetigten Capability fuer
     mindestens einen ihrer Kunden (feinere Rollen, ADR 0018 Ergaenzung). Ein schreibender
     Endpunkt (`required` ueber viewer) laesst sich nie mit dem Leserecht oeffnen - auch nicht
     durch einen falschen Eintrag in der Freigabeliste. Ob das Objekt zum Kunden gehoert, prueft
-    der Endpunkt."""
+    der Endpunkt. Ohne Zuordnung im Kunden-Portal (1.13.0) nur `/auth/me`, sonst 403 mit einer
+    klaren Meldung statt „insufficient role“ - Rechte gibt es weiterhin keine."""
     route = request.scope.get("route")
     path = getattr(route, "path", None)
     need = customer_routes.capability(request.method, path) if path is not None else None
+    if principal.assignment_missing:
+        if (request.method, path) in _OHNE_ZUORDNUNG and required == R.VIEWER:
+            request.state.customer_tenants = ()
+            return
+        raise HTTPException(status_code=403, detail=assignment_missing_text(principal))
     if need is None or (required != R.VIEWER and need == caps.READ):
         raise HTTPException(status_code=403, detail="not available for customer users")
     if not principal.can(need):

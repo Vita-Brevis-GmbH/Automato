@@ -376,8 +376,8 @@ Chat, Ticket oder Datei). Ein erneutes `cockpit-token` macht das alte ungültig.
   Personen; ohne eingerichtetes Token `404`. Inhalt: nur Namen und Adressen.
 - Seit 1.11.0 (ADR 0054) schickt das Cockpit mit demselben Token auch die **Freigaben**
   (`PUT /api/freigaben`): Kunden, Werkzeuge, Zugriff und Realm für das Kunden-Portal. Das Token
-  darf damit Kunden des Kunden-Portals anlegen, ändern und entfernen (nicht Mandant, Kunden und
-  Rolle) – nur im Cockpit hinterlegen. Seit 1.13.0 (ADR 0055) liefert es damit auch das
+  darf damit Kunden des Kunden-Portals anlegen, ändern und entfernen, seit 1.13.0 auch Mandant,
+  Kunden und Rolle wählen (ADR 0054 Nachtrag) – nur im Cockpit hinterlegen. Seit 1.13.0 (ADR 0055) liefert es damit auch das
   Client-Secret des Anmelde-Tors versiegelt (Abschnitt 6).
 - Das Cockpit erreicht die Oberfläche: seine Adresse steht in `AUTOMATO_UI_ALLOW`, und es vertraut
   dem Zertifikat (im Cockpit `deploy/certs/inventory-ca.pem`, wenn es eine interne CA ist).

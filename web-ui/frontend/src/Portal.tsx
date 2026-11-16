@@ -341,6 +341,18 @@ export default function Portal({ tenants }: { tenants: Tenant[] }) {
                         {c.tenant_id == null
                           ? "–"
                           : `${tenantName(c.tenant_id)} · ${c.customer_ids.length} ${L("Kunden", "customers")} · ${c.default_role}`}
+                        {c.scope_source === "cockpit" && (
+                          <span className="chip info" style={{ marginLeft: 6 }}>
+                            {L("aus dem Cockpit", "from the cockpit")}
+                          </span>
+                        )}
+                        {fromCockpit(c) && c.assigned === false && c.realm && c.realm !== data.keycloak.main_realm && (
+                          <div className="portal-zuordnung-fehlt">
+                            <span className="chip warn">
+                              {L("noch kein Mandant – Benutzer haben keine Rechte", "no tenant yet – users have no permissions")}
+                            </span>
+                          </div>
+                        )}
                       </td>
                       <td>
                         {Object.entries(c.addresses).map(([k, url]) => (
@@ -445,6 +457,8 @@ function PortalEditor({
   const set = (patch: Partial<PortalCustomerIn>) => setF((old) => ({ ...old, ...patch }));
   // Kunde aus dem Cockpit (1.11.0, ADR 0054): Kurzname, Name, Werkzeuge, Zugriff und Realm nur lesbar
   const locked = fromCockpit(existing);
+  // 1.13.0: Mandant, Kunden und Rolle aus dem Cockpit – dann auch diese nur lesbar
+  const scopeLocked = existing?.scope_source === "cockpit";
 
   useEffect(() => {
     if (f.tenant_id == null) {
@@ -576,11 +590,20 @@ function PortalEditor({
           )}
         </div>
       </div>
+      {scopeLocked && (
+        <Note>
+          {L(
+            "Mandant, Kunden und Rolle aus dem Cockpit – dort beim Kunden ändern.",
+            "Tenant, customers and role from the cockpit – change them there at the customer.",
+          )}
+        </Note>
+      )}
       <div className="field">
         <label htmlFor="pc-tenant">{L("Mandant (Umgebung)", "Tenant (environment)")}</label>
         <select
           id="pc-tenant"
           className="input"
+          disabled={scopeLocked}
           value={f.tenant_id ?? ""}
           onChange={(e) => set({ tenant_id: e.target.value ? Number(e.target.value) : null, customer_ids: [] })}
         >
@@ -600,6 +623,7 @@ function PortalEditor({
             <label key={c.id} className="check">
               <input
                 type="checkbox"
+                disabled={scopeLocked}
                 checked={f.customer_ids.includes(c.id)}
                 onChange={(e) =>
                   set({ customer_ids: e.target.checked ? [...f.customer_ids, c.id] : f.customer_ids.filter((x) => x !== c.id) })
@@ -612,7 +636,7 @@ function PortalEditor({
       )}
       <div className="field">
         <label htmlFor="pc-role">{L("Rolle ohne Angabe im Realm", "Role without one from the realm")}</label>
-        <select id="pc-role" className="input" value={f.default_role} onChange={(e) => set({ default_role: e.target.value })}>
+        <select id="pc-role" className="input" value={f.default_role} disabled={scopeLocked} onChange={(e) => set({ default_role: e.target.value })}>
           {ROLES.map(([role, text]) => (
             <option key={role} value={role}>
               {role} – {text}

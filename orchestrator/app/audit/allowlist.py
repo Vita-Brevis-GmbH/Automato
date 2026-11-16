@@ -11,10 +11,11 @@ bewusst: lieber ein lückenhaftes als ein undichtes Log.
 """
 
 # Kunden-Portal (1.11.0): geaenderte Felder ohne die Kacheln (frei eingegebene Adressen); bei
-# Freigaben aus dem Cockpit (Akteur `cockpit`) die Herkunft in `quelle`
+# Freigaben aus dem Cockpit (Akteur `cockpit`) die Herkunft in `quelle`; seit 1.13.0 wer Mandant,
+# Kunden und Rolle setzt (`scope_source`)
 _PORTAL = frozenset(
     {"short_name", "name", "doc", "nb", "um", "cmdb", "realm", "tenant_id", "customer_ids",
-     "default_role", "access", "access_nets", "quelle", "uebernommen"}
+     "default_role", "access", "access_nets", "quelle", "uebernommen", "scope_source"}
 )  # fmt: skip
 
 # action -> erlaubte detail-Keys. Nur unkritische, benannte Felder.

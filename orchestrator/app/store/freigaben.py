@@ -24,6 +24,10 @@ Automato prueft nur die Form (alles oder nichts wie bei `kunden`) und die Kennun
 (eine veraltete lehnt nur diesen Eintrag ab) und haelt nur das Chiffrat
 (`portal_customer.tor_secret`, im Soll-Stand `tor_geheimnisse`) - entschluesselt wird nur in
 `front.sh sync`.
+
+Seit 1.13.0 (ADR 0054 Nachtrag) je Kunde optional `zuordnung` (Mandant, Kunden, Rolle): dann ist
+das Cockpit Autor dieser drei Felder (`scope_source = cockpit`, in Automato nur lesbar); ohne
+`zuordnung` bleibt der Stand in Automato und die Felder sind dort wieder aenderbar.
 """
 
 import base64
@@ -36,6 +40,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import audit
+from app.auth import capabilities as caps
 from app.i18n import L
 from app.models import PortalCustomer
 from app.store import portal
@@ -47,8 +52,11 @@ MAX_KUNDEN = 1000
 WERKZEUGE = ("doc", "nb", "um", "cmdb")
 #: Akteur im Audit
 AKTEUR = "cockpit"
-#: Felder, deren Autor das Cockpit ist (alles andere bleibt in Automato)
-FELDER = ("name", "doc", "nb", "um", "cmdb", "realm", "access", "access_nets")
+#: Felder, deren Autor das Cockpit ist (alles andere bleibt in Automato); mit `zuordnung` auch
+#: Mandant, Kunden und Standard-Rolle (1.13.0) - `scope_source` haelt fest, wer sie setzt
+FELDER = ("name", "doc", "nb", "um", "cmdb", "realm", "access", "access_nets", "scope_source")
+FELDER_ZUORDNUNG = ("tenant_id", "customer_ids", "default_role")
+MAX_ZUORDNUNG_KUNDEN = 2000
 #: versiegelte Client-Secrets (1.13.0, ADR 0055): Kennung des Empfangsschluessels, Chiffrat
 KENNUNG = re.compile(r"[0-9a-f]{64}")
 BASE64 = re.compile(r"[A-Za-z0-9+/]+={0,2}")
@@ -145,7 +153,42 @@ def _werkzeuge(value: object) -> set[str]:
     return out
 
 
-def _freigabe(roh: dict) -> Freigabe:
+def _id(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def _zuordnung(session: Session, roh: object) -> dict:
+    """`zuordnung` eines Kunden pruefen (1.13.0): bestehender Mandant, Kunden nur dieses
+    Mandanten (eindeutig, darf leer sein), Kunden-Rolle (nie admin). Ohne bzw. null: keine
+    Aussage - die Felder bleiben in Automato aenderbar."""
+    if roh is None:
+        return {"scope_source": portal.SCOPE_AUTOMATO}
+    if not isinstance(roh, dict):
+        raise portal.PortalError(L("zuordnung ist kein Objekt", "zuordnung is not an object"))
+    mandant, kunden, rolle = roh.get("mandant"), roh.get("kunden"), roh.get("rolle")
+    if not _id(mandant):
+        raise portal.PortalError(L("zuordnung: mandant ist keine Id (Zahl > 0)",
+                                   "zuordnung: mandant is not an id (number > 0)"))  # fmt: skip
+    if kunden is None:
+        kunden = []
+    if not isinstance(kunden, list) or len(kunden) > MAX_ZUORDNUNG_KUNDEN:
+        raise portal.PortalError(L(
+            f"zuordnung: kunden ist keine Liste (höchstens {MAX_ZUORDNUNG_KUNDEN})",
+            f"zuordnung: kunden is not a list (at most {MAX_ZUORDNUNG_KUNDEN})"))  # fmt: skip
+    if not all(_id(k) for k in kunden) or len(set(kunden)) != len(kunden):
+        raise portal.PortalError(L("zuordnung: kunden nur eindeutige Ids (Zahl > 0)",
+                                   "zuordnung: kunden only unique ids (number > 0)"))  # fmt: skip
+    if not isinstance(rolle, str) or rolle not in caps.CUSTOMER_ROLES:
+        raise portal.PortalError(L(
+            f"zuordnung: Rolle '{str(rolle)[:20]}' unbekannt ({', '.join(caps.CUSTOMER_ROLES)})",
+            f"zuordnung: role '{str(rolle)[:20]}' unknown ({', '.join(caps.CUSTOMER_ROLES)})",
+        ))  # fmt: skip
+    ids = portal.check_scope(session, mandant, kunden)
+    return {"tenant_id": mandant, "customer_ids": ids, "default_role": rolle,
+            "scope_source": portal.SCOPE_COCKPIT}  # fmt: skip
+
+
+def _freigabe(session: Session, roh: dict) -> Freigabe:
     """Einen Kunden der Anfrage pruefen (wirft PortalError)."""
     kurz_roh = roh.get("kurzname")
     if not isinstance(kurz_roh, str):
@@ -164,7 +207,7 @@ def _freigabe(roh: dict) -> Freigabe:
         raise portal.PortalError(L("realm ist kein Text", "realm is not a string"))
     werte = {"name": name, "doc": "doc" in tools, "nb": "nb" in tools, "um": "um" in tools,
              "cmdb": "cmdb" in tools, "realm": portal.check_realm(realm), "access": access,
-             "access_nets": nets}  # fmt: skip
+             "access_nets": nets, **_zuordnung(session, roh.get("zuordnung"))}  # fmt: skip
     return Freigabe(kurz, werte)
 
 
@@ -272,7 +315,7 @@ def _pruefen(session: Session, data: object) -> tuple[list[Freigabe], list[TorGe
                                           f"entry {nr} is not an object")))  # fmt: skip
             continue
         try:
-            f = _freigabe(roh)
+            f = _freigabe(session, roh)
         except portal.PortalError as exc:
             fehler.append(_fehler(roh.get("kurzname"), str(exc)))
             continue
@@ -313,6 +356,10 @@ def _wert(pc: PortalCustomer, feld: str) -> object:
         return list(value or [])
     if feld == "access":
         return value or "ueberall"
+    if feld == "customer_ids":
+        return sorted(int(c) for c in value or [])
+    if feld == "scope_source":
+        return value or portal.SCOPE_AUTOMATO
     return value
 
 
@@ -354,8 +401,9 @@ def anwenden(session: Session, freigaben: list[Freigabe], akteur: str = AKTEUR) 
     for f, pc, changed, art in plan:
         detail = {**changed, "quelle": portal.SOURCE_COCKPIT}
         if pc is None:
-            pc = PortalCustomer(short_name=f.kurzname, links=[], customer_ids=[],
-                                source=portal.SOURCE_COCKPIT, **f.werte)  # fmt: skip
+            pc = PortalCustomer(short_name=f.kurzname, links=[],
+                                source=portal.SOURCE_COCKPIT,
+                                **{"customer_ids": [], **f.werte})  # fmt: skip
             session.add(pc)
             action = "portal.customer.created"
         else:

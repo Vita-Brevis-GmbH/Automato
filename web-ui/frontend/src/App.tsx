@@ -188,6 +188,27 @@ export default function App() {
       </Splash>
     );
   }
+  if (boot.me.missingAssignment) {
+    // Kunden-Realm ohne Mandant/Kunden in Automato (1.13.0): keine Rechte – eine klare Meldung
+    // statt Fehlern beim Laden
+    return (
+      <Splash>
+        <div id="zuordnung-fehlt">
+          <Note warn>{boot.me.missingAssignment}</Note>
+        </div>
+        <div style={{ display: "flex", gap: 9 }}>
+          <button className="btn btn-primary" onClick={() => window.location.reload()}>
+            {L("Neu laden", "Reload")}
+          </button>
+          {boot.cfg.auth_mode === "oidc" && (
+            <button className="btn btn-ghost" onClick={() => auth.logout()}>
+              {L("Abmelden", "Sign out")}
+            </button>
+          )}
+        </div>
+      </Splash>
+    );
+  }
   return <Shell cfg={boot.cfg} me={boot.me} />;
 }
 

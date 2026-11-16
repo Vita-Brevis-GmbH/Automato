@@ -33,6 +33,24 @@ das Geheimnis versiegelt an die VM zu liefern: „go der Vorschlag“). ADR 0055
   es startet jetzt ausdrücklich den Container des Realms neu. `front.sh erzeugen` führt den Stand
   des Tors in `status.json` nach (auch nach Handgriffen).
 
+Zuordnung in Automato aus dem Cockpit (Fund aus dem Test 2026-11-16: neuer Kunde aus dem Cockpit
+meldet sich an, Automato zeigt „Mandanten laden: Keine Berechtigung (insufficient role)“; zum
+Vorschlag, Mandant und Kunden im Cockpit zu wählen: „Ja gerne“). ADR 0054 Nachtrag, R26.
+
+- **Klare Meldung statt „insufficient role“:** Benutzer eines Kunden-Realms, dessen Kunde im
+  Kunden-Portal noch keinen Mandanten bzw. keine Kunden hat, sehen nach der Anmeldung eine eigene
+  Seite („Für Kunde A (kunde-a) ist in Automato noch kein Mandant zugeordnet …“); `/auth/me`
+  meldet `zuordnung_fehlt`, alle übrigen Endpunkte antworten 403 mit derselben Meldung. Rechte
+  gibt es weiterhin keine. Das Kunden-Portal markiert solche Kunden aus dem Cockpit („noch kein
+  Mandant – Benutzer haben keine Rechte“).
+- **Mandant, Kunden und Rolle aus dem Cockpit:** `PUT /freigaben` nimmt je Kunde optional
+  `zuordnung` (`mandant`, `kunden`, `rolle`) an – geprüft wie in der Oberfläche (sonst 422, alles
+  oder nichts), danach im Kunden-Portal nur lesbar („aus dem Cockpit“, 409 beim Ändern). Ohne
+  `zuordnung` bleibt der Stand und ist in Automato wieder änderbar.
+- **Inventar:** `automato.mandanten` (Mandanten mit ihren Kunden, nur Id und Name),
+  `automato.rollen` und je Kunde `automato_zugeordnet` und `zuordnung` – die Auswahl und der
+  Stand für das Cockpit.
+
 ## 1.12.2 – 2026-11-14
 
 Korrektur aus dem Test des Anmelde-Tors (Anwender 2026-11-14: „Wenn ich mich im Portal ein Logout

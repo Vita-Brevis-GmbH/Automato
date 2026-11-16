@@ -35,10 +35,18 @@ class Principal:
     customer_source: str | None = None
     # (Kunde, Kunden-Rolle) - nur fuer Kunden aus customer_ids
     customer_roles: tuple[tuple[int, str], ...] = ()
+    # Benutzer eines Kunden-Realms (1.13.0): (Kurzname, Anzeigename) des Kunden im Kunden-Portal
+    realm_customer: tuple[str, str] | None = None
 
     @property
     def is_admin(self) -> bool:
         return "admin" in self.roles and self.customer_ids is None
+
+    @property
+    def assignment_missing(self) -> bool:
+        """Benutzer eines Kunden-Realms, dessen Kunde in Automato noch keinen Mandanten bzw.
+        keine Kunden hat (1.13.0): keine Rechte (fail-closed), aber eine klare Meldung."""
+        return self.realm_customer is not None and not (self.tenant_ids and self.customer_ids)
 
     @property
     def is_customer(self) -> bool:

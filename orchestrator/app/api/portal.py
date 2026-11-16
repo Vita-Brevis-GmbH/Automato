@@ -8,7 +8,8 @@ Kunde (1.5.0: ueberall, intern, netze) geht an den Host; der Front-Proxy sperrt 
 
 Kunden aus dem Cockpit (1.11.0, ADR 0054, `PUT /freigaben`): hier aendern sich nur Mandant,
 Kunden, Standard-Rolle und Kacheln - Kurzname, Name, Werkzeuge, Zugriff und Realm fuehrt das
-Cockpit, entfernt werden sie nur dort.
+Cockpit, entfernt werden sie nur dort. Hat das Cockpit auch die Zuordnung geschickt (1.13.0,
+`scope_source = cockpit`), sind Mandant, Kunden und Rolle hier nur lesbar (409 beim Aendern).
 """
 
 from datetime import UTC, datetime
@@ -162,6 +163,15 @@ def update_customer(
     if pc is None:
         raise HTTPException(status_code=404, detail="portal customer not found")
     previous = pc.short_name
+    if pc.scope_source == portal.SCOPE_COCKPIT and (
+        data.tenant_id != pc.tenant_id
+        or sorted(set(data.customer_ids)) != sorted(pc.customer_ids or [])
+        or (data.default_role or "viewer").strip().lower() != (pc.default_role or "viewer")
+    ):
+        raise HTTPException(status_code=409, detail=L(
+            f"Mandant, Kunden und Rolle von '{pc.short_name}' kommen aus dem Cockpit – dort ändern",
+            f"Tenant, customers and role of '{pc.short_name}' come from the cockpit – change them "
+            "there"))  # fmt: skip
     if pc.source == portal.SOURCE_COCKPIT:
         # Autor ist das Cockpit (ADR 0054): hier nur Mandant, Kunden, Rolle und Kacheln - die
         # uebrigen Felder bleiben, wie sie sind, egal was die Anfrage nennt

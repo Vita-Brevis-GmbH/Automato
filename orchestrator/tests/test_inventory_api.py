@@ -72,8 +72,11 @@ def test_inventar_aus_der_topologie(client, tmp_path):
     assert r.status_code == 200, r.text
     data = r.json()
     assert data["vertrag"] == 1
+    rollen = ["viewer", "triage", "editor", "customer_admin"]
     assert data["automato"] == {"version": __version__, "umgebung": "test",
-                                "oberflaeche": "https://automato.int.example.ch"}  # fmt: skip
+                                "oberflaeche": "https://automato.int.example.ch",
+                                # 1.13.0: Auswahl fuer die Zuordnung (hier ohne Mandanten)
+                                "mandanten": [], "rollen": rollen}  # fmt: skip
     assert data["keycloak"] == {"issuer": ISSUER}
     front = data["front"]
     assert front["vm"] == {"name": "automato-vm.int.example.ch", "adressen": ["10.0.20.5"]}
@@ -88,7 +91,7 @@ def test_inventar_aus_der_topologie(client, tmp_path):
         "kurzname": "kunde-a", "name": "Kunde A", "startseite": "https://kunde-a.mgmt.example.ch",
         "netbox": "https://kunde-a-nb.mgmt.example.ch", "automato": None, "magister": None,
         "cmdb": None, "quelle": None, "werkzeuge": None, "zugriff": None, "netze": [],
-        "realm": None,
+        "realm": None, "automato_zugeordnet": None, "zuordnung": None,
     }]  # fmt: skip
 
 
@@ -206,3 +209,53 @@ def test_empfangsschluessel_nur_geprueft(client, tmp_path, fall):
             serialization.NoEncryption()).decode()  # fmt: skip
     _topologie(tmp_path, tor=tor, tor_empfang=empfang)
     assert _get(client, tmp_path).json()["front"]["tor_empfang"] is None
+
+
+# --- Auswahl und Stand der Zuordnung fuers Cockpit (1.13.0, ADR 0054 Nachtrag) ---------------
+
+
+def test_mandanten_rollen_und_zuordnung_je_kunde(client, tmp_path, session_factory):
+    from app.models import Customer, IpamType, PortalCustomer, Tenant
+    from app.models.tenant import DnsType
+
+    with session_factory() as s:
+        ids = {}
+        for name in ("Zentrum", "Rechenzentrum"):
+            t = Tenant(name=name, ipam_type=IpamType.NETBOX, dns_type=DnsType.ACTIVE_DIRECTORY)
+            s.add(t)
+            s.flush()
+            ids[name] = t.id
+        kunden = [Customer(tenant_id=ids["Rechenzentrum"], name=n) for n in ("Kunde B", "Kunde A")]
+        s.add_all(kunden)
+        s.flush()
+        a, b = kunden[1].id, kunden[0].id
+        s.add_all([
+            PortalCustomer(short_name="kunde-a", name="A", doc=True, realm="kunde-a",
+                           tenant_id=ids["Rechenzentrum"], customer_ids=[b, a],
+                           default_role="triage", scope_source="cockpit", links=[]),
+            PortalCustomer(short_name="kunde-b", name="B", doc=True, realm="kunde-b",
+                           tenant_id=ids["Zentrum"], customer_ids=[], links=[]),
+            PortalCustomer(short_name="kunde-c", name="C", doc=False, links=[], customer_ids=[]),
+        ])  # fmt: skip
+        s.commit()
+    basis = {"startseite": None, "netbox": None, "automato": None, "magister": None,
+             "cmdb": None}  # fmt: skip
+    namen = ("kunde-a", "kunde-b", "kunde-c", "kunde-d")
+    _topologie(tmp_path, kunden=[{"kurzname": k, "name": k, **basis} for k in namen])
+    data = _get(client, tmp_path).json()
+    assert data["automato"]["rollen"] == ["viewer", "triage", "editor", "customer_admin"]
+    assert data["automato"]["mandanten"] == [
+        {"id": ids["Rechenzentrum"], "name": "Rechenzentrum",
+         "kunden": [{"id": a, "name": "Kunde A"}, {"id": b, "name": "Kunde B"}]},
+        {"id": ids["Zentrum"], "name": "Zentrum", "kunden": []},
+    ]  # fmt: skip
+    kunden = {k["kurzname"]: k for k in data["kunden"]}
+    assert kunden["kunde-a"]["automato_zugeordnet"] is True
+    assert kunden["kunde-a"]["zuordnung"] == {"mandant": ids["Rechenzentrum"],
+                                              "kunden": sorted([a, b]), "rolle": "triage",
+                                              "von": "cockpit"}  # fmt: skip
+    assert kunden["kunde-b"]["automato_zugeordnet"] is False  # Mandant ohne Kunden
+    assert kunden["kunde-b"]["zuordnung"]["von"] == "automato"
+    assert kunden["kunde-c"]["automato_zugeordnet"] is None  # ohne Doku
+    assert (kunden["kunde-d"]["automato_zugeordnet"], kunden["kunde-d"]["zuordnung"]) == (
+        None, None)  # fmt: skip
