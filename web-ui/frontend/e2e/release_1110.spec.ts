@@ -1,9 +1,9 @@
 // 1.11.0 (Anwender 2026-11-13: „starte mal P2“ – ein Ort für Kunden: im Cockpit Kunden anlegen und Werkzeuge
 // wählen, Automato übernimmt; ADR 0054): Kunden aus dem Cockpit im Kunden-Portal nur teilweise änderbar und nicht
 // entfernbar, NetBox (-nb) als wählbares Werkzeug.
-import { expect, test } from "./fixtures";
-
-const COCKPIT = { Authorization: "Bearer e2e-cockpit-token" }; // e2e/server.py
+// Seit 1.14.0 (ADR 0058): mit verbundenem Cockpit ist das Kunden-Portal nur lesbar; die teilweise Pflege
+// gilt nur noch ohne Cockpit (entkoppelt).
+import { cockpit, COCKPIT, expect, testCockpit as test } from "./cockpit";
 
 test("Kunden-Portal: NetBox wählbar, Kunden aus dem Cockpit (1.11.0)", async ({ page }) => {
   // Freigabe wie aus dem Cockpit – ganzer Stand: nur dieser Kunde
@@ -20,7 +20,17 @@ test("Kunden-Portal: NetBox wählbar, Kunden aus dem Cockpit (1.11.0)", async ({
   await expect(row).toContainText("nur intern");
   await expect(row.locator("button:has-text('Entfernen')")).toHaveCount(0);
 
-  // nur Mandant, Kunden, Rolle und Kacheln änderbar
+  // mit verbundenem Cockpit (1.14.0): nur lesbar, kein „+ Kunde“
+  await expect(page.locator("#portal-nur-cockpit")).toBeVisible();
+  await expect(page.locator("button:has-text('+ Kunde')")).toHaveCount(0);
+  await row.locator("button:has-text('Ansehen')").click();
+  await expect(page.locator("#pc-role")).toBeDisabled();
+  await expect(page.locator(".modal-foot button:has-text('Speichern')")).toHaveCount(0);
+  await page.click(".modal-foot button:has-text('Schliessen')");
+
+  // ohne Cockpit: nur Mandant, Kunden, Rolle und Kacheln änderbar
+  await cockpit(page.request, false);
+  await page.reload();
   await row.locator("button:has-text('Bearbeiten')").click();
   await expect(page.locator(".modal")).toContainText("pflegt das Cockpit");
   await expect(page.locator("#pc-short")).toBeDisabled();
@@ -52,6 +62,7 @@ test("Kunden-Portal: NetBox wählbar, Kunden aus dem Cockpit (1.11.0)", async ({
   await expect(page.locator("#portal-customers tbody tr", { hasText: "ohne-nb-e2e" })).toHaveCount(0);
 
   // im Cockpit entfernt: weg
+  await cockpit(page.request, true);
   const leer = await page.request.put("/api/freigaben", { headers: COCKPIT, data: { vertrag: 1, kunden: [] } });
   expect((await leer.json()).entfernt).toEqual(["cockpit-e2e"]);
   await page.reload();

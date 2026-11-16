@@ -1,7 +1,8 @@
 // 1.5.0 (Anwender 2026-11-10: „Kann ich eventuell noch einstellen, von wo ich die einzelnen Kunden drauf zugreifen
 // können? Bei VB wäre es am liebsten nur von intern möglich, andere ‚zahlende‘ Kunden von extern“): Zugriff je Kunde
 // im Kunden-Portal – überall, nur intern oder nur aus bestimmten Netzen.
-import { expect, test } from "./fixtures";
+// seit 1.14.0 (ADR 0058) ohne Cockpit – mit verbundenem Cockpit ist das Kunden-Portal nur lesbar
+import { expect, testOhneCockpit as test } from "./cockpit";
 
 test("Kunden-Portal: Zugriff je Kunde (1.5.0)", async ({ page, problems }) => {
   await page.goto("/#kundenportal");

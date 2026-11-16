@@ -126,14 +126,37 @@ def realm_principal(claims: dict, scope: RealmScope, settings) -> Principal:
     (`customer_role` bzw. Realm-Rollen), sonst gilt die Standard-Rolle des Portals. Ohne
     Mandant sieht der Benutzer nichts (fail-closed). Keine Zuordnung ueber `customer_user`
     (`logins` leer): Kennungen aus einem fremden Realm sind nicht vertrauenswuerdig.
+
+    Seit 1.14.0 (ADR 0058) bei Kunden aus dem Cockpit: die Rolle aus dem Token zaehlt nicht
+    (Standard-Rolle des Portals); nennt das Cockpit Benutzer (`benutzer`), haben nur diese
+    Rechte, mit ihrer Rolle (nach `preferred_username`) - alle anderen keine, mit eigener Meldung.
     """
     subject = claims.get("sub") or claims.get("preferred_username") or "unknown"
-    raw_roles = _dig(claims, settings.oidc_roles_claim) or []
-    roles = (
-        frozenset(str(r) for r in raw_roles) if isinstance(raw_roles, list | tuple) else frozenset()
-    )
-    role = customer_role_of(roles, _dig(claims, settings.oidc_customer_role_claim))
-    role = role or scope.default_role
+    if scope.users is not None:
+        # Benutzer und Rollen aus dem Cockpit (1.14.0, ADR 0058): nur die genannten Benutzer
+        # haben Rechte, mit ihrer Rolle - alle anderen keine (fail-closed, eigene Meldung)
+        username = str(claims.get("preferred_username") or "").strip().lower()
+        role = scope.users.get(username) if username else None
+        if role is None:
+            return Principal(
+                subject=f"{scope.realm}:{subject}",
+                roles=frozenset({"viewer"}),
+                tenant_ids=(),
+                customer_ids=(),
+                logins=(),
+                customer_source=f"realm:{scope.realm}",
+                realm_customer=(scope.short_name, scope.name or scope.short_name),
+                realm_role_missing=True,
+            )
+    elif scope.from_cockpit:
+        # Kunde aus dem Cockpit (1.14.0): Rollen nur aus dem Cockpit, nie aus dem Token
+        role = scope.default_role
+    else:
+        raw_roles = _dig(claims, settings.oidc_roles_claim) or []
+        roles = (frozenset(str(r) for r in raw_roles) if isinstance(raw_roles, list | tuple)
+                 else frozenset())  # fmt: skip
+        role = customer_role_of(roles, _dig(claims, settings.oidc_customer_role_claim))
+        role = role or scope.default_role
     customers = scope.customer_ids if scope.tenant_id is not None else ()
     return Principal(
         subject=f"{scope.realm}:{subject}",

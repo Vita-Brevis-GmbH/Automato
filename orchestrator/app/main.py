@@ -48,7 +48,7 @@ from app.db import get_sessionmaker
 from app.i18n import middleware as i18n_middleware
 from app.secrets import resolve_settings
 from app.store import customer_alias, version_refresh
-from app.store import portal as portal_store
+from app.store import verwaltung as verwaltung_store
 
 log = logging.getLogger(__name__)
 
@@ -68,7 +68,8 @@ def _lifespan(settings: Settings):
         if settings.front_state_dir:
             try:
                 with get_sessionmaker()() as session:
-                    if portal_store.write_desired(session, settings.front_state_dir, True):
+                    # 1.14.0 (ADR 0058): `verwaltung: cockpit`, solange ein Cockpit verbunden ist
+                    if verwaltung_store.soll_schreiben(session, settings, True):
                         log.info("Soll-Stand des Front-Proxys nachgefuehrt")
             except Exception:  # noqa: BLE001 - Ordner fehlt/nicht beschreibbar: Start geht vor
                 log.warning("Soll-Stand des Front-Proxys nicht geschrieben", exc_info=True)

@@ -31,6 +31,9 @@ und Standard-Rolle pflegt Automato) oder `cockpit` (das Cockpit hat sie mit den 
 Kacheln aus dem Cockpit (1.13.0, ADR 0054 zweiter Nachtrag): `links_source` = `automato` (die
 weiteren Kacheln pflegt Automato) oder `cockpit` (das Cockpit hat sie mit den Freigaben gesetzt -
 in Automato dann nur lesbar).
+
+Benutzer und Rollen aus dem Cockpit (1.14.0, ADR 0058): `users` = Keycloak-Benutzernamen des
+Kunden-Realms mit ihrer Kunden-Rolle; gesetzt haben nur diese Benutzer Rechte (`auth/oidc.py`).
 """
 
 from datetime import UTC, datetime
@@ -78,6 +81,10 @@ class PortalCustomer(Base):
     links_source: Mapped[str] = mapped_column(
         String(16), default="automato", server_default="automato"
     )
+    # Benutzer des Kunden-Realms mit Rolle aus dem Cockpit (1.14.0, ADR 0058):
+    # [{"benutzer", "rolle"}] - None = keine Aussage (alle Benutzer des Realms mit der
+    # Standard-Rolle); gesetzt, auch leer: nur diese Benutzer haben Rechte
+    users: Mapped[list | None] = mapped_column(JSON, nullable=True)
     updated_by: Mapped[str | None] = mapped_column(String(200), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)

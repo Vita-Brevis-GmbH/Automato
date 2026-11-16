@@ -19,6 +19,7 @@ from app.auth.deps import require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
 from app.models import (
+    CockpitCustomer,
     Customer,
     CustomerMember,
     CustomerSelector,
@@ -271,6 +272,8 @@ def delete_customer(
     session.execute(CustomerMember.__table__.delete().where(CustomerMember.customer_id == c.id))
     # Zuordnungen seiner Benutzer fallen weg (0.53.0)
     session.execute(CustomerUser.__table__.delete().where(CustomerUser.customer_id == c.id))
+    # fuer das Cockpit angelegt (1.14.0, ADR 0058): die Verknuepfung faellt mit (auch ohne FK)
+    session.execute(CockpitCustomer.__table__.delete().where(CockpitCustomer.customer_id == c.id))
     # seine logischen Zonen bleiben, gehoeren dann keinem Kunden (0.51.0)
     session.execute(
         update(LogicalZone).where(LogicalZone.customer_id == c.id).values(customer_id=None)

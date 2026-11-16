@@ -277,6 +277,10 @@ export interface Me {
   logins: string[]; // eigene Kennungen laut Orchestrator (eigene Zuordnung erkennen)
   // Kunden-Realm ohne Zuordnung in Automato (1.13.0): Meldung des Servers, sonst nichts laden
   missingAssignment?: string | null;
+  // 1.14.0 (ADR 0058): Kunden-Realm ohne Rolle aus dem Cockpit – eigene Seite; Kunden, deren
+  // Benutzer und Rollen das Cockpit führt
+  missingRole?: string | null;
+  cockpitCustomers?: number[];
 }
 
 export const DEV_ME: Me = {
@@ -472,6 +476,8 @@ export function withServer(me: Me, s: ServerMe): Me {
     customers: s.customers.map((c) => ({ id: c.id, name: c.name })),
     logins: s.logins ?? [],
     missingAssignment: s.zuordnung_fehlt?.meldung ?? null,
+    missingRole: s.rolle_fehlt?.meldung ?? null,
+    cockpitCustomers: s.cockpit_kunden ?? [],
   };
 }
 

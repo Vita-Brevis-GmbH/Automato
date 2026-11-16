@@ -20,6 +20,7 @@
 #                  [--zugriff ueberall|intern|"<netz> …"]           anlegen/ändern
 #   front.sh link <kunde> <titel> <url> [beschreibung]               weitere Kachel auf der Startseite
 #   front.sh entfernen <kunde> --ja                                 Kunde aus dem Front-Proxy nehmen
+#     (kunde, link, entfernen: mit verbundenem Cockpit nur mit --trotzdem, siehe unten)
 #   front.sh liste                                                  Kunden mit ihren Werkzeugen
 #   front.sh erzeugen                                               alles neu erzeugen, Proxy neu laden
 #   front.sh pruefen                                                Einstellungen, Zertifikate, Adressen,
@@ -58,6 +59,11 @@
 # prüft (Realm eines Kunden aus dem Cockpit, Client automato-front) und übernimmt es; das Geheimnis
 # erscheint nie in Ausgabe, Log oder status.json. `front.sh tor <realm>` von Hand geht weiterhin und
 # gilt, bis das Cockpit ein anderes Chiffrat schickt.
+#
+# Seit 1.14.0 (ADR 0058) entstehen und ändern sich Kunden nur noch im Cockpit, sobald Automato mit
+# einem Cockpit verbunden ist (soll.json: "verwaltung": "cockpit"): `kunde`, `link` und `entfernen`
+# lehnen dann ab; nur mit ausdrücklichem --trotzdem (Notweg, mit Warnung) ändern sie von Hand – das
+# Cockpit kennt solche Kunden nicht (Altlast), bis es sie übernimmt.
 #
 # Einstellungen: AUTOMATO_FRONT_* in .env (siehe .env.example). Kunden: deploy/front/kunden/,
 # erzeugt: deploy/front/generated/, Client-Secrets und Empfangsschlüssel: deploy/front/tor/ (alles
@@ -235,6 +241,18 @@ aus_cockpit_realm() {  # gehört der Realm einem Kunden aus dem Cockpit? (1.13.0
     if [ "$QUELLE" = cockpit ] && [ "$REALM" = "$1" ]; then return 0; fi
   done
   return 1
+}
+cockpit_verbunden() {  # 1.14.0 (ADR 0058): Automato mit dem Cockpit verbunden (soll.json, verwaltung)?
+  [ -f "$FRONT_STATE/soll.json" ] || return 1
+  python3 -I -c 'import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+sys.exit(0 if isinstance(d, dict) and d.get("verwaltung") == "cockpit" else 1)' "$FRONT_STATE/soll.json" 2>/dev/null
+}
+TROTZDEM=nein  # --trotzdem bei kunde, link, entfernen (1.14.0)
+am_cockpit_vorbei() {  # $1 Befehl, $2 Kunde: von Hand nur ohne Cockpit bzw. mit --trotzdem (Notweg)
+  cockpit_verbunden || return 0
+  [ "$TROTZDEM" = ja ] || abbruch "Automato ist mit dem Cockpit verbunden: Kunden entstehen und ändern sich nur noch im Cockpit (Kundenregister, ADR 0058) – dort anlegen bzw. ändern. Nur im Notfall von Hand: front.sh $1 … --trotzdem"
+  warn "am Cockpit vorbei (--trotzdem): $1 $2 von Hand – das Cockpit führt diesen Kunden nicht (Altlast); im Cockpit übernehmen bzw. dort aufräumen"
 }
 nur_befehl() {
   ! aus_cockpit "$1" || abbruch "Kunde '$1' wird im Cockpit gepflegt (Kundenregister, ADR 0054)"
@@ -983,6 +1001,7 @@ cmd_kunde() {
   lade_conf
   local k=${1:-} name=${2:-} doc=nein nb=ja um=nein cmdb=nein realm="" zugriff=ueberall netz=""
   kurzname "$k"
+  am_cockpit_vorbei kunde "$k"
   nur_befehl "$k"
   [ -n "$name" ] && [[ "$name" != --* ]] || abbruch "Verwendung: kunde <kunde> \"<Anzeigename>\" [--doc] [--um] [--cmdb] [--ohne-nb] [--realm <realm>] [--zugriff ueberall|intern|\"<netz> …\"]"
   shift 2
@@ -1038,6 +1057,7 @@ cmd_link() {
   lade_conf
   local k=${1:-} t=${2:-} u=${3:-} b=${4:-}
   kurzname "$k"
+  am_cockpit_vorbei link "$k"
   nur_befehl "$k"
   [ -f "$(kdir)/$k.conf" ] || abbruch "Kunde '$k' unbekannt (erst: kunde $k \"<Name>\")"
   [ -n "$t" ] && [ -n "$u" ] || abbruch "Verwendung: link <kunde> <titel> <url> [beschreibung]"
@@ -1053,6 +1073,7 @@ cmd_entfernen() {
   lade_conf
   local k=${1:-} ja=${2:-}
   kurzname "$k"
+  am_cockpit_vorbei entfernen "$k"
   nur_befehl "$k"
   [ -f "$(kdir)/$k.conf" ] || abbruch "Kunde '$k' unbekannt"
   [ "$ja" = "--ja" ] || abbruch "nimmt Startseite und Weiterleitungen von '$k' aus dem Front-Proxy (NetBox und Daten bleiben) – bestätigen mit: entfernen $k --ja"
@@ -2075,6 +2096,14 @@ cmd_tor_empfang() {
   return 0
 }
 
+case "${1:-}" in
+  kunde | link | entfernen)  # 1.14.0 (ADR 0058): --trotzdem an beliebiger Stelle
+    befehl=$1 rest=()
+    shift
+    for a in "$@"; do if [ "$a" = --trotzdem ]; then TROTZDEM=ja; else rest+=("$a"); fi; done
+    set -- "$befehl" ${rest[@]+"${rest[@]}"}
+    ;;
+esac
 case "${1:-}" in
   kunde) shift; cmd_kunde "$@" ;;
   link) shift; cmd_link "$@" ;;

@@ -3571,6 +3571,10 @@ export interface PortalCustomer {
   assigned?: boolean | null;
   // 1.13.0: weitere Kacheln aus dem Cockpit (dann nur lesbar)
   links_source?: "automato" | "cockpit";
+  // 1.14.0 (ADR 0058): Benutzer des Realms mit Rolle aus dem Cockpit (null = alle mit der
+  // Standard-Rolle) und der Kunde, den Automato für das Cockpit im Mandanten angelegt hat
+  users?: PortalUser[] | null;
+  kunde_angelegt?: number | null;
   addresses: Record<string, string>; // start, netbox, doc, um, cmdb (mit Domain)
   updated_by: string | null;
   updated_at: string | null;
@@ -3578,9 +3582,23 @@ export interface PortalCustomer {
 }
 export type PortalAccess = "ueberall" | "intern" | "netze";
 export type PortalSource = "oberflaeche" | "cockpit";
+export interface PortalUser {
+  benutzer: string; // Keycloak-Benutzername (klein)
+  rolle: CustomerRole;
+}
 export type PortalCustomerIn = Omit<
   PortalCustomer,
-  "id" | "addresses" | "updated_by" | "updated_at" | "note" | "source" | "scope_source" | "assigned" | "links_source"
+  | "id"
+  | "addresses"
+  | "updated_by"
+  | "updated_at"
+  | "note"
+  | "source"
+  | "scope_source"
+  | "assigned"
+  | "links_source"
+  | "users"
+  | "kunde_angelegt"
 >;
 export interface PortalAgent {
   configured: boolean;
@@ -3609,6 +3627,8 @@ export interface PortalListing {
   agent: PortalAgent;
   domain: string;
   keycloak: { base: string; main_realm: string };
+  // 1.14.0 (ADR 0058): mit verbundenem Cockpit nur lesbar (Kunden nur im Cockpit)
+  verwaltung?: "cockpit" | "automato";
 }
 export const fetchPortal = () => getJSON<PortalListing>("/api/portal/customers");
 export const createPortalCustomer = (body: PortalCustomerIn) => sendJSON<PortalCustomer>("/api/portal/customers", "POST", body);
@@ -4449,6 +4469,10 @@ export interface ServerMe {
   logins?: string[]; // eigene Kennungen (sub, Benutzername, E-Mail – klein)
   // Benutzer eines Kunden-Realms ohne Mandant/Kunden in Automato (1.13.0): Meldung statt Fehlern
   zuordnung_fehlt?: { kurzname: string; name: string; meldung: string } | null;
+  // 1.14.0 (ADR 0058): Benutzer eines Kunden-Realms ohne Rolle aus dem Cockpit (eigene Seite) und
+  // Kunden, deren Benutzer und Rollen das Cockpit führt (dort kein Zuordnen durch den Kunden-Admin)
+  rolle_fehlt?: { kurzname: string; name: string; meldung: string } | null;
+  cockpit_kunden?: number[];
 }
 export const fetchServerMe = () => getJSON<ServerMe>("/api/auth/me");
 

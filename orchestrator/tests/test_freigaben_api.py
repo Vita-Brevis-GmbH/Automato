@@ -47,6 +47,19 @@ def _put(client, kunden: list[dict], **extra):
     return client.put("/freigaben", json={"vertrag": 1, "kunden": kunden, **extra}, headers=AUTH)
 
 
+URL = "/portal/customers/{}"
+
+
+def _ui(api, tmp_path, method: str, url: str, **kw):
+    """Oberflaeche ohne verbundenes Cockpit (seit 1.14.0, ADR 0058, sonst nur lesbar): die Felder,
+    deren Autor das Cockpit ist, bleiben trotzdem gesperrt."""
+    api.app.dependency_overrides[get_settings] = lambda: _settings(tmp_path, cockpit_token="")
+    try:
+        return getattr(api, method)(url, **kw)
+    finally:
+        api.app.dependency_overrides[get_settings] = lambda: _settings(tmp_path)
+
+
 def _audit(session_factory) -> list[tuple[str, str, str, dict | None]]:
     with session_factory() as s:
         rows = s.query(AuditLog).order_by(AuditLog.id).all()
@@ -305,7 +318,7 @@ def test_oberflaeche_aendert_nur_mandant_kunden_rolle_kacheln(api, session_facto
     pc = listing[0]
     assert pc["source"] == "cockpit" and pc["nb"] is False
     assert "netbox" not in pc["addresses"] and "doc" in pc["addresses"]  # NetBox nur mit nb
-    r = api.put(f"/portal/customers/{pc['id']}", json={
+    r = _ui(api, tmp_path, "put", f"/portal/customers/{pc['id']}", json={
         "short_name": "anders", "name": "Anders", "doc": False, "nb": True, "um": True,
         "realm": "fremd", "access": "ueberall", "tenant_id": tid, "customer_ids": [cid],
         "default_role": "editor",
@@ -327,17 +340,17 @@ def test_oberflaeche_aendert_nur_mandant_kunden_rolle_kacheln(api, session_facto
         assert (pc_db.tenant_id, pc_db.default_role, len(pc_db.links)) == (tid, "editor", 1)
 
     # entfernen nur im Cockpit
-    weg = api.delete(f"/portal/customers/{pc['id']}")
+    weg = _ui(api, tmp_path, "delete", f"/portal/customers/{pc['id']}")
     assert weg.status_code == 409 and "im Cockpit entfernen" in weg.json()["detail"]
     assert "kunde-a" in _soll(tmp_path)
 
 
 def test_oberflaeche_waehlt_netbox(api, tmp_path):
     """1.11.0: NetBox (-nb) als Werkzeug - Vorgabe an, abwaehlbar."""
-    r = api.post("/portal/customers", json={"short_name": "kunde-a", "name": "A"})
+    r = _ui(api, tmp_path, "post", "/portal/customers", json={"short_name": "kunde-a", "name": "A"})
     assert r.status_code == 201 and r.json()["nb"] is True and r.json()["source"] == "oberflaeche"
     assert r.json()["addresses"]["netbox"] == "https://kunde-a-nb.mgmt.example.ch"
-    r = api.put(f"/portal/customers/{r.json()['id']}",
+    r = _ui(api, tmp_path, "put", f"/portal/customers/{r.json()['id']}",
                 json={"short_name": "kunde-a", "name": "A", "nb": False})  # fmt: skip
     assert r.status_code == 200 and "netbox" not in r.json()["addresses"]
     assert _soll(tmp_path)["kunde-a"]["nb"] is False
@@ -540,10 +553,10 @@ def test_zuordnung_aus_dem_cockpit_idempotent_und_nur_lesbar(api, session_factor
     body = {k: pc[k] for k in ("short_name", "name", "doc", "nb", "um", "cmdb", "realm",
                                "tenant_id", "customer_ids", "default_role", "access")}  # fmt: skip
     for aenderung in ({"default_role": "editor"}, {"customer_ids": []}, {"tenant_id": None}):
-        r = api.put(f"/portal/customers/{pc['id']}", json={**body, **aenderung})
+        r = _ui(api, tmp_path, "put", f"/portal/customers/{pc['id']}", json={**body, **aenderung})
         assert r.status_code == 409 and "aus dem Cockpit" in r.json()["detail"], aenderung
     links = [{"title": "Handbuch", "url": "https://h.example.ch", "text": ""}]
-    r = api.put(f"/portal/customers/{pc['id']}", json={**body, "links": links})
+    r = _ui(api, tmp_path, "put", f"/portal/customers/{pc['id']}", json={**body, "links": links})
     assert r.status_code == 200, r.text
 
     # wieder ohne zuordnung: der Stand bleibt, die Felder sind in Automato wieder aenderbar
@@ -555,7 +568,7 @@ def test_zuordnung_aus_dem_cockpit_idempotent_und_nur_lesbar(api, session_factor
         pc_db = s.query(PortalCustomer).one()
         assert (pc_db.tenant_id, pc_db.default_role, pc_db.scope_source) == (
             tid, "triage", "automato")  # fmt: skip
-    r = api.put(f"/portal/customers/{pc['id']}", json={**body, "default_role": "editor"})
+    r = _ui(api, tmp_path, "put", URL.format(pc["id"]), json={**body, "default_role": "editor"})
     assert r.status_code == 200 and r.json()["scope_source"] == "automato"
 
 
@@ -666,11 +679,11 @@ def test_kacheln_aus_dem_cockpit_idempotent_reihenfolge_audit(api, session_facto
     assert pc["links_source"] == "cockpit"
     for links in ([], _links(KACHEL_B), _links(KACHEL_A, KACHEL_B),
                   _links(KACHEL_B, {**KACHEL_A, "text": "anders"})):  # fmt: skip
-        r = api.put(f"/portal/customers/{pc['id']}", json=_portal_body(pc, links=links))
+        r = _ui(api, tmp_path, "put", URL.format(pc["id"]), json=_portal_body(pc, links=links))
         assert r.status_code == 409 and "aus dem Cockpit" in r.json()["detail"], links
     leer = {"title": "", "url": "", "text": ""}
     body = _portal_body(pc, links=[*pc["links"], leer], default_role="triage")
-    r = api.put(f"/portal/customers/{pc['id']}", json=body)
+    r = _ui(api, tmp_path, "put", f"/portal/customers/{pc['id']}", json=body)
     assert r.status_code == 200, r.text
     assert r.json()["links"] == _links(KACHEL_B, KACHEL_A) and r.json()["default_role"] == "triage"
 
@@ -696,7 +709,9 @@ def test_kacheln_leer_und_ohne_feld(api, session_factory, tmp_path):
     assert _soll(tmp_path)["kunde-a"]["links"] == []
     pc = api.get("/portal/customers").json()["customers"][0]
     assert (pc["links"], pc["links_source"]) == ([], "cockpit")
-    r = api.put(f"/portal/customers/{pc['id']}", json=_portal_body(pc, links=_links(KACHEL_B)))
+    r = _ui(
+        api, tmp_path, "put", URL.format(pc["id"]), json=_portal_body(pc, links=_links(KACHEL_B))
+    )
     assert r.status_code == 409
 
     # wieder ohne kacheln: der Stand bleibt (leer), in Automato wieder aenderbar
@@ -704,7 +719,9 @@ def test_kacheln_leer_und_ohne_feld(api, session_factory, tmp_path):
     assert r.json()["geaendert"] == ["kunde-a"]
     upd = [d for _, act, _, d in _audit(session_factory) if act == "portal.customer.updated"]
     assert upd[-1] == {"links_source": "automato", "quelle": "cockpit"}
-    r = api.put(f"/portal/customers/{pc['id']}", json=_portal_body(pc, links=_links(KACHEL_B)))
+    r = _ui(
+        api, tmp_path, "put", URL.format(pc["id"]), json=_portal_body(pc, links=_links(KACHEL_B))
+    )
     assert r.status_code == 200, r.text
     assert (r.json()["links"], r.json()["links_source"]) == (_links(KACHEL_B), "automato")
     assert _soll(tmp_path)["kunde-a"]["links"] == _links(KACHEL_B)

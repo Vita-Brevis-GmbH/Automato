@@ -25,6 +25,10 @@ Ebenfalls seit 1.13.0 (ADR 0054 zweiter Nachtrag) je Kunde die weiteren Kacheln 
 (`kacheln`: Titel, Adresse, Text - Grenzen wie in `PUT /freigaben`) und wer sie setzt
 (`kacheln_von`: `cockpit` | `automato`) - so verliert das Cockpit beim Uebernehmen keine Kacheln.
 Ohne Eintrag im Kunden-Portal beides `null` (unbekannt).
+
+Seit 1.14.0 (ADR 0058) je Kunde in `zuordnung` der Kunde, den Automato fuer das Cockpit im
+Mandanten angelegt hat (`kunde_angelegt`, Id oder null), und die Benutzer mit Rolle aus dem
+Cockpit (`benutzer`: aktueller Stand bzw. null = keine Aussage).
 """
 
 import hashlib
@@ -44,7 +48,7 @@ from app import __version__
 from app.auth import capabilities as caps
 from app.config import Settings
 from app.models import Customer, PortalCustomer, Tenant
-from app.store import portal
+from app.store import portal, verwaltung
 
 TOPOLOGIE = "topologie.json"
 #: Fassung der Antwort (Vertrag im Cockpit: docs/vertraege/inventar.md)
@@ -199,14 +203,27 @@ def _herkunft(k: dict) -> dict:
     }
 
 
-def _zuordnung(pc: PortalCustomer | None, live: dict[int, set[int]]) -> dict:
+def _zuordnung(pc: PortalCustomer | None, live: dict[int, set[int]],
+               angelegt: dict[tuple[str, int], int] | None = None) -> dict:  # fmt: skip
     """Zuordnung in Automato je Kunde (1.13.0): ob ein Ausschnitt da ist und der Stand im
     Kunden-Portal - nur mit Kunden, die es noch gibt (`portal.live_customers`); ohne Eintrag im
-    Kunden-Portal unbekannt (null)."""
+    Kunden-Portal unbekannt (null). Seit 1.14.0 (ADR 0058) in der Zuordnung der Kunde, den
+    Automato fuer das Cockpit im Mandanten angelegt hat (`kunde_angelegt`, sonst null), und die
+    Benutzer mit Rolle aus dem Cockpit (`benutzer`, null = keine Aussage)."""
     if pc is None:
-        return {"automato_zugeordnet": None, "zuordnung": None}
+        return {"automato_zugeordnet": None, "zuordnung": None, "benutzer": None}
+    kunde = (angelegt or {}).get((pc.short_name, pc.tenant_id)) if pc.tenant_id else None
     return {"automato_zugeordnet": portal.assigned(pc, live),
-            "zuordnung": portal.scope_of(pc, live)}  # fmt: skip
+            "zuordnung": {**portal.scope_of(pc, live), "kunde_angelegt": kunde},
+            "benutzer": _benutzer(pc)}  # fmt: skip
+
+
+def _benutzer(pc: PortalCustomer) -> list[dict] | None:
+    """Benutzer mit Rolle aus dem Cockpit (1.14.0) in der Form des Vertrags."""
+    users = portal.users_of(pc.users)
+    if users is None:
+        return None
+    return [{"benutzer": n, "rolle": r} for n, r in sorted(users.items())]
 
 
 def _kachel(link: object) -> dict | None:
@@ -240,7 +257,8 @@ def _kacheln(pc: PortalCustomer | None) -> dict:
 
 
 def _kunden(topo: dict, portal_kunden: dict[str, PortalCustomer],
-            live: dict[int, set[int]]) -> list[dict]:  # fmt: skip
+            live: dict[int, set[int]],
+            angelegt: dict[tuple[str, int], int] | None = None) -> list[dict]:  # fmt: skip
     kunden = topo.get("kunden") if isinstance(topo.get("kunden"), list) else []
     out = []
     for k in kunden[:1000]:
@@ -248,7 +266,7 @@ def _kunden(topo: dict, portal_kunden: dict[str, PortalCustomer],
         if kurz:
             pc = portal_kunden.get(kurz)
             out.append({**{feld: _text(k.get(feld)) for feld in _KUNDE}, **_herkunft(k),
-                        **_zuordnung(pc, live), **_kacheln(pc)})  # fmt: skip
+                        **_zuordnung(pc, live, angelegt), **_kacheln(pc)})  # fmt: skip
     return out
 
 
@@ -302,5 +320,6 @@ def inventory(settings: Settings, session: Session | None = None) -> dict:
         },
         "keycloak": {"issuer": _text(issuer)},
         "front": _front(topo, settings.front_state_dir),
-        "kunden": _kunden(topo, portal_kunden, live),
-    }
+        "kunden": _kunden(topo, portal_kunden, live,
+                          verwaltung.angelegt_je_kunde(session) if session else None),
+    }  # fmt: skip

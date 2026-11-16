@@ -17,6 +17,7 @@ from app.models import (
     AgentCheck,
     Application,
     ApplicationMember,
+    CockpitCustomer,
     CollectorRun,
     Customer,
     CustomerMember,
@@ -230,6 +231,7 @@ def delete_tenant(session: Session, tenant: Tenant) -> dict[str, int]:
     session.execute(delete(LogicalZone).where(LogicalZone.tenant_id == tid))
     customer_ids = select(Customer.id).where(Customer.tenant_id == tid)
     session.execute(delete(CustomerUser).where(CustomerUser.tenant_id == tid))
+    session.execute(delete(CockpitCustomer).where(CockpitCustomer.tenant_id == tid))  # 1.14.0
     session.execute(delete(CustomerMember).where(CustomerMember.tenant_id == tid))
     session.execute(delete(CustomerSelector).where(CustomerSelector.customer_id.in_(customer_ids)))
     session.execute(delete(Customer).where(Customer.tenant_id == tid))

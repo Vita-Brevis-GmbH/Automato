@@ -13,6 +13,10 @@ Kunden hier selbst zu (`admin` bleibt dem globalen Admin vorbehalten: 422). Ein 
 sieht und aendert nur die Zuordnungen seiner Kunden, vergibt hoechstens die eigene Rolle, aendert
 bzw. entfernt nie die eigene Zuordnung und nie andere Kunden; seine Zuordnungen
 (`origin = customer`) wirken nie auf Betreuer. Betreuer: Admin.
+
+Seit 1.14.0 (ADR 0058) nicht bei Kunden aus dem Cockpit: dort vergibt nur der Betreiber im Cockpit
+Benutzer und Rollen - der Kunden-Admin bekommt 409 (`auth/verwaltung.py`), seine frueheren
+Zuordnungen wirken nicht mehr; der globale Admin bleibt Notzugang.
 """
 
 from datetime import UTC, datetime
@@ -26,11 +30,18 @@ from app import audit
 from app.api.customer_filter import actor
 from app.auth import assignments
 from app.auth import capabilities as caps
-from app.auth.deps import assignment_missing_text, require_admin, require_viewer, tenant_scope
+from app.auth.deps import (
+    assignment_missing_text,
+    require_admin,
+    require_viewer,
+    role_missing_text,
+    tenant_scope,
+)
 from app.auth.principal import Principal
 from app.db import get_session
 from app.i18n import L
 from app.models import CUSTOMER_USER_ROLES, Customer, CustomerUser
+from app.store import verwaltung
 
 router = APIRouter(tags=["customer-users"])
 
@@ -112,8 +123,16 @@ def _managed(principal: Principal, customer_id: int) -> None:
         return
     if customer_id not in (principal.customer_ids or ()):
         raise HTTPException(status_code=404, detail="customer not found")
+    _cockpit(principal, customer_id)
     if not principal.can(caps.USERS_MANAGE, customer_id):
         raise HTTPException(status_code=403, detail="insufficient role")
+
+
+def _cockpit(principal: Principal, customer_id: int) -> None:
+    """Kunde aus dem Cockpit (1.14.0, ADR 0058): Benutzer und Rollen vergibt nur der Betreiber
+    im Cockpit - der Kunden-Admin hier nicht (409); der globale Admin bleibt Notzugang."""
+    if principal.is_customer and customer_id in principal.cockpit_customers:
+        raise HTTPException(status_code=409, detail=verwaltung.benutzer_text())
 
 
 def _within(principal: Principal, customer_id: int, role: str) -> None:
@@ -182,6 +201,8 @@ def _get(session: Session, principal: Principal, assignment_id: int) -> Customer
         raise HTTPException(status_code=404, detail="assignment not found")
     tenant_scope(principal, a.tenant_id)
     if principal.is_customer:  # Kunden-Admin: nur Zuordnungen seiner Kunden, nie die eigene
+        if a.customer_id in (principal.customer_ids or ()):
+            _cockpit(principal, a.customer_id)
         if a.customer_id not in principal.customers_with(caps.USERS_MANAGE):
             raise HTTPException(status_code=404, detail="assignment not found")
         if _own(principal, a.login):
@@ -282,4 +303,15 @@ def me(
         }
         if principal.assignment_missing and principal.realm_customer
         else None,
+        # 1.14.0 (ADR 0058): Benutzer eines Kunden-Realms, dem das Cockpit keine Rolle gibt -
+        # eigene Seite statt Fehlern beim Laden
+        "rolle_fehlt": {
+            "kurzname": principal.realm_customer[0],
+            "name": principal.realm_customer[1],
+            "meldung": role_missing_text(principal),
+        }
+        if principal.realm_role_missing and principal.realm_customer
+        else None,
+        # 1.14.0: Kunden, deren Benutzer und Rollen das Cockpit fuehrt (hier kein Zuordnen)
+        "cockpit_kunden": list(principal.cockpit_customers),
     }

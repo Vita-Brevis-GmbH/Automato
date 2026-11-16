@@ -36,12 +36,17 @@ ersetzt sie vollstaendig in der gesendeten Reihenfolge (`links_source = cockpit`
 lesbar); geprueft je Kachel wie in der Oberflaeche (`portal.check_tile`). Ohne `kacheln` bzw.
 `null` bleibt der letzte Stand und ist in Automato wieder aenderbar. Im Audit nur die Anzahl
 (`kacheln`), nie Titel oder Adressen.
+
+Seit 1.14.0 (ADR 0058, `store/verwaltung.py`) je Kunde optional `benutzer` (Keycloak-Benutzername
+-> Kunden-Rolle; gesetzt haben nur diese Benutzer des Realms Rechte, null = alle mit der
+Standard-Rolle) und `zuordnung.kunde_anlegen` (Automato legt im Mandanten einen Kunden mit dem
+Namen des Portal-Kunden an und nimmt ihn zu den Kunden - idempotent, Audit `customer.created`).
 """
 
 import base64
 import binascii
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -51,7 +56,7 @@ from app import audit
 from app.auth import capabilities as caps
 from app.i18n import L
 from app.models import PortalCustomer
-from app.store import portal
+from app.store import portal, verwaltung
 
 #: Fassung der Anfrage und Antwort (Vertrag v1)
 VERTRAG = 1
@@ -64,7 +69,7 @@ AKTEUR = "cockpit"
 #: Mandant, Kunden und Standard-Rolle (1.13.0) - `scope_source` haelt fest, wer sie setzt; mit
 #: `kacheln` auch die weiteren Kacheln (`links_source`)
 FELDER = ("name", "doc", "nb", "um", "cmdb", "realm", "access", "access_nets", "scope_source",
-          "links", "links_source")  # fmt: skip
+          "links", "links_source", "users")  # fmt: skip
 FELDER_ZUORDNUNG = ("tenant_id", "customer_ids", "default_role")
 MAX_ZUORDNUNG_KUNDEN = 2000
 #: versiegelte Client-Secrets (1.13.0, ADR 0055): Kennung des Empfangsschluessels, Chiffrat
@@ -85,10 +90,12 @@ class FreigabenFehler(ValueError):
 
 @dataclass(frozen=True)
 class Freigabe:
-    """Ein gepruefter Kunde aus der Anfrage: Kurzname und die Werte der `FELDER`."""
+    """Ein gepruefter Kunde aus der Anfrage: Kurzname und die Werte der `FELDER`; seit 1.14.0
+    (ADR 0058) ob Automato im Mandanten einen Kunden fuer ihn anlegen soll."""
 
     kurzname: str
     werte: dict
+    kunde_anlegen: bool = False
 
 
 @dataclass(frozen=True)
@@ -114,11 +121,13 @@ class Ergebnis:
     #: 1.13.0: {"uebernommen": [Realm], "abgelehnt": [{"realm", "grund"}]}; None = nicht gesendet
     tor: dict | None = None
     tor_geaendert: bool = False
+    #: 1.14.0 (ADR 0058): Kunden in Automato, die fuer das Cockpit angelegt wurden (Id)
+    kunden_angelegt: list[int] = field(default_factory=list)
 
     @property
     def etwas_geaendert(self) -> bool:
         return bool(self.angelegt or self.geaendert or self.uebernommen or self.entfernt
-                    or self.tor_geaendert)  # fmt: skip
+                    or self.tor_geaendert or self.kunden_angelegt)  # fmt: skip
 
     def antwort(self) -> dict:
         return {
@@ -198,6 +207,19 @@ def _zuordnung(session: Session, roh: object) -> dict:
             "scope_source": portal.SCOPE_COCKPIT}  # fmt: skip
 
 
+def _kunde_anlegen(roh: object) -> bool:
+    """`zuordnung.kunde_anlegen` (1.14.0, ADR 0058): Wahrheitswert, Vorgabe false."""
+    if not isinstance(roh, dict):
+        return False  # keine Zuordnung (bzw. ungueltig - das meldet `_zuordnung`)
+    value = roh.get("kunde_anlegen")
+    if value is None:
+        return False
+    if not isinstance(value, bool):
+        raise portal.PortalError(L("zuordnung: kunde_anlegen ist kein Wahrheitswert",
+                                   "zuordnung: kunde_anlegen is not a boolean"))  # fmt: skip
+    return value
+
+
 def _kacheln(roh: object) -> dict:
     """`kacheln` eines Kunden pruefen (1.13.0, ADR 0054 zweiter Nachtrag): hoechstens 20, je
     Kachel wie in der Oberflaeche (`portal.check_tile`). Ohne bzw. null: keine Aussage - die
@@ -250,8 +272,9 @@ def _freigabe(session: Session, roh: dict) -> Freigabe:
     werte = {"name": name, "doc": "doc" in tools, "nb": "nb" in tools, "um": "um" in tools,
              "cmdb": "cmdb" in tools, "realm": portal.check_realm(realm), "access": access,
              "access_nets": nets, **_zuordnung(session, roh.get("zuordnung")),
-             **_kacheln(roh.get("kacheln"))}  # fmt: skip
-    return Freigabe(kurz, werte)
+             **_kacheln(roh.get("kacheln")),
+             "users": verwaltung.check_benutzer(roh.get("benutzer"))}  # fmt: skip
+    return Freigabe(kurz, werte, _kunde_anlegen(roh.get("zuordnung")))
 
 
 def _siegel_ok(value: object) -> bool:
@@ -330,8 +353,10 @@ def pruefen(session: Session, data: object) -> list[Freigabe]:
     return _pruefen(session, data)[0]
 
 
-def _pruefen(session: Session, data: object) -> tuple[list[Freigabe], list[TorGeheimnis] | None]:
-    """Wie `pruefen`, dazu die versiegelten Client-Secrets (None = nicht gesendet)."""
+def _pruefen(session: Session, data: object) -> tuple[list[Freigabe], list[TorGeheimnis] | None,
+                                                      list[verwaltung.Anlegen]]:  # fmt: skip
+    """Wie `pruefen`, dazu die versiegelten Client-Secrets (None = nicht gesendet) und der Plan
+    fuer `kunde_anlegen` (1.14.0)."""
     if not isinstance(data, dict):
         raise FreigabenFehler([_fehler(None, L("Anfrage ist kein JSON-Objekt",
                                                "request is not a JSON object"))])  # fmt: skip
@@ -388,9 +413,16 @@ def _pruefen(session: Session, data: object) -> tuple[list[Freigabe], list[TorGe
                 f"realm '{pc.realm}' already belongs to '{pc.short_name}' (customer from the "
                 "Automato UI)")))  # fmt: skip
     tor = _tor_geheimnisse(data.get("tor_geheimnisse"), realms, alle_realms, len(kunden), fehler)
+    # 1.14.0 (ADR 0058): Kunden in Automato anlegen - vorhandene aus einer frueheren Anfrage bzw.
+    # ein freier Name im Mandanten (sonst Fehler: alles oder nichts)
+    plan, belegt = verwaltung.planen(session, [
+        (f.kurzname, f.werte["name"], f.werte["tenant_id"]) for f in out
+        if f.kunde_anlegen and f.werte.get("tenant_id") is not None
+    ])  # fmt: skip
+    fehler.extend(_fehler(kurz, grund) for kurz, grund in belegt)
     if fehler:
         raise FreigabenFehler(fehler)
-    return out, tor
+    return out, tor, plan
 
 
 def _wert(pc: PortalCustomer, feld: str) -> object:
@@ -408,12 +440,15 @@ def _wert(pc: PortalCustomer, feld: str) -> object:
     return value
 
 
-def _detail(changed: dict) -> dict:
+def _detail(changed: dict, users_vorher: list | None = None) -> dict:
     """Audit-Detail einer Aenderung: die Kacheln nur als Anzahl (`kacheln`), nie Titel oder
-    Adressen (frei eingegeben)."""
-    detail = {k: v for k, v in changed.items() if k != "links"}
+    Adressen (frei eingegeben); die Benutzer aus dem Cockpit (1.14.0) als Anzahl und was sich
+    aendert (`verwaltung.benutzer_detail`)."""
+    detail = {k: v for k, v in changed.items() if k not in ("links", "users")}
     if "links" in changed:
         detail["kacheln"] = len(changed["links"])
+    if "users" in changed and not (changed["users"] is None and users_vorher is None):
+        detail.update(verwaltung.benutzer_detail(users_vorher, changed["users"]))
     return detail
 
 
@@ -453,7 +488,8 @@ def anwenden(session: Session, freigaben: list[Freigabe], akteur: str = AKTEUR) 
     session.flush()
     # 4. uebernehmen
     for f, pc, changed, art in plan:
-        detail = {**_detail(changed), "quelle": portal.SOURCE_COCKPIT}
+        users_vorher = pc.users if pc is not None else None
+        detail = {**_detail(changed, users_vorher), "quelle": portal.SOURCE_COCKPIT}
         if pc is None:
             pc = PortalCustomer(short_name=f.kurzname, source=portal.SOURCE_COCKPIT,
                                 **{"customer_ids": [], "links": [], **f.werte})  # fmt: skip
@@ -473,6 +509,24 @@ def anwenden(session: Session, freigaben: list[Freigabe], akteur: str = AKTEUR) 
         getattr(erg, art).append(f.kurzname)
     session.flush()
     return erg
+
+
+def kunden_anlegen(session: Session, freigaben: list[Freigabe], plan: list[verwaltung.Anlegen],
+                   akteur: str = AKTEUR) -> tuple[list[Freigabe], list[int]]:  # fmt: skip
+    """`zuordnung.kunde_anlegen` (1.14.0, ADR 0058): je Portal-Kunde den Kunden in Automato
+    anlegen (bzw. den frueher angelegten nehmen) und zu den gesendeten Kunden nehmen - ohne
+    commit. Danach vergleicht `anwenden` wie sonst (gleiche Anfrage zweimal = keine Aenderung).
+    Liefert die Freigaben und die Ids der neu angelegten Kunden."""
+    kunden = {p.kurzname: verwaltung.anlegen(session, p, akteur) for p in plan}
+    neu = sorted(kunden[p.kurzname] for p in plan if p.kunde is None)
+    out = []
+    for f in freigaben:
+        cid = kunden.get(f.kurzname)
+        if cid is not None:
+            ids = sorted({*f.werte["customer_ids"], cid})
+            f = replace(f, werte={**f.werte, "customer_ids": ids})
+        out.append(f)
+    return out, neu
 
 
 def tor_anwenden(session: Session, eintraege: list[TorGeheimnis], empfang: str | None,
@@ -511,8 +565,10 @@ def uebernehmen(session: Session, data: object, akteur: str = AKTEUR,
                 empfang: str | None = None) -> Ergebnis:  # fmt: skip
     """Anfrage pruefen und uebernehmen (ohne commit) - wirft `FreigabenFehler`. `empfang` =
     Kennung des aktuellen Empfangsschluessels der VM (aus dem Front-Status, None = keiner)."""
-    freigaben, tor = _pruefen(session, data)
+    freigaben, tor, plan = _pruefen(session, data)
+    freigaben, neu = kunden_anlegen(session, freigaben, plan, akteur)
     erg = anwenden(session, freigaben, akteur)
+    erg.kunden_angelegt = neu
     if tor is not None:
         tor_anwenden(session, tor, empfang, erg, akteur)
     return erg

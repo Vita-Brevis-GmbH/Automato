@@ -11,6 +11,11 @@ Kunden, Standard-Rolle und Kacheln - Kurzname, Name, Werkzeuge, Zugriff und Real
 Cockpit, entfernt werden sie nur dort. Hat das Cockpit auch die Zuordnung geschickt (1.13.0,
 `scope_source = cockpit`), sind Mandant, Kunden und Rolle hier nur lesbar (409 beim Aendern);
 ebenso die Kacheln, wenn das Cockpit sie geschickt hat (1.13.0, `links_source = cockpit`).
+
+Seit 1.14.0 (ADR 0058): ist Automato mit einem Cockpit verbunden (gekoppelt oder
+`AUTOMATO_COCKPIT_TOKEN`), entstehen und aendern sich die Kunden nur noch im Cockpit - hier ist
+alles nur lesbar (409 beim Anlegen, Aendern und Entfernen); Kunden aus der Oberflaeche uebernimmt
+das Cockpit. Ohne Cockpit wie bisher.
 """
 
 from datetime import UTC, datetime
@@ -28,7 +33,7 @@ from app.config import Settings, get_settings
 from app.db import get_session
 from app.i18n import L
 from app.models import PortalCustomer
-from app.store import portal
+from app.store import portal, verwaltung
 
 router = APIRouter(prefix="/portal", tags=["portal"])
 
@@ -113,12 +118,18 @@ def _same_links(data: PortalIn, pc: PortalCustomer) -> bool:
     return sent == list(pc.links or [])
 
 
+def _ohne_cockpit(session: Session, settings: Settings) -> None:
+    """Mit verbundenem Cockpit (1.14.0, ADR 0058) aendert die Oberflaeche keine Kunden (409)."""
+    if verwaltung.cockpit_verbunden(session, settings):
+        raise HTTPException(status_code=409, detail=verwaltung.portal_text())
+
+
 def _publish(session: Session, settings: Settings) -> str | None:
     """Soll-Stand fuer den Host-Agenten schreiben; Fehler als Hinweis (die Daten sind
     gespeichert, der Agent holt sie mit dem naechsten erfolgreichen Schreiben)."""
     realms.invalidate()
     try:
-        portal.write_desired(session, settings.front_state_dir)
+        verwaltung.soll_schreiben(session, settings)
     except OSError as exc:
         return L(f"Gespeichert, aber Soll-Stand nicht geschrieben ({settings.front_state_dir}): "
                  f"{exc} – Ordner einrichten: sudo deploy/front/front.sh agent",
@@ -136,11 +147,21 @@ def list_customers(
     kunden = portal.listing(session)
     # „zugeordnet“ nur mit Kunden, die es noch gibt (1.13.0, wie Inventar und Anmeldung)
     live = portal.live_customers(session, (pc.tenant_id for pc in kunden))
+    # 1.14.0 (ADR 0058): Kunde, den Automato fuer das Cockpit im Mandanten angelegt hat
+    angelegt = verwaltung.angelegt_je_kunde(session)
     return {
-        "customers": [portal.out(pc, settings.front_domain, live) for pc in kunden],
+        "customers": [
+            {
+                **portal.out(pc, settings.front_domain, live),
+                "kunde_angelegt": angelegt.get((pc.short_name, pc.tenant_id)),
+            }
+            for pc in kunden
+        ],
         "agent": portal.agent_status(settings.front_state_dir),
         "domain": settings.front_domain,
         "keycloak": _keycloak(settings),
+        # 1.14.0: mit verbundenem Cockpit nur lesbar (`cockpit`), sonst `automato`
+        "verwaltung": "cockpit" if verwaltung.cockpit_verbunden(session, settings) else "automato",
     }
 
 
@@ -151,6 +172,7 @@ def create_customer(
     session: Session = Depends(get_session, scope="function"),
     settings: Settings = Depends(get_settings),
 ):
+    _ohne_cockpit(session, settings)
     pc = PortalCustomer(links=[], customer_ids=[])
     changed = _apply(session, pc, data)
     pc.updated_by, pc.updated_at = principal.subject, datetime.now(UTC)
@@ -189,6 +211,8 @@ def update_customer(
             f"Die Kacheln von '{pc.short_name}' kommen aus dem Cockpit – dort ändern",
             f"The tiles of '{pc.short_name}' come from the cockpit – change them there",
         ))  # fmt: skip
+    # 1.14.0 (ADR 0058) - nach den Feldern aus dem Cockpit (deren Meldung ist genauer)
+    _ohne_cockpit(session, settings)
     if pc.source == portal.SOURCE_COCKPIT:
         # Autor ist das Cockpit (ADR 0054): hier nur Mandant, Kunden, Rolle und Kacheln - die
         # uebrigen Felder bleiben, wie sie sind, egal was die Anfrage nennt
@@ -220,6 +244,7 @@ def delete_customer(
             f"Kunde '{pc.short_name}' kommt aus dem Cockpit – im Cockpit entfernen",
             f"Customer '{pc.short_name}' comes from the cockpit – remove it in the cockpit",
         ))  # fmt: skip
+    _ohne_cockpit(session, settings)  # 1.14.0 (ADR 0058)
     audit.record(session, actor=principal.subject, action="portal.customer.deleted",
                  subject=pc.short_name, detail={"realm": pc.realm})  # fmt: skip
     session.delete(pc)
