@@ -7,6 +7,50 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 1.13.0 – 2026-11-16
+
+Client-Secret des Anmelde-Tors aus dem Cockpit (Anwender 2026-11-16: „Bitte auch einbauen, dass
+das Geheimnis auch erneuert werden kann … dass alles korrigiert werden kann“; auf den Vorschlag,
+das Geheimnis versiegelt an die VM zu liefern: „go der Vorschlag“). ADR 0055, R25.
+
+- **Empfangsschlüssel der VM:** `front.sh` legt mit dem Anmelde-Tor einen RSA-Schlüssel (3072 Bit,
+  privat nur root) unter `deploy/front/tor/` an; `front.sh tor-empfang` zeigt Kennung (SHA-256 über
+  den öffentlichen Schlüssel) und je Realm „von Hand“ bzw. „aus dem Cockpit“, `tor-empfang neu`
+  ersetzt ihn. Das Inventar (`GET /inventory`) nennt ihn als `front.tor_empfang` (nur ein
+  öffentlicher RSA-Schlüssel mit passender Kennung) und je Realm den Stand des Secrets
+  (`front.tor_realms`: bereit, ohne Secret, aus dem Cockpit).
+- **Freigaben mit versiegeltem Secret:** `PUT /freigaben` nimmt optional `tor_geheimnisse` (Realm,
+  Kennung, Chiffrat) für Realms von Kunden derselben Anfrage an – Form und Realm alles oder nichts
+  (`422`), eine veraltete Kennung lehnt nur diesen Eintrag ab (Antwort `tor_geheimnisse.abgelehnt`).
+  Automato hält nur das Chiffrat (Datenbank, `soll.json`); Audit `portal.tor_secret.updated` nur
+  bei neuem Chiffrat, mit Realm und Kennung.
+- **`front.sh sync` öffnet das Siegel** (openssl, nur root): prüft Realm eines Kunden aus dem
+  Cockpit, Client `automato-front` und Form, schreibt `tor/<realm>.env` (600) nur bei neuem Secret,
+  behält das Cookie-Secret und startet nur den Container dieses Realms neu. Das Secret erscheint
+  nie in Ausgabe, Log oder `status.json` (auch nicht mit `bash -x`); Verworfenes steht mit Grund
+  in `status.json`, `front.sh pruefen` und im Kunden-Portal.
+- **Von Hand bleibt:** `front.sh tor <realm>` gilt, bis das Cockpit ein anderes Secret schickt;
+  es startet jetzt ausdrücklich den Container des Realms neu. `front.sh erzeugen` führt den Stand
+  des Tors in `status.json` nach (auch nach Handgriffen).
+
+Zuordnung in Automato aus dem Cockpit (Fund aus dem Test 2026-11-16: neuer Kunde aus dem Cockpit
+meldet sich an, Automato zeigt „Mandanten laden: Keine Berechtigung (insufficient role)“; zum
+Vorschlag, Mandant und Kunden im Cockpit zu wählen: „Ja gerne“). ADR 0054 Nachtrag, R26.
+
+- **Klare Meldung statt „insufficient role“:** Benutzer eines Kunden-Realms, dessen Kunde im
+  Kunden-Portal noch keinen Mandanten bzw. keine Kunden hat, sehen nach der Anmeldung eine eigene
+  Seite („Für Kunde A (kunde-a) ist in Automato noch kein Mandant zugeordnet …“); `/auth/me`
+  meldet `zuordnung_fehlt`, alle übrigen Endpunkte antworten 403 mit derselben Meldung. Rechte
+  gibt es weiterhin keine. Das Kunden-Portal markiert solche Kunden aus dem Cockpit („noch kein
+  Mandant – Benutzer haben keine Rechte“).
+- **Mandant, Kunden und Rolle aus dem Cockpit:** `PUT /freigaben` nimmt je Kunde optional
+  `zuordnung` (`mandant`, `kunden`, `rolle`) an – geprüft wie in der Oberfläche (sonst 422, alles
+  oder nichts), danach im Kunden-Portal nur lesbar („aus dem Cockpit“, 409 beim Ändern). Ohne
+  `zuordnung` bleibt der Stand und ist in Automato wieder änderbar.
+- **Inventar:** `automato.mandanten` (Mandanten mit ihren Kunden, nur Id und Name),
+  `automato.rollen` und je Kunde `automato_zugeordnet` und `zuordnung` – die Auswahl und der
+  Stand für das Cockpit.
+
 ## 1.12.2 – 2026-11-14
 
 Korrektur aus dem Test des Anmelde-Tors (Anwender 2026-11-14: „Wenn ich mich im Portal ein Logout

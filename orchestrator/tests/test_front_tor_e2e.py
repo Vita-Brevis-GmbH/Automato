@@ -314,6 +314,7 @@ def tor(tmp_path_factory):  # noqa: C901 - ein Aufbau, Schritt für Schritt
         else:
             logs = _run("docker", "logs", f"{PROJEKT}-front", check=False)
             pytest.fail("Front-Proxy antwortet nicht: " + logs.stdout + logs.stderr)
+        idp.front, idp.dir = front, d  # 1.13.0: Client-Secret über sync (eigener Test)
         yield idp
     finally:
         socket.getaddrinfo = echt
@@ -459,3 +460,50 @@ def test_abmelden_beendet_auch_keycloak(tor):
         # NetBox: /logout/ landet auf derselben Seite
         r = c.get("https://vb-nb.mgmt.example.ch/logout/")
         assert r.status_code == 302 and "abgemeldet" in r.headers["location"]
+
+
+def test_client_secret_versiegelt_aus_dem_cockpit(tor):
+    """1.13.0 (ADR 0055): das Client-Secret eines neuen Realms kommt versiegelt über den Soll-Stand
+    (front.sh sync) statt über front.sh tor - danach geht die Anmeldung in diesem Realm."""
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import padding
+
+    geheim = "geheim-kd-0123456789"
+    pub_pem = (tor.dir / "front" / "tor" / "empfang.pub").read_bytes()
+    pub = serialization.load_pem_public_key(pub_pem)
+    der = pub.public_bytes(serialization.Encoding.DER,
+                           serialization.PublicFormat.SubjectPublicKeyInfo)  # fmt: skip
+    klar = json.dumps({"realm": "kunde-d", "client": "automato-front", "secret": geheim},
+                      separators=(",", ":")).encode()  # fmt: skip
+    oaep = padding.OAEP(mgf=padding.MGF1(hashes.SHA256()), algorithm=hashes.SHA256(), label=None)
+    state = tor.dir / "front" / "state"
+    state.mkdir(exist_ok=True)
+    (state / "soll.json").write_text(json.dumps({
+        "version": 1,
+        "kunden": [{"kurzname": "kunde-d", "name": "Kunde D", "realm": "kunde-d",
+                    "quelle": "cockpit", "links": []}],
+        "tor_geheimnisse": [{"realm": "kunde-d", "kennung": hashlib.sha256(der).hexdigest(),
+                             "versiegelt": base64.b64encode(pub.encrypt(klar, oaep)).decode()}],
+    }))  # fmt: skip
+    tor.front("sync")
+    assert geheim in (tor.dir / "front" / "tor" / "kunde-d.env").read_text()
+    SECRETS["kunde-d"], tor.user["kunde-d"] = geheim, "alice"
+    try:
+        compose = tor.dir / "front" / "generated" / "tor" / "compose.yml"
+        _run("docker", "compose", "-p", PROJEKT, "-f", str(compose), "up", "-d")
+        _run("docker", "exec", f"{PROJEKT}-front", "caddy", "reload", "--config",
+             "/etc/caddy/Caddyfile")  # fmt: skip
+        for _ in range(30):
+            with _browser() as c:
+                try:
+                    r = c.get("https://kunde-d.mgmt.example.ch/")
+                    if r.status_code == 302 and "/realms/kunde-d/" in r.headers["location"]:
+                        break
+                except httpx.HTTPError:
+                    pass
+            time.sleep(1)
+        with _browser() as c:
+            r, _ = _folgen(c, "https://kunde-d.mgmt.example.ch/")
+            assert r.status_code == 200 and "Kunde D" in r.text  # Token mit dem Secret geholt
+    finally:
+        SECRETS.pop("kunde-d", None)

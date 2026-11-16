@@ -2413,7 +2413,11 @@ Client-Zertifikat und die passenden Zeilen der `agent.env`.
   ohne zweite Maske in Automato, NetBox (Rechte aus den Realm-Rollen admin/operator, sonst lesen)
   und Magister. Client-Secret je Realm: `sudo deploy/front/front.sh tor <realm>`; Stand:
   `front.sh tor` und im Kunden-Portal. Kunden ohne Realm sind gesperrt. NetBox:
-  `netbox-host.sh sso <kunde|alle>` (`docs/INSTALLATION-FRONT.md` 6).
+  `netbox-host.sh sso <kunde|alle>` (`docs/INSTALLATION-FRONT.md` 6). Seit 1.13.0 (ADR 0055)
+  liefert das Cockpit das Client-Secret seiner Kunden versiegelt mit (auch erneuert); von Hand
+  geht weiter und gilt bis zum nächsten neuen aus dem Cockpit. Empfangsschlüssel:
+  `front.sh tor-empfang [neu]`; `front.sh tor`/`pruefen` zeigen je Realm „von Hand“ bzw. „aus dem
+  Cockpit“ und verworfene Secrets.
 - **Zugriff je Kunde** (1.5.0): im Kunden-Portal *Zugriff* – überall (Vorgabe), nur intern
   (Management-Netz) oder nur aus diesen Netzen; von Hand `front.sh kunde … --zugriff intern|"<netze>"`.
   Wer nicht darf, sieht für alle Adressen des Kunden nur „Unbekannte Adresse“ (auch keine
@@ -2423,7 +2427,13 @@ Client-Zertifikat und die passenden Zeilen der `agent.env`.
   Kunden-Portal tragen sie „aus dem Cockpit“: Kurzname, Name, Werkzeuge, Zugriff und Realm nur
   lesbar, Entfernen nur im Cockpit; hier pflegt man Mandant, Kunden, Rolle und Kacheln. Ein
   vorhandener Kunde mit gleichem Kurznamen wird übernommen. `front.sh liste` zeigt Quelle
-  „Cockpit“; von Hand nicht änderbar.
+  „Cockpit“; von Hand nicht änderbar. Seit 1.13.0 kann das Cockpit auch **Mandant, Kunden und
+  Rolle** wählen (Liste aus dem Inventar von Automato): dann stehen sie im Kunden-Portal „aus dem
+  Cockpit“ und sind hier nur lesbar; schickt das Cockpit keine Zuordnung, pflegt man sie wie
+  bisher hier. Mandanten und Kunden selbst legt man weiterhin in Automato an. Ein Kunde aus dem
+  Cockpit ohne Mandant bzw. ohne Kunden ist in der Liste markiert („noch kein Mandant – Benutzer
+  haben keine Rechte“); seine Benutzer sehen nach der Anmeldung nur diese Meldung statt
+  „Keine Berechtigung“.
 - **NetBox als Werkzeug** (1.11.0): im Kunden-Portal „NetBox (-nb)“ (Vorgabe an), von Hand
   `front.sh kunde … --ohne-nb`. Ohne NetBox keine Adresse `<kunde>-nb`, keine Kachel, keine
   Prüfung.

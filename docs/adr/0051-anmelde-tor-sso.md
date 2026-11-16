@@ -50,7 +50,9 @@ ADR 0044 Nachtrag (Front-Proxy).
    zusätzlich die Kopfzeilen des Tors; welchen Weg Magister nutzt, entscheidet Magister.
 7. **Secrets nur auf der VM:** das Client-Secret je Realm legt `front.sh tor <realm>` (Eingabe
    unsichtbar, Datei nur root) ab, dazu ein Cookie-Secret. Die Oberfläche kennt keine Secrets; sie
-   bekommt den Realm im Soll-Stand und zeigt den Stand des Tors aus `status.json`.
+   bekommt den Realm im Soll-Stand und zeigt den Stand des Tors aus `status.json`. *Geändert mit
+   1.13.0 (ADR 0055):* im Klartext nur auf der VM; aus dem Cockpit nur versiegelt mit dem
+   Empfangsschlüssel der VM, entschlüsselt nur von `front.sh sync`.
 8. **Abmelden** (`/oauth2/sign_out`, Startseite und NetBox) beendet auch die Keycloak-Sitzung.
 
 ## Folgen
@@ -82,3 +84,10 @@ auf den Vorschlag „Drei Stufen“ und „Zusammen als 1.5.0“.
 - Hinter einer FortiGate mit VIP (Adresse des Besuchers statt WAF) gilt für die Kunden-Adressen
   `AUTOMATO_FRONT_KUNDEN_ALLOW="0.0.0.0/0 ::/0"`; die Oberfläche bleibt über `AUTOMATO_UI_ALLOW`
   intern, interne Adressen prüft der Proxy weiter nach Absender.
+
+## Nachtrag 1.13.0 (2026-11-16): Client-Secret aus dem Cockpit
+
+Punkt 7 geändert durch ADR 0055: das Cockpit liefert das Client-Secret von `automato-front`
+versiegelt mit dem Empfangsschlüssel der VM (`front.sh tor-empfang`); Datenbank und Soll-Stand
+halten nur das Chiffrat, im Klartext steht es nur in `deploy/front/tor/<realm>.env`. Der Weg von
+Hand (`front.sh tor <realm>`) bleibt und gilt, bis das Cockpit ein anderes Chiffrat schickt.

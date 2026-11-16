@@ -3565,6 +3565,10 @@ export interface PortalCustomer {
   access_nets: string[];
   // Herkunft (1.11.0, ADR 0054): aus dem Cockpit = Kurzname, Name, Werkzeuge, Zugriff und Realm nur dort
   source: PortalSource;
+  // 1.13.0: Mandant, Kunden und Rolle aus dem Cockpit (dann nur lesbar); Ausschnitt vorhanden
+  // (Mandant und mindestens ein Kunde; null = ohne Doku)
+  scope_source?: "automato" | "cockpit";
+  assigned?: boolean | null;
   addresses: Record<string, string>; // start, netbox, doc, um, cmdb (mit Domain)
   updated_by: string | null;
   updated_at: string | null;
@@ -3572,7 +3576,10 @@ export interface PortalCustomer {
 }
 export type PortalAccess = "ueberall" | "intern" | "netze";
 export type PortalSource = "oberflaeche" | "cockpit";
-export type PortalCustomerIn = Omit<PortalCustomer, "id" | "addresses" | "updated_by" | "updated_at" | "note" | "source">;
+export type PortalCustomerIn = Omit<
+  PortalCustomer,
+  "id" | "addresses" | "updated_by" | "updated_at" | "note" | "source" | "scope_source" | "assigned"
+>;
 export interface PortalAgent {
   configured: boolean;
   writable: boolean;
@@ -3583,7 +3590,16 @@ export interface PortalAgent {
     meldung?: string;
     kunden?: string[];
     // Anmelde-Tor (1.4.0, ADR 0051): von front.sh sync gemeldet
-    tor?: { an: boolean; realms_bereit: string[]; realms_ohne_secret: string[]; gesperrt: string[]; haupt_realm: string };
+    tor?: {
+      an: boolean;
+      realms_bereit: string[];
+      realms_ohne_secret: string[];
+      gesperrt: string[];
+      haupt_realm: string;
+      // 1.13.0 (ADR 0055): Client-Secret aus dem Cockpit übernommen bzw. verworfen (nur Grund)
+      vom_cockpit?: string[];
+      verworfen?: { realm: string | null; grund: string }[];
+    };
   } | null;
 }
 export interface PortalListing {
@@ -4404,6 +4420,8 @@ export interface ServerMe {
   customer_roles?: Record<string, CustomerRole>;
   capabilities?: Capability[];
   logins?: string[]; // eigene Kennungen (sub, Benutzername, E-Mail – klein)
+  // Benutzer eines Kunden-Realms ohne Mandant/Kunden in Automato (1.13.0): Meldung statt Fehlern
+  zuordnung_fehlt?: { kurzname: string; name: string; meldung: string } | null;
 }
 export const fetchServerMe = () => getJSON<ServerMe>("/api/auth/me");
 

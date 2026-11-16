@@ -143,6 +143,7 @@ def realm_principal(claims: dict, scope: RealmScope, settings) -> Principal:
         logins=(),
         customer_source=f"realm:{scope.realm}",
         customer_roles=tuple((c, role) for c in customers),
+        realm_customer=(scope.short_name, scope.name or scope.short_name),
     )
 
 

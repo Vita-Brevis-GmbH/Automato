@@ -3,6 +3,7 @@ je Kunde, Portal, Weiterleitung je Werkzeug. Mit Ersatz für docker und curl; ge
 Skript schreibt (Caddy-Einträge, Seiten maskiert, Freigaben nie leer), dass Werkzeuge nur mit
 Freischaltung erscheinen und dass Einstellungen nichts in den Caddyfile schleusen können."""
 
+import base64
 import hashlib
 import json
 import os
@@ -12,6 +13,8 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 SCRIPT = Path(__file__).resolve().parents[2] / "deploy" / "front" / "front.sh"
 
@@ -1040,3 +1043,212 @@ def test_sync_uebernimmt_netbox_und_herkunft_cockpit(front):
     assert not (front.dir / "kunden" / "kunde-a.conf").exists()
     assert not (front.gen / "sites" / "kunde-a.caddy").exists()
     assert (front.gen / "sites" / "kunde-c.caddy").exists()
+
+
+# --- Client-Secrets versiegelt aus dem Cockpit (1.13.0, ADR 0055) --------------------------------
+
+GEHEIM = "testwert-cockpit-0123456789"  # Testwert, kein echtes Geheimnis
+
+
+def _kennung(pub: Path) -> str:
+    key = serialization.load_pem_public_key(pub.read_bytes())
+    der = key.public_bytes(serialization.Encoding.DER,
+                           serialization.PublicFormat.SubjectPublicKeyInfo)  # fmt: skip
+    return hashlib.sha256(der).hexdigest()
+
+
+def _versiegeln(pub: Path, realm: str, secret: str = GEHEIM, client: str = "automato-front",
+                klartext: bytes | None = None) -> str:  # fmt: skip
+    """Wie das Cockpit (Vertrag §4): JSON ohne Leerraum, RSA-OAEP mit SHA-256/MGF1-SHA-256."""
+    key = serialization.load_pem_public_key(pub.read_bytes())
+    if klartext is None:
+        klartext = json.dumps({"realm": realm, "client": client, "secret": secret},
+                              separators=(",", ":")).encode()  # fmt: skip
+    oaep = padding.OAEP(mgf=padding.MGF1(hashes.SHA256()), algorithm=hashes.SHA256(), label=None)
+    return base64.b64encode(key.encrypt(klartext, oaep)).decode()
+
+
+def _soll_mit_tor(front, kunden: list[dict], tor: list[dict]) -> Path:
+    datei = _soll(front, kunden)
+    data = json.loads(datei.read_text(encoding="utf-8"))
+    datei.write_text(json.dumps({**data, "tor_geheimnisse": tor}), encoding="utf-8")
+    return datei
+
+
+COCKPIT_A = {"kurzname": "kunde-a", "name": "Kunde A", "realm": "kunde-a", "quelle": "cockpit",
+             "links": []}  # fmt: skip
+
+
+def _nirgends(front, geheim: str, *ausgaben: subprocess.CompletedProcess) -> None:
+    """Das Geheimnis steht nur in tor/<realm>.env - nie in Ausgabe, Status, Topologie, Log."""
+    for out in ausgaben:
+        assert geheim not in out.stdout and geheim not in out.stderr
+    for datei in [*(front.dir / "state").iterdir(), front.log, *front.gen.rglob("*")]:
+        if datei.is_file():
+            assert geheim not in datei.read_text(encoding="utf-8", errors="replace"), datei
+
+
+def test_empfangsschluessel_anlegen_kennung_und_neu(front):
+    """§1: RSA 3072, privat 600, Kennung = SHA-256 über DER; im Front-Status fürs Inventar."""
+    front.env_file.write_text(TOR_ENV)
+    (front.dir / "state").mkdir(parents=True)
+    out = front("kunde", "kunde-a", "Kunde A", "--realm", "kunde-a")
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert "Empfangsschlüssel für Client-Secrets aus dem Cockpit angelegt" in out.stdout
+    key, pub = front.dir / "tor" / "empfang.key", front.dir / "tor" / "empfang.pub"
+    assert key.stat().st_mode & 0o777 == 0o600
+    assert (front.dir / "tor").stat().st_mode & 0o777 == 0o700
+    privat = serialization.load_pem_private_key(key.read_bytes(), password=None)
+    assert isinstance(privat, rsa.RSAPrivateKey) and privat.key_size == 3072
+    kennung = _kennung(pub)
+    topo = json.loads((front.dir / "state" / "topologie.json").read_text(encoding="utf-8"))
+    assert topo["tor_empfang"] == {"alg": "RSA-OAEP-256", "pem": pub.read_text(),
+                                   "kennung": kennung}  # fmt: skip
+    assert "PRIVATE" not in json.dumps(topo)
+    # bleibt beim nächsten Erzeugen
+    assert front("erzeugen").returncode == 0 and _kennung(pub) == kennung
+    stand = front("tor-empfang")
+    assert stand.returncode == 0 and f"Kennung {kennung}" in stand.stdout
+    assert "Realm kunde-a: Client-Secret fehlt" in stand.stdout
+
+    neu = front("tor-empfang", "neu")
+    assert neu.returncode == 0, neu.stdout + neu.stderr
+    assert _kennung(pub) != kennung
+    topo = json.loads((front.dir / "state" / "topologie.json").read_text(encoding="utf-8"))
+    assert topo["tor_empfang"]["kennung"] == _kennung(pub)
+    assert front("tor-empfang", "falsch").returncode != 0
+
+    # Tor aus: kein Schlüssel im Inventar, kein neuer
+    front.env_file.write_text(ENV)
+    assert front("erzeugen").returncode == 0
+    topo = json.loads((front.dir / "state" / "topologie.json").read_text(encoding="utf-8"))
+    assert topo["tor"] is False and topo["tor_empfang"] is None
+    aus = front("tor-empfang", "neu")
+    assert aus.returncode != 0 and "Anmelde-Tor ist aus" in aus.stderr
+
+
+def test_sync_uebernimmt_versiegeltes_client_secret(front):
+    """§4: sync entschlüsselt, prüft, schreibt tor/<realm>.env (600, Kopfzeile „aus dem
+    Cockpit“), behält das Cookie-Secret, startet den Container des Realms neu – und gibt das
+    Geheimnis nirgends aus, auch nicht mit bash -x."""
+    front.env_file.write_text(TOR_ENV)
+    _soll(front, [COCKPIT_A])
+    assert front("sync").returncode == 0  # legt den Empfangsschlüssel an
+    pub = front.dir / "tor" / "empfang.pub"
+    kennung = _kennung(pub)
+    siegel = {"realm": "kunde-a", "kennung": kennung, "versiegelt": _versiegeln(pub, "kunde-a")}
+    _soll_mit_tor(front, [COCKPIT_A], [siegel])
+    out = front("sync", SHELLOPTS="xtrace")  # Ablaufverfolgung wie bash -x
+    assert out.returncode == 0, out.stdout + out.stderr[-3000:]
+    assert "Realm kunde-a: Client-Secret aus dem Cockpit übernommen" in out.stdout
+    env = front.dir / "tor" / "kunde-a.env"
+    assert env.stat().st_mode & 0o777 == 0o600
+    zeilen = env.read_text().splitlines()
+    assert zeilen[0] == "# Anmelde-Tor, Realm kunde-a (aus dem Cockpit) – nur root"
+    assert zeilen[1] == f"OAUTH2_PROXY_CLIENT_SECRET={GEHEIM}"
+    assert re.fullmatch(r"OAUTH2_PROXY_COOKIE_SECRET=[0-9a-f]{32}", zeilen[2])
+    status = _status(front)
+    assert status["ok"] and status["tor"]["vom_cockpit"] == ["kunde-a"]
+    assert "kunde-a" in status["tor"]["realms_bereit"] and status["tor"]["verworfen"] == []
+    dienst = re.search(r"^  (tor-kunde-a-[0-9a-f]{8}):$", (front.gen / "tor" / "compose.yml")
+                       .read_text(), re.M).group(1)  # fmt: skip
+    log = front.log.read_text()
+    assert f"up -d --no-deps --force-recreate {dienst}" in log
+    assert log.index("--force-recreate") < log.rindex("up -d --remove-orphans")
+    assert "aus dem Cockpit" in front("tor").stdout
+    _nirgends(front, GEHEIM, out)
+
+    # dasselbe Siegel noch einmal (Timer, --immer): nichts neu
+    front.log.write_text("")
+    nochmal = front("sync", "--immer")
+    assert nochmal.returncode == 0 and "--force-recreate" not in front.log.read_text()
+
+    # von Hand ersetzt: gilt, bis das Cockpit ein anderes Chiffrat schickt
+    hand = front("tor", "kunde-a", input="testwert-von-hand-0123\n")
+    assert hand.returncode == 0 and "bis das Cockpit ein neues Client-Secret schickt" in hand.stdout
+    assert _status(front)["tor"]["vom_cockpit"] == []  # Stand des Tors auch nach Handgriffen
+    assert front("sync", "--immer").returncode == 0
+    assert "OAUTH2_PROXY_CLIENT_SECRET=testwert-von-hand-0123" in env.read_text()
+    cookie = env.read_text().splitlines()[2]
+
+    # neues Chiffrat (erneuert): übernommen, Cookie-Secret bleibt (Sitzungen bleiben)
+    neu = "testwert-erneuert-9876543210"
+    siegel = {**siegel, "versiegelt": _versiegeln(pub, "kunde-a", neu)}
+    _soll_mit_tor(front, [COCKPIT_A], [siegel])
+    out = front("sync")
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert env.read_text().splitlines()[1:] == [f"OAUTH2_PROXY_CLIENT_SECRET={neu}", cookie]
+    _nirgends(front, neu, out)
+
+    # dasselbe Geheimnis neu versiegelt (anderes Chiffrat): wie bisher, kein Neustart
+    front.log.write_text("")
+    siegel = {**siegel, "versiegelt": _versiegeln(pub, "kunde-a", neu)}
+    _soll_mit_tor(front, [COCKPIT_A], [siegel])
+    out = front("sync")
+    assert "Client-Secret aus dem Cockpit wie bisher" in out.stdout
+    assert "--force-recreate" not in front.log.read_text()
+    pr = front("pruefen")
+    assert "Realm kunde-a: Client-Secret hinterlegt (aus dem Cockpit)" in pr.stdout
+    assert "Empfangsschlüssel für Client-Secrets aus dem Cockpit" in pr.stdout
+
+
+@pytest.mark.parametrize(
+    ("fall", "grund"),
+    [
+        ("realm_im_siegel", "inhalt_ungueltig"),
+        ("client", "inhalt_ungueltig"),
+        ("secret_form", "inhalt_ungueltig"),
+        ("kein_json", "inhalt_ungueltig"),
+        ("fremder_schluessel", "nicht_entschluesselt"),
+        ("kennung_veraltet", "schluessel_veraltet"),
+        ("realm_von_hand", "realm_unbekannt"),
+        ("kennung_form", "format"),
+        ("base64_form", "format"),
+    ],
+)
+def test_sync_verwirft_falsche_siegel(front, fall, grund):
+    """§4: falscher Realm/Client/Inhalt, fremder Schlüssel, veraltete Kennung, Realm eines nicht
+    vom Cockpit gepflegten Kunden – verworfen, Warnung ohne Inhalt, der Rest geht weiter."""
+    front.env_file.write_text(TOR_ENV)
+    hand = {"kurzname": "kunde-b", "name": "Kunde B", "realm": "kunde-b", "links": []}
+    _soll(front, [COCKPIT_A, hand])
+    assert front("sync").returncode == 0
+    pub = front.dir / "tor" / "empfang.pub"
+    realm, kennung, geheim = "kunde-a", _kennung(pub), "testwert-verworfen-0123"
+    versiegelt = _versiegeln(pub, realm, geheim)
+    if fall == "realm_im_siegel":
+        versiegelt = _versiegeln(pub, "kunde-x", geheim)
+    elif fall == "client":
+        versiegelt = _versiegeln(pub, realm, geheim, client="magister")
+    elif fall == "secret_form":
+        geheim = "mit leerzeichen 0123"
+        versiegelt = _versiegeln(pub, realm, geheim)
+    elif fall == "kein_json":
+        versiegelt = _versiegeln(pub, realm, klartext=b"testwert-verworfen-0123")
+    elif fall == "fremder_schluessel":
+        anderer = front.dir / "anderer.pub"
+        key = rsa.generate_private_key(public_exponent=65537, key_size=3072)
+        spki = serialization.PublicFormat.SubjectPublicKeyInfo
+        anderer.write_bytes(key.public_key().public_bytes(serialization.Encoding.PEM, spki))
+        versiegelt = _versiegeln(anderer, realm, geheim)
+    elif fall == "kennung_veraltet":
+        kennung = "0" * 64
+    elif fall == "realm_von_hand":
+        realm = "kunde-b"
+        versiegelt = _versiegeln(pub, realm, geheim)
+    elif fall == "kennung_form":
+        kennung = kennung.upper()
+    elif fall == "base64_form":
+        versiegelt = versiegelt[:-2] + "!!"
+    _soll_mit_tor(front, [COCKPIT_A, hand],
+                  [{"realm": realm, "kennung": kennung, "versiegelt": versiegelt}])  # fmt: skip
+    out = front("sync")
+    assert out.returncode == 0, out.stdout + out.stderr  # die Kunden gehen trotzdem durch
+    assert f"Client-Secret aus dem Cockpit verworfen ({grund})" in out.stdout
+    assert not (front.dir / "tor" / f"{realm}.env").exists()
+    status = _status(front)
+    assert status["ok"] and status["tor"]["verworfen"] == [{"realm": realm, "grund": grund}]
+    assert status["tor"]["vom_cockpit"] == []
+    _nirgends(front, geheim, out)
+    pr = front("pruefen")
+    assert f"Client-Secret aus dem Cockpit verworfen: Realm {realm} ({grund})" in pr.stdout

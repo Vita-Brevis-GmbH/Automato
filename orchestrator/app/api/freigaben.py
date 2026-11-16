@@ -5,6 +5,10 @@ Inventar (ADR 0053): ohne eingerichtetes Token 404, mit falschem 401, nie mit de
 Person. Das Cockpit schickt den ganzen Stand seiner Kunden; Automato fuehrt damit sein
 Kunden-Portal nach (`store/freigaben.py`), schreibt danach den Soll-Stand fuer den Front-Proxy
 (`soll.json`, nur bei neuem Inhalt) und meldet, ob der Host-Agent ihn schon uebernommen hat.
+
+Seit 1.13.0 (ADR 0055) optional mit den versiegelten Client-Secrets des Anmelde-Tors
+(`tor_geheimnisse`); die Kennung des Empfangsschluessels kommt aus dem Front-Status (wie das
+Inventar), die Antwort nennt uebernommene und abgelehnte Realms.
 """
 
 from typing import Annotated, Any
@@ -19,7 +23,7 @@ from app.auth.cockpit import require_cockpit_token
 from app.config import Settings, get_settings
 from app.db import get_session
 from app.i18n import L
-from app.store import freigaben, portal
+from app.store import freigaben, inventory, portal
 
 router = APIRouter(prefix="/freigaben", tags=["freigaben"])
 
@@ -44,7 +48,9 @@ def put_freigaben(
     settings: Settings = Depends(get_settings),
 ):
     try:
-        ergebnis = freigaben.uebernehmen(session, data)
+        ergebnis = freigaben.uebernehmen(
+            session, data, empfang=inventory.empfang_kennung(settings.front_state_dir)
+        )
     except freigaben.FreigabenFehler as exc:
         session.rollback()
         return JSONResponse(

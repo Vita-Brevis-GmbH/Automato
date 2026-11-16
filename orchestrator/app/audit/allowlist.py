@@ -11,10 +11,11 @@ bewusst: lieber ein lückenhaftes als ein undichtes Log.
 """
 
 # Kunden-Portal (1.11.0): geaenderte Felder ohne die Kacheln (frei eingegebene Adressen); bei
-# Freigaben aus dem Cockpit (Akteur `cockpit`) die Herkunft in `quelle`
+# Freigaben aus dem Cockpit (Akteur `cockpit`) die Herkunft in `quelle`; seit 1.13.0 wer Mandant,
+# Kunden und Rolle setzt (`scope_source`)
 _PORTAL = frozenset(
     {"short_name", "name", "doc", "nb", "um", "cmdb", "realm", "tenant_id", "customer_ids",
-     "default_role", "access", "access_nets", "quelle", "uebernommen"}
+     "default_role", "access", "access_nets", "quelle", "uebernommen", "scope_source"}
 )  # fmt: skip
 
 # action -> erlaubte detail-Keys. Nur unkritische, benannte Felder.
@@ -225,6 +226,9 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "portal.customer.created": _PORTAL,
     "portal.customer.updated": _PORTAL,
     "portal.customer.deleted": _PORTAL,
+    # Client-Secret des Anmelde-Tors versiegelt aus dem Cockpit (1.13.0, ADR 0055): nur Realm und
+    # Kennung des Empfangsschluessels - nie das Chiffrat
+    "portal.tor_secret.updated": frozenset({"realm", "kennung"}),
     # Zuordnung Benutzer -> Kunde in Automato (0.53.0, ADR 0018 Schritt 4); seit den feineren
     # Rollen mit Herkunft (Betreuer bzw. Kunden-Admin) und den Kunden-Rollen des Handelnden
     "customer_user.assigned": frozenset(

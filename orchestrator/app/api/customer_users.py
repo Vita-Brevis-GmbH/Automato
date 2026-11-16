@@ -26,7 +26,7 @@ from app import audit
 from app.api.customer_filter import actor
 from app.auth import assignments
 from app.auth import capabilities as caps
-from app.auth.deps import require_admin, require_viewer, tenant_scope
+from app.auth.deps import assignment_missing_text, require_admin, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
 from app.i18n import L
@@ -273,4 +273,13 @@ def me(
         # eigene Kennungen (sub, Benutzername, E-Mail): die Oberflaeche erkennt die eigene
         # Zuordnung (aendern/entfernen nicht moeglich)
         "logins": list(principal.logins),
+        # Benutzer eines Kunden-Realms ohne Zuordnung in Automato (1.13.0): die Oberflaeche
+        # zeigt diese Meldung statt Fehlern beim Laden
+        "zuordnung_fehlt": {
+            "kurzname": principal.realm_customer[0],
+            "name": principal.realm_customer[1],
+            "meldung": assignment_missing_text(principal),
+        }
+        if principal.assignment_missing and principal.realm_customer
+        else None,
     }

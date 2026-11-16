@@ -30,7 +30,8 @@ Freigaben“, Kundenregister (ADR 0005 dort), Vertrag `docs/vertraege/freigaben.
    `front.sh` prüft den Soll-Stand danach noch einmal.
 2. **Wer Autor wofür ist:** das Cockpit für Kurzname, Name, Werkzeuge, Zugriff und Realm;
    Automato bleibt Autor für Mandant, Kunden (ADR 0018), Standard-Rolle und weitere Kacheln – das
-   Cockpit kennt Automatos Mandanten nicht. `portal_customer.source` hält die Herkunft fest
+   Cockpit kennt Automatos Mandanten nicht. *Geändert mit 1.13.0 (Nachtrag unten):* schickt das Cockpit eine
+   Zuordnung, ist es auch Autor für Mandant, Kunden und Rolle dieses Kunden. `portal_customer.source` hält die Herkunft fest
    (`oberflaeche` | `cockpit`). In der Oberfläche sind die Felder des Cockpits bei solchen Kunden
    nur lesbar, entfernt werden sie nur im Cockpit (`409`).
 3. **Übernahme und Entfernen:** gibt es den Kurznamen schon aus der Oberfläche, übernimmt das
@@ -70,3 +71,31 @@ Freigaben“, Kundenregister (ADR 0005 dort), Vertrag `docs/vertraege/freigaben.
   (`netbox-host.sh token`) bleiben ein Handgriff.
 - Neue Felder im Vertrag nur optional; eine andere Bedeutung = `vertrag: 2`, zuerst in Automato,
   dann im Cockpit.
+
+## Nachtrag 1.13.0 (2026-11-16): Zuordnung in Automato aus dem Cockpit
+
+Anwender 2026-11-16 nach dem Fund „neuer Kunde aus dem Cockpit meldet sich an, Automato zeigt
+‚Mandanten laden: Keine Berechtigung (insufficient role)‘“ (im Kunden-Portal war kein Mandant
+zugeordnet) auf den Vorschlag „Mandant und Kunden für Automato künftig direkt im Cockpit beim
+Kunden wählen; das Cockpit zeigt dafür die Liste aus Automato; Mandanten und Kunden selbst
+entstehen weiterhin in Automato; ändert die Aufteilung aus ADR 0054“: „Ja gerne“. Vertrag im
+Cockpit: `inventar.md`, `freigaben.md` (v1, neue Felder optional).
+
+- **Punkt 2 geändert:** je Kunde optional `zuordnung` (`mandant`, `kunden`, `rolle`) in
+  `PUT /freigaben`. Gesetzt: Mandant, Kunden und Standard-Rolle dieses Kunden kommen aus dem
+  Cockpit (`portal_customer.scope_source = cockpit`), im Kunden-Portal nur lesbar („aus dem
+  Cockpit“, `409` beim Ändern über die API). Geprüft wie in der Oberfläche (bestehender Mandant,
+  Kunden nur dieses Mandanten, eindeutig, Kunden-Rolle – nie `admin`), sonst `422` (alles oder
+  nichts). Fehlt `zuordnung`: keine Aussage, der Stand bleibt und ist in Automato wieder änderbar.
+  Automato bleibt Autor seiner Mandanten und Kunden (anlegen, umbenennen, löschen) und der Kacheln.
+- **Inventar:** `automato.mandanten` (alle Mandanten mit ihren Kunden, nur Id und Name),
+  `automato.rollen` (Kunden-Rollen) und je Kunde `automato_zugeordnet` (Mandant und mindestens ein
+  Kunde; `null` ohne Doku bzw. unbekannt) sowie `zuordnung` (Stand im Kunden-Portal, `von`
+  `cockpit` bzw. `automato`).
+- **Klare Meldung statt „insufficient role“:** Benutzer eines Kunden-Realms ohne Mandant bzw.
+  Kunden erhalten weiterhin keine Rechte, aber `/auth/me` nennt die fehlende Zuordnung
+  (`zuordnung_fehlt`), die Oberfläche zeigt eine eigene Seite, alle übrigen Endpunkte antworten
+  `403` mit derselben Meldung; das Kunden-Portal markiert Kunden aus dem Cockpit ohne Zuordnung.
+- **Folge:** das Token des Cockpits darf jetzt auch Mandant, Kunden und Rolle eines Kunden-Realms
+  setzen – Benutzer dieses Realms sehen dann diesen Ausschnitt (höchstens `customer_admin`, nie
+  Verwaltung). Risiko R26.

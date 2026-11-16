@@ -17,8 +17,22 @@ Mandant, Kunden, Standard-Rolle und weitere Kacheln pflegt Automato selbst.
 Geprueft wird mit denselben Funktionen wie in der Oberflaeche (`store/portal.py`); `front.sh`
 prueft den Soll-Stand danach noch einmal (Vertrauensgrenze). Ein Eingang in Automatos eigene
 Datenbank - kein Schreibweg nach aussen (Nur-Lese-Regel unberuehrt).
+
+Seit 1.13.0 (ADR 0055) optional `tor_geheimnisse`: je Realm eines Kunden der Anfrage das
+Client-Secret des Anmelde-Tors (`automato-front`), versiegelt mit dem Empfangsschluessel der VM.
+Automato prueft nur die Form (alles oder nichts wie bei `kunden`) und die Kennung des Schluessels
+(eine veraltete lehnt nur diesen Eintrag ab) und haelt nur das Chiffrat
+(`portal_customer.tor_secret`, im Soll-Stand `tor_geheimnisse`) - entschluesselt wird nur in
+`front.sh sync`.
+
+Seit 1.13.0 (ADR 0054 Nachtrag) je Kunde optional `zuordnung` (Mandant, Kunden, Rolle): dann ist
+das Cockpit Autor dieser drei Felder (`scope_source = cockpit`, in Automato nur lesbar); ohne
+`zuordnung` bleibt der Stand in Automato und die Felder sind dort wieder aenderbar.
 """
 
+import base64
+import binascii
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
@@ -26,6 +40,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import audit
+from app.auth import capabilities as caps
 from app.i18n import L
 from app.models import PortalCustomer
 from app.store import portal
@@ -37,8 +52,17 @@ MAX_KUNDEN = 1000
 WERKZEUGE = ("doc", "nb", "um", "cmdb")
 #: Akteur im Audit
 AKTEUR = "cockpit"
-#: Felder, deren Autor das Cockpit ist (alles andere bleibt in Automato)
-FELDER = ("name", "doc", "nb", "um", "cmdb", "realm", "access", "access_nets")
+#: Felder, deren Autor das Cockpit ist (alles andere bleibt in Automato); mit `zuordnung` auch
+#: Mandant, Kunden und Standard-Rolle (1.13.0) - `scope_source` haelt fest, wer sie setzt
+FELDER = ("name", "doc", "nb", "um", "cmdb", "realm", "access", "access_nets", "scope_source")
+FELDER_ZUORDNUNG = ("tenant_id", "customer_ids", "default_role")
+MAX_ZUORDNUNG_KUNDEN = 2000
+#: versiegelte Client-Secrets (1.13.0, ADR 0055): Kennung des Empfangsschluessels, Chiffrat
+KENNUNG = re.compile(r"[0-9a-f]{64}")
+BASE64 = re.compile(r"[A-Za-z0-9+/]+={0,2}")
+SIEGEL_MAX = 1024
+#: Gruende, aus denen ein Eintrag nicht uebernommen wird (die Anfrage scheitert deshalb nicht)
+SCHLUESSEL_VERALTET, KEIN_EMPFANG = "schluessel_veraltet", "kein_empfang"
 
 
 class FreigabenFehler(ValueError):
@@ -57,6 +81,19 @@ class Freigabe:
     werte: dict
 
 
+@dataclass(frozen=True)
+class TorGeheimnis:
+    """Versiegeltes Client-Secret des Anmelde-Tors fuer den Realm eines Kunden der Anfrage."""
+
+    realm: str
+    kurzname: str
+    kennung: str
+    versiegelt: str
+
+    def wert(self) -> dict:
+        return {"realm": self.realm, "kennung": self.kennung, "versiegelt": self.versiegelt}
+
+
 @dataclass
 class Ergebnis:
     angelegt: list[str] = field(default_factory=list)
@@ -64,10 +101,14 @@ class Ergebnis:
     uebernommen: list[str] = field(default_factory=list)
     entfernt: list[str] = field(default_factory=list)
     unveraendert: int = 0
+    #: 1.13.0: {"uebernommen": [Realm], "abgelehnt": [{"realm", "grund"}]}; None = nicht gesendet
+    tor: dict | None = None
+    tor_geaendert: bool = False
 
     @property
     def etwas_geaendert(self) -> bool:
-        return bool(self.angelegt or self.geaendert or self.uebernommen or self.entfernt)
+        return bool(self.angelegt or self.geaendert or self.uebernommen or self.entfernt
+                    or self.tor_geaendert)  # fmt: skip
 
     def antwort(self) -> dict:
         return {
@@ -77,6 +118,7 @@ class Ergebnis:
             "uebernommen": self.uebernommen,
             "entfernt": self.entfernt,
             "unveraendert": self.unveraendert,
+            "tor_geheimnisse": self.tor,
         }
 
 
@@ -111,7 +153,42 @@ def _werkzeuge(value: object) -> set[str]:
     return out
 
 
-def _freigabe(roh: dict) -> Freigabe:
+def _id(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def _zuordnung(session: Session, roh: object) -> dict:
+    """`zuordnung` eines Kunden pruefen (1.13.0): bestehender Mandant, Kunden nur dieses
+    Mandanten (eindeutig, darf leer sein), Kunden-Rolle (nie admin). Ohne bzw. null: keine
+    Aussage - die Felder bleiben in Automato aenderbar."""
+    if roh is None:
+        return {"scope_source": portal.SCOPE_AUTOMATO}
+    if not isinstance(roh, dict):
+        raise portal.PortalError(L("zuordnung ist kein Objekt", "zuordnung is not an object"))
+    mandant, kunden, rolle = roh.get("mandant"), roh.get("kunden"), roh.get("rolle")
+    if not _id(mandant):
+        raise portal.PortalError(L("zuordnung: mandant ist keine Id (Zahl > 0)",
+                                   "zuordnung: mandant is not an id (number > 0)"))  # fmt: skip
+    if kunden is None:
+        kunden = []
+    if not isinstance(kunden, list) or len(kunden) > MAX_ZUORDNUNG_KUNDEN:
+        raise portal.PortalError(L(
+            f"zuordnung: kunden ist keine Liste (höchstens {MAX_ZUORDNUNG_KUNDEN})",
+            f"zuordnung: kunden is not a list (at most {MAX_ZUORDNUNG_KUNDEN})"))  # fmt: skip
+    if not all(_id(k) for k in kunden) or len(set(kunden)) != len(kunden):
+        raise portal.PortalError(L("zuordnung: kunden nur eindeutige Ids (Zahl > 0)",
+                                   "zuordnung: kunden only unique ids (number > 0)"))  # fmt: skip
+    if not isinstance(rolle, str) or rolle not in caps.CUSTOMER_ROLES:
+        raise portal.PortalError(L(
+            f"zuordnung: Rolle '{str(rolle)[:20]}' unbekannt ({', '.join(caps.CUSTOMER_ROLES)})",
+            f"zuordnung: role '{str(rolle)[:20]}' unknown ({', '.join(caps.CUSTOMER_ROLES)})",
+        ))  # fmt: skip
+    ids = portal.check_scope(session, mandant, kunden)
+    return {"tenant_id": mandant, "customer_ids": ids, "default_role": rolle,
+            "scope_source": portal.SCOPE_COCKPIT}  # fmt: skip
+
+
+def _freigabe(session: Session, roh: dict) -> Freigabe:
     """Einen Kunden der Anfrage pruefen (wirft PortalError)."""
     kurz_roh = roh.get("kurzname")
     if not isinstance(kurz_roh, str):
@@ -130,13 +207,88 @@ def _freigabe(roh: dict) -> Freigabe:
         raise portal.PortalError(L("realm ist kein Text", "realm is not a string"))
     werte = {"name": name, "doc": "doc" in tools, "nb": "nb" in tools, "um": "um" in tools,
              "cmdb": "cmdb" in tools, "realm": portal.check_realm(realm), "access": access,
-             "access_nets": nets}  # fmt: skip
+             "access_nets": nets, **_zuordnung(session, roh.get("zuordnung"))}  # fmt: skip
     return Freigabe(kurz, werte)
+
+
+def _siegel_ok(value: object) -> bool:
+    """Base64 (Standard, mit Padding), hoechstens `SIEGEL_MAX` Zeichen."""
+    if not isinstance(value, str) or not value or len(value) > SIEGEL_MAX or len(value) % 4:
+        return False
+    if not BASE64.fullmatch(value):
+        return False
+    try:
+        base64.b64decode(value, validate=True)
+    except (binascii.Error, ValueError):
+        return False
+    return True
+
+
+def _tor_geheimnisse(roh: object, realms: dict[str, str], alle_realms: set[str],
+                     anzahl: int, fehler: list[dict]) -> list[TorGeheimnis] | None:  # fmt: skip
+    """`tor_geheimnisse` der Anfrage pruefen (Form und Realm eines Kunden derselben Anfrage);
+    Fehler kommen in `fehler` (alles oder nichts). None = Feld fehlt bzw. null."""
+    if roh is None:
+        return None
+    if not isinstance(roh, list):
+        fehler.append(_fehler(None, L("tor_geheimnisse ist keine Liste",
+                                      "tor_geheimnisse is not a list")))  # fmt: skip
+        return None
+    if len(roh) > anzahl:
+        fehler.append(_fehler(None, L(
+            f"tor_geheimnisse: höchstens so viele Einträge wie Kunden ({anzahl})",
+            f"tor_geheimnisse: at most as many entries as customers ({anzahl})")))  # fmt: skip
+        return None
+    out: list[TorGeheimnis] = []
+    gesehen: set[str] = set()
+    for nr, e in enumerate(roh, start=1):
+        if not isinstance(e, dict):
+            fehler.append(_fehler(None, L(
+                f"tor_geheimnisse: Eintrag {nr} ist kein Objekt",
+                f"tor_geheimnisse: entry {nr} is not an object")))  # fmt: skip
+            continue
+        realm = e.get("realm")
+        kurz = realms.get(realm) if isinstance(realm, str) else None
+        if kurz is None:
+            # Realm eines ungueltigen Kunden: dessen Fehler steht schon in der Liste
+            if not (isinstance(realm, str) and realm in alle_realms):
+                name = str(realm)[:64]
+                fehler.append(_fehler(None, L(
+                    f"tor_geheimnisse: Realm '{name}' gehört zu keinem Kunden der Anfrage",
+                    f"tor_geheimnisse: realm '{name}' belongs to no customer of the request",
+                )))  # fmt: skip
+            continue
+        if realm in gesehen:
+            fehler.append(_fehler(kurz, L(f"tor_geheimnisse: Realm '{realm}' doppelt",
+                                          f"tor_geheimnisse: realm '{realm}' twice")))  # fmt: skip
+            continue
+        gesehen.add(realm)
+        kennung, versiegelt = e.get("kennung"), e.get("versiegelt")
+        if not isinstance(kennung, str) or not KENNUNG.fullmatch(kennung):
+            fehler.append(_fehler(kurz, L(
+                f"tor_geheimnisse '{realm}': kennung ist kein SHA-256 (64 Zeichen hex, klein)",
+                f"tor_geheimnisse '{realm}': kennung is not a SHA-256 (64 lowercase hex)",
+            )))  # fmt: skip
+            continue
+        if not _siegel_ok(versiegelt):
+            fehler.append(_fehler(kurz, L(
+                f"tor_geheimnisse '{realm}': versiegelt ist kein Base64 (höchstens "
+                f"{SIEGEL_MAX} Zeichen)",
+                f"tor_geheimnisse '{realm}': versiegelt is not base64 (at most {SIEGEL_MAX} "
+                "characters)")))  # fmt: skip
+            continue
+        out.append(TorGeheimnis(realm, kurz, kennung, versiegelt))
+    return out
 
 
 def pruefen(session: Session, data: object) -> list[Freigabe]:
     """Ganze Anfrage pruefen; wirft `FreigabenFehler` mit allen Gruenden (dann aendert sich
     nichts)."""
+    return _pruefen(session, data)[0]
+
+
+def _pruefen(session: Session, data: object) -> tuple[list[Freigabe], list[TorGeheimnis] | None]:
+    """Wie `pruefen`, dazu die versiegelten Client-Secrets (None = nicht gesendet)."""
     if not isinstance(data, dict):
         raise FreigabenFehler([_fehler(None, L("Anfrage ist kein JSON-Objekt",
                                                "request is not a JSON object"))])  # fmt: skip
@@ -155,13 +307,15 @@ def pruefen(session: Session, data: object) -> list[Freigabe]:
     out: list[Freigabe] = []
     kurznamen: set[str] = set()
     realms: dict[str, str] = {}
+    alle_realms = {r.get("realm") for r in kunden if isinstance(r, dict)
+                   and isinstance(r.get("realm"), str)}  # fmt: skip
     for nr, roh in enumerate(kunden, start=1):
         if not isinstance(roh, dict):
             fehler.append(_fehler(None, L(f"Eintrag {nr} ist kein Objekt",
                                           f"entry {nr} is not an object")))  # fmt: skip
             continue
         try:
-            f = _freigabe(roh)
+            f = _freigabe(session, roh)
         except portal.PortalError as exc:
             fehler.append(_fehler(roh.get("kurzname"), str(exc)))
             continue
@@ -190,9 +344,10 @@ def pruefen(session: Session, data: object) -> list[Freigabe]:
                 "Oberfläche von Automato)",
                 f"realm '{pc.realm}' already belongs to '{pc.short_name}' (customer from the "
                 "Automato UI)")))  # fmt: skip
+    tor = _tor_geheimnisse(data.get("tor_geheimnisse"), realms, alle_realms, len(kunden), fehler)
     if fehler:
         raise FreigabenFehler(fehler)
-    return out
+    return out, tor
 
 
 def _wert(pc: PortalCustomer, feld: str) -> object:
@@ -201,6 +356,10 @@ def _wert(pc: PortalCustomer, feld: str) -> object:
         return list(value or [])
     if feld == "access":
         return value or "ueberall"
+    if feld == "customer_ids":
+        return sorted(int(c) for c in value or [])
+    if feld == "scope_source":
+        return value or portal.SCOPE_AUTOMATO
     return value
 
 
@@ -242,13 +401,16 @@ def anwenden(session: Session, freigaben: list[Freigabe], akteur: str = AKTEUR) 
     for f, pc, changed, art in plan:
         detail = {**changed, "quelle": portal.SOURCE_COCKPIT}
         if pc is None:
-            pc = PortalCustomer(short_name=f.kurzname, links=[], customer_ids=[],
-                                source=portal.SOURCE_COCKPIT, **f.werte)  # fmt: skip
+            pc = PortalCustomer(short_name=f.kurzname, links=[],
+                                source=portal.SOURCE_COCKPIT,
+                                **{"customer_ids": [], **f.werte})  # fmt: skip
             session.add(pc)
             action = "portal.customer.created"
         else:
             for key, value in f.werte.items():
                 setattr(pc, key, value)
+            if "realm" in changed:  # das Siegel gilt nur fuer den Realm, fuer den es kam
+                pc.tor_secret = None
             pc.source = portal.SOURCE_COCKPIT
             action = "portal.customer.updated"
             if art == "uebernommen":
@@ -260,9 +422,47 @@ def anwenden(session: Session, freigaben: list[Freigabe], akteur: str = AKTEUR) 
     return erg
 
 
-def uebernehmen(session: Session, data: object, akteur: str = AKTEUR) -> Ergebnis:
-    """Anfrage pruefen und uebernehmen (ohne commit) - wirft `FreigabenFehler`."""
-    return anwenden(session, pruefen(session, data), akteur)
+def tor_anwenden(session: Session, eintraege: list[TorGeheimnis], empfang: str | None,
+                 erg: Ergebnis, akteur: str = AKTEUR) -> None:  # fmt: skip
+    """Versiegelte Client-Secrets uebernehmen (nach `anwenden`, ohne commit): nur mit der Kennung
+    des aktuellen Empfangsschluessels, sonst abgelehnt. Audit nur bei neuem Chiffrat - im Detail
+    Realm und Kennung, nie das Chiffrat."""
+    erg.tor = {"uebernommen": [], "abgelehnt": []}
+    if not eintraege:
+        return
+    kunden = {pc.short_name: pc for pc in session.scalars(
+        select(PortalCustomer).where(PortalCustomer.short_name.in_([e.kurzname for e in eintraege]))
+    )}  # fmt: skip
+    for e in eintraege:
+        pc = kunden.get(e.kurzname)
+        if not empfang:
+            erg.tor["abgelehnt"].append({"realm": e.realm, "grund": KEIN_EMPFANG})
+            continue
+        if e.kennung != empfang:
+            erg.tor["abgelehnt"].append({"realm": e.realm, "grund": SCHLUESSEL_VERALTET})
+            continue
+        if pc is None or pc.realm != e.realm:  # nach `anwenden` nicht moeglich
+            continue
+        erg.tor["uebernommen"].append(e.realm)
+        if pc.tor_secret == e.wert():
+            continue
+        pc.tor_secret = e.wert()
+        audit.record(session, actor=akteur, action="portal.tor_secret.updated",
+                     subject=e.kurzname,
+                     detail={"realm": e.realm, "kennung": e.kennung})  # fmt: skip
+        erg.tor_geaendert = True
+    session.flush()
+
+
+def uebernehmen(session: Session, data: object, akteur: str = AKTEUR,
+                empfang: str | None = None) -> Ergebnis:  # fmt: skip
+    """Anfrage pruefen und uebernehmen (ohne commit) - wirft `FreigabenFehler`. `empfang` =
+    Kennung des aktuellen Empfangsschluessels der VM (aus dem Front-Status, None = keiner)."""
+    freigaben, tor = _pruefen(session, data)
+    erg = anwenden(session, freigaben, akteur)
+    if tor is not None:
+        tor_anwenden(session, tor, empfang, erg, akteur)
+    return erg
 
 
 def front(state_dir: str, hinweis: str | None = None) -> dict:

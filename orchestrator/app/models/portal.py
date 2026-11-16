@@ -18,6 +18,15 @@ Herkunft (1.11.0, ADR 0054): `source` = `oberflaeche` (in Automato angelegt) ode
 Kundenregister des Cockpits mit `PUT /freigaben`). Bei Kunden aus dem Cockpit sind Kurzname, Name,
 Werkzeuge, Zugriff und Realm nur dort aenderbar; Mandant, Kunden, Rolle und Kacheln pflegt
 Automato. `nb` = NetBox (`-nb`) ist seit 1.11.0 ein waehlbares Werkzeug (Vorgabe an).
+
+Client-Secret des Anmelde-Tors aus dem Cockpit (1.13.0, ADR 0055): `tor_secret` =
+`{"realm", "kennung", "versiegelt"}` - nur das Chiffrat, versiegelt mit dem Empfangsschluessel der
+VM (`kennung`); entschluesseln kann es nur `front.sh sync` als root. Gilt nur, solange `realm`
+der Realm dieses Kunden ist.
+
+Zuordnung aus dem Cockpit (1.13.0, ADR 0054 Nachtrag): `scope_source` = `automato` (Mandant, Kunden
+und Standard-Rolle pflegt Automato) oder `cockpit` (das Cockpit hat sie mit den Freigaben gesetzt
+- in Automato dann nur lesbar).
 """
 
 from datetime import UTC, datetime
@@ -54,6 +63,12 @@ class PortalCustomer(Base):
     # Herkunft (1.11.0, ADR 0054): oberflaeche | cockpit
     source: Mapped[str] = mapped_column(
         String(16), default="oberflaeche", server_default="oberflaeche"
+    )
+    # versiegeltes Client-Secret des Anmelde-Tors aus dem Cockpit (1.13.0, ADR 0055), nur Chiffrat
+    tor_secret: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # wer Mandant, Kunden und Standard-Rolle setzt (1.13.0): automato | cockpit
+    scope_source: Mapped[str] = mapped_column(
+        String(16), default="automato", server_default="automato"
     )
     updated_by: Mapped[str | None] = mapped_column(String(200), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(

@@ -40,6 +40,8 @@ ACCESS = ("ueberall", "intern", "netze")
 MAX_NETS = 50
 # Herkunft je Kunde (1.11.0, ADR 0054): in Automato angelegt bzw. vom Kundenregister des Cockpits
 SOURCE_UI, SOURCE_COCKPIT = "oberflaeche", "cockpit"
+# wer Mandant, Kunden und Standard-Rolle setzt (1.13.0, ADR 0054 Nachtrag)
+SCOPE_AUTOMATO, SCOPE_COCKPIT = "automato", "cockpit"
 
 
 class PortalError(ValueError):
@@ -55,6 +57,12 @@ class RealmScope:
     tenant_id: int | None
     customer_ids: tuple[int, ...]
     default_role: str
+    name: str = ""  # Anzeigename (Meldung bei fehlender Zuordnung, 1.13.0)
+
+    @property
+    def assigned(self) -> bool:
+        """Mandant und mindestens ein Kunde - sonst hat ein Benutzer des Realms keine Rechte."""
+        return self.tenant_id is not None and bool(self.customer_ids)
 
 
 def check_short_name(name: str) -> str:
@@ -208,8 +216,27 @@ def realm_scopes(session: Session, main_realm: str | None) -> dict[str, RealmSco
             tenant_id=pc.tenant_id,
             customer_ids=tuple(int(c) for c in pc.customer_ids or ()),
             default_role=caps.normalize(pc.default_role),
+            name=pc.name or pc.short_name,
         )
     return out
+
+
+def assigned(pc: PortalCustomer) -> bool | None:
+    """Hat der Kunde in Automato einen Ausschnitt (Mandant und mindestens ein Kunde)? None =
+    ohne Werkzeug Doku (seine Benutzer melden sich nicht in Automato an)."""
+    if not pc.doc:
+        return None
+    return pc.tenant_id is not None and bool(pc.customer_ids)
+
+
+def scope_of(pc: PortalCustomer) -> dict:
+    """Zuordnung im Kunden-Portal (Inventar, 1.13.0): Mandant, Kunden, Rolle und wer sie setzt."""
+    return {
+        "mandant": pc.tenant_id,
+        "kunden": sorted(int(c) for c in pc.customer_ids or []),
+        "rolle": pc.default_role or caps.VIEWER,
+        "von": pc.scope_source or SCOPE_AUTOMATO,
+    }
 
 
 def realm_for_host(session: Session, host: str | None) -> str | None:
@@ -248,6 +275,9 @@ def out(pc: PortalCustomer, domain: str = "") -> dict:
         "access": pc.access or "ueberall",
         "access_nets": list(pc.access_nets or []),
         "source": pc.source or SOURCE_UI,
+        # 1.13.0: Mandant, Kunden und Rolle aus dem Cockpit (dann nur lesbar), Ausschnitt vorhanden
+        "scope_source": pc.scope_source or SCOPE_AUTOMATO,
+        "assigned": assigned(pc),
         "addresses": addresses,
         "updated_by": pc.updated_by,
         "updated_at": pc.updated_at,
@@ -266,8 +296,11 @@ def desired(session: Session) -> dict:
     """Soll-Stand fuer den Front-Proxy (nur, was front.sh braucht - kein Mandant). Seit 1.4.0
     mit dem Realm: das Anmelde-Tor fragt je Kunde in dessen Realm (ADR 0051); ohne Realm
     gesperrt. Seit 1.5.0 mit dem Zugriff je Kunde (`zugriff`, `netze`), seit 1.11.0 mit NetBox
-    als Werkzeug (`nb`) und der Herkunft (`quelle`: oberflaeche | cockpit, ADR 0054)."""
-    return {
+    als Werkzeug (`nb`) und der Herkunft (`quelle`: oberflaeche | cockpit, ADR 0054). Seit 1.13.0
+    (ADR 0055) mit den versiegelten Client-Secrets des Anmelde-Tors aus dem Cockpit
+    (`tor_geheimnisse`, nur Chiffrat; nur, wenn es welche gibt)."""
+    kunden = listing(session)
+    data = {
         "version": 1,
         "erzeugt": datetime.now(UTC).isoformat(timespec="seconds"),
         "kunden": [
@@ -275,9 +308,21 @@ def desired(session: Session) -> dict:
              "um": pc.um, "cmdb": pc.cmdb, "realm": pc.realm or "",
              "zugriff": pc.access or "ueberall", "netze": list(pc.access_nets or []),
              "links": list(pc.links or []), "quelle": pc.source or SOURCE_UI}
-            for pc in listing(session)
+            for pc in kunden
         ],
     }  # fmt: skip
+    tor = sorted(
+        (
+            {k: pc.tor_secret.get(k) for k in ("realm", "kennung", "versiegelt")}
+            for pc in kunden
+            if pc.realm and pc.source == SOURCE_COCKPIT and isinstance(pc.tor_secret, dict)
+            and pc.tor_secret.get("realm") == pc.realm
+        ),
+        key=lambda e: e["realm"],
+    )  # fmt: skip
+    if tor:
+        data["tor_geheimnisse"] = tor
+    return data
 
 
 def _content(data: dict) -> dict:

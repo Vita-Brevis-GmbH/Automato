@@ -277,3 +277,39 @@ def test_auth_config_je_adresse(oidc_client, session_factory):
     assert get("kunde-b-doc.mgmt.example.ch")["issuer"] == ISSUER  # ohne -doc kein eigener Login
     assert get("vb-doc.mgmt.example.ch")["issuer"] == ISSUER  # gemeinsamer Realm
     assert get("automato.int.example.ch")["issuer"] == ISSUER
+
+
+# --- Realm-Benutzer ohne Zuordnung (1.13.0) --------------------------------------------------
+
+
+@pytest.mark.parametrize("zuordnung", ["ohne_mandant", "ohne_kunden"])
+def test_kunden_realm_ohne_zuordnung_klare_meldung(oidc_client, session_factory, keys, zuordnung):
+    """Fund 2026-11-16: statt „insufficient role“ sagt Automato, dass der Mandant fehlt - und
+    gibt weiterhin keine Rechte (fail-closed)."""
+    with session_factory() as s:
+        tid, _ = _tenant(s, "dc")
+        s.add(PortalCustomer(short_name="kunde-a", name="Kunde A", doc=True, realm="kunde-a",
+                             tenant_id=tid if zuordnung == "ohne_kunden" else None,
+                             customer_ids=[], links=[]))  # fmt: skip
+        s.commit()
+    auth = {"Authorization": f"Bearer {_token(keys['kunde-a'], 'kunde-a')}"}
+    r = oidc_client.get("/auth/me", headers=auth)
+    assert r.status_code == 200, r.text
+    me = r.json()
+    assert me["is_customer"] is True and me["capabilities"] == [] and me["customers"] == []
+    fehlt = me["zuordnung_fehlt"]
+    assert (fehlt["kurzname"], fehlt["name"]) == ("kunde-a", "Kunde A")
+    assert "Kunde A (kunde-a)" in fehlt["meldung"] and "Kunden-Portal → kunde-a" in fehlt["meldung"]
+    for pfad in ("/tenants", "/portal/customers", "/applications"):
+        r = oidc_client.get(pfad, headers=auth)
+        assert r.status_code == 403 and "noch kein Mandant zugeordnet" in r.json()["detail"], pfad
+    # zugeordnet: wie bisher, ohne Meldung
+    with session_factory() as s:
+        cid = s.query(Customer).filter_by(tenant_id=tid).first().id
+        pc = s.query(PortalCustomer).one()
+        pc.tenant_id, pc.customer_ids = tid, [cid]
+        s.commit()
+    realms.invalidate()
+    me = oidc_client.get("/auth/me", headers=auth).json()
+    assert me["zuordnung_fehlt"] is None and me["customer_ids"] == [cid]
+    assert oidc_client.get("/tenants", headers=auth).status_code == 200

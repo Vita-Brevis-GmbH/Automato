@@ -227,8 +227,9 @@ zweite Maske an: Automato selbst, NetBox über den Benutzer vom Tor
 2. **Client-Secret** je Realm auf dieser VM hinterlegen (Eingabe unsichtbar, Datei nur root in
    `deploy/front/tor/`):
    ```bash
-   sudo deploy/front/front.sh tor vb        # Realm von Automato bzw. eines Kunden
+   sudo deploy/front/front.sh tor kunde-a   # Realm von Automato bzw. eines Kunden
    ```
+   Für Kunden aus dem Cockpit entfällt das seit 1.13.0 (unten „Client-Secret aus dem Cockpit“).
 3. `AUTOMATO_FRONT_TOR=an` in `.env`, dann `sudo deploy/front/front.sh erzeugen` (startet die
    Container des Tors, lädt den Proxy neu). Bei Kunden aus der Oberfläche übernimmt das der Agent.
 
@@ -247,6 +248,25 @@ zweite Maske an: Automato selbst, NetBox über den Benutzer vom Tor
 - **Sitzung:** 12 h, alle 5 min bei Keycloak erneuert.
 - **Keycloak erreichbar:** die Anmeldeseite für alle Benutzer (Kunden über die WAF); dieser Proxy
   braucht Keycloak für Token und Schlüssel (`AUTOMATO_FRONT_KEYCLOAK_INTERN`).
+
+**Client-Secret aus dem Cockpit (1.13.0, ADR 0055).** Sobald das Tor an ist, legt `front.sh` einen
+Empfangsschlüssel an (`deploy/front/tor/empfang.key`, RSA 3072, nur root). Seinen öffentlichen
+Teil holt das Cockpit mit dem Inventar, versiegelt damit das Client-Secret von `automato-front`
+seiner Kunden und schickt es mit den Freigaben; der Host-Agent (`front.sh sync`) entschlüsselt,
+prüft (Realm eines Kunden aus dem Cockpit, Client `automato-front`) und übernimmt es nach
+`tor/<realm>.env` – das Cookie-Secret bleibt, der Container des Realms startet neu. Automato und
+seine Datenbank sehen nur das Chiffrat.
+
+```bash
+sudo deploy/front/front.sh tor-empfang       # Kennung und je Realm: von Hand bzw. aus dem Cockpit
+sudo deploy/front/front.sh tor-empfang neu   # neuer Schlüssel; das Cockpit versiegelt neu
+```
+
+- **Von Hand bleibt möglich:** `front.sh tor <realm>` gilt, bis das Cockpit ein anderes Secret
+  schickt (z. B. nach „Geheimnis erneuern“ im Cockpit).
+- **Verworfen** (falscher Realm/Client, alter Schlüssel, nicht entschlüsselbar): Warnung im Log
+  des Agenten und in `front.sh pruefen`, Grund ohne Inhalt in `status.json`; das bisherige Secret
+  bleibt.
 
 ## 7. Prüfen
 
@@ -332,7 +352,8 @@ warnt, wenn Orchestrator und Worker verschieden auflösen.
   (veröffentlichte Ports sonst aus jedem Netz erreichbar).
 - Nach einem Update bleiben Kunden und erzeugte Dateien erhalten (`deploy/front/kunden/`,
   `deploy/front/generated/`, nicht im Repo); `front.sh erzeugen` schreibt alles neu.
-- **Sicherung:** `deploy/front/kunden/` und `deploy/front/tor/` (Client-Secrets) zusammen mit
+- **Sicherung:** `deploy/front/kunden/` und `deploy/front/tor/` (Client-Secrets, seit 1.13.0 auch
+  der Empfangsschlüssel) zusammen mit
   `.env` und `deploy/proxy/pki` sichern (wie die Konfiguration in `INSTALLATION-PROD.md` 7).
 - **Update auf 1.4.0:** `update.sh` startet den Proxy im neuen Netz `automato-front-tor`; danach
   `sudo deploy/front/front.sh erzeugen`. Ohne `AUTOMATO_FRONT_TOR=an` bleibt alles wie in 1.3.
@@ -355,8 +376,9 @@ Chat, Ticket oder Datei). Ein erneutes `cockpit-token` macht das alte ungültig.
   Personen; ohne eingerichtetes Token `404`. Inhalt: nur Namen und Adressen.
 - Seit 1.11.0 (ADR 0054) schickt das Cockpit mit demselben Token auch die **Freigaben**
   (`PUT /api/freigaben`): Kunden, Werkzeuge, Zugriff und Realm für das Kunden-Portal. Das Token
-  darf damit Kunden des Kunden-Portals anlegen, ändern und entfernen (nicht Mandant, Kunden und
-  Rolle) – nur im Cockpit hinterlegen.
+  darf damit Kunden des Kunden-Portals anlegen, ändern und entfernen, seit 1.13.0 auch Mandant,
+  Kunden und Rolle wählen (ADR 0054 Nachtrag) – nur im Cockpit hinterlegen. Seit 1.13.0 (ADR 0055) liefert es damit auch das
+  Client-Secret des Anmelde-Tors versiegelt (Abschnitt 6).
 - Das Cockpit erreicht die Oberfläche: seine Adresse steht in `AUTOMATO_UI_ALLOW`, und es vertraut
   dem Zertifikat (im Cockpit `deploy/certs/inventory-ca.pem`, wenn es eine interne CA ist).
 
