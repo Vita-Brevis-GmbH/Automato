@@ -3,9 +3,8 @@
 // Zuordnung aus dem Cockpit Mandant, Kunden und Rolle nur lesbar.
 // Ebenfalls 1.13.0 (Cockpit ADR 0011 Stufe B, ADR 0054 zweiter Nachtrag): Kacheln der Startseite aus dem Cockpit
 // nur lesbar, ohne `kacheln` wieder änderbar.
-import { expect, test } from "./fixtures";
-
-const COCKPIT = { Authorization: "Bearer e2e-cockpit-token" }; // e2e/server.py
+// Seit 1.14.0 (ADR 0058) mit verbundenem Cockpit alles nur lesbar („Ansehen“); wieder änderbar nur ohne Cockpit.
+import { cockpit, COCKPIT, expect, testCockpit as test } from "./cockpit";
 
 test("Kunden-Portal: Zuordnung aus dem Cockpit (1.13.0)", async ({ page }) => {
   const retry = test.info().retry;
@@ -33,11 +32,11 @@ test("Kunden-Portal: Zuordnung aus dem Cockpit (1.13.0)", async ({ page }) => {
   await page.reload();
   await expect(row).toContainText("triage");
   await expect(row).not.toContainText("noch kein Mandant");
-  await row.locator("button:has-text('Bearbeiten')").click();
+  await row.locator("button:has-text('Ansehen')").click();
   await expect(page.locator(".modal")).toContainText("Mandant, Kunden und Rolle aus dem Cockpit");
   await expect(page.locator("#pc-tenant")).toBeDisabled();
   await expect(page.locator("#pc-role")).toBeDisabled();
-  await page.click(".modal-foot button:has-text('Abbrechen')");
+  await page.click(".modal-foot button:has-text('Schliessen')");
 
   // aufräumen: im Cockpit entfernt, Kunde löschen
   const leer = await page.request.put("/api/freigaben", { headers: COCKPIT, data: { vertrag: 1, kunden: [] } });
@@ -54,16 +53,17 @@ test("Kunden-Portal: Kacheln aus dem Cockpit (1.13.0)", async ({ page }) => {
   // aus dem Cockpit: nur lesbar, mit Hinweis
   await page.goto("/#kundenportal");
   const row = page.locator("#portal-customers tbody tr", { hasText: "kacheln-e2e" }).first();
-  await row.locator("button:has-text('Bearbeiten')").click();
+  await row.locator("button:has-text('Ansehen')").click();
   await expect(page.locator("#portal-links-cockpit")).toContainText("Kacheln aus dem Cockpit");
   await expect(page.locator("#portal-links input").nth(0)).toHaveValue("Ticketsystem");
   await expect(page.locator("#portal-links input").nth(0)).toBeDisabled();
   await expect(page.locator(".modal button:has-text('+ Kachel')")).toHaveCount(0);
-  await page.click(".modal-foot button:has-text('Abbrechen')");
+  await page.click(".modal-foot button:has-text('Schliessen')");
 
-  // wieder ohne kacheln: der Stand bleibt, in Automato wieder änderbar
+  // wieder ohne kacheln: der Stand bleibt, ohne Cockpit (1.14.0) in Automato wieder änderbar
   put = await page.request.put("/api/freigaben", { headers: COCKPIT, data: { vertrag: 1, kunden: [kunde] } });
   expect(put.status()).toBe(200);
+  await cockpit(page.request, false);
   await page.reload();
   await row.locator("button:has-text('Bearbeiten')").click();
   await expect(page.locator("#portal-links-cockpit")).toHaveCount(0);
@@ -72,6 +72,7 @@ test("Kunden-Portal: Kacheln aus dem Cockpit (1.13.0)", async ({ page }) => {
   await page.click(".modal-foot button:has-text('Abbrechen')");
 
   // aufräumen: im Cockpit entfernt
+  await cockpit(page.request, true);
   const leer = await page.request.put("/api/freigaben", { headers: COCKPIT, data: { vertrag: 1, kunden: [] } });
   expect((await leer.json()).entfernt).toEqual(["kacheln-e2e"]);
 });

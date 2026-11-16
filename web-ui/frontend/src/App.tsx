@@ -188,13 +188,13 @@ export default function App() {
       </Splash>
     );
   }
-  if (boot.me.missingAssignment) {
-    // Kunden-Realm ohne Mandant/Kunden in Automato (1.13.0): keine Rechte – eine klare Meldung
-    // statt Fehlern beim Laden
+  if (boot.me.missingAssignment || boot.me.missingRole) {
+    // Kunden-Realm ohne Mandant/Kunden in Automato (1.13.0) bzw. ohne Rolle aus dem Cockpit
+    // (1.14.0, ADR 0058): keine Rechte – eine klare Meldung statt Fehlern beim Laden
     return (
       <Splash>
-        <div id="zuordnung-fehlt">
-          <Note warn>{boot.me.missingAssignment}</Note>
+        <div id={boot.me.missingRole ? "rolle-fehlt" : "zuordnung-fehlt"}>
+          <Note warn>{boot.me.missingRole ?? boot.me.missingAssignment}</Note>
         </div>
         <div style={{ display: "flex", gap: 9 }}>
           <button className="btn btn-primary" onClick={() => window.location.reload()}>

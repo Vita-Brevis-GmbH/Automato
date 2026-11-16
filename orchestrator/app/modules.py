@@ -121,6 +121,7 @@ MODULES: tuple[Module, ...] = (
             "sites",
             "tenant_lock",
             "topology",
+            "verwaltung",
             "virtual",
         ),
         views=(

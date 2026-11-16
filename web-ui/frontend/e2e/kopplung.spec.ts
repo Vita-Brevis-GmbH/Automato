@@ -1,14 +1,16 @@
 // 1.13.0 (Anwender 2026-11-16, Cockpit ADR 0011 Stufe C: „Automato mit dem Cockpit koppeln – bisher Token
 // kopieren – künftig Kopplung mit Einmal-Code“; ADR 0057): im Kunden-Portal einen Einmal-Code erzeugen, das
 // Cockpit löst ihn mit POST /api/kopplung ein und holt mit seinem neuen Token das Inventar; entkoppeln.
-import { expect, test } from "./fixtures";
+// Seit 1.14.0 (ADR 0058): solange gekoppelt, ist das Kunden-Portal nur lesbar.
+import { expect, testOhneCockpit as test } from "./cockpit";
 
 test("Kunden-Portal: Kopplung mit dem Cockpit über einen Einmal-Code (1.13.0)", async ({ page }) => {
   await page.goto("/#kundenportal");
   const card = page.locator("#kopplung-cockpit");
   await expect(card.locator("#kopplung-stand")).toHaveText("Nicht gekoppelt");
-  // e2e/server.py setzt ein Token in der Umgebung (früherer Weg) – es gilt zusätzlich
-  await expect(card).toContainText("AUTOMATO_COCKPIT_TOKEN");
+  // ohne Cockpit: Kunden in der Oberfläche anlegen
+  await expect(page.locator("#portal-nur-cockpit")).toHaveCount(0);
+  await expect(page.locator("button:has-text('+ Kunde')")).toBeVisible();
 
   await card.locator("#kopplung-neu").click();
   const code = (await card.locator("#kopplung-code").innerText()).trim();
@@ -31,11 +33,17 @@ test("Kunden-Portal: Kopplung mit dem Cockpit über einen Einmal-Code (1.13.0)",
   await expect(card.locator("#kopplung-stand")).toContainText("Gekoppelt mit „Cockpit E2E“", { timeout: 15_000 });
   await expect(card.locator("#kopplung-code")).toHaveCount(0);
   await expect(card.locator("#kopplung-zuletzt")).toContainText("Zuletzt benutzt");
+  // gekoppelt (1.14.0): Kunden nur noch im Cockpit – das Kunden-Portal ist nur lesbar
+  await page.reload();
+  await expect(page.locator("#portal-nur-cockpit")).toContainText("nur noch im Cockpit");
+  await expect(page.locator("button:has-text('+ Kunde')")).toHaveCount(0);
 
-  // entkoppeln: das Token gilt nicht mehr (das aus der Umgebung weiter)
+  // entkoppeln: das Token gilt nicht mehr, das Kunden-Portal ist wieder in der Oberfläche pflegbar
   page.once("dialog", (d) => d.accept());
   await card.locator("button:has-text('Entkoppeln')").click();
   await expect(card.locator("#kopplung-stand")).toHaveText("Nicht gekoppelt");
   const danach = await page.request.get("/api/inventory", { headers: { Authorization: `Bearer ${token}` } });
-  expect(danach.status()).toBe(401);
+  expect(danach.status()).toBe(404); // ohne Kopplung und ohne Token aus .env gibt es den Endpunkt nicht
+  await page.reload();
+  await expect(page.locator("button:has-text('+ Kunde')")).toBeVisible();
 });

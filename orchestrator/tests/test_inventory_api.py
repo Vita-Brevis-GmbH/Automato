@@ -92,7 +92,7 @@ def test_inventar_aus_der_topologie(client, tmp_path):
         "netbox": "https://kunde-a-nb.mgmt.example.ch", "automato": None, "magister": None,
         "cmdb": None, "quelle": None, "werkzeuge": None, "zugriff": None, "netze": [],
         "realm": None, "automato_zugeordnet": None, "zuordnung": None,
-        "kacheln": None, "kacheln_von": None,
+        "kacheln": None, "kacheln_von": None, "benutzer": None,  # 1.14.0
     }]  # fmt: skip
 
 
@@ -254,7 +254,8 @@ def test_mandanten_rollen_und_zuordnung_je_kunde(client, tmp_path, session_facto
     assert kunden["kunde-a"]["automato_zugeordnet"] is True
     assert kunden["kunde-a"]["zuordnung"] == {"mandant": ids["Rechenzentrum"],
                                               "kunden": sorted([a, b]), "rolle": "triage",
-                                              "von": "cockpit"}  # fmt: skip
+                                              "von": "cockpit",
+                                              "kunde_angelegt": None}  # fmt: skip
     assert kunden["kunde-b"]["automato_zugeordnet"] is False  # Mandant ohne Kunden
     assert kunden["kunde-b"]["zuordnung"]["von"] == "automato"
     assert kunden["kunde-c"]["automato_zugeordnet"] is None  # ohne Doku
@@ -299,7 +300,8 @@ def test_zuordnung_mit_geloeschtem_kunden(client, tmp_path, session_factory):
         s.commit()
     k = kunde()
     assert k["automato_zugeordnet"] is False
-    assert k["zuordnung"] == {"mandant": tid, "kunden": [], "rolle": "viewer", "von": "cockpit"}
+    assert k["zuordnung"] == {"mandant": tid, "kunden": [], "rolle": "viewer", "von": "cockpit",
+                              "kunde_angelegt": None}  # fmt: skip
     with session_factory() as s:  # gespeichert bleibt, was das Cockpit schickte
         assert s.query(PortalCustomer).one().customer_ids == ids
 

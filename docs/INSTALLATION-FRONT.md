@@ -154,6 +154,9 @@ sudo deploy/front/front.sh entfernen kunde-a --ja             # NetBox und Daten
 ```
 
 - Derselbe Kurzname wie auf dem NetBox-Host (`netbox-host.sh neu kunde-a`).
+- **Mit verbundenem Cockpit** (seit 1.14.0, ADR 0058) lehnen `kunde`, `link` und `entfernen` ab –
+  Kunden entstehen dann nur im Cockpit. Nur im Notfall mit `--trotzdem` (Warnung; das Cockpit
+  sieht den Kunden mit Herkunft „Hand“ und kann ihn übernehmen bzw. abbauen).
 - **`--doc`:** Anmeldung über Keycloak – im Client `automato-web` je Kunde die *Valid redirect
   URI* `https://kunde-a-doc.mgmt.example.ch/*` und den *Web origin* ergänzen (das Werkzeug zeigt
   beides an). Die Anmeldeseite (Keycloak) muss für die Benutzer erreichbar sein.

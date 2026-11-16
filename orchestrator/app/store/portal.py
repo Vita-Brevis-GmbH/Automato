@@ -66,6 +66,11 @@ class RealmScope:
     customer_ids: tuple[int, ...]
     default_role: str
     name: str = ""  # Anzeigename (Meldung bei fehlender Zuordnung, 1.13.0)
+    # 1.14.0 (ADR 0058): Kunde aus dem Cockpit - die Rolle aus dem Token zaehlt nicht
+    from_cockpit: bool = False
+    # 1.14.0: Benutzername -> Rolle aus dem Cockpit (`benutzer`); None = keine Aussage, gesetzt
+    # haben nur diese Benutzer Rechte
+    users: dict[str, str] | None = None
 
     @property
     def assigned(self) -> bool:
@@ -276,7 +281,21 @@ def realm_scopes(session: Session, main_realm: str | None) -> dict[str, RealmSco
             customer_ids=tuple(live_ids(pc, live)),
             default_role=caps.normalize(pc.default_role),
             name=pc.name or pc.short_name,
+            from_cockpit=pc.source == SOURCE_COCKPIT,
+            users=users_of(pc.users),
         )
+    return out
+
+
+def users_of(users: list | None) -> dict[str, str] | None:
+    """Benutzer aus dem Cockpit (1.14.0, ADR 0058): gespeicherte Liste -> Benutzername ->
+    Kunden-Rolle (unbekannte Rolle = viewer, nie admin); None = keine Aussage."""
+    if users is None:
+        return None
+    out: dict[str, str] = {}
+    for e in users:
+        if isinstance(e, dict) and isinstance(e.get("benutzer"), str):
+            out[e["benutzer"].strip().lower()] = caps.normalize(e.get("rolle"))
     return out
 
 
@@ -340,6 +359,9 @@ def out(pc: PortalCustomer, domain: str = "", live: dict[int, set[int]] | None =
         "scope_source": pc.scope_source or SCOPE_AUTOMATO,
         # 1.13.0: Kacheln aus dem Cockpit (dann nur lesbar)
         "links_source": pc.links_source or SCOPE_AUTOMATO,
+        # 1.14.0 (ADR 0058): Benutzer des Realms mit Rolle aus dem Cockpit (None = alle mit der
+        # Standard-Rolle)
+        "users": list(pc.users) if pc.users is not None else None,
         "assigned": assigned(pc, live),
         "addresses": addresses,
         "updated_by": pc.updated_by,
@@ -355,13 +377,15 @@ def listing(session: Session) -> list[PortalCustomer]:
     )
 
 
-def desired(session: Session) -> dict:
+def desired(session: Session, cockpit: bool = False) -> dict:
     """Soll-Stand fuer den Front-Proxy (nur, was front.sh braucht - kein Mandant). Seit 1.4.0
     mit dem Realm: das Anmelde-Tor fragt je Kunde in dessen Realm (ADR 0051); ohne Realm
     gesperrt. Seit 1.5.0 mit dem Zugriff je Kunde (`zugriff`, `netze`), seit 1.11.0 mit NetBox
     als Werkzeug (`nb`) und der Herkunft (`quelle`: oberflaeche | cockpit, ADR 0054). Seit 1.13.0
     (ADR 0055) mit den versiegelten Client-Secrets des Anmelde-Tors aus dem Cockpit
-    (`tor_geheimnisse`, nur Chiffrat; nur, wenn es welche gibt)."""
+    (`tor_geheimnisse`, nur Chiffrat; nur, wenn es welche gibt). Seit 1.14.0 (ADR 0058) mit
+    `verwaltung: cockpit`, wenn ein Cockpit verbunden ist (`cockpit`) - dann aendert `front.sh`
+    Kunden von Hand nur noch mit `--trotzdem`."""
     kunden = listing(session)
     data = {
         "version": 1,
@@ -385,6 +409,8 @@ def desired(session: Session) -> dict:
     )  # fmt: skip
     if tor:
         data["tor_geheimnisse"] = tor
+    if cockpit:
+        data["verwaltung"] = "cockpit"
     return data
 
 
@@ -393,7 +419,8 @@ def _content(data: dict) -> dict:
     return {k: v for k, v in data.items() if k != "erzeugt"}
 
 
-def write_desired(session: Session, state_dir: str, only_if_changed: bool = False) -> str | None:
+def write_desired(session: Session, state_dir: str, only_if_changed: bool = False,
+                  cockpit: bool = False) -> str | None:  # fmt: skip
     """`soll.json` atomar schreiben; ohne Ordner (nicht eingerichtet) nichts. Wirft OSError.
 
     `only_if_changed` (beim Start, 1.5.0): nur schreiben, wenn sich der Inhalt gegenueber der
@@ -402,7 +429,7 @@ def write_desired(session: Session, state_dir: str, only_if_changed: bool = Fals
     if not state_dir:
         return None
     folder = Path(state_dir)
-    soll = desired(session)
+    soll = desired(session, cockpit)
     if only_if_changed:
         try:
             current = json.loads((folder / SOLL).read_text(encoding="utf-8"))

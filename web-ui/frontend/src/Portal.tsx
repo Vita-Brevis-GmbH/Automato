@@ -10,6 +10,7 @@ import {
   PortalCustomerIn,
   PortalLink,
   PortalListing,
+  PortalUser,
   Tenant,
   updatePortalCustomer,
 } from "./api";
@@ -25,6 +26,9 @@ import { Empty, ErrorBox, fmtTime, Loading, Modal, Note, PageHead } from "./ui";
 // Rolle und Kacheln; NetBox (-nb) ist ein wählbares Werkzeug.
 // Seit 1.13.0 auf Wunsch des Cockpits auch Mandant, Kunden und Rolle bzw. die Kacheln aus dem
 // Cockpit – dann hier nur lesbar.
+// Seit 1.14.0 (ADR 0058): ist Automato mit einem Cockpit verbunden (gekoppelt bzw. Token), entstehen
+// und ändern sich Kunden nur noch im Cockpit – hier ist alles nur lesbar; Benutzer und Rollen der
+// Realm-Benutzer kommen aus dem Cockpit.
 
 const ROLES: [string, string][] = [
   ["viewer", L("liest die Doku", "reads the documentation")],
@@ -215,6 +219,8 @@ export default function Portal({ tenants }: { tenants: Tenant[] }) {
   };
 
   const agent = data?.agent;
+  // 1.14.0 (ADR 0058): mit verbundenem Cockpit nur lesbar
+  const readOnly = data?.verwaltung === "cockpit";
   const tenantName = (id: number | null) => tenants.find((t) => t.id === id)?.name ?? (id == null ? "–" : `#${id}`);
 
   return (
@@ -222,9 +228,11 @@ export default function Portal({ tenants }: { tenants: Tenant[] }) {
       <PageHead
         title={L("Kunden-Portal", "Customer portal")}
         actions={
-          <button className="btn btn-primary btn-sm" onClick={() => setEditing("new")}>
-            {L("+ Kunde", "+ Customer")}
-          </button>
+          readOnly ? undefined : (
+            <button className="btn btn-primary btn-sm" onClick={() => setEditing("new")}>
+              {L("+ Kunde", "+ Customer")}
+            </button>
+          )
         }
       >
         {L(
@@ -248,6 +256,16 @@ export default function Portal({ tenants }: { tenants: Tenant[] }) {
       </PageHead>
       <ErrorBox error={err} onClose={() => setErr(null)} />
       {note && <Note warn>{note}</Note>}
+      {readOnly && (
+        <div id="portal-nur-cockpit">
+          <Note>
+            {L(
+              "Mit dem Cockpit verbunden: Kunden, Benutzer und Rollen entstehen und ändern sich nur noch im Cockpit (Kundenregister) – hier nur lesbar. Kunden aus der Oberfläche übernimmt das Cockpit dort („Übernehmen“).",
+              "Connected to the cockpit: customers, users and roles are only created and changed in the cockpit (customer register) – read-only here. The cockpit takes over customers from the UI there (“Take over”).",
+            )}
+          </Note>
+        </div>
+      )}
 
       {agent && (
         <div className="card" id="portal-agent">
@@ -329,6 +347,18 @@ export default function Portal({ tenants }: { tenants: Tenant[] }) {
                             {L("aus dem Cockpit", "from the cockpit")}
                           </span>
                         )}
+                        {readOnly && !fromCockpit(c) && (
+                          <span
+                            className="chip warn portal-uebernehmen"
+                            style={{ marginLeft: 6 }}
+                            title={L(
+                              "Kunde aus der Oberfläche – im Cockpit übernehmen (Kundenregister → Übernehmen)",
+                              "Customer from the UI – take it over in the cockpit (customer register → Take over)",
+                            )}
+                          >
+                            {L("im Cockpit übernehmen", "take over in the cockpit")}
+                          </span>
+                        )}
                       </td>
                       <td>{tools(c)}</td>
                       <td>
@@ -359,6 +389,18 @@ export default function Portal({ tenants }: { tenants: Tenant[] }) {
                             {L("aus dem Cockpit", "from the cockpit")}
                           </span>
                         )}
+                        {c.users != null && (
+                          <span
+                            className="chip info portal-benutzer"
+                            style={{ marginLeft: 6 }}
+                            title={L(
+                              "Nur diese Benutzer des Realms haben Rechte – Rollen aus dem Cockpit",
+                              "Only these users of the realm have permissions – roles from the cockpit",
+                            )}
+                          >
+                            {L(`${c.users.length} Benutzer`, `${c.users.length} users`)}
+                          </span>
+                        )}
                         {fromCockpit(c) && c.assigned === false && c.realm && c.realm !== data.keycloak.main_realm && (
                           <div className="portal-zuordnung-fehlt">
                             <span className="chip warn">
@@ -382,9 +424,9 @@ export default function Portal({ tenants }: { tenants: Tenant[] }) {
                           {L("Einrichtung", "Setup")}
                         </button>{" "}
                         <button className="linkbtn" onClick={() => setEditing(c)}>
-                          {L("Bearbeiten", "Edit")}
+                          {readOnly ? L("Ansehen", "View") : L("Bearbeiten", "Edit")}
                         </button>
-                        {!fromCockpit(c) && (
+                        {!fromCockpit(c) && !readOnly && (
                           <>
                             {" "}
                             <button className="linkbtn danger" onClick={() => remove(c)}>
@@ -419,6 +461,7 @@ export default function Portal({ tenants }: { tenants: Tenant[] }) {
           existing={editing === "new" ? null : editing}
           tenants={tenants}
           domain={data.domain}
+          readOnly={readOnly}
           onClose={() => setEditing(null)}
           onSaved={(n) => {
             setEditing(null);
@@ -435,12 +478,14 @@ function PortalEditor({
   existing,
   tenants,
   domain,
+  readOnly,
   onClose,
   onSaved,
 }: {
   existing: PortalCustomer | null;
   tenants: Tenant[];
   domain: string;
+  readOnly: boolean; // 1.14.0 (ADR 0058): mit verbundenem Cockpit alles nur lesbar
   onClose: () => void;
   onSaved: (note: string | null) => void;
 }) {
@@ -469,11 +514,11 @@ function PortalEditor({
   const [netsText, setNetsText] = useState(() => (existing?.access_nets ?? []).join("\n"));
   const set = (patch: Partial<PortalCustomerIn>) => setF((old) => ({ ...old, ...patch }));
   // Kunde aus dem Cockpit (1.11.0, ADR 0054): Kurzname, Name, Werkzeuge, Zugriff und Realm nur lesbar
-  const locked = fromCockpit(existing);
+  const locked = readOnly || fromCockpit(existing);
   // 1.13.0: Mandant, Kunden und Rolle aus dem Cockpit – dann auch diese nur lesbar
-  const scopeLocked = existing?.scope_source === "cockpit";
+  const scopeLocked = readOnly || existing?.scope_source === "cockpit";
   // 1.13.0: Kacheln aus dem Cockpit – dann auch diese nur lesbar
-  const linksLocked = existing?.links_source === "cockpit";
+  const linksLocked = readOnly || existing?.links_source === "cockpit";
 
   useEffect(() => {
     if (f.tenant_id == null) {
@@ -511,18 +556,32 @@ function PortalEditor({
       title={existing ? L(`Kunde „${existing.short_name}“`, `Customer “${existing.short_name}”`) : L("Neuer Kunde im Portal", "New customer in the portal")}
       onClose={onClose}
       footer={
-        <>
+        readOnly ? (
           <button className="btn btn-ghost" onClick={onClose}>
-            {L("Abbrechen", "Cancel")}
+            {L("Schliessen", "Close")}
           </button>
-          <button className="btn btn-primary" onClick={save} disabled={busy || !f.short_name.trim() || !f.name.trim()}>
-            {busy ? L("Speichere…", "Saving…") : L("Speichern", "Save")}
-          </button>
-        </>
+        ) : (
+          <>
+            <button className="btn btn-ghost" onClick={onClose}>
+              {L("Abbrechen", "Cancel")}
+            </button>
+            <button className="btn btn-primary" onClick={save} disabled={busy || !f.short_name.trim() || !f.name.trim()}>
+              {busy ? L("Speichere…", "Saving…") : L("Speichern", "Save")}
+            </button>
+          </>
+        )
       }
     >
       <ErrorBox error={err} />
-      {locked && (
+      {readOnly && (
+        <Note>
+          {L(
+            "Mit dem Cockpit verbunden: nur lesbar – im Cockpit beim Kunden ändern.",
+            "Connected to the cockpit: read-only – change it in the cockpit at the customer.",
+          )}
+        </Note>
+      )}
+      {locked && !readOnly && (
         <Note>
           {L(
             "Aus dem Cockpit: Kurzname, Name, Werkzeuge, Zugriff und Realm pflegt das Cockpit (Kundenregister) – hier nur Mandant, Kunden, Rolle und Kacheln. Entfernen nur im Cockpit.",
@@ -605,7 +664,7 @@ function PortalEditor({
           )}
         </div>
       </div>
-      {scopeLocked && (
+      {existing?.scope_source === "cockpit" && (
         <Note>
           {L(
             "Mandant, Kunden und Rolle aus dem Cockpit – dort beim Kunden ändern.",
@@ -645,12 +704,21 @@ function PortalEditor({
                 }
               />{" "}
               {c.name}
+              {existing?.kunde_angelegt === c.id && (
+                <span className="chip info" style={{ marginLeft: 6 }}>
+                  {L("für das Cockpit angelegt", "created for the cockpit")}
+                </span>
+              )}
             </label>
           ))}
         </div>
       )}
       <div className="field">
-        <label htmlFor="pc-role">{L("Rolle ohne Angabe im Realm", "Role without one from the realm")}</label>
+        <label htmlFor="pc-role">
+          {fromCockpit(existing)
+            ? L("Rolle der Benutzer des Realms", "Role of the realm's users")
+            : L("Rolle ohne Angabe im Realm", "Role without one from the realm")}
+        </label>
         <select id="pc-role" className="input" value={f.default_role} disabled={scopeLocked} onChange={(e) => set({ default_role: e.target.value })}>
           {ROLES.map(([role, text]) => (
             <option key={role} value={role}>
@@ -660,8 +728,10 @@ function PortalEditor({
         </select>
       </div>
 
+      {existing && fromCockpit(existing) && <PortalUsers users={existing.users ?? null} />}
+
       <h3 style={{ marginTop: 12 }}>{L("Weitere Kacheln der Startseite", "Further tiles of the start page")}</h3>
-      {linksLocked && (
+      {existing?.links_source === "cockpit" && (
         <div id="portal-links-cockpit">
           <Note>
             {L(
@@ -702,5 +772,46 @@ function PortalEditor({
         </button>
       )}
     </Modal>
+  );
+}
+
+// Benutzer und Rollen aus dem Cockpit (1.14.0, ADR 0058): nur lesbar. Ohne Liste haben alle
+// Benutzer des Realms die Rolle oben; mit Liste nur diese, alle anderen sehen eine Meldung.
+function PortalUsers({ users }: { users: PortalUser[] | null }) {
+  return (
+    <div className="field" id="portal-users">
+      <span className="label">{L("Benutzer und Rollen (aus dem Cockpit)", "Users and roles (from the cockpit)")}</span>
+      {users == null ? (
+        <div className="hint">
+          {L(
+            "Keine Liste aus dem Cockpit – alle Benutzer des Realms haben die Rolle oben. Die Rolle aus dem Realm zählt bei Kunden aus dem Cockpit nicht.",
+            "No list from the cockpit – all users of the realm have the role above. The role from the realm does not count for customers from the cockpit.",
+          )}
+        </div>
+      ) : users.length === 0 ? (
+        <div className="hint">
+          {L("Leere Liste – kein Benutzer des Realms hat Rechte.", "Empty list – no user of the realm has permissions.")}
+        </div>
+      ) : (
+        <>
+          <div className="hint">
+            {L(
+              "Nur diese Benutzer des Realms haben Rechte; alle anderen sehen „keine Rolle vergeben“. Ändern im Cockpit beim Kunden.",
+              "Only these users of the realm have permissions; all others see “no role assigned”. Change it in the cockpit at the customer.",
+            )}
+          </div>
+          <table className="compact" id="portal-users-list">
+            <tbody>
+              {users.map((u) => (
+                <tr key={u.benutzer}>
+                  <td className="mono">{u.benutzer}</td>
+                  <td>{u.rolle}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+    </div>
   );
 }

@@ -23,15 +23,22 @@ os.environ.setdefault("AUTOMATO_DOC_STALE_SECONDS", "120")
 # 0.133.2: alle Applikationen vorrechnen nicht in den UI-Tests - nach jeder Aenderung rechnete der
 # Hintergrund sonst alle Beispiel-Applikationen (Uebersicht laufend neu); geprueft in Python-Tests
 os.environ.setdefault("AUTOMATO_DOC_WARM_ALL", "false")
-# 1.11.0 (ADR 0054): Freigaben aus dem Cockpit (PUT /freigaben) in release_1110.spec.ts - nur ein
-# Test-Token des lokalen UI-Servers, kein Geheimnis
-os.environ.setdefault("AUTOMATO_COCKPIT_TOKEN", "e2e-cockpit-token")
+# 1.11.0 (ADR 0054): Freigaben aus dem Cockpit (PUT /freigaben) in den UI-Tests - nur ein
+# Test-Token des lokalen UI-Servers, kein Geheimnis. Seit 1.14.0 (ADR 0058) nicht mehr aus der
+# Umgebung, sondern als Kopplung (umschaltbar): mit verbundenem Cockpit ist das Kunden-Portal nur
+# lesbar, die Tests der Oberflaeche ohne Cockpit entkoppeln dafuer (`PUT`/`DELETE /e2e/cockpit`,
+# e2e/cockpit.ts)
+E2E_COCKPIT_TOKEN = "e2e-cockpit-token"
+
+import hashlib  # noqa: E402
+from datetime import UTC, datetime  # noqa: E402
 
 import uvicorn  # noqa: E402
 from app.api import jobs  # noqa: E402
-from app.db import get_engine  # noqa: E402
+from app.db import get_engine, get_sessionmaker  # noqa: E402
 from app.main import create_app  # noqa: E402
 from app.models import Base  # noqa: E402
+from app.store import kopplung  # noqa: E402
 from sqlalchemy import event  # noqa: E402
 
 sys.path.insert(0, str(HERE))
@@ -45,4 +52,21 @@ Base.metadata.create_all(get_engine())
 jobs.celery_app.dispatch_collect = lambda platform, run_id: None  # Laeufe bleiben "wartet"
 app = create_app()
 seed.run(app)
+
+
+def _cockpit(gekoppelt: bool) -> dict:
+    """Nur im UI-Testserver: mit dem Test-Token koppeln bzw. entkoppeln (1.14.0)."""
+    with get_sessionmaker()() as session:
+        row = kopplung._ensure(session, kopplung.COCKPIT)
+        token = hashlib.sha256(E2E_COCKPIT_TOKEN.encode()).hexdigest()
+        row.token_hash = token if gekoppelt else None
+        row.peer_name = "Cockpit E2E" if gekoppelt else None
+        row.coupled_at = datetime.now(UTC) if gekoppelt else None
+        session.commit()
+    return {"gekoppelt": gekoppelt}
+
+
+app.add_api_route("/e2e/cockpit", lambda: _cockpit(True), methods=["PUT"])
+app.add_api_route("/e2e/cockpit", lambda: _cockpit(False), methods=["DELETE"])
+_cockpit(True)
 uvicorn.run(app, host="127.0.0.1", port=int(sys.argv[1]) if len(sys.argv) > 1 else 8000)

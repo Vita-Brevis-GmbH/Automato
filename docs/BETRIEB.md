@@ -2008,6 +2008,8 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     (`customer_admin`, zusätzlich die Kunden-Benutzer des eigenen Kunden zuordnen – höchstens
     mit der eigenen Rolle, nie das eigene Konto, nie andere Kunden). Kunden-Admins finden unter
     Administration → Kunden-Benutzer nur ihre Kunden; ihre Zuordnungen wirken nie auf Betreuer.
+    Seit 1.14.0 (ADR 0058) nicht bei Kunden aus dem Cockpit: dort vergibt der Betreiber Benutzer
+    und Rollen im Cockpit (siehe „Kunden, Benutzer und Rollen nur aus dem Cockpit“).
     Die Rolle gilt je Kunde. Alternativ das Keycloak-Attribut `customer_role` (Mapper
     `customer_role`; im bestehenden Realm von Hand anlegen, `deploy/keycloak/README.md`;
     `AUTOMATO_OIDC_CUSTOMER_ROLE_CLAIM`); Claim und Zuordnung zusammen = je Kunde die höhere
@@ -2400,7 +2402,8 @@ Client-Zertifikat und die passenden Zeilen der `agent.env`.
   Dienst „Read-only file system“, schreibt er an eine neue Stelle – Meldung an die Entwicklung.
 - **Front-Proxy** (1.2.0, `docs/INSTALLATION-FRONT.md`): Startseiten `<kunde>.<domain>`,
   Weiterleitung `<kunde>-nb`/`-doc`/`-um`/`-cmdb` und internes Portal `start.<intern>` laufen im
-  Proxy von Automato. Kunden pflegen mit `sudo deploy/front/front.sh kunde|link|entfernen|liste`,
+  Proxy von Automato. Kunden pflegen mit `sudo deploy/front/front.sh kunde|link|entfernen|liste`
+  (mit verbundenem Cockpit seit 1.14.0 nur noch im Notfall mit `--trotzdem`, ADR 0058),
   prüfen mit `front.sh pruefen`; Einstellungen `AUTOMATO_FRONT_*` in `.env`, danach
   `front.sh erzeugen`. Kunden-Adressen nur von der WAF und aus dem Management-Netz.
 - **Kunden-Portal** (1.3.0, ADR 0050): Administration → Kunden-Portal (Admin) – Kunden anlegen,
@@ -2440,6 +2443,28 @@ Client-Zertifikat und die passenden Zeilen der `agent.env`.
   bisherigen und sind hier wieder änderbar. Für eine Kachel gilt hier wie im Cockpit: Titel
   höchstens 60 Zeichen, Adresse mit `https://` (höchstens 500 Zeichen, ohne Leerzeichen),
   Beschreibung höchstens 200 Zeichen, höchstens 20 Kacheln.
+- **Kunden, Benutzer und Rollen nur aus dem Cockpit** (1.14.0, ADR 0058): ist Automato mit einem
+  Cockpit verbunden (gekoppelt oder `AUTOMATO_COCKPIT_TOKEN`), ist das Kunden-Portal nur lesbar –
+  kein „+ Kunde“, „Ansehen“ statt „Bearbeiten“, kein Entfernen (die API antwortet `409`). Kunden,
+  die noch aus der Oberfläche stammen, tragen „im Cockpit übernehmen“: im Cockpit beim
+  Kundenregister übernehmen. Ohne Cockpit wie bisher. Das Cockpit kann zusätzlich
+  - den **Kunden in Automato anlegen** lassen (Freigaben: `zuordnung.kunde_anlegen`): Automato
+    legt im gewählten Mandanten einen Kunden mit dem Namen des Portal-Kunden an (gibt es den Namen
+    schon: „<Name> (<Kurzname>)“) und ordnet ihn zu; im Kunden-Portal mit „für das Cockpit
+    angelegt“. Selektoren, Zonen usw. pflegt man danach wie bei jedem Kunden unter Administration
+    → Kunden.
+  - **Benutzer und Rollen** schicken: dann haben nur diese Benutzer des Realms Rechte (Liste im
+    Kunden-Portal unter „Ansehen“, Spalte Ausschnitt „N Benutzer“); alle anderen sehen nach der
+    Anmeldung „Für Sie ist in Automato keine Rolle vergeben – das macht der Betreiber im Cockpit“.
+    Ohne Liste haben alle Benutzer des Realms die Rolle der Zuordnung. Bei Kunden aus dem Cockpit
+    zählt die Rolle aus dem Realm (`customer_role`, Realm-Rollen) nicht mehr.
+  Bei Kunden aus dem Cockpit ordnet der **Kunden-Admin keine Kunden-Benutzer** mehr zu (Seite
+  „Kunden-Benutzer“ ausgeblendet bzw. nur seine übrigen Kunden; API `409` „Benutzer und Rollen
+  dieses Kunden vergibt der Betreiber im Cockpit“), früher von ihm angelegte Zuordnungen wirken
+  nicht mehr. Der globale Admin kann weiterhin zuordnen (Notzugang). `front.sh kunde|link|entfernen`
+  lehnen bei verbundenem Cockpit ab; nur im Notfall mit `--trotzdem` (Warnung „am Cockpit
+  vorbei“; das Cockpit sieht den Kunden mit Herkunft „Hand“ und kann ihn übernehmen bzw.
+  abbauen). Nach dem Update `alembic upgrade head` (Migration `0086_cockpit_verwaltung`).
 - **Kopplung mit dem Cockpit** (1.13.0, ADR 0057): Administration → Kunden-Portal, Karte
   „Cockpit“ (nur Admin) → „Code zum Koppeln erzeugen“ und den Code im Cockpit bei der
   Automato-Instanz unter „Koppeln“ eingeben (15 Minuten, einmal, höchstens 5 Fehlversuche; nur

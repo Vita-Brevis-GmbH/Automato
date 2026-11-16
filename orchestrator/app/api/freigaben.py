@@ -23,7 +23,7 @@ from app.auth.cockpit import require_cockpit_token
 from app.config import Settings, get_settings
 from app.db import get_session
 from app.i18n import L
-from app.store import freigaben, inventory, portal
+from app.store import freigaben, inventory, verwaltung
 
 router = APIRouter(prefix="/freigaben", tags=["freigaben"])
 
@@ -31,8 +31,8 @@ router = APIRouter(prefix="/freigaben", tags=["freigaben"])
 def _soll_stand(session: Session, settings: Settings) -> str | None:
     """Soll-Stand nur bei neuem Inhalt schreiben (zweimal dieselbe Anfrage = keine neue Datei,
     der Host-Agent rechnet nicht neu); Fehler als Hinweis - die Daten sind gespeichert."""
-    try:
-        portal.write_desired(session, settings.front_state_dir, only_if_changed=True)
+    try:  # 1.14.0 (ADR 0058): mit `verwaltung: cockpit` - von Hand nur noch mit --trotzdem
+        verwaltung.soll_schreiben(session, settings, only_if_changed=True)
     except OSError as exc:
         return L(f"Gespeichert, aber Soll-Stand nicht geschrieben ({settings.front_state_dir}): "
                  f"{exc} – auf der VM: sudo deploy/front/front.sh agent",

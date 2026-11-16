@@ -4,13 +4,14 @@ import logging
 
 from fastapi import Depends, Header, HTTPException, Request
 
-from app.auth import assignments, customer_routes, oidc, realms
 from app.auth import capabilities as caps
+from app.auth import customer_routes, oidc, realms, verwaltung
 from app.auth import roles as R
 from app.auth.principal import Principal
 from app.config import get_settings
 from app.db import get_session_factory
 from app.i18n import L
+from app.store import verwaltung as verwaltung_store
 
 log = logging.getLogger(__name__)
 
@@ -35,9 +36,11 @@ def get_principal(
     principal = _authenticate(authorization, x_dev_roles, x_dev_tenants, x_dev_customers,
                               x_dev_user, x_dev_customer_role, factory)  # fmt: skip
     if (principal.customer_source or "").startswith("realm:"):
-        # Kunden-Realm (1.3.0): Ausschnitt nur aus dem Portal, keine Zuordnung ueber Kennungen
-        return principal
-    return assignments.resolve(factory, principal)
+        # Kunden-Realm (1.3.0): Ausschnitt nur aus dem Portal, keine Zuordnung ueber Kennungen;
+        # Kunden aus dem Cockpit vermerken (1.14.0, ADR 0058: dort keine Rechte vergeben)
+        return verwaltung.realm(factory, principal)
+    # Zuordnung in Automato - bei Kunden aus dem Cockpit ohne die eines Kunden-Admins (1.14.0)
+    return verwaltung.resolve(factory, principal)
 
 
 def _authenticate(authorization, x_dev_roles, x_dev_tenants, x_dev_customers,
@@ -104,6 +107,23 @@ def assignment_missing_text(principal: Principal) -> str:
     )
 
 
+def role_missing_text(principal: Principal) -> str:
+    """Meldung fuer Benutzer eines Kunden-Realms, denen das Cockpit keine Rolle gibt (1.14.0,
+    ADR 0058: `benutzer` in den Freigaben)."""
+    kurz, name = principal.realm_customer or ("?", "?")
+    return L(
+        f"Für Sie ist in Automato keine Rolle vergeben ({name}, {kurz}) – das macht der Betreiber "
+        "im Cockpit beim Kunden.",
+        f"No role is assigned to you in Automato ({name}, {kurz}) – the operator does this in the "
+        "cockpit at the customer.",
+    )
+
+
+def without_rights_text(principal: Principal) -> str:
+    return (role_missing_text(principal) if principal.realm_role_missing
+            else assignment_missing_text(principal))  # fmt: skip
+
+
 #: auch ohne Zuordnung erreichbar (die Oberflaeche zeigt damit die Meldung statt Fehlern)
 _OHNE_ZUORDNUNG = frozenset({("GET", "/auth/me")})
 
@@ -118,14 +138,19 @@ def _customer_gate(request: Request, principal: Principal, required: str) -> Non
     route = request.scope.get("route")
     path = getattr(route, "path", None)
     need = customer_routes.capability(request.method, path) if path is not None else None
-    if principal.assignment_missing:
+    if principal.without_rights:  # ohne Zuordnung bzw. ohne Rolle aus dem Cockpit (1.14.0)
         if (request.method, path) in _OHNE_ZUORDNUNG and required == R.VIEWER:
             request.state.customer_tenants = ()
             return
-        raise HTTPException(status_code=403, detail=assignment_missing_text(principal))
+        raise HTTPException(status_code=403, detail=without_rights_text(principal))
     if need is None or (required != R.VIEWER and need == caps.READ):
         raise HTTPException(status_code=403, detail="not available for customer users")
     if not principal.can(need):
+        if need == caps.USERS_MANAGE and any(
+            caps.USERS_MANAGE in caps.capabilities(principal.customer_role(c))
+            for c in principal.cockpit_customers
+        ):  # Kunden-Admin bei Kunden aus dem Cockpit (1.14.0, ADR 0058): Rechte nur dort
+            raise HTTPException(status_code=409, detail=verwaltung_store.benutzer_text())
         raise HTTPException(status_code=403, detail="insufficient role")
     # Antwort ohne Geraetenamen (0.58.0, `customer_alias`, Middleware in `main.py`)
     request.state.customer_tenants = tuple(principal.tenant_ids or ())

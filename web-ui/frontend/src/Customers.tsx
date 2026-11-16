@@ -682,7 +682,9 @@ function CustomerEditor({
 // eigenen Kunden – der Orchestrator lässt nur diese Kunden, höchstens die eigene Rolle und nie das
 // eigene Konto zu
 export function OwnCustomerUsers({ me, tenantId }: { me: Me; tenantId: number | null }) {
-  const own = me.customers.filter((c) => me.customerRoles[String(c.id)] === "customer_admin");
+  // 1.14.0 (ADR 0058): bei Kunden aus dem Cockpit vergibt nur der Betreiber dort Benutzer und Rollen
+  const cockpit = me.cockpitCustomers ?? [];
+  const own = me.customers.filter((c) => me.customerRoles[String(c.id)] === "customer_admin" && !cockpit.includes(c.id));
   return (
     <>
       <PageHead title={L("Kunden-Benutzer", "Customer users")}>
@@ -697,7 +699,16 @@ export function OwnCustomerUsers({ me, tenantId }: { me: Me; tenantId: number | 
           </>,
         )}
       </PageHead>
-      {tenantId == null ? (
+      {own.length === 0 ? (
+        <div id="customer-users-cockpit">
+          <Note>
+            {L(
+              "Benutzer und Rollen Ihres Kunden vergibt der Betreiber im Cockpit.",
+              "Users and roles of your customer are assigned by the operator in the cockpit.",
+            )}
+          </Note>
+        </div>
+      ) : tenantId == null ? (
         <Note>{L("Bitte oben eine Umgebung (Mandant) wählen.", "Please select an environment (tenant) above.")}</Note>
       ) : (
         <CustomerUsers tenantId={tenantId} customers={own} me={me} />
@@ -813,13 +824,15 @@ function CustomerUsers({ tenantId, customers, me }: { tenantId: number; customer
                 <>
                   Anmeldung in Keycloak, Zuordnung hier: Benutzername bzw. E-Mail → Kunde, mit Kunden-Rolle. Ein zugeordneter
                   Benutzer sieht nur die Doku seines Kunden (nie Admin); ein Kunden-Admin ordnet die Benutzer seines Kunden
-                  selbst zu. Alternativ die Attribute customer_ids und customer_role in Keycloak (die höhere Rolle gilt).
+                  selbst zu – nicht bei Kunden aus dem Cockpit, dort vergibt der Betreiber Benutzer und Rollen im Cockpit.
+                  Alternativ die Attribute customer_ids und customer_role in Keycloak (die höhere Rolle gilt).
                 </>,
                 <>
                   Login in Keycloak, assignment here: username or email → customer, with customer role. An assigned user only
                   sees the documentation of their customer (never admin); a customer admin assigns the users of their
-                  customer themselves. Alternatively the attributes customer_ids and customer_role in Keycloak (the higher
-                  role applies).
+                  customer themselves – not for customers from the cockpit, where the operator assigns users and roles in
+                  the cockpit. Alternatively the attributes customer_ids and customer_role in Keycloak (the higher role
+                  applies).
                 </>,
               )}
         </span>

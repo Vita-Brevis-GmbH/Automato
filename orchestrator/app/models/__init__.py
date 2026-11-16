@@ -108,6 +108,7 @@ from app.models.topology import (
     TopoPolicyRoute,
     TopoRoute,
 )
+from app.models.verwaltung import CockpitCustomer
 from app.models.virtual import Portgroup, Vm, VmIp, VmNic
 from app.models.zone import Zone
 
@@ -132,6 +133,7 @@ __all__ = [
     "AuditLog",
     "Base",
     "CollectorRun",
+    "CockpitCustomer",
     "Coupling",
     "DataChange",
     "DataState",

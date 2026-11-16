@@ -25,6 +25,7 @@ bleibt deutsch (`@german_only`); `status` zeigt die gespeicherte Meldung ueberse
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import sys
@@ -428,6 +429,11 @@ def _cmd_cockpit_kopplung(session: Session, args: argparse.Namespace) -> int:
         with german():  # Audit (gespeichert)
             done = kopplung.uncouple(session, peer, actor)
         session.commit()
+        # 1.14.0 (ADR 0058): Soll-Stand ohne `verwaltung: cockpit` (front.sh wieder frei)
+        from app.store import verwaltung
+
+        with contextlib.suppress(OSError):
+            verwaltung.soll_schreiben(session, get_settings(), only_if_changed=True)
         print(L("OK     entkoppelt – das gekoppelte Token gilt nicht mehr",
                 "OK     unpaired – the paired token is no longer valid") if done
               else L("INFO   nicht gekoppelt", "INFO   not paired"))  # fmt: skip

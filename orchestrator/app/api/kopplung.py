@@ -11,6 +11,7 @@
 Code und Token stehen nie im Audit, im Log oder in einer anderen Antwort (`store/kopplung.py`).
 """
 
+import contextlib
 import threading
 import time
 from collections import deque
@@ -26,11 +27,20 @@ from app.auth.principal import Principal
 from app.config import Settings, get_settings
 from app.db import get_session
 from app.i18n import L
-from app.store import inventory, kopplung
+from app.store import inventory, kopplung, verwaltung
 
 router = APIRouter(prefix="/kopplung", tags=["kopplung"])
 
 _NO_STORE = {"Cache-Control": "no-store", "Pragma": "no-cache"}
+
+
+def _soll_stand(session: Session, settings: Settings) -> None:
+    """Nach Koppeln bzw. Entkoppeln den Soll-Stand des Front-Proxys nachfuehren (1.14.0,
+    ADR 0058: `verwaltung: cockpit` sperrt `front.sh kunde|link|entfernen` von Hand); ein Fehler
+    aendert an der Kopplung nichts (der naechste Start bzw. die naechsten Freigaben holen es
+    nach)."""
+    with contextlib.suppress(OSError):
+        verwaltung.soll_schreiben(session, settings, only_if_changed=True)
 
 
 class Drossel:
@@ -106,6 +116,7 @@ def einloesen(
         session.commit()  # Fehlversuch bzw. abgelaufener Code zaehlt
         raise _abgelehnt() from None
     session.commit()
+    _soll_stand(session, settings)
     body = {
         "vertrag": kopplung.VERTRAG,
         "token": token,
@@ -161,4 +172,5 @@ def cockpit_uncouple(
 ) -> dict:
     kopplung.uncouple(session, kopplung.COCKPIT, principal.subject)
     session.commit()
+    _soll_stand(session, settings)
     return cockpit_status(principal, session, settings)
