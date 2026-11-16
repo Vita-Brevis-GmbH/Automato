@@ -10,12 +10,22 @@ gelesen wird sie trotzdem wie fremde Eingabe.
 Seit 1.11.0 (ADR 0054, Gegenrichtung der Freigaben) je Kunde auch Herkunft (`quelle`),
 Werkzeuge, Zugriff, Netze und Realm - so uebernimmt das Cockpit Kunden, die es noch nicht kennt,
 ohne Realm oder Zugriff zu verlieren. Vertrag bleibt v1 (nur neue optionale Felder).
+
+Seit 1.13.0 (ADR 0055) unter `front` auch der Empfangsschluessel der VM (`tor_empfang`: nur der
+oeffentliche RSA-Schluessel und seine Kennung) - damit versiegelt das Cockpit das Client-Secret des
+Anmelde-Tors - und je Realm, ob ein Client-Secret da ist und ob es aus dem Cockpit kam
+(`tor_realms`, aus `status.json` des Host-Agenten).
 """
 
+import hashlib
 import ipaddress
 import json
 import re
 from pathlib import Path
+
+from cryptography.exceptions import UnsupportedAlgorithm
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 
 from app import __version__
 from app.config import Settings
@@ -29,16 +39,86 @@ _ADRESSE = re.compile(r"^[0-9A-Fa-f.:]{2,45}$")
 #: Herkunft je Kunde: Cockpit (Freigaben), Oberflaeche (Kunden-Portal), Befehl (front.sh kunde)
 _QUELLEN = ("cockpit", "oberflaeche", "befehl")
 _WERKZEUGE = ("doc", "nb", "um", "cmdb")
+#: Siegel der Client-Secrets aus dem Cockpit (ADR 0055): RSA-OAEP mit SHA-256 und MGF1-SHA-256
+TOR_ALG = "RSA-OAEP-256"
+TOR_PEM_MAX = 1000
+TOR_BITS_MIN = 3072
+KENNUNG = re.compile(r"[0-9a-f]{64}")
 
 
-def _topologie(state_dir: str) -> dict:
+def _datei(state_dir: str, name: str) -> dict:
+    """JSON-Datei des Host-Agenten (schreibt root) - gelesen wie fremde Eingabe."""
     if not state_dir:
         return {}
     try:
-        data = json.loads((Path(state_dir) / TOPOLOGIE).read_text(encoding="utf-8"))
+        data = json.loads((Path(state_dir) / name).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def _topologie(state_dir: str) -> dict:
+    return _datei(state_dir, TOPOLOGIE)
+
+
+def _realm(value: object) -> str | None:
+    ok = isinstance(value, str) and portal.REALM.fullmatch(value) and value != "master"
+    return value if ok else None
+
+
+def _tor_empfang(topo: dict) -> dict | None:
+    """Empfangsschluessel fuer Client-Secrets aus dem Cockpit (1.13.0, ADR 0055): nur mit
+    Anmelde-Tor, nur ein oeffentlicher RSA-Schluessel (mindestens 3072 Bit), Kennung = SHA-256
+    ueber seine DER-Form - sonst null."""
+    roh = topo.get("tor_empfang")
+    if topo.get("tor") is not True or not isinstance(roh, dict) or roh.get("alg") != TOR_ALG:
+        return None
+    pem, kennung = roh.get("pem"), roh.get("kennung")
+    if not isinstance(pem, str) or len(pem) > TOR_PEM_MAX or not pem.isascii():
+        return None
+    if not isinstance(kennung, str) or not KENNUNG.fullmatch(kennung):
+        return None
+    if not pem.startswith("-----BEGIN PUBLIC KEY-----"):
+        return None
+    try:
+        key = serialization.load_pem_public_key(pem.encode("ascii"))
+    except (ValueError, TypeError, UnsupportedAlgorithm):
+        return None
+    if not isinstance(key, rsa.RSAPublicKey) or key.key_size < TOR_BITS_MIN:
+        return None
+    der = key.public_bytes(
+        serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+    if hashlib.sha256(der).hexdigest() != kennung:
+        return None
+    return {"alg": TOR_ALG, "pem": pem, "kennung": kennung}
+
+
+def empfang_kennung(state_dir: str) -> str | None:
+    """Kennung des aktuellen Empfangsschluessels der VM (`PUT /freigaben` vergleicht die
+    Kennung der versiegelten Client-Secrets damit); None = keiner bzw. Anmelde-Tor aus."""
+    empfang = _tor_empfang(_topologie(state_dir))
+    return empfang["kennung"] if empfang else None
+
+
+def _tor_realms(state_dir: str) -> dict | None:
+    """Je Realm, ob ein Client-Secret da ist und ob es zuletzt aus dem Cockpit kam (1.13.0,
+    aus `status.json` des Host-Agenten); null, wenn unbekannt."""
+    tor = _datei(state_dir, portal.STATUS).get("tor")
+    if not isinstance(tor, dict):
+        return None
+
+    def realms(feld: str) -> list[str]:
+        werte = tor.get(feld)
+        if not isinstance(werte, list):
+            return []
+        return sorted({r for r in werte[:1000] if _realm(r)})
+
+    return {
+        "bereit": realms("realms_bereit"),
+        "ohne_secret": realms("realms_ohne_secret"),
+        "vom_cockpit": realms("vom_cockpit"),
+    }
 
 
 def _text(value: object, laenge: int = 300) -> str | None:
@@ -48,7 +128,7 @@ def _text(value: object, laenge: int = 300) -> str | None:
     return value if value and len(value) <= laenge and value.isprintable() else None
 
 
-def _front(topo: dict) -> dict | None:
+def _front(topo: dict, state_dir: str = "") -> dict | None:
     if not topo:
         return None
     vm = topo.get("vm") if isinstance(topo.get("vm"), dict) else {}
@@ -66,6 +146,9 @@ def _front(topo: dict) -> dict | None:
         "magister": _text(topo.get("magister")),
         "cmdb": _text(topo.get("cmdb")),
         "tor": topo.get("tor") is True,
+        # 1.13.0 (ADR 0055): Client-Secrets des Anmelde-Tors versiegelt aus dem Cockpit
+        "tor_empfang": _tor_empfang(topo),
+        "tor_realms": _tor_realms(state_dir),
     }
 
 
@@ -88,8 +171,6 @@ def _herkunft(k: dict) -> dict:
     Werte, sonst null/leer (aeltere topologie.json ohne die Felder: null)."""
     werkzeuge = k.get("werkzeuge")
     zugriff = k.get("zugriff") if k.get("zugriff") in portal.ACCESS else None
-    realm = k.get("realm")
-    realm_ok = isinstance(realm, str) and portal.REALM.match(realm) and realm != "master"
     return {
         "quelle": k.get("quelle") if k.get("quelle") in _QUELLEN else None,
         "werkzeuge": [w for w in _WERKZEUGE if w in werkzeuge]
@@ -97,7 +178,7 @@ def _herkunft(k: dict) -> dict:
         else None,
         "zugriff": zugriff,
         "netze": _netze(k.get("netze")) if zugriff == "netze" else [],
-        "realm": realm if realm_ok else None,
+        "realm": _realm(k.get("realm")),
     }
 
 
@@ -122,6 +203,6 @@ def inventory(settings: Settings) -> dict:
             "oberflaeche": _text(topo.get("oberflaeche")),
         },
         "keycloak": {"issuer": _text(issuer)},
-        "front": _front(topo),
+        "front": _front(topo, settings.front_state_dir),
         "kunden": _kunden(topo),
     }

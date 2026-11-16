@@ -143,10 +143,24 @@ function TorStand({ tor }: { tor?: Tor }) {
         {L("Anmelde-Tor an", "Sign-in gate on")}
         {tor.realms_bereit.length > 0 && ` · Realm ${tor.realms_bereit.join(", ")}`}
       </span>
+      {(tor.vom_cockpit ?? []).length > 0 && (
+        <div className="hint">
+          {L("Client-Secret aus dem Cockpit: ", "Client secret from the cockpit: ")}
+          <span className="mono">{(tor.vom_cockpit ?? []).join(", ")}</span>
+        </div>
+      )}
       {tor.realms_ohne_secret.map((r) => (
         <Note warn key={r}>
           {L(`Realm ${r}: Client-Secret fehlt – auf der VM: `, `Realm ${r}: client secret missing – on the VM: `)}
           <span className="mono">sudo deploy/front/front.sh tor {r}</span>
+        </Note>
+      ))}
+      {(tor.verworfen ?? []).map((v, i) => (
+        <Note warn key={`v${i}`}>
+          {L(
+            `Realm ${v.realm ?? "?"}: Client-Secret aus dem Cockpit verworfen (${v.grund}) – im Cockpit neu versiegeln lassen; das bisherige gilt weiter`,
+            `Realm ${v.realm ?? "?"}: client secret from the cockpit rejected (${v.grund}) – have the cockpit seal it again; the previous one stays in effect`,
+          )}
         </Note>
       ))}
       {tor.gesperrt.length > 0 && (

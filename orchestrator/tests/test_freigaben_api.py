@@ -5,6 +5,8 @@ idempotent, alles oder nichts, Uebernahme vorhandener Kunden (Mandant, Kunden, R
 bleiben), Entfernen nur von Kunden aus dem Cockpit. Vertrag im Cockpit:
 docs/vertraege/freigaben.md (v1)."""
 
+import base64
+import functools
 import hashlib
 import json
 
@@ -14,6 +16,8 @@ from app.auth import realms
 from app.config import Settings, get_settings
 from app.models import AuditLog, Customer, IpamType, PortalCustomer, Tenant
 from app.models.tenant import DnsType
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 TOKEN = "c" * 64
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
@@ -337,3 +341,171 @@ def test_oberflaeche_waehlt_netbox(api, tmp_path):
                 json={"short_name": "kunde-a", "name": "A", "nb": False})  # fmt: skip
     assert r.status_code == 200 and "netbox" not in r.json()["addresses"]
     assert _soll(tmp_path)["kunde-a"]["nb"] is False
+
+
+# --- Client-Secrets des Anmelde-Tors versiegelt aus dem Cockpit (1.13.0, ADR 0055) -----------
+
+
+@functools.cache
+def _empfang() -> tuple[rsa.RSAPrivateKey, str, str]:
+    """Empfangsschluessel wie front.sh (RSA 3072): privater Schluessel, PEM, Kennung."""
+    key = rsa.generate_private_key(public_exponent=65537, key_size=3072)
+    pub = key.public_key()
+    spki = serialization.PublicFormat.SubjectPublicKeyInfo
+    pem = pub.public_bytes(serialization.Encoding.PEM, spki)
+    der = pub.public_bytes(serialization.Encoding.DER, spki)
+    return key, pem.decode(), hashlib.sha256(der).hexdigest()
+
+
+def _versiegeln(realm: str, secret: str = "testwert-nur-fuer-tests-01") -> str:  # noqa: S107
+    _, pem, _ = _empfang()
+    pub = serialization.load_pem_public_key(pem.encode())
+    klar = json.dumps({"realm": realm, "client": "automato-front", "secret": secret},
+                      separators=(",", ":")).encode()  # fmt: skip
+    oaep = padding.OAEP(mgf=padding.MGF1(hashes.SHA256()), algorithm=hashes.SHA256(), label=None)
+    return base64.b64encode(pub.encrypt(klar, oaep)).decode()
+
+
+def _front_status(tmp_path, tor: bool = True, schluessel: bool = True) -> str:
+    """topologie.json wie front.sh erzeugen (Anmelde-Tor, Empfangsschluessel); Rueckgabe Kennung."""
+    _, pem, kennung = _empfang()
+    empfang = {"alg": "RSA-OAEP-256", "pem": pem, "kennung": kennung} if schluessel else None
+    (tmp_path / "topologie.json").write_text(
+        json.dumps({"tor": tor, "tor_empfang": empfang, "kunden": []}), encoding="utf-8"
+    )
+    return kennung
+
+
+def _siegel(realm: str, kennung: str | None = None, **kw) -> dict:
+    return {"realm": realm, "kennung": kennung or _empfang()[2],
+            "versiegelt": kw.pop("versiegelt", None) or _versiegeln(realm), **kw}  # fmt: skip
+
+
+def test_tor_geheimnisse_fehlen_keine_aussage(api, tmp_path):
+    _front_status(tmp_path)
+    r = _put(api, [_kunde("kunde-a", realm="kunde-a")])
+    assert r.status_code == 200 and r.json()["tor_geheimnisse"] is None
+    r = _put(api, [_kunde("kunde-a", realm="kunde-a")], tor_geheimnisse=None)
+    assert r.status_code == 200 and r.json()["tor_geheimnisse"] is None
+    assert "tor_geheimnisse" not in json.loads((tmp_path / "soll.json").read_text())
+
+
+def test_tor_geheimnisse_nur_chiffrat_idempotent_audit(api, session_factory, tmp_path):
+    kennung = _front_status(tmp_path)
+    kunden = [_kunde("kunde-a", realm="kunde-a"), _kunde("kunde-b", realm="kunde-b")]
+    siegel = _siegel("kunde-a")
+    r = _put(api, kunden, tor_geheimnisse=[siegel])
+    assert r.status_code == 200, r.text
+    assert r.json()["tor_geheimnisse"] == {"uebernommen": ["kunde-a"], "abgelehnt": []}
+    soll = json.loads((tmp_path / "soll.json").read_text(encoding="utf-8"))
+    assert soll["tor_geheimnisse"] == [siegel]  # dieselben Felder, nur das Chiffrat
+    with session_factory() as s:
+        assert s.query(PortalCustomer).filter_by(short_name="kunde-a").one().tor_secret == siegel
+    tor_audit = [(a, subj, d) for a, act, subj, d in _audit(session_factory)
+                 if act == "portal.tor_secret.updated"]  # fmt: skip
+    assert tor_audit == [("cockpit", "kunde-a", {"realm": "kunde-a", "kennung": kennung})]
+    assert siegel["versiegelt"] not in json.dumps(_audit(session_factory))
+
+    # dasselbe Chiffrat noch einmal: kein Audit, kein neuer Soll-Stand
+    vorher, anzahl = (tmp_path / "soll.json").read_bytes(), len(_audit(session_factory))
+    r = _put(api, kunden, tor_geheimnisse=[siegel])
+    assert r.json()["tor_geheimnisse"] == {"uebernommen": ["kunde-a"], "abgelehnt": []}
+    assert r.json()["unveraendert"] == 2
+    assert (tmp_path / "soll.json").read_bytes() == vorher
+    assert len(_audit(session_factory)) == anzahl
+    # ohne das Feld bzw. ohne den Realm: keine Aussage, das Chiffrat bleibt
+    assert _put(api, kunden).json()["tor_geheimnisse"] is None
+    assert _put(api, kunden, tor_geheimnisse=[]).json()["tor_geheimnisse"] == {
+        "uebernommen": [], "abgelehnt": []}  # fmt: skip
+    assert json.loads((tmp_path / "soll.json").read_text())["tor_geheimnisse"] == [siegel]
+
+    # erneuert (neues Chiffrat): ein Audit, neuer Soll-Stand
+    neu = _siegel("kunde-a", versiegelt=_versiegeln("kunde-a", "testwert-erneuert-02"))
+    r = _put(api, kunden, tor_geheimnisse=[neu, _siegel("kunde-b")])
+    assert r.json()["tor_geheimnisse"]["uebernommen"] == ["kunde-a", "kunde-b"]
+    assert len(_audit(session_factory)) == anzahl + 2
+    eintraege = json.loads((tmp_path / "soll.json").read_text())["tor_geheimnisse"]
+    assert [e["realm"] for e in eintraege] == ["kunde-a", "kunde-b"] and eintraege[0] == neu
+
+
+def test_tor_geheimnis_mit_veralteter_kennung_abgelehnt(api, session_factory, tmp_path):
+    """Kennung passt nicht zum Empfangsschluessel der VM: nur dieser Eintrag nicht - die Anfrage
+    gelingt, das Cockpit versiegelt mit dem Schluessel aus dem naechsten Inventar neu."""
+    _front_status(tmp_path)
+    alt = _siegel("kunde-a", kennung="0" * 64)
+    r = _put(api, [_kunde("kunde-a", realm="kunde-a"), _kunde("kunde-b", realm="kunde-b")],
+             tor_geheimnisse=[alt, _siegel("kunde-b")])  # fmt: skip
+    assert r.status_code == 200, r.text
+    assert r.json()["angelegt"] == ["kunde-a", "kunde-b"]
+    assert r.json()["tor_geheimnisse"] == {
+        "uebernommen": ["kunde-b"],
+        "abgelehnt": [{"realm": "kunde-a", "grund": "schluessel_veraltet"}],
+    }
+    soll = json.loads((tmp_path / "soll.json").read_text())
+    assert [e["realm"] for e in soll["tor_geheimnisse"]] == ["kunde-b"]
+    with session_factory() as s:
+        assert s.query(PortalCustomer).filter_by(short_name="kunde-a").one().tor_secret is None
+
+
+@pytest.mark.parametrize("stand", ["ohne_datei", "tor_aus", "ohne_schluessel", "ohne_ordner"])
+def test_tor_geheimnis_ohne_empfangsschluessel(api, tmp_path, stand):
+    if stand == "tor_aus":
+        _front_status(tmp_path, tor=False)
+    elif stand == "ohne_schluessel":
+        _front_status(tmp_path, schluessel=False)
+    elif stand == "ohne_ordner":
+        api.app.dependency_overrides[get_settings] = lambda: _settings(tmp_path, front_state_dir="")
+    r = _put(api, [_kunde("kunde-a", realm="kunde-a")], tor_geheimnisse=[_siegel("kunde-a")])
+    assert r.status_code == 200, r.text
+    abgelehnt = [{"realm": "kunde-a", "grund": "kein_empfang"}]
+    assert r.json()["tor_geheimnisse"] == {"uebernommen": [], "abgelehnt": abgelehnt}
+
+
+@pytest.mark.parametrize(
+    ("tor", "grund"),
+    [
+        ({}, "keine Liste"),
+        (["x"], "kein Objekt"),
+        ([_siegel("fremd", kennung="1" * 64, versiegelt="QUJD")], "keinem Kunden der Anfrage"),
+        ([_siegel("vb", kennung="1" * 64, versiegelt="QUJD")], "keinem Kunden der Anfrage"),
+        ([{"kennung": "1" * 64, "versiegelt": "QUJD"}], "keinem Kunden der Anfrage"),
+        ([_siegel("kunde-a", kennung="1" * 64, versiegelt="QUJD")] * 2, "doppelt"),
+        ([_siegel("kunde-a", kennung="A" * 64, versiegelt="QUJD")], "kennung"),
+        ([_siegel("kunde-a", kennung="1" * 63, versiegelt="QUJD")], "kennung"),
+        ([_siegel("kunde-a", kennung="1" * 64 + "\n", versiegelt="QUJD")], "kennung"),
+        ([_siegel("kunde-a", kennung="1" * 64, versiegelt="kein base64!")], "Base64"),
+        ([_siegel("kunde-a", kennung="1" * 64, versiegelt="QUJ")], "Base64"),
+        ([_siegel("kunde-a", kennung="1" * 64, versiegelt="QUJD" * 257)], "Base64"),
+        ([_siegel("kunde-a", kennung="1" * 64, versiegelt=5)], "Base64"),
+        ([_siegel("kunde-a", kennung="1" * 64, versiegelt="QUJD")] * 3, "höchstens so viele"),
+    ],
+)
+def test_tor_geheimnisse_alles_oder_nichts(api, session_factory, tmp_path, tor, grund):
+    with session_factory() as s:  # Realm eines Kunden aus der Oberflaeche, nicht in der Anfrage
+        s.add(PortalCustomer(short_name="vb", name="VB", realm="vb", links=[], customer_ids=[]))
+        s.commit()
+    _front_status(tmp_path)
+    r = _put(api, [_kunde("kunde-a", realm="kunde-a"), _kunde("kunde-b")], tor_geheimnisse=tor)
+    assert r.status_code == 422, r.text
+    fehler = r.json()["fehler"]
+    assert len(fehler) == 1 and grund in fehler[0]["grund"], fehler
+    with session_factory() as s:
+        assert s.query(PortalCustomer).count() == 1  # nur vb, nichts angelegt
+    assert not (tmp_path / "soll.json").exists()
+    assert [a for a in _audit(session_factory) if a[1].startswith("portal.")] == []
+
+
+def test_tor_geheimnis_gilt_nur_fuer_seinen_realm(api, session_factory, tmp_path):
+    """Wechselt der Realm des Kunden, faellt das Siegel weg; entfernt das Cockpit den Kunden,
+    auch."""
+    _front_status(tmp_path)
+    _put(api, [_kunde("kunde-a", realm="ra")], tor_geheimnisse=[_siegel("ra")])
+    assert "tor_geheimnisse" in json.loads((tmp_path / "soll.json").read_text())
+    r = _put(api, [_kunde("kunde-a", realm="rb")])
+    assert r.json()["geaendert"] == ["kunde-a"]
+    assert "tor_geheimnisse" not in json.loads((tmp_path / "soll.json").read_text())
+    with session_factory() as s:
+        assert s.query(PortalCustomer).one().tor_secret is None
+    _put(api, [_kunde("kunde-a", realm="rb")], tor_geheimnisse=[_siegel("rb")])
+    assert _put(api, []).json()["entfernt"] == ["kunde-a"]
+    assert "tor_geheimnisse" not in json.loads((tmp_path / "soll.json").read_text())

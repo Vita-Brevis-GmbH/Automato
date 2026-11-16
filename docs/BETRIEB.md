@@ -2413,7 +2413,11 @@ Client-Zertifikat und die passenden Zeilen der `agent.env`.
   ohne zweite Maske in Automato, NetBox (Rechte aus den Realm-Rollen admin/operator, sonst lesen)
   und Magister. Client-Secret je Realm: `sudo deploy/front/front.sh tor <realm>`; Stand:
   `front.sh tor` und im Kunden-Portal. Kunden ohne Realm sind gesperrt. NetBox:
-  `netbox-host.sh sso <kunde|alle>` (`docs/INSTALLATION-FRONT.md` 6).
+  `netbox-host.sh sso <kunde|alle>` (`docs/INSTALLATION-FRONT.md` 6). Seit 1.13.0 (ADR 0055)
+  liefert das Cockpit das Client-Secret seiner Kunden versiegelt mit (auch erneuert); von Hand
+  geht weiter und gilt bis zum nächsten neuen aus dem Cockpit. Empfangsschlüssel:
+  `front.sh tor-empfang [neu]`; `front.sh tor`/`pruefen` zeigen je Realm „von Hand“ bzw. „aus dem
+  Cockpit“ und verworfene Secrets.
 - **Zugriff je Kunde** (1.5.0): im Kunden-Portal *Zugriff* – überall (Vorgabe), nur intern
   (Management-Netz) oder nur aus diesen Netzen; von Hand `front.sh kunde … --zugriff intern|"<netze>"`.
   Wer nicht darf, sieht für alle Adressen des Kunden nur „Unbekannte Adresse“ (auch keine

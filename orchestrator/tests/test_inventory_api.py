@@ -1,10 +1,15 @@
 """Inventar fuers Cockpit (1.10.0, ADR 0053): GET /inventory nur mit dem Token des Cockpits,
 Inhalt aus `topologie.json` des Front-Proxys - gepruefte Werte, nie mehr."""
 
+import functools
+import hashlib
 import json
 
+import pytest
 from app import __version__
 from app.config import Settings, get_settings
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec, rsa
 
 TOKEN = "a" * 64
 ISSUER = "https://kc.example.ch/realms/vb"
@@ -121,3 +126,83 @@ def test_ohne_front_proxy_nur_automato(client, tmp_path):
     assert data["keycloak"] == {"issuer": None} and data["automato"]["oberflaeche"] is None
     (tmp_path / "topologie.json").write_text("kein json", encoding="utf-8")
     assert _get(client, tmp_path).json()["front"] is None
+
+
+# --- Empfangsschluessel und Client-Secrets je Realm (1.13.0, ADR 0055) ------------------------
+
+
+def _schluessel(key) -> tuple[str, str]:
+    spki = serialization.PublicFormat.SubjectPublicKeyInfo
+    pub = key.public_key()
+    pem = pub.public_bytes(serialization.Encoding.PEM, spki).decode()
+    der = pub.public_bytes(serialization.Encoding.DER, spki)
+    return pem, hashlib.sha256(der).hexdigest()
+
+
+@functools.cache
+def _rsa(bits: int):
+    return rsa.generate_private_key(public_exponent=65537, key_size=bits)
+
+
+def test_empfangsschluessel_und_realms_des_tors(client, tmp_path):
+    pem, kennung = _schluessel(_rsa(3072))
+    _topologie(tmp_path, tor_empfang={"alg": "RSA-OAEP-256", "pem": pem, "kennung": kennung,
+                                      "privat": "nie"})  # fmt: skip
+    (tmp_path / "status.json").write_text(json.dumps({"ok": True, "tor": {
+        "an": True, "realms_bereit": ["kunde-a", "vb", "master", "a b", 5],
+        "realms_ohne_secret": ["kunde-b"], "vom_cockpit": ["kunde-a"],
+        "verworfen": [{"realm": "kunde-c", "grund": "format"}]}}))  # fmt: skip
+    front = _get(client, tmp_path).json()["front"]
+    assert front["tor_empfang"] == {"alg": "RSA-OAEP-256", "pem": pem, "kennung": kennung}
+    assert front["tor_realms"] == {"bereit": ["kunde-a", "vb"], "ohne_secret": ["kunde-b"],
+                                   "vom_cockpit": ["kunde-a"]}  # fmt: skip
+
+
+def test_ohne_status_bzw_aelterer_status(client, tmp_path):
+    _topologie(tmp_path)
+    front = _get(client, tmp_path).json()["front"]
+    assert front["tor_empfang"] is None and front["tor_realms"] is None
+    # status.json vor 1.13.0: ohne vom_cockpit
+    alt = {"tor": {"an": True, "realms_bereit": ["vb"], "realms_ohne_secret": []}}
+    (tmp_path / "status.json").write_text(json.dumps(alt))
+    assert _get(client, tmp_path).json()["front"]["tor_realms"] == {
+        "bereit": ["vb"], "ohne_secret": [], "vom_cockpit": []}  # fmt: skip
+
+
+def _ec_pem() -> str:
+    key = ec.generate_private_key(ec.SECP256R1()).public_key()
+    return key.public_bytes(serialization.Encoding.PEM,
+                            serialization.PublicFormat.SubjectPublicKeyInfo).decode()  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    "fall",
+    ["tor_aus", "kennung_falsch", "kennung_gross", "rsa_2048", "ec", "kein_pem", "zu_lang", "alg",
+     "privat"],
+)  # fmt: skip
+def test_empfangsschluessel_nur_geprueft(client, tmp_path, fall):
+    """Nur ein oeffentlicher RSA-Schluessel (ab 3072 Bit), dessen Kennung stimmt - sonst null."""
+    pem, kennung = _schluessel(_rsa(3072))
+    empfang, tor = {"alg": "RSA-OAEP-256", "pem": pem, "kennung": kennung}, True
+    if fall == "tor_aus":
+        tor = False
+    elif fall == "kennung_falsch":
+        empfang["kennung"] = "0" * 64
+    elif fall == "kennung_gross":
+        empfang["kennung"] = kennung.upper()
+    elif fall == "rsa_2048":
+        empfang["pem"], empfang["kennung"] = _schluessel(_rsa(2048))
+    elif fall == "ec":
+        empfang["pem"] = _ec_pem()
+    elif fall == "kein_pem":
+        empfang["pem"] = "kein Schluessel"
+    elif fall == "zu_lang":
+        empfang["pem"] = pem + "\n" * 400
+    elif fall == "alg":
+        empfang["alg"] = "RSA1_5"
+    elif fall == "privat":
+        empfang["pem"] = _rsa(3072).private_bytes(
+            serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption()).decode()  # fmt: skip
+    _topologie(tmp_path, tor=tor, tor_empfang=empfang)
+    assert _get(client, tmp_path).json()["front"]["tor_empfang"] is None

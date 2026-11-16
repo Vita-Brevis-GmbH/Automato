@@ -225,6 +225,9 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "portal.customer.created": _PORTAL,
     "portal.customer.updated": _PORTAL,
     "portal.customer.deleted": _PORTAL,
+    # Client-Secret des Anmelde-Tors versiegelt aus dem Cockpit (1.13.0, ADR 0055): nur Realm und
+    # Kennung des Empfangsschluessels - nie das Chiffrat
+    "portal.tor_secret.updated": frozenset({"realm", "kennung"}),
     # Zuordnung Benutzer -> Kunde in Automato (0.53.0, ADR 0018 Schritt 4); seit den feineren
     # Rollen mit Herkunft (Betreuer bzw. Kunden-Admin) und den Kunden-Rollen des Handelnden
     "customer_user.assigned": frozenset(

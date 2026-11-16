@@ -266,8 +266,11 @@ def desired(session: Session) -> dict:
     """Soll-Stand fuer den Front-Proxy (nur, was front.sh braucht - kein Mandant). Seit 1.4.0
     mit dem Realm: das Anmelde-Tor fragt je Kunde in dessen Realm (ADR 0051); ohne Realm
     gesperrt. Seit 1.5.0 mit dem Zugriff je Kunde (`zugriff`, `netze`), seit 1.11.0 mit NetBox
-    als Werkzeug (`nb`) und der Herkunft (`quelle`: oberflaeche | cockpit, ADR 0054)."""
-    return {
+    als Werkzeug (`nb`) und der Herkunft (`quelle`: oberflaeche | cockpit, ADR 0054). Seit 1.13.0
+    (ADR 0055) mit den versiegelten Client-Secrets des Anmelde-Tors aus dem Cockpit
+    (`tor_geheimnisse`, nur Chiffrat; nur, wenn es welche gibt)."""
+    kunden = listing(session)
+    data = {
         "version": 1,
         "erzeugt": datetime.now(UTC).isoformat(timespec="seconds"),
         "kunden": [
@@ -275,9 +278,21 @@ def desired(session: Session) -> dict:
              "um": pc.um, "cmdb": pc.cmdb, "realm": pc.realm or "",
              "zugriff": pc.access or "ueberall", "netze": list(pc.access_nets or []),
              "links": list(pc.links or []), "quelle": pc.source or SOURCE_UI}
-            for pc in listing(session)
+            for pc in kunden
         ],
     }  # fmt: skip
+    tor = sorted(
+        (
+            {k: pc.tor_secret.get(k) for k in ("realm", "kennung", "versiegelt")}
+            for pc in kunden
+            if pc.realm and pc.source == SOURCE_COCKPIT and isinstance(pc.tor_secret, dict)
+            and pc.tor_secret.get("realm") == pc.realm
+        ),
+        key=lambda e: e["realm"],
+    )  # fmt: skip
+    if tor:
+        data["tor_geheimnisse"] = tor
+    return data
 
 
 def _content(data: dict) -> dict:

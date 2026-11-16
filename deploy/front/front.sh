@@ -28,6 +28,8 @@
 #   front.sh sync [--immer]                                         Kunden aus der Oberfläche übernehmen
 #   front.sh agent                                                  Host-Agent einrichten (systemd)
 #   front.sh tor [<realm>]                                          Anmelde-Tor: Stand bzw. Client-Secret
+#   front.sh tor-empfang [neu]                                      Empfangsschlüssel für Client-Secrets
+#                                                                   aus dem Cockpit: Kennung bzw. neu
 #
 # Seit 1.3.0 (ADR 0050) pflegt die Oberfläche die Kunden (Administration → Kunden-Portal): der
 # Orchestrator schreibt den Soll-Stand nach deploy/front/state/soll.json, der Host-Agent
@@ -50,8 +52,16 @@
 # in kunden/<k>.conf: ja) und Kunden kommen auch aus dem Cockpit (QUELLE=cockpit, über die
 # Oberfläche und soll.json) – sie gelten wie Kunden aus der Oberfläche als nicht von Hand änderbar.
 #
+# Seit 1.13.0 (ADR 0055) liefert das Cockpit das Client-Secret je Realm versiegelt: mit dem
+# Empfangsschlüssel dieser VM (tor/empfang.key, RSA 3072, nur root; angelegt, sobald das Tor an ist)
+# verschlüsselt, Automato hält nur das Chiffrat (soll.json, tor_geheimnisse). Nur `sync` entschlüsselt,
+# prüft (Realm eines Kunden aus dem Cockpit, Client automato-front) und übernimmt es; das Geheimnis
+# erscheint nie in Ausgabe, Log oder status.json. `front.sh tor <realm>` von Hand geht weiterhin und
+# gilt, bis das Cockpit ein anderes Chiffrat schickt.
+#
 # Einstellungen: AUTOMATO_FRONT_* in .env (siehe .env.example). Kunden: deploy/front/kunden/,
-# erzeugt: deploy/front/generated/, Client-Secrets: deploy/front/tor/ (alles nicht im Repo).
+# erzeugt: deploy/front/generated/, Client-Secrets und Empfangsschlüssel: deploy/front/tor/ (alles
+# nicht im Repo).
 # Zertifikate: deploy/proxy/pki/mgmt.crt|key (Kunden-Adressen) und mgmt-int.crt|key (intern).
 # Kurzname: Kleinbuchstaben, Ziffern und Bindestrich (DNS-Label), nicht auf -nb/-doc/-um/-cmdb endend.
 # Für Tests ersetzbar: DOCKER, CURL, IPTABLES, SYSTEMCTL, GETENT, FRONT_DIR, FRONT_PKI, FRONT_STATE,
@@ -73,6 +83,7 @@ FRONT_SYSTEMD_DIR=${FRONT_SYSTEMD_DIR:-/etc/systemd/system}
 ORCH_UID=1001  # Benutzer im Orchestrator-Container (orchestrator/Dockerfile)
 TOR_CLIENT=automato-front  # Client des Anmelde-Tors in jedem Realm (deploy/keycloak/make_realm.py)
 TOR_IMAGE_STANDARD=quay.io/oauth2-proxy/oauth2-proxy:v7.15.6
+TOR_EMPFANG_ALG=RSA-OAEP-256  # Siegel des Cockpits (1.13.0, ADR 0055): RSA-OAEP, SHA-256, MGF1-SHA-256
 cd "$REPO_DIR"
 # shellcheck source=deploy/env.sh
 . "$REPO_DIR/deploy/env.sh"
@@ -217,6 +228,14 @@ aus_oberflaeche() {  # Kunde kommt über soll.json (QUELLE=oberflaeche bzw. seit
   [ -f "$(kdir)/$1.conf" ] && grep -qxE 'QUELLE=(oberflaeche|cockpit)' "$(kdir)/$1.conf"
 }
 aus_cockpit() { [ -f "$(kdir)/$1.conf" ] && grep -qx 'QUELLE=cockpit' "$(kdir)/$1.conf"; }
+aus_cockpit_realm() {  # gehört der Realm einem Kunden aus dem Cockpit? (1.13.0)
+  local k
+  for k in $(kunden); do
+    lies_kunde "$k"
+    if [ "$QUELLE" = cockpit ] && [ "$REALM" = "$1" ]; then return 0; fi
+  done
+  return 1
+}
 nur_befehl() {
   ! aus_cockpit "$1" || abbruch "Kunde '$1' wird im Cockpit gepflegt (Kundenregister, ADR 0054)"
   ! aus_oberflaeche "$1" || abbruch "Kunde '$1' wird in der Oberfläche gepflegt (Administration → Kunden-Portal)"
@@ -643,8 +662,13 @@ proxy_reload() {
 # Inventar (GET /api/inventory). Nur Namen und Adressen, nur mit eingerichtetem Host-Agenten.
 schreibe_topologie() {
   [ -d "$FRONT_STATE" ] || return 0
-  local k tmp ui=${AUTOMATO_UI_HOST:-} portal="" vm sep=$'\x1f'
+  local k tmp ui=${AUTOMATO_UI_HOST:-} portal="" vm sep=$'\x1f' pub="" kennung=""
   [ -z "$INTERN" ] || portal="https://start.$INTERN"
+  # Empfangsschlüssel fürs Cockpit (1.13.0, ADR 0055): nur der öffentliche, nur mit Anmelde-Tor
+  if tor_an; then
+    kennung=$(empfang_kennung)
+    [ -z "$kennung" ] || pub=$(empfang_pub)
+  fi
   vm=${FRONT_HOSTNAME:-$(hostname -f 2>/dev/null || hostname 2>/dev/null || true)}
   tmp=$(mktemp "$FRONT_STATE/.topologie-XXXXXX") || return 0
   for k in $(kunden); do
@@ -661,7 +685,8 @@ schreibe_topologie() {
     [ "$CMDB_AN" != ja ] || w+=" cmdb"
     printf '%s\n' "$k$sep${NAME//$sep/}${sep}https://$k.$DOMAIN$sep$nb$sep$doc$sep$um$sep$cm$sep$QUELLE$sep${w# }$sep$ZUGRIFF$sep$NETZE$sep$REALM"
   done | python3 -I -c "$TOPOLOGIE_PY" "$vm" "$(eigene_ips)" "${ui:+https://$ui}" "$portal" "$DOMAIN" \
-    "$NETBOX" "$UEBRIGE" "${UM_ZIEL:+$UM_SCHEMA://$UM_ZIEL}" "$CMDB" "$TOR" >"$tmp" || { rm -f "$tmp"; return 0; }
+    "$NETBOX" "$UEBRIGE" "${UM_ZIEL:+$UM_SCHEMA://$UM_ZIEL}" "$CMDB" "$TOR" "$pub" "$kennung" \
+    "$TOR_EMPFANG_ALG" >"$tmp" || { rm -f "$tmp"; return 0; }
   chmod 644 "$tmp"
   mv -f "$tmp" "$FRONT_STATE/topologie.json"
 }
@@ -670,7 +695,7 @@ schreibe_topologie() {
 TOPOLOGIE_PY=$(cat <<'PY'
 import json, sys
 from datetime import datetime, timezone
-vm, ips, ui, portal, domain, netbox, uebrige, magister, cmdb, tor = sys.argv[1:11]
+vm, ips, ui, portal, domain, netbox, uebrige, magister, cmdb, tor, pub, kennung, alg = sys.argv[1:14]
 felder = ("kurzname", "name", "startseite", "netbox", "automato", "magister", "cmdb",
           "quelle", "werkzeuge", "zugriff", "netze", "realm")
 listen = ("werkzeuge", "netze")  # mit Leerzeichen getrennt
@@ -679,6 +704,14 @@ for zeile in sys.stdin.read().splitlines():
     teile = zeile.split("\x1f")
     if len(teile) == len(felder):
         kunden.append({f: (w.split() if f in listen else (w or None)) for f, w in zip(felder, teile)})
+empfang = None  # 1.13.0 (ADR 0055): öffentlicher Schlüssel, mit dem das Cockpit Client-Secrets versiegelt
+if pub and kennung:
+    try:
+        pem = open(pub, encoding="ascii").read()
+    except (OSError, ValueError):
+        pem = ""
+    if pem.startswith("-----BEGIN PUBLIC KEY-----") and len(pem) <= 1000:
+        empfang = {"alg": alg, "pem": pem, "kennung": kennung}
 print(json.dumps({
     "zeit": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     "vm": {"name": vm, "adressen": ips.split()},
@@ -690,6 +723,7 @@ print(json.dumps({
     "magister": magister or None,
     "cmdb": cmdb or None,
     "tor": tor == "an",
+    "tor_empfang": empfang,
     "kunden": kunden,
 }, ensure_ascii=False, indent=1))
 PY
@@ -795,7 +829,10 @@ EOF
   fi
   schreibe_tor_compose
   chmod -R a+rX "$g"
+  if tor_an; then empfang_anlegen; fi  # 1.13.0 (ADR 0055): Client-Secrets aus dem Cockpit
   schreibe_topologie
+  # Stand des Tors auch nach Änderungen von Hand (kunde, tor) – Ergebnis des letzten sync bleibt
+  [ ! -f "$FRONT_STATE/status.json" ] || status_schreiben behalten
   ok "Front-Proxy erzeugt ($(kunden | wc -l | tr -d ' ') Kunden)"
   tor_starten
   proxy_reload
@@ -901,7 +938,23 @@ tor_starten() {  # Container des Tors nach compose.yml (bzw. anhalten, wenn kein
     info "Anmelde-Tor startet mit dem Proxy (danach: front.sh erzeugen)"
     return 0
   fi
-  local meldung
+  local meldung r d neu=()
+  # neues Client-Secret (von Hand bzw. aus dem Cockpit, 1.13.0): den Container dieses Realms neu
+  # erzeugen – oauth2-proxy liest seine env_file nur beim Start; zuerst, damit der Rest danach
+  # nichts mehr neu startet
+  for r in ${TOR_NEU:-}; do
+    for d in "$(tor_dienst "$r")" tor-intern; do
+      [ "$d" != tor-intern ] || [ "$r" = "$HAUPT_REALM" ] || continue
+      if grep -qx "  $d:" "$f"; then neu+=("$d"); fi
+    done
+  done
+  if [ "${#neu[@]}" -gt 0 ]; then
+    if meldung=$($DOCKER compose -p automato-tor -f "$f" up -d --no-deps --force-recreate "${neu[@]}" 2>&1); then
+      ok "Anmelde-Tor: ${neu[*]} mit neuem Client-Secret gestartet"
+    else
+      fehler "Anmelde-Tor: ${neu[*]} nicht neu gestartet: ${meldung##*$'\n'}"
+    fi
+  fi
   if meldung=$($DOCKER compose -p automato-tor -f "$f" up -d --remove-orphans 2>&1); then
     ok "Anmelde-Tor läuft ($(grep -c '^  tor-' "$f") Container)"
   else
@@ -1385,9 +1438,28 @@ cmd_pruefen() {
   if tor_an; then
     ok "an – Keycloak $KC (Browser), $KC_INTERN (Proxy)"
     tor_uebersicht
-    local r laufend soll
-    for r in $TOR_BEREIT; do ok "Realm $r: Client-Secret hinterlegt"; done
+    local r laufend soll kennung zeile
+    for r in $TOR_BEREIT; do ok "Realm $r: Client-Secret hinterlegt ($(tor_herkunft "$r"))"; done
     for r in $TOR_FEHLT; do fehler "Realm $r: Client-Secret fehlt – front.sh tor $r"; done
+    # 1.13.0 (ADR 0055): Empfangsschlüssel und was der letzte sync aus dem Cockpit verworfen hat
+    kennung=$(empfang_kennung)
+    if [ -n "$kennung" ]; then
+      ok "Empfangsschlüssel für Client-Secrets aus dem Cockpit: ${kennung:0:16}…"
+    else
+      warn "kein Empfangsschlüssel für Client-Secrets aus dem Cockpit – front.sh erzeugen"
+    fi
+    while IFS= read -r zeile; do
+      [ -z "$zeile" ] || warn "Client-Secret aus dem Cockpit verworfen: $zeile – im Cockpit neu versiegeln lassen"
+    done < <(python3 -I -c 'import json, re, sys
+try:
+    tor = json.load(open(sys.argv[1], encoding="utf-8")).get("tor") or {}
+except (OSError, ValueError, AttributeError):
+    tor = {}
+for v in tor.get("verworfen") or [] if isinstance(tor, dict) else []:
+    if isinstance(v, dict):
+        r, g = str(v.get("realm") or "?"), str(v.get("grund") or "")
+        if re.fullmatch(r"[A-Za-z0-9._?-]{1,64}", r) and re.fullmatch(r"[a-z_]{1,40}", g):
+            print(f"Realm {r} ({g})")' "$FRONT_STATE/status.json" 2>/dev/null || true)
     for r in $TOR_GESPERRT; do warn "Kunde $r gesperrt (kein Realm bzw. kein Client-Secret) – front.sh tor"; done
     # die Container des Tors holen Token und Schlüssel bei Keycloak – wie der Proxy (gleiches Netz,
     # gleiche Namensauflösung, ohne extra_hosts des Orchestrators)
@@ -1537,11 +1609,15 @@ PY
       ok "$k aus dem Front-Proxy genommen (in der Oberfläche entfernt)"
     fi
   done
+  # 1.13.0 (ADR 0055): versiegelte Client-Secrets aus dem Cockpit – nach den Kunden (Realm eines
+  # Kunden aus dem Cockpit), vor dem Erzeugen (Container des Tors mit dem neuen Secret)
+  if tor_an; then tor_geheimnisse_uebernehmen "$soll"; fi
   cmd_erzeugen
   [ "$FEHLER" -eq 0 ] || exit 1
 }
 
-tor_uebersicht() {  # setzt TOR_BEREIT (Realms mit Client-Secret), TOR_FEHLT (ohne), TOR_GESPERRT (Kunden)
+tor_uebersicht() {  # setzt TOR_BEREIT (Realms mit Client-Secret), TOR_FEHLT (ohne), TOR_GESPERRT (Kunden),
+                    # TOR_COCKPIT (Client-Secret aus dem Cockpit)
   local k
   local -A bereit=() fehlt=()
   TOR_GESPERRT=""
@@ -1556,36 +1632,75 @@ tor_uebersicht() {  # setzt TOR_BEREIT (Realms mit Client-Secret), TOR_FEHLT (oh
   fi
   TOR_BEREIT="${!bereit[*]}"
   TOR_FEHLT="${!fehlt[*]}"
+  TOR_COCKPIT=""  # 1.13.0: Realms, deren Client-Secret zuletzt aus dem Cockpit kam
+  for k in "${!bereit[@]}"; do
+    if tor_vom_cockpit "$k"; then TOR_COCKPIT+="$k "; fi
+  done
 }
 
-status_schreiben() {  # $1 = ok|fehler, $2 = Prüfsumme, $3 = Meldung
+status_schreiben() {  # $1 = ok|fehler|behalten (nur den Stand des Tors erneuern), $2 = Prüfsumme, $3 = Meldung
   local ziel="$FRONT_STATE/status.json" tmp
+  [ -d "$FRONT_STATE" ] || return 0
   tmp=$(mktemp "$FRONT_STATE/.status-XXXXXX")
   # sync wendet in einer Subshell an: Einstellungen hier noch einmal lesen (ohne abzubrechen)
   if [ -z "${TOR:-}" ] && (lade_conf) >/dev/null 2>&1; then lade_conf; fi
-  TOR=${TOR:-aus} TOR_BEREIT="" TOR_FEHLT="" TOR_GESPERRT=""
+  TOR=${TOR:-aus} TOR_BEREIT="" TOR_FEHLT="" TOR_GESPERRT="" TOR_COCKPIT=""
   if [ "$TOR" = an ]; then tor_uebersicht; fi
-  python3 -I - "$1" "$2" "$3" "$(kunden | tr '\n' ' ')" "$TOR" "$TOR_BEREIT" "$TOR_FEHLT" "$TOR_GESPERRT" \
-    "${HAUPT_REALM:-}" >"$tmp" <<'PY'
+  # TOR_VERWORFEN (nur in sync): Datei mit „Realm<TAB>Grund“ je verworfenem Geheimnis aus dem Cockpit
+  if ! python3 -I - "$1" "${2:-}" "${3:-}" "$(kunden | tr '\n' ' ')" "$TOR" "$TOR_BEREIT" "$TOR_FEHLT" \
+    "$TOR_GESPERRT" "${HAUPT_REALM:-}" "$TOR_COCKPIT" "${TOR_VERWORFEN:-}" "$ziel" >"$tmp" <<'PY'
 import json, sys
 from datetime import datetime, timezone
-ok, summe, meldung, kunden, tor, bereit, fehlt, gesperrt, haupt = sys.argv[1:10]
+art, summe, meldung, kunden, tor, bereit, fehlt, gesperrt, haupt, cockpit, verworfen_datei, ziel = sys.argv[1:13]
+verworfen = None
+if verworfen_datei:
+    try:
+        zeilen = open(verworfen_datei, encoding="utf-8").read().splitlines()
+    except OSError:
+        zeilen = []
+    verworfen = []
+    for zeile in zeilen:
+        realm, _, grund = zeile.partition("\t")
+        if grund:
+            verworfen.append({"realm": realm or None, "grund": grund})
+# Anmelde-Tor (1.4.0): welche Realms bereit sind, welchen das Client-Secret fehlt, wer gesperrt ist;
+# 1.13.0 (ADR 0055): welche Client-Secrets aus dem Cockpit kamen bzw. verworfen wurden (nie Inhalte)
+stand_tor = {
+    "an": tor == "an",
+    "realms_bereit": sorted(bereit.split()),
+    "realms_ohne_secret": sorted(fehlt.split()),
+    "gesperrt": gesperrt.split(),
+    "haupt_realm": haupt,
+    "vom_cockpit": sorted(cockpit.split()),
+    "verworfen": verworfen or [],
+}
+if art == "behalten":  # nach erzeugen bzw. tor-empfang: das Ergebnis des letzten sync bleibt
+    try:
+        alt = json.load(open(ziel, encoding="utf-8"))
+    except (OSError, ValueError):
+        sys.exit(1)
+    if not isinstance(alt, dict):
+        sys.exit(1)
+    if verworfen is None:
+        vorher = alt.get("tor") if isinstance(alt.get("tor"), dict) else {}
+        liste = vorher.get("verworfen")
+        stand_tor["verworfen"] = liste if isinstance(liste, list) else []
+    alt["tor"] = stand_tor
+    print(json.dumps(alt, ensure_ascii=False))
+    sys.exit(0)
 print(json.dumps({
-    "ok": ok == "ok",
+    "ok": art == "ok",
     "zeit": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     "soll_sha256": summe,
     "meldung": meldung,
     "kunden": kunden.split(),
-    # Anmelde-Tor (1.4.0): welche Realms bereit sind, welchen das Client-Secret fehlt, wer gesperrt ist
-    "tor": {
-        "an": tor == "an",
-        "realms_bereit": sorted(bereit.split()),
-        "realms_ohne_secret": sorted(fehlt.split()),
-        "gesperrt": gesperrt.split(),
-        "haupt_realm": haupt,
-    },
+    "tor": stand_tor,
 }, ensure_ascii=False))
 PY
+  then
+    rm -f "$tmp"
+    return 0
+  fi
   chmod 644 "$tmp"
   mv -f "$tmp" "$ziel"
 }
@@ -1606,15 +1721,16 @@ print(d.get("soll_sha256", "") if d.get("ok") else "")' "$FRONT_STATE/status.jso
     return 0
   fi
   fehlertext=$(mktemp)
+  TOR_VERWORFEN=$(mktemp)  # Geheimnisse aus dem Cockpit, die sync verwirft (Realm und Grund, 1.13.0)
   if (sync_anwenden "$soll") 2>"$fehlertext"; then rc=0; else rc=$?; fi
   cat "$fehlertext" >&2
   if [ "$rc" -eq 0 ]; then
     status_schreiben ok "$summe" "übernommen"
-    rm -f "$fehlertext"
+    rm -f "$fehlertext" "$TOR_VERWORFEN"
     ok "Kunden aus der Oberfläche übernommen"
   else
     status_schreiben fehler "$summe" "$(grep -m1 'FEHLER' "$fehlertext" | sed -E 's/^ *FEHLER:? *//' || true)"
-    rm -f "$fehlertext"
+    rm -f "$fehlertext" "$TOR_VERWORFEN"
     abbruch "Kunden aus der Oberfläche nicht übernommen (Meldung in status.json)"
   fi
 }
@@ -1697,7 +1813,7 @@ tor_stand() {
   [ -n "$KC" ] && ok "Keycloak: $KC (Browser), $KC_INTERN (Proxy)" || warn "Keycloak unbekannt: AUTOMATO_OIDC_ISSUER bzw. AUTOMATO_FRONT_KEYCLOAK"
   tor_uebersicht
   for r in $TOR_BEREIT; do
-    ok "Realm $r: Client-Secret hinterlegt"
+    ok "Realm $r: Client-Secret hinterlegt ($(tor_herkunft "$r"))"
   done
   for r in $TOR_FEHLT; do
     warn "Realm $r: Client-Secret fehlt – sudo deploy/front/front.sh tor $r"
@@ -1714,9 +1830,16 @@ tor_stand() {
     if [ -z "$REALM" ]; then warn "Kunde $k ohne Realm – gesperrt (Kunden-Portal: Realm eintragen)"
     else warn "Kunde $k gesperrt – Client-Secret für Realm $REALM fehlt"; fi
   done
+  tor_an || return 0
+  local kennung
+  kennung=$(empfang_kennung)
+  if [ -n "$kennung" ]; then
+    info "Empfangsschlüssel für Client-Secrets aus dem Cockpit: ${kennung:0:16}… (front.sh tor-empfang)"
+  fi
 }
 
 cmd_tor() {
+  { set +x; } 2>/dev/null  # das Client-Secret nie in einer Ablaufverfolgung (bash -x)
   root_noetig
   lade_conf
   local realm=${1:-} geheim ziel
@@ -1746,8 +1869,210 @@ cmd_tor() {
   )
   mv -f "$ziel.neu" "$ziel"
   ok "Client secret für $realm hinterlegt ($ziel, nur root; Sitzungen beginnen neu)"
+  if aus_cockpit_realm "$realm"; then
+    info "Realm $realm gehört zu einem Kunden aus dem Cockpit: gilt, bis das Cockpit ein neues Client-Secret schickt"
+  fi
   tor_an || info "Anmelde-Tor ist aus – einschalten: AUTOMATO_FRONT_TOR=an in .env"
+  TOR_NEU=$realm
   cmd_erzeugen
+}
+
+# --- Client-Secrets aus dem Cockpit (1.13.0, ADR 0055) -------------------------------------------
+# Das Cockpit liest das Client-Secret von automato-front in Keycloak und versiegelt es mit dem
+# öffentlichen Empfangsschlüssel dieser VM (Inventar: front.tor_empfang). Automato hält nur das
+# Chiffrat (soll.json, tor_geheimnisse); entschlüsselt wird nur hier, als root, und der Klartext
+# geht nur durch Pipes (openssl → Python) – nie in eine Variable, ein Argument, die Ausgabe oder
+# status.json.
+empfang_key() { printf '%s/empfang.key' "$FRONT_TOR_DIR"; }
+empfang_pub() { printf '%s/empfang.pub' "$FRONT_TOR_DIR"; }
+
+empfang_kennung() {  # SHA-256 (hex, klein) über den öffentlichen Schlüssel im DER-Format; leer = keiner
+  local pub
+  pub=$(empfang_pub)
+  if [ ! -s "$pub" ] || ! openssl pkey -pubin -in "$pub" -noout 2>/dev/null; then return 0; fi
+  openssl pkey -pubin -in "$pub" -outform DER 2>/dev/null | sha256sum | cut -c1-64
+}
+
+empfang_anlegen() {  # Empfangsschlüssel anlegen, wenn keiner da ist (RSA 3072, privat nur root, 600)
+  local key pub
+  key=$(empfang_key)
+  pub=$(empfang_pub)
+  install -d -m 700 "$FRONT_TOR_DIR"
+  if [ ! -s "$key" ]; then
+    rm -f "$pub" "$key.neu"
+    if ! (umask 077 && openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out "$key.neu" 2>/dev/null); then
+      rm -f "$key.neu"
+      warn "Empfangsschlüssel nicht angelegt (openssl) – Client-Secrets aus dem Cockpit erst danach"
+      return 0
+    fi
+    chmod 600 "$key.neu"
+    mv -f "$key.neu" "$key"
+    ok "Empfangsschlüssel für Client-Secrets aus dem Cockpit angelegt (ADR 0055)"
+  fi
+  if [ ! -s "$pub" ]; then
+    if openssl pkey -in "$key" -pubout -out "$pub.neu" 2>/dev/null; then
+      chmod 644 "$pub.neu"
+      mv -f "$pub.neu" "$pub"
+    else
+      rm -f "$pub.neu"
+      warn "Empfangsschlüssel $key nicht lesbar – neu: front.sh tor-empfang neu"
+    fi
+  fi
+}
+
+tor_vom_cockpit() {  # Client-Secret des Realms zuletzt aus dem Cockpit übernommen (Kopfzeile der Datei)?
+  local erste=""
+  tor_bereit "$1" || return 1
+  IFS= read -r erste <"$(tor_env "$1")" || true
+  [[ "$erste" == *"(aus dem Cockpit)"* ]]
+}
+
+tor_herkunft() {  # für tor, tor-empfang und pruefen
+  if tor_vom_cockpit "$1"; then printf 'aus dem Cockpit'; else printf 'von Hand'; fi
+}
+
+tor_verwerfen() {  # $1 Realm, $2 Grund – Warnung und status.json, nie mit Inhalt
+  warn "Realm ${1:-?}: Client-Secret aus dem Cockpit verworfen ($2)"
+  [ -z "${TOR_VERWORFEN:-}" ] || printf '%s\t%s\n' "$1" "$2" >>"$TOR_VERWORFEN"
+}
+
+tor_geheimnisse_uebernehmen() {  # $1 soll.json; setzt TOR_NEU (Realms mit neuem Client-Secret)
+  { set +x; } 2>/dev/null  # keine Ablaufverfolgung in der Nähe des Geheimnisses
+  local soll=$1 zeilen realm kennung versiegelt eigene k summe siegel ergebnis
+  local -A cockpit=()
+  TOR_NEU=""
+  # nur lesen und in Zeilen wandeln (Trenner 0x1f); geprüft wird danach
+  zeilen=$(python3 -I - "$soll" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+eintraege = data.get("tor_geheimnisse") if isinstance(data, dict) else None
+for e in eintraege if isinstance(eintraege, list) else []:
+    werte = [e.get(f) if isinstance(e, dict) else None for f in ("realm", "kennung", "versiegelt")]
+    print("\x1f".join(w if isinstance(w, str) and w.isprintable() and "\x1f" not in w else "" for w in werte))
+PY
+  ) || { tor_verwerfen "" format; return 0; }
+  [ -n "$zeilen" ] || return 0
+  for k in $(kunden); do  # nur Realms von Kunden aus dem Cockpit
+    lies_kunde "$k"
+    if [ "$QUELLE" = cockpit ] && [ -n "$REALM" ]; then cockpit[$REALM]=1; fi
+  done
+  eigene=$(empfang_kennung)
+  while IFS=$'\x1f' read -r realm kennung versiegelt; do
+    if ! realm_ok "$realm"; then tor_verwerfen "" format; continue; fi
+    if ! [[ "$kennung" =~ ^[0-9a-f]{64}$ && "$versiegelt" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
+      || [ "${#versiegelt}" -gt 1024 ] || [ $(( ${#versiegelt} % 4 )) -ne 0 ]; then
+      tor_verwerfen "$realm" format
+      continue
+    fi
+    if [ -z "${cockpit[$realm]:-}" ]; then tor_verwerfen "$realm" realm_unbekannt; continue; fi
+    # schon verarbeitet (übernommen bzw. danach von Hand ersetzt): gilt, bis ein anderes Chiffrat kommt
+    summe=$(printf '%s' "$versiegelt" | sha256sum | cut -c1-64)
+    siegel="$FRONT_TOR_DIR/$realm.siegel"
+    if [ -f "$siegel" ] && [ "$(cat "$siegel")" = "$summe" ]; then continue; fi
+    if [ -z "$eigene" ]; then tor_verwerfen "$realm" kein_empfang; continue; fi
+    if [ "$kennung" != "$eigene" ]; then tor_verwerfen "$realm" schluessel_veraltet; continue; fi
+    ergebnis=$(printf '%s' "$versiegelt" | base64 -d 2>/dev/null \
+      | openssl pkeyutl -decrypt -inkey "$(empfang_key)" -pkeyopt rsa_padding_mode:oaep \
+          -pkeyopt rsa_oaep_md:sha256 -pkeyopt rsa_mgf1_md:sha256 2>/dev/null \
+      | python3 -I -c "$TOR_SIEGEL_PY" "$realm" "$TOR_CLIENT" "$(tor_env "$realm")" 2>/dev/null) || true
+    case "$ergebnis" in
+      neu | gleich)
+        (umask 077 && printf '%s\n' "$summe" >"$siegel")
+        if [ "$ergebnis" = neu ]; then
+          TOR_NEU+="$realm "
+          ok "Realm $realm: Client-Secret aus dem Cockpit übernommen (Container des Tors neu)"
+        else
+          ok "Realm $realm: Client-Secret aus dem Cockpit wie bisher"
+        fi
+        ;;
+      nicht_entschluesselt | inhalt_ungueltig) tor_verwerfen "$realm" "$ergebnis" ;;
+      *) tor_verwerfen "$realm" nicht_geschrieben ;;
+    esac
+  done <<<"$zeilen"
+  return 0
+}
+
+# Python für tor_geheimnisse_uebernehmen: Klartext des Siegels auf stdin, Realm, Client und Datei
+# als Argumente. Gibt nur ein Wort aus (neu, gleich, nicht_entschluesselt, inhalt_ungueltig, fehler).
+TOR_SIEGEL_PY=$(cat <<'PY'
+import hmac, json, os, re, secrets, sys
+def ende(wort):
+    print(wort)
+    sys.exit(0)
+try:
+    realm, client, ziel = sys.argv[1:4]
+    roh = sys.stdin.buffer.read(4096)
+    if not roh:
+        ende("nicht_entschluesselt")
+    try:
+        inhalt = json.loads(roh.decode("utf-8"))
+    except ValueError:
+        inhalt = None
+    geheim = inhalt.get("secret") if isinstance(inhalt, dict) else None
+    if not (isinstance(inhalt, dict) and inhalt.get("realm") == realm and inhalt.get("client") == client
+            and isinstance(geheim, str) and re.fullmatch(r"[A-Za-z0-9._~+/=-]{8,512}", geheim)):
+        ende("inhalt_ungueltig")
+    alt, zeilen = {}, []
+    try:
+        with open(ziel, encoding="utf-8") as fh:
+            zeilen = fh.read().splitlines()
+    except OSError:
+        pass
+    for zeile in zeilen:
+        schluessel, _, wert = zeile.partition("=")
+        alt.setdefault(schluessel, wert)
+    gleich = hmac.compare_digest(alt.get("OAUTH2_PROXY_CLIENT_SECRET", "").encode(), geheim.encode())
+    kopf = f"# Anmelde-Tor, Realm {realm} (aus dem Cockpit) – nur root"
+    if gleich and zeilen and zeilen[0] == kopf:
+        ende("gleich")
+    # Cookie-Secret bleibt (Sitzungen bleiben gültig), sonst neu wie front.sh tor
+    cookie = alt.get("OAUTH2_PROXY_COOKIE_SECRET", "")
+    if not re.fullmatch(r"[A-Za-z0-9._~+/=-]{16,64}", cookie):
+        cookie = secrets.token_hex(16)
+    neu = ziel + ".neu"
+    fd = os.open(neu, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(f"{kopf}\nOAUTH2_PROXY_CLIENT_SECRET={geheim}\nOAUTH2_PROXY_COOKIE_SECRET={cookie}\n")
+    os.chmod(neu, 0o600)
+    os.replace(neu, ziel)
+    ende("gleich" if gleich else "neu")
+except SystemExit:
+    raise
+except BaseException:  # nie eine Ablaufverfolgung (sie könnte Werte zeigen)
+    ende("fehler")
+PY
+)
+
+cmd_tor_empfang() {
+  root_noetig
+  lade_conf
+  local kennung r
+  case "${1:-}" in
+    "") ;;
+    neu)
+      tor_an || abbruch "Anmelde-Tor ist aus (AUTOMATO_FRONT_TOR=an) – kein Empfangsschlüssel nötig"
+      rm -f "$(empfang_key)" "$(empfang_pub)"
+      empfang_anlegen
+      schreibe_topologie
+      info "Das Cockpit versiegelt die Client-Secrets beim nächsten Abgleich neu; die hinterlegten gelten weiter"
+      ;;
+    *) abbruch "Verwendung: front.sh tor-empfang [neu]" ;;
+  esac
+  titel "Empfangsschlüssel für Client-Secrets aus dem Cockpit (ADR 0055)"
+  kennung=$(empfang_kennung)
+  if [ -n "$kennung" ]; then
+    ok "Kennung $kennung"
+    info "RSA 3072, $TOR_EMPFANG_ALG, öffentlich: $(empfang_pub) – im Inventar fürs Cockpit"
+  elif tor_an; then
+    warn "noch keiner – legt front.sh erzeugen bzw. sync an (oder: front.sh tor-empfang neu)"
+  else
+    info "keiner – Anmelde-Tor aus"
+  fi
+  tor_an || return 0
+  tor_uebersicht
+  for r in $TOR_BEREIT; do info "Realm $r: Client-Secret $(tor_herkunft "$r")"; done
+  for r in $TOR_FEHLT; do info "Realm $r: Client-Secret fehlt"; done
+  return 0
 }
 
 case "${1:-}" in
@@ -1761,5 +2086,6 @@ case "${1:-}" in
   sync) shift; cmd_sync "$@" ;;
   agent) cmd_agent ;;
   tor) shift; cmd_tor "$@" ;;
+  tor-empfang) shift; cmd_tor_empfang "$@" ;;
   *) sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

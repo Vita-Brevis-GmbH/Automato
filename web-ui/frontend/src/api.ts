@@ -3583,7 +3583,16 @@ export interface PortalAgent {
     meldung?: string;
     kunden?: string[];
     // Anmelde-Tor (1.4.0, ADR 0051): von front.sh sync gemeldet
-    tor?: { an: boolean; realms_bereit: string[]; realms_ohne_secret: string[]; gesperrt: string[]; haupt_realm: string };
+    tor?: {
+      an: boolean;
+      realms_bereit: string[];
+      realms_ohne_secret: string[];
+      gesperrt: string[];
+      haupt_realm: string;
+      // 1.13.0 (ADR 0055): Client-Secret aus dem Cockpit übernommen bzw. verworfen (nur Grund)
+      vom_cockpit?: string[];
+      verworfen?: { realm: string | null; grund: string }[];
+    };
   } | null;
 }
 export interface PortalListing {
