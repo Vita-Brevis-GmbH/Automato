@@ -8,6 +8,11 @@ schreibt nur diese eine Datei; `front.sh` prueft alles noch einmal (Vertrauensgr
 
 Die Pruefungen entsprechen `front.sh` (Kurzname als DNS-Label, reservierte Namen und Endungen,
 Kacheln nur mit https://) - so meldet die Oberflaeche einen Fehler sofort statt erst der Agent.
+
+Kacheln aus dem Cockpit (1.13.0, ADR 0054 zweiter Nachtrag): eine Kachel prueft `check_tile` -
+dieselbe Pruefung fuer die Oberflaeche und `PUT /freigaben` (Grenzen wie im Vertrag mit dem
+Cockpit: Titel 1-60 Zeichen, Adresse mit https:// hoechstens 500 Zeichen ohne Leerraum, Text
+hoechstens 200 Zeichen, nirgends Steuerzeichen; hoechstens 20 Kacheln).
 """
 
 import hashlib
@@ -16,6 +21,7 @@ import json
 import os
 import re
 import tempfile
+import unicodedata
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -32,15 +38,16 @@ SHORT_NAME = re.compile(r"^[a-z0-9]([a-z0-9-]{0,40}[a-z0-9])?$")
 RESERVED = frozenset({"start", "www", "proxy", "alle", "konfig", "mgmt", "konsole", "connect"})
 SUFFIXES = ("-nb", "-doc", "-um", "-cmdb")
 REALM = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
-URL = re.compile(r"^https://[^\s\t\"<>]{1,500}$")
-MAX_LINKS = 20
+# Kacheln (1.13.0: Grenzen wie im Vertrag mit dem Cockpit, ADR 0054 zweiter Nachtrag)
+MAX_LINKS, MAX_TILE_TITLE, MAX_TILE_URL, MAX_TILE_TEXT = 20, 60, 500, 200
 SOLL, STATUS = "soll.json", "status.json"
 # Zugriff je Kunde (1.5.0): von wo die Adressen des Kunden erreichbar sind
 ACCESS = ("ueberall", "intern", "netze")
 MAX_NETS = 50
 # Herkunft je Kunde (1.11.0, ADR 0054): in Automato angelegt bzw. vom Kundenregister des Cockpits
 SOURCE_UI, SOURCE_COCKPIT = "oberflaeche", "cockpit"
-# wer Mandant, Kunden und Standard-Rolle setzt (1.13.0, ADR 0054 Nachtrag)
+# wer Mandant, Kunden und Standard-Rolle setzt (1.13.0, ADR 0054 Nachtrag) - dieselben Werte fuer
+# die Kacheln (`links_source`, ADR 0054 zweiter Nachtrag)
 SCOPE_AUTOMATO, SCOPE_COCKPIT = "automato", "cockpit"
 
 
@@ -98,30 +105,51 @@ def check_realm(realm: str | None) -> str | None:
     return realm
 
 
+def _control(value: str) -> bool:
+    """Enthaelt Steuerzeichen (Tabulator, Umbruch, C0/C1, DEL)?"""
+    return any(unicodedata.category(c) == "Cc" for c in value)
+
+
+def check_tile(title: str, url: str, text: str = "") -> dict:
+    """Eine Kachel pruefen - dieselbe Pruefung fuer die Oberflaeche und die Kacheln aus dem
+    Cockpit (1.13.0): Titel 1-60 Zeichen, Adresse beginnt mit https:// (hoechstens 500 Zeichen,
+    ohne Leerraum), Text hoechstens 200 Zeichen, nirgends Steuerzeichen. Leerraum am Rand faellt
+    weg."""
+    title, url, text = title.strip(), url.strip(), text.strip()
+    if not title or len(title) > MAX_TILE_TITLE or _control(title):
+        raise PortalError(L(
+            f"Kachel ohne Titel bzw. Titel länger als {MAX_TILE_TITLE} Zeichen oder mit "
+            "Steuerzeichen",
+            f"Tile without a title or title longer than {MAX_TILE_TITLE} characters or with "
+            "control characters",
+        ))  # fmt: skip
+    if (not url.startswith("https://") or len(url) == len("https://") or len(url) > MAX_TILE_URL
+            or _control(url) or any(c.isspace() for c in url)):  # fmt: skip
+        raise PortalError(L(
+            f"Kachel „{title}“: Adresse muss mit https:// beginnen (höchstens {MAX_TILE_URL} "
+            "Zeichen, ohne Leerzeichen)",
+            f"Tile “{title}”: the address must start with https:// (at most {MAX_TILE_URL} "
+            "characters, no spaces)",
+        ))  # fmt: skip
+    if len(text) > MAX_TILE_TEXT or _control(text):
+        raise PortalError(L(
+            f"Kachel „{title}“: Beschreibung höchstens {MAX_TILE_TEXT} Zeichen, ohne "
+            "Tabulatoren/Zeilenumbrüche",
+            f"Tile “{title}”: description at most {MAX_TILE_TEXT} characters, no tabs/line "
+            "breaks",
+        ))  # fmt: skip
+    return {"title": title, "url": url, "text": text}
+
+
 def check_links(links: list[dict] | None) -> list[dict]:
+    """Kacheln aus der Oberflaeche: ganz leere Zeilen fallen weg, jede andere wie `check_tile`."""
     out: list[dict] = []
     for item in links or []:
-        title = str(item.get("title") or "").strip()
-        url = str(item.get("url") or "").strip()
-        text = str(item.get("text") or "").strip()
-        if not title and not url:
+        title = str(item.get("title") or "")
+        url = str(item.get("url") or "")
+        if not title.strip() and not url.strip():
             continue
-        if not title or len(title) > 80:
-            raise PortalError(L("Kachel ohne Titel (bzw. länger als 80 Zeichen)",
-                                "Tile without a title (or longer than 80 characters)"))  # fmt: skip
-        if not URL.match(url):
-            raise PortalError(
-                L(
-                    f"Kachel „{title}“: Adresse muss mit https:// beginnen",
-                    f"Tile “{title}”: the address must start with https://",
-                )
-            )
-        if any("\t" in v or "\n" in v for v in (title, url, text)) or len(text) > 200:
-            raise PortalError(L(f"Kachel „{title}“: keine Tabulatoren/Zeilenumbrüche, "
-                                "Beschreibung höchstens 200 Zeichen",
-                                f"Tile “{title}”: no tabs/line breaks, description at most "
-                                "200 characters"))  # fmt: skip
-        out.append({"title": title, "url": url, "text": text})
+        out.append(check_tile(title, url, str(item.get("text") or "")))
     if len(out) > MAX_LINKS:
         raise PortalError(L(f"höchstens {MAX_LINKS} Kacheln", f"at most {MAX_LINKS} tiles"))
     return out
@@ -277,6 +305,8 @@ def out(pc: PortalCustomer, domain: str = "") -> dict:
         "source": pc.source or SOURCE_UI,
         # 1.13.0: Mandant, Kunden und Rolle aus dem Cockpit (dann nur lesbar), Ausschnitt vorhanden
         "scope_source": pc.scope_source or SCOPE_AUTOMATO,
+        # 1.13.0: Kacheln aus dem Cockpit (dann nur lesbar)
+        "links_source": pc.links_source or SCOPE_AUTOMATO,
         "assigned": assigned(pc),
         "addresses": addresses,
         "updated_by": pc.updated_by,

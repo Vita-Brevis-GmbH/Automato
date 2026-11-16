@@ -3569,6 +3569,8 @@ export interface PortalCustomer {
   // (Mandant und mindestens ein Kunde; null = ohne Doku)
   scope_source?: "automato" | "cockpit";
   assigned?: boolean | null;
+  // 1.13.0: weitere Kacheln aus dem Cockpit (dann nur lesbar)
+  links_source?: "automato" | "cockpit";
   addresses: Record<string, string>; // start, netbox, doc, um, cmdb (mit Domain)
   updated_by: string | null;
   updated_at: string | null;
@@ -3578,7 +3580,7 @@ export type PortalAccess = "ueberall" | "intern" | "netze";
 export type PortalSource = "oberflaeche" | "cockpit";
 export type PortalCustomerIn = Omit<
   PortalCustomer,
-  "id" | "addresses" | "updated_by" | "updated_at" | "note" | "source" | "scope_source" | "assigned"
+  "id" | "addresses" | "updated_by" | "updated_at" | "note" | "source" | "scope_source" | "assigned" | "links_source"
 >;
 export interface PortalAgent {
   configured: boolean;

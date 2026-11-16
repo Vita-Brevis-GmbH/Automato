@@ -9,7 +9,8 @@ Kunde (1.5.0: ueberall, intern, netze) geht an den Host; der Front-Proxy sperrt 
 Kunden aus dem Cockpit (1.11.0, ADR 0054, `PUT /freigaben`): hier aendern sich nur Mandant,
 Kunden, Standard-Rolle und Kacheln - Kurzname, Name, Werkzeuge, Zugriff und Realm fuehrt das
 Cockpit, entfernt werden sie nur dort. Hat das Cockpit auch die Zuordnung geschickt (1.13.0,
-`scope_source = cockpit`), sind Mandant, Kunden und Rolle hier nur lesbar (409 beim Aendern).
+`scope_source = cockpit`), sind Mandant, Kunden und Rolle hier nur lesbar (409 beim Aendern);
+ebenso die Kacheln, wenn das Cockpit sie geschickt hat (1.13.0, `links_source = cockpit`).
 """
 
 from datetime import UTC, datetime
@@ -104,6 +105,14 @@ def _apply(session: Session, pc: PortalCustomer, data: PortalIn) -> dict:
     return changed
 
 
+def _same_links(data: PortalIn, pc: PortalCustomer) -> bool:
+    """Nennt die Anfrage dieselben Kacheln wie gespeichert (Leerraum am Rand und ganz leere
+    Zeilen der Oberflaeche zaehlen nicht)?"""
+    sent = [{"title": link.title.strip(), "url": link.url.strip(), "text": link.text.strip()}
+            for link in data.links if link.title.strip() or link.url.strip()]  # fmt: skip
+    return sent == list(pc.links or [])
+
+
 def _publish(session: Session, settings: Settings) -> str | None:
     """Soll-Stand fuer den Host-Agenten schreiben; Fehler als Hinweis (die Daten sind
     gespeichert, der Agent holt sie mit dem naechsten erfolgreichen Schreiben)."""
@@ -172,6 +181,11 @@ def update_customer(
             f"Mandant, Kunden und Rolle von '{pc.short_name}' kommen aus dem Cockpit – dort ändern",
             f"Tenant, customers and role of '{pc.short_name}' come from the cockpit – change them "
             "there"))  # fmt: skip
+    if pc.links_source == portal.SCOPE_COCKPIT and not _same_links(data, pc):
+        raise HTTPException(status_code=409, detail=L(
+            f"Die Kacheln von '{pc.short_name}' kommen aus dem Cockpit – dort ändern",
+            f"The tiles of '{pc.short_name}' come from the cockpit – change them there",
+        ))  # fmt: skip
     if pc.source == portal.SOURCE_COCKPIT:
         # Autor ist das Cockpit (ADR 0054): hier nur Mandant, Kunden, Rolle und Kacheln - die
         # uebrigen Felder bleiben, wie sie sind, egal was die Anfrage nennt

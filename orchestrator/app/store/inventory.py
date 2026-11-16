@@ -20,12 +20,18 @@ Ebenfalls seit 1.13.0 (ADR 0054 Nachtrag) die Auswahl fuer die Zuordnung im Cock
 Mandanten mit ihren Kunden (`automato.mandanten`, nur Id und Name) und die Kunden-Rollen
 (`automato.rollen`); je Kunde, ob er in Automato zugeordnet ist (`automato_zugeordnet`) und die
 Zuordnung im Kunden-Portal (`zuordnung`).
+
+Ebenfalls seit 1.13.0 (ADR 0054 zweiter Nachtrag) je Kunde die weiteren Kacheln der Startseite
+(`kacheln`: Titel, Adresse, Text - Grenzen wie in `PUT /freigaben`) und wer sie setzt
+(`kacheln_von`: `cockpit` | `automato`) - so verliert das Cockpit beim Uebernehmen keine Kacheln.
+Ohne Eintrag im Kunden-Portal beides `null` (unbekannt).
 """
 
 import hashlib
 import ipaddress
 import json
 import re
+import unicodedata
 from pathlib import Path
 
 from cryptography.exceptions import UnsupportedAlgorithm
@@ -201,14 +207,45 @@ def _zuordnung(pc: PortalCustomer | None) -> dict:
     return {"automato_zugeordnet": portal.assigned(pc), "zuordnung": portal.scope_of(pc)}
 
 
+def _kachel(link: object) -> dict | None:
+    """Eine gespeicherte Kachel in der Form des Vertrags (1.13.0); aeltere Eintraege werden auf
+    die Grenzen gekuerzt (Steuerzeichen weg, Titel bzw. Text gekuerzt), eine ungueltige Adresse
+    faellt weg - so nimmt `PUT /freigaben` jede gelieferte Kachel wieder an."""
+    if not isinstance(link, dict):
+        return None
+
+    def rein(value: object, laenge: int) -> str:
+        text = value if isinstance(value, str) else ""
+        ohne = "".join(c for c in text if unicodedata.category(c) != "Cc")
+        return ohne.strip()[:laenge].strip()
+
+    try:
+        k = portal.check_tile(rein(link.get("title"), portal.MAX_TILE_TITLE),
+                              link.get("url") if isinstance(link.get("url"), str) else "",
+                              rein(link.get("text"), portal.MAX_TILE_TEXT))  # fmt: skip
+    except portal.PortalError:
+        return None
+    return {"titel": k["title"], "adresse": k["url"], "text": k["text"]}
+
+
+def _kacheln(pc: PortalCustomer | None) -> dict:
+    """Weitere Kacheln der Startseite je Kunde (1.13.0) und wer sie setzt; ohne Eintrag im
+    Kunden-Portal unbekannt (null)."""
+    if pc is None:
+        return {"kacheln": None, "kacheln_von": None}
+    kacheln = [k for k in map(_kachel, list(pc.links or [])[: portal.MAX_LINKS]) if k]
+    return {"kacheln": kacheln, "kacheln_von": pc.links_source or portal.SCOPE_AUTOMATO}
+
+
 def _kunden(topo: dict, portal_kunden: dict[str, PortalCustomer]) -> list[dict]:
     kunden = topo.get("kunden") if isinstance(topo.get("kunden"), list) else []
     out = []
     for k in kunden[:1000]:
         kurz = _text(k.get("kurzname"), 63) if isinstance(k, dict) else None
         if kurz:
+            pc = portal_kunden.get(kurz)
             out.append({**{feld: _text(k.get(feld)) for feld in _KUNDE}, **_herkunft(k),
-                        **_zuordnung(portal_kunden.get(kurz))})  # fmt: skip
+                        **_zuordnung(pc), **_kacheln(pc)})  # fmt: skip
     return out
 
 

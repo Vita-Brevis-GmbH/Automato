@@ -27,6 +27,10 @@ der Realm dieses Kunden ist.
 Zuordnung aus dem Cockpit (1.13.0, ADR 0054 Nachtrag): `scope_source` = `automato` (Mandant, Kunden
 und Standard-Rolle pflegt Automato) oder `cockpit` (das Cockpit hat sie mit den Freigaben gesetzt
 - in Automato dann nur lesbar).
+
+Kacheln aus dem Cockpit (1.13.0, ADR 0054 zweiter Nachtrag): `links_source` = `automato` (die
+weiteren Kacheln pflegt Automato) oder `cockpit` (das Cockpit hat sie mit den Freigaben gesetzt -
+in Automato dann nur lesbar).
 """
 
 from datetime import UTC, datetime
@@ -68,6 +72,10 @@ class PortalCustomer(Base):
     tor_secret: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # wer Mandant, Kunden und Standard-Rolle setzt (1.13.0): automato | cockpit
     scope_source: Mapped[str] = mapped_column(
+        String(16), default="automato", server_default="automato"
+    )
+    # wer die weiteren Kacheln setzt (1.13.0, ADR 0054 zweiter Nachtrag): automato | cockpit
+    links_source: Mapped[str] = mapped_column(
         String(16), default="automato", server_default="automato"
     )
     updated_by: Mapped[str | None] = mapped_column(String(200), nullable=True)

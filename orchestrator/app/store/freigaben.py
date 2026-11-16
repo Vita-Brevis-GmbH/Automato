@@ -3,7 +3,8 @@
 Das Kundenregister des Cockpits schickt den ganzen Stand seiner Kunden fuer diese Installation
 (Vertrag im Cockpit: docs/vertraege/freigaben.md, v1); Automato fuehrt damit sein Kunden-Portal
 nach (ADR 0050). Das Cockpit ist Autor fuer Kurzname, Name, Werkzeuge, Zugriff und Realm;
-Mandant, Kunden, Standard-Rolle und weitere Kacheln pflegt Automato selbst.
+Mandant, Kunden, Standard-Rolle und weitere Kacheln pflegt Automato selbst (seit 1.13.0 auf
+Wunsch auch das Cockpit, siehe unten).
 
 - **Ganzer Stand, idempotent:** dieselbe Anfrage zweimal aendert nichts (kein Audit, der
   Soll-Stand bleibt).
@@ -28,6 +29,13 @@ Automato prueft nur die Form (alles oder nichts wie bei `kunden`) und die Kennun
 Seit 1.13.0 (ADR 0054 Nachtrag) je Kunde optional `zuordnung` (Mandant, Kunden, Rolle): dann ist
 das Cockpit Autor dieser drei Felder (`scope_source = cockpit`, in Automato nur lesbar); ohne
 `zuordnung` bleibt der Stand in Automato und die Felder sind dort wieder aenderbar.
+
+Ebenfalls seit 1.13.0 (ADR 0054 zweiter Nachtrag) je Kunde optional `kacheln` (Titel, Adresse,
+Text): gesetzt (auch leer) ist das Cockpit Autor der weiteren Kacheln dieses Kunden - Automato
+ersetzt sie vollstaendig in der gesendeten Reihenfolge (`links_source = cockpit`, in Automato nur
+lesbar); geprueft je Kachel wie in der Oberflaeche (`portal.check_tile`). Ohne `kacheln` bzw.
+`null` bleibt der letzte Stand und ist in Automato wieder aenderbar. Im Audit nur die Anzahl
+(`kacheln`), nie Titel oder Adressen.
 """
 
 import base64
@@ -53,8 +61,10 @@ WERKZEUGE = ("doc", "nb", "um", "cmdb")
 #: Akteur im Audit
 AKTEUR = "cockpit"
 #: Felder, deren Autor das Cockpit ist (alles andere bleibt in Automato); mit `zuordnung` auch
-#: Mandant, Kunden und Standard-Rolle (1.13.0) - `scope_source` haelt fest, wer sie setzt
-FELDER = ("name", "doc", "nb", "um", "cmdb", "realm", "access", "access_nets", "scope_source")
+#: Mandant, Kunden und Standard-Rolle (1.13.0) - `scope_source` haelt fest, wer sie setzt; mit
+#: `kacheln` auch die weiteren Kacheln (`links_source`)
+FELDER = ("name", "doc", "nb", "um", "cmdb", "realm", "access", "access_nets", "scope_source",
+          "links", "links_source")  # fmt: skip
 FELDER_ZUORDNUNG = ("tenant_id", "customer_ids", "default_role")
 MAX_ZUORDNUNG_KUNDEN = 2000
 #: versiegelte Client-Secrets (1.13.0, ADR 0055): Kennung des Empfangsschluessels, Chiffrat
@@ -188,6 +198,38 @@ def _zuordnung(session: Session, roh: object) -> dict:
             "scope_source": portal.SCOPE_COCKPIT}  # fmt: skip
 
 
+def _kacheln(roh: object) -> dict:
+    """`kacheln` eines Kunden pruefen (1.13.0, ADR 0054 zweiter Nachtrag): hoechstens 20, je
+    Kachel wie in der Oberflaeche (`portal.check_tile`). Ohne bzw. null: keine Aussage - die
+    Kacheln bleiben, wie sie sind, und in Automato aenderbar."""
+    if roh is None:
+        return {"links_source": portal.SCOPE_AUTOMATO}
+    if not isinstance(roh, list):
+        raise portal.PortalError(L("kacheln ist keine Liste", "kacheln is not a list"))
+    if len(roh) > portal.MAX_LINKS:
+        raise portal.PortalError(L(f"kacheln: höchstens {portal.MAX_LINKS} Kacheln",
+                                   f"kacheln: at most {portal.MAX_LINKS} tiles"))  # fmt: skip
+    out: list[dict] = []
+    for nr, k in enumerate(roh, start=1):
+        if not isinstance(k, dict):
+            raise portal.PortalError(L(f"kacheln: Kachel {nr} ist kein Objekt",
+                                       f"kacheln: tile {nr} is not an object"))  # fmt: skip
+        titel, adresse, text = k.get("titel"), k.get("adresse"), k.get("text")
+        if text is None:
+            text = ""
+        if not all(isinstance(v, str) for v in (titel, adresse, text)):
+            raise portal.PortalError(L(
+                f"kacheln: Kachel {nr} – titel und adresse sind Text, text Text oder null",
+                f"kacheln: tile {nr} – titel and adresse are strings, text a string or null",
+            ))  # fmt: skip
+        try:
+            out.append(portal.check_tile(titel, adresse, text))
+        except portal.PortalError as exc:
+            raise portal.PortalError(L(f"kacheln: Kachel {nr} – {exc}",
+                                       f"kacheln: tile {nr} – {exc}")) from exc  # fmt: skip
+    return {"links": out, "links_source": portal.SCOPE_COCKPIT}
+
+
 def _freigabe(session: Session, roh: dict) -> Freigabe:
     """Einen Kunden der Anfrage pruefen (wirft PortalError)."""
     kurz_roh = roh.get("kurzname")
@@ -207,7 +249,8 @@ def _freigabe(session: Session, roh: dict) -> Freigabe:
         raise portal.PortalError(L("realm ist kein Text", "realm is not a string"))
     werte = {"name": name, "doc": "doc" in tools, "nb": "nb" in tools, "um": "um" in tools,
              "cmdb": "cmdb" in tools, "realm": portal.check_realm(realm), "access": access,
-             "access_nets": nets, **_zuordnung(session, roh.get("zuordnung"))}  # fmt: skip
+             "access_nets": nets, **_zuordnung(session, roh.get("zuordnung")),
+             **_kacheln(roh.get("kacheln"))}  # fmt: skip
     return Freigabe(kurz, werte)
 
 
@@ -358,9 +401,20 @@ def _wert(pc: PortalCustomer, feld: str) -> object:
         return value or "ueberall"
     if feld == "customer_ids":
         return sorted(int(c) for c in value or [])
-    if feld == "scope_source":
+    if feld in ("scope_source", "links_source"):
         return value or portal.SCOPE_AUTOMATO
+    if feld == "links":
+        return list(value or [])
     return value
+
+
+def _detail(changed: dict) -> dict:
+    """Audit-Detail einer Aenderung: die Kacheln nur als Anzahl (`kacheln`), nie Titel oder
+    Adressen (frei eingegeben)."""
+    detail = {k: v for k, v in changed.items() if k != "links"}
+    if "links" in changed:
+        detail["kacheln"] = len(changed["links"])
+    return detail
 
 
 def anwenden(session: Session, freigaben: list[Freigabe], akteur: str = AKTEUR) -> Ergebnis:
@@ -399,11 +453,10 @@ def anwenden(session: Session, freigaben: list[Freigabe], akteur: str = AKTEUR) 
     session.flush()
     # 4. uebernehmen
     for f, pc, changed, art in plan:
-        detail = {**changed, "quelle": portal.SOURCE_COCKPIT}
+        detail = {**_detail(changed), "quelle": portal.SOURCE_COCKPIT}
         if pc is None:
-            pc = PortalCustomer(short_name=f.kurzname, links=[],
-                                source=portal.SOURCE_COCKPIT,
-                                **{"customer_ids": [], **f.werte})  # fmt: skip
+            pc = PortalCustomer(short_name=f.kurzname, source=portal.SOURCE_COCKPIT,
+                                **{"customer_ids": [], "links": [], **f.werte})  # fmt: skip
             session.add(pc)
             action = "portal.customer.created"
         else:
