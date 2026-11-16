@@ -131,6 +131,28 @@ def create_code(
     return format_code(code), expires
 
 
+def deposit_code(
+    session: Session, peer: str, raw_code: str, actor: str, now: datetime | None = None
+) -> datetime:
+    """Einen vorgegebenen Einmal-Code als offenen Code hinterlegen (1.16.0, ADR 0061): beim
+    Einrichten einer eigenen Automato-Instanz erzeugt das Cockpit den Code und gibt ihn im Auftrag
+    mit (`betrieb.sh installieren --kopplung`); danach gelten dieselben Regeln wie fuer einen hier
+    erzeugten (`CODE_MINUTEN`, einmal, `MAX_FEHLVERSUCHE`, nur der Hash bleibt). Ersetzt einen
+    offenen Code; wirft ValueError bei einem ungueltigen Code. Der Aufrufer committet."""
+    code = normalize_code(raw_code)
+    if code is None:
+        raise ValueError("ungueltiger Einmal-Code")
+    now = now or datetime.now(UTC)
+    row = _ensure(session, peer)
+    replaced = row.code_hash is not None and (_aware(row.code_expires) or now) > now
+    expires = now + timedelta(minutes=CODE_MINUTEN)
+    row.code_hash, row.code_expires, row.code_failures, row.code_by = (
+        _hash(code), expires, 0, actor[:200])  # fmt: skip
+    audit.record(session, actor=actor, action=f"{peer}.kopplung.code", subject=peer,
+                 detail={"bis": expires.isoformat(), "ersetzt": replaced})  # fmt: skip
+    return expires
+
+
 def withdraw_code(session: Session, peer: str, actor: str) -> bool:
     """Offenen Code verwerfen -> True, wenn einer offen war."""
     row = _row(session, peer, lock=True)

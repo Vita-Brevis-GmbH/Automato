@@ -91,6 +91,9 @@ class PortalCustomer(Base):
     users: Mapped[list | None] = mapped_column(JSON, nullable=True)
     # zum Entfernen vorgemerkt (Cockpit, ADR 0059): Front-Proxy sperrt alle Adressen, Daten bleiben
     gesperrt: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    # eigene Automato-Instanz des Kunden aus dem Cockpit (1.16.0, ADR 0061): <kunde>-doc geht an
+    # automato-<instanz> statt an die Hauptinstanz; None = gemeinsame Instanz (wie bisher)
+    automato_instanz: Mapped[str | None] = mapped_column(String(31), nullable=True)
     updated_by: Mapped[str | None] = mapped_column(String(200), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)

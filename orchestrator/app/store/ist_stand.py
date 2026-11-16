@@ -7,7 +7,8 @@ Kundenregister (Seite „Aufräumen“); Automato liefert seinen Teil - nur Name
 - `front`: was der Front-Proxy auf der VM hat (`status.json` von `front.sh`, Schluessel `ist`):
   Kunden, gesperrte Kunden, Realms mit Tor-Geheimnis (`tor/<realm>.env`), Realms mit Container
   des Tors, Container ohne bekannten Realm, verwaiste Tor-Dateien (ohne Kunden - nur gemeldet,
-  nie still geloescht) und was der letzte Abgleich auf Auftrag entfernt bzw. abgelehnt hat.
+  nie still geloescht) und was der letzte Abgleich auf Auftrag entfernt bzw. abgelehnt hat; seit
+  1.16.0 (ADR 0061) die eigenen Automato-Instanzen, deren Anschluss im Netz des Proxys laeuft.
 - `netbox_host`: letzte Meldung des Agenten des NetBox-Hosts (`PUT /netbox-host/stand` nach jedem
   `sync`): Instanzen, Instanzen ohne Freigabe, auf Auftrag geloeschte bzw. nicht geloeschte.
 - `automato_kunden`: die Kunden in Automato (ADR 0018) mit Mandant, fuer welchen Portal-Kunden
@@ -185,6 +186,8 @@ def front(state_dir: str) -> dict | None:
         "tor_verwaist": _namen(teil.get("tor_verwaist"), _realm),
         "tor_entfernt": _namen(teil.get("tor_entfernt"), _realm),
         "tor_entfernen_abgelehnt": abgelehnt if "ist" in status else None,
+        # 1.16.0 (ADR 0061): eigene Automato-Instanzen auf der VM; null bei einem aelteren front.sh
+        "instanzen": _namen(teil.get("instanzen"), portal.INSTANZ.fullmatch),
     }
 
 

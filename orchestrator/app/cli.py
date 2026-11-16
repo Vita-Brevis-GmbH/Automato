@@ -16,6 +16,8 @@ Im Orchestrator-Container (Beispiele):
   automato tls-init --dir /pki [--name <vm>] [--renew]   # interne CA + Zertifikate (0.49.0)
   automato cockpit-kopplung [--status|--verwerfen|--entkoppeln]   # Einmal-Code fuers Cockpit
                           (1.13.0, ADR 0057; deploy/aufbau.sh cockpit-kopplung)
+  automato cockpit-kopplung --hinterlegen   # Code des Cockpits von stdin (1.16.0, ADR 0061;
+                          deploy/betrieb.sh installieren --kopplung)
 
 Sprache der Ausgaben (0.90.0, ADR 0028 Schritt 4): `--lang de|en` (vor oder nach dem Befehl)
 bzw. Umgebungsvariable `AUTOMATO_LANG`, Standard Deutsch. Was gespeichert wird (Laeufe, Audit),
@@ -438,6 +440,23 @@ def _cmd_cockpit_kopplung(session: Session, args: argparse.Namespace) -> int:
                 "OK     unpaired – the paired token is no longer valid") if done
               else L("INFO   nicht gekoppelt", "INFO   not paired"))  # fmt: skip
         return 0
+    if args.hinterlegen:
+        # 1.16.0 (ADR 0061): Code aus dem Auftrag des Cockpits (betrieb.sh installieren) - von
+        # stdin, nie als Argument (Prozessliste); nie ausgegeben
+        try:
+            with german():
+                expires = kopplung.deposit_code(session, peer, sys.stdin.readline(),
+                                                "cli:betrieb-installieren")  # fmt: skip
+        except ValueError:
+            session.rollback()
+            _error("kein gültiger Einmal-Code (XXXX-XXXX-XXXX) auf stdin",
+                   "no valid pairing code (XXXX-XXXX-XXXX) on stdin")  # fmt: skip
+            return 2
+        session.commit()
+        bis = _zeit(expires.isoformat())
+        print(L(f"OK     Einmal-Code des Cockpits hinterlegt, gültig bis {bis}",
+                f"OK     pairing code of the cockpit stored, valid until {bis}"))  # fmt: skip
+        return 0
     if args.verwerfen:
         with german():
             done = kopplung.withdraw_code(session, peer, actor)
@@ -606,6 +625,10 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--entkoppeln", action="store_true",
                    help=L("gekoppeltes Token ungueltig machen",
                           "invalidate the paired token"))  # fmt: skip
+    q.add_argument("--hinterlegen", action="store_true",
+                   help=L("Einmal-Code des Cockpits von stdin hinterlegen (eigene Instanz)",
+                          "store the cockpit's pairing code from stdin (own instance)"),
+                   )  # fmt: skip
     p.set_defaults(func=_cmd_cockpit_kopplung)
 
     p = command("purge", "alte Laeufe, Sync-Vorschauen und Audit nach Frist loeschen",

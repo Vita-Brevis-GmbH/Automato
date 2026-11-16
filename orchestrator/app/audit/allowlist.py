@@ -14,12 +14,13 @@ bewusst: lieber ein lückenhaftes als ein undichtes Log.
 # Freigaben aus dem Cockpit (Akteur `cockpit`) die Herkunft in `quelle`; seit 1.13.0 wer Mandant,
 # Kunden und Rolle setzt (`scope_source`) sowie Kacheln aus dem Cockpit nur als Anzahl (`kacheln`)
 # und wer sie setzt (`links_source`); seit 1.14.0 (ADR 0058) die Benutzer aus dem Cockpit als
-# Anzahl und was sich aendert (je Benutzername und Rolle), ob gesperrt (ADR 0059)
+# Anzahl und was sich aendert (je Benutzername und Rolle), ob gesperrt (ADR 0059); seit 1.16.0
+# (ADR 0061) die eigene Automato-Instanz (Name)
 _PORTAL = frozenset(
     {"short_name", "name", "doc", "nb", "um", "cmdb", "realm", "tenant_id", "customer_ids",
      "default_role", "access", "access_nets", "quelle", "uebernommen", "scope_source", "kacheln",
      "links_source", "benutzer", "benutzer_neu", "benutzer_entfernt", "benutzer_rolle",
-     "gesperrt"}
+     "gesperrt", "automato_instanz"}
 )  # fmt: skip
 # Abbau aus dem Cockpit (1.14.0, ADR 0059): gewuenschte Teile, Realm, Stand und Grund - nur
 # Namen und Codes

@@ -50,6 +50,9 @@ SOURCE_UI, SOURCE_COCKPIT = "oberflaeche", "cockpit"
 # wer Mandant, Kunden und Standard-Rolle setzt (1.13.0, ADR 0054 Nachtrag) - dieselben Werte fuer
 # die Kacheln (`links_source`, ADR 0054 zweiter Nachtrag)
 SCOPE_AUTOMATO, SCOPE_COCKPIT = "automato", "cockpit"
+# eigene Automato-Instanz je Kunde (1.16.0, ADR 0061): Name wie im Vertrag mit dem Cockpit
+# (Compose-Projekt automato-<instanz>, Ordner <basisordner>/<instanz>) - wie deploy/lib-instanz.sh
+INSTANZ = re.compile(r"^[a-z][a-z0-9-]{1,30}$")
 
 
 class PortalError(ValueError):
@@ -366,6 +369,8 @@ def out(pc: PortalCustomer, domain: str = "", live: dict[int, set[int]] | None =
         "users": list(pc.users) if pc.users is not None else None,
         # 1.14.0 (ADR 0059): vom Cockpit zum Entfernen vorgemerkt - Front-Proxy sperrt alle Adressen
         "gesperrt": bool(pc.gesperrt),
+        # 1.16.0 (ADR 0061): eigene Automato-Instanz aus dem Cockpit (None = gemeinsame)
+        "automato_instanz": pc.automato_instanz,
         "assigned": assigned(pc, live),
         "addresses": addresses,
         "updated_by": pc.updated_by,
@@ -391,7 +396,8 @@ def desired(session: Session, cockpit: bool = False) -> dict:
     `verwaltung: cockpit`, wenn ein Cockpit verbunden ist (`cockpit`) - dann aendert `front.sh`
     Kunden von Hand nur noch mit `--trotzdem`. Ebenfalls seit 1.14.0 (ADR 0059) je Kunde
     `gesperrt` (nur, wenn gesperrt) und die Tor-Geheimnisse, die `front.sh sync` auf Auftrag des
-    Cockpits entfernt (`tor_entfernen`, nur, wenn es welche gibt)."""
+    Cockpits entfernt (`tor_entfernen`, nur, wenn es welche gibt). Seit 1.16.0 (ADR 0061) je Kunde
+    `automato_instanz` (nur, wenn gesetzt): `<kunde>-doc` an die eigene Automato-Instanz."""
     from app.store import abbau  # spaet: abbau nutzt portal
 
     kunden = listing(session)
@@ -403,7 +409,8 @@ def desired(session: Session, cockpit: bool = False) -> dict:
              "um": pc.um, "cmdb": pc.cmdb, "realm": pc.realm or "",
              "zugriff": pc.access or "ueberall", "netze": list(pc.access_nets or []),
              "links": list(pc.links or []), "quelle": pc.source or SOURCE_UI,
-             **({"gesperrt": True} if pc.gesperrt else {})}
+             **({"gesperrt": True} if pc.gesperrt else {}),
+             **({"automato_instanz": pc.automato_instanz} if pc.automato_instanz else {})}
             for pc in kunden
         ],
     }  # fmt: skip

@@ -93,6 +93,7 @@ def test_inventar_aus_der_topologie(client, tmp_path):
         "cmdb": None, "quelle": None, "werkzeuge": None, "zugriff": None, "netze": [],
         "realm": None, "gesperrt": None, "automato_zugeordnet": None, "zuordnung": None,
         "kacheln": None, "kacheln_von": None, "benutzer": None,  # 1.14.0
+        "automato_instanz": None,  # 1.16.0
     }]  # fmt: skip
 
 

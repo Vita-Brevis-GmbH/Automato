@@ -45,6 +45,12 @@ Namen des Portal-Kunden an und nimmt ihn zu den Kunden - idempotent, Audit `cust
 Ebenfalls seit 1.14.0 (ADR 0059) je Kunde optional `gesperrt` (Vorgabe false) - zum Entfernen
 vorgemerkt, der Front-Proxy sperrt alle Adressen, Daten bleiben. Die Loeschauftraege (`entfernen`,
 oberste Ebene) prueft und fuehrt `store/abbau.py` (vor bzw. nach `uebernehmen`, `api/freigaben.py`).
+
+Seit 1.16.0 (ADR 0061) je Kunde optional `automato_instanz` (Name der eigenen Automato-Instanz,
+`^[a-z][a-z0-9-]{1,30}$`, null bzw. ohne = gemeinsame Instanz): dann leitet der Front-Proxy
+`<kunde>-doc` an diese Instanz. Eine Instanz gehoert genau einem Kunden (doppelt in der Anfrage:
+abgelehnt, alles oder nichts). Angelegt und entfernt wird sie nicht hier, sondern vom Host-Agenten
+des Cockpits (`deploy/betrieb.sh installieren` bzw. `entfernen`).
 """
 
 import base64
@@ -74,7 +80,7 @@ AKTEUR = "cockpit"
 #: `kacheln` auch die weiteren Kacheln (`links_source`); seit 1.14.0 die Benutzer mit Rolle
 #: (`users`, ADR 0058) und die Sperre waehrend der Frist (`gesperrt`, ADR 0059)
 FELDER = ("name", "doc", "nb", "um", "cmdb", "realm", "access", "access_nets", "scope_source",
-          "links", "links_source", "users", "gesperrt")  # fmt: skip
+          "links", "links_source", "users", "gesperrt", "automato_instanz")  # fmt: skip
 FELDER_ZUORDNUNG = ("tenant_id", "customer_ids", "default_role")
 MAX_ZUORDNUNG_KUNDEN = 2000
 #: versiegelte Client-Secrets (1.13.0, ADR 0055): Kennung des Empfangsschluessels, Chiffrat
@@ -257,6 +263,18 @@ def _kacheln(roh: object) -> dict:
     return {"links": out, "links_source": portal.SCOPE_COCKPIT}
 
 
+def _instanz(value: object) -> str | None:
+    """`automato_instanz` eines Kunden (1.16.0, ADR 0061): Name der eigenen Instanz oder null."""
+    if value is None:
+        return None
+    if not isinstance(value, str) or not portal.INSTANZ.fullmatch(value):
+        raise portal.PortalError(L(
+            "automato_instanz ungültig (a–z, 0–9 und -, 2–31 Zeichen, zuerst ein Buchstabe)",
+            "automato_instanz invalid (a–z, 0–9 and -, 2–31 characters, starting with a letter)",
+        ))  # fmt: skip
+    return value
+
+
 def _freigabe(session: Session, roh: dict) -> Freigabe:
     """Einen Kunden der Anfrage pruefen (wirft PortalError)."""
     kurz_roh = roh.get("kurzname")
@@ -281,7 +299,8 @@ def _freigabe(session: Session, roh: dict) -> Freigabe:
              "cmdb": "cmdb" in tools, "realm": portal.check_realm(realm), "access": access,
              "access_nets": nets, **_zuordnung(session, roh.get("zuordnung")),
              **_kacheln(roh.get("kacheln")), "gesperrt": bool(gesperrt),
-             "users": verwaltung.check_benutzer(roh.get("benutzer"))}  # fmt: skip
+             "users": verwaltung.check_benutzer(roh.get("benutzer")),
+             "automato_instanz": _instanz(roh.get("automato_instanz"))}  # fmt: skip
     return Freigabe(kurz, werte, _kunde_anlegen(roh.get("zuordnung")))
 
 
@@ -383,6 +402,7 @@ def _pruefen(session: Session, data: object) -> tuple[list[Freigabe], list[TorGe
     out: list[Freigabe] = []
     kurznamen: set[str] = set()
     realms: dict[str, str] = {}
+    instanzen: dict[str, str] = {}  # 1.16.0: eigene Automato-Instanz -> Kurzname
     alle_realms = {r.get("realm") for r in kunden if isinstance(r, dict)
                    and isinstance(r.get("realm"), str)}  # fmt: skip
     for nr, roh in enumerate(kunden, start=1):
@@ -405,9 +425,19 @@ def _pruefen(session: Session, data: object) -> tuple[list[Freigabe], list[TorGe
                 f"Realm '{realm}' doppelt in der Anfrage (auch '{realms[realm]}')",
                 f"realm '{realm}' twice in the request (also '{realms[realm]}')")))  # fmt: skip
             continue
+        instanz = f.werte["automato_instanz"]
+        if instanz and instanz in instanzen:
+            auch = instanzen[instanz]
+            fehler.append(_fehler(f.kurzname, L(
+                f"automato_instanz '{instanz}' doppelt in der Anfrage (auch '{auch}')",
+                f"automato_instanz '{instanz}' twice in the request (also '{auch}')",
+            )))  # fmt: skip
+            continue
         kurznamen.add(f.kurzname)
         if realm:
             realms[realm] = f.kurzname
+        if instanz:
+            instanzen[instanz] = f.kurzname
         out.append(f)
     # Realm eines Kunden aus der Oberflaeche, der nicht in der Anfrage steht (bleibt also, wie
     # er ist): nicht wegnehmen - Kunden aus dem Cockpit, die wegfallen, geben ihren frei

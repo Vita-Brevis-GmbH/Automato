@@ -619,7 +619,7 @@ def test_ist_im_inventar(api, session_factory):
         "stand": "2026-11-16T10:00:00+00:00", "kunden": ["kunde-a"], "gesperrt": ["kunde-a"],
         "tor_realms_dateien": ["alt-r", "kunde-a"], "tor_dienste": ["kunde-a"],
         "tor_dienste_fremd": ["tor-alt-12345678"], "tor_verwaist": ["alt-r"], "tor_entfernt": [],
-        "tor_entfernen_abgelehnt": [],
+        "tor_entfernen_abgelehnt": [], "instanzen": None,  # 1.16.0: front.sh ohne Instanzen
     }  # fmt: skip
     # aelteres front.sh ohne `ist`: Listen unbekannt
     (api.state_dir / "status.json").write_text(json.dumps(

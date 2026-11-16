@@ -33,6 +33,10 @@ Cockpit (`benutzer`: aktueller Stand bzw. null = keine Aussage).
 Ebenfalls seit 1.14.0 (ADR 0059) der Ist-Stand der Instanzen (`ist`: Front-Proxy, NetBox-Host,
 Kunden in Automato, Loeschauftraege - `store/ist_stand.py`) und je Kunde, ob der Front-Proxy ihn
 sperrt (`gesperrt`, aus `topologie.json`; null bei einem aelteren front.sh).
+
+Seit 1.16.0 (ADR 0061) je Kunde die eigene Automato-Instanz (`automato_instanz`: Name aus dem
+Kunden-Portal, sonst aus `topologie.json`, sonst null = gemeinsame Instanz) und unter `ist.front`
+die Instanzen, deren Anschluss der Front-Proxy auf der VM gefunden hat (`instanzen`).
 """
 
 import hashlib
@@ -262,6 +266,14 @@ def _kacheln(pc: PortalCustomer | None) -> dict:
     return {"kacheln": kacheln, "kacheln_von": pc.links_source or portal.SCOPE_AUTOMATO}
 
 
+def _instanz(pc: PortalCustomer | None, k: dict) -> dict:
+    """Eigene Automato-Instanz des Kunden (1.16.0, ADR 0061): aus dem Kunden-Portal, ohne Eintrag
+    dort aus `topologie.json` (nur gueltige Namen), sonst null."""
+    wert = pc.automato_instanz if pc is not None else k.get("automato_instanz")
+    ok = isinstance(wert, str) and portal.INSTANZ.fullmatch(wert)
+    return {"automato_instanz": wert if ok else None}
+
+
 def _kunden(topo: dict, portal_kunden: dict[str, PortalCustomer],
             live: dict[int, set[int]],
             angelegt: dict[tuple[str, int], int] | None = None) -> list[dict]:  # fmt: skip
@@ -272,7 +284,8 @@ def _kunden(topo: dict, portal_kunden: dict[str, PortalCustomer],
         if kurz:
             pc = portal_kunden.get(kurz)
             out.append({**{feld: _text(k.get(feld)) for feld in _KUNDE}, **_herkunft(k),
-                        **_zuordnung(pc, live, angelegt), **_kacheln(pc)})  # fmt: skip
+                        **_zuordnung(pc, live, angelegt), **_kacheln(pc),
+                        **_instanz(pc, k)})  # fmt: skip
     return out
 
 
