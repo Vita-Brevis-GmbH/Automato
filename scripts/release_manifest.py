@@ -21,6 +21,8 @@ ungueltig, 4 Signatur fehlt bzw. ungueltig, 5 Schluessel ungueltig bzw. openssl 
 6 Produkt bzw. Version passt nicht, 2 Aufruf.
 """
 
+from __future__ import annotations  # auch mit aelterem python3 auf dem Host
+
 import argparse
 import base64
 import binascii

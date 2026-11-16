@@ -22,6 +22,12 @@
 # Sperre, Stand des letzten Updates und Rueckfall teilt es mit update.sh (deploy/lib-update.sh).
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 2
+# Der Agent gibt nur PATH, LANG und BETRIEB_AUFTRAG mit - git und docker (Anmeldung an GHCR unter
+# ~/.docker) brauchen HOME
+if [ -z "${HOME:-}" ]; then
+  HOME=$(getent passwd "$(id -u)" | cut -d: -f6)
+  export HOME
+fi
 # shellcheck source=deploy/env.sh
 . deploy/env.sh
 COMPOSE=${COMPOSE:-docker compose}
