@@ -300,3 +300,26 @@ jobs:
             web-ui/frontend/playwright-report
             web-ui/frontend/test-results
           retention-days: 7
+
+  # Images und signiertes Manifest je Kanal (1.15.0, ADR 0060): nur nach grüner CI dieses Commits
+  # (needs auf alle Jobs, keiner rot oder abgebrochen), nur für Pushes auf main (Kanal latest) und
+  # den Entwicklungs-Branch (dev) und nur, wenn sich Code, Images oder Betrieb geändert haben.
+  # Tags v<X.Y.Z> (stable) und von Hand: images.yml selbst, nach einem grünen Lauf dieses Commits.
+  images:
+    needs: [changes, gitleaks, python, postgres, frontend, docker, e2e]
+    if: >-
+      !cancelled() && github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' ||
+      github.ref == 'refs/heads/claude/projekt-roadmap-planung-0mk5v0') &&
+      !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') &&
+      (needs.changes.outputs.python == 'true' || needs.changes.outputs.frontend == 'true' ||
+      needs.changes.outputs.docker == 'true')
+    permissions:
+      contents: write
+      packages: write
+      actions: read
+    uses: ./.github/workflows/images.yml
+    with:
+      aus_ci: true
+    secrets:
+      MANIFEST_SIGNING_KEY: ${{ secrets.MANIFEST_SIGNING_KEY }}
