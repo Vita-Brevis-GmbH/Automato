@@ -133,8 +133,11 @@ def list_customers(
     session: Session = Depends(get_session, scope="function"),
     settings: Settings = Depends(get_settings),
 ):
+    kunden = portal.listing(session)
+    # „zugeordnet“ nur mit Kunden, die es noch gibt (1.13.0, wie Inventar und Anmeldung)
+    live = portal.live_customers(session, (pc.tenant_id for pc in kunden))
     return {
-        "customers": [portal.out(pc, settings.front_domain) for pc in portal.listing(session)],
+        "customers": [portal.out(pc, settings.front_domain, live) for pc in kunden],
         "agent": portal.agent_status(settings.front_state_dir),
         "domain": settings.front_domain,
         "keycloak": _keycloak(settings),

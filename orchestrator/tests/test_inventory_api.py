@@ -262,6 +262,48 @@ def test_mandanten_rollen_und_zuordnung_je_kunde(client, tmp_path, session_facto
         None, None)  # fmt: skip
 
 
+def test_zuordnung_mit_geloeschtem_kunden(client, tmp_path, session_factory):
+    """Fund aus der Kette mit dem Cockpit (1.13.0): ein in Automato geloeschter Kunde bleibt in
+    der Zuordnung stehen, zaehlt aber nicht - das Inventar zeigt den neuen Stand, ohne einen
+    verbliebenen Kunden ist der Portal-Kunde nicht mehr zugeordnet."""
+    from app.models import Customer, IpamType, PortalCustomer, Tenant
+    from app.models.tenant import DnsType
+
+    with session_factory() as s:
+        t = Tenant(name="Rechenzentrum", ipam_type=IpamType.NETBOX,
+                   dns_type=DnsType.ACTIVE_DIRECTORY)  # fmt: skip
+        s.add(t)
+        s.flush()
+        a, b = Customer(tenant_id=t.id, name="Kunde A"), Customer(tenant_id=t.id, name="Kunde B")
+        s.add_all([a, b])
+        s.flush()
+        tid, ids = t.id, [a.id, b.id]
+        s.add(PortalCustomer(short_name="kunde-a", name="A", doc=True, realm="kunde-a",
+                             tenant_id=tid, customer_ids=ids, default_role="viewer",
+                             scope_source="cockpit", links=[]))  # fmt: skip
+        s.commit()
+    basis = {"startseite": None, "netbox": None, "automato": None, "magister": None,
+             "cmdb": None}  # fmt: skip
+    _topologie(tmp_path, kunden=[{"kurzname": "kunde-a", "name": "A", **basis}])
+
+    def kunde() -> dict:
+        return _get(client, tmp_path).json()["kunden"][0]
+
+    with session_factory() as s:
+        s.delete(s.get(Customer, ids[1]))
+        s.commit()
+    k = kunde()
+    assert k["automato_zugeordnet"] is True and k["zuordnung"]["kunden"] == [ids[0]]
+    with session_factory() as s:
+        s.delete(s.get(Customer, ids[0]))
+        s.commit()
+    k = kunde()
+    assert k["automato_zugeordnet"] is False
+    assert k["zuordnung"] == {"mandant": tid, "kunden": [], "rolle": "viewer", "von": "cockpit"}
+    with session_factory() as s:  # gespeichert bleibt, was das Cockpit schickte
+        assert s.query(PortalCustomer).one().customer_ids == ids
+
+
 # --- Kacheln der Startseite fuers Cockpit (1.13.0, ADR 0054 zweiter Nachtrag) -----------------
 
 

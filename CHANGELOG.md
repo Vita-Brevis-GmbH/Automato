@@ -50,6 +50,12 @@ Vorschlag, Mandant und Kunden im Cockpit zu wählen: „Ja gerne“). ADR 0054 N
 - **Inventar:** `automato.mandanten` (Mandanten mit ihren Kunden, nur Id und Name),
   `automato.rollen` und je Kunde `automato_zugeordnet` und `zuordnung` – die Auswahl und der
   Stand für das Cockpit.
+- **Gelöschte Kunden zählen nicht** (Fund aus der Kette mit dem Cockpit,
+  `api/tests/test_kette_automato.py` dort): ein in Automato gelöschter Kunde bleibt in der
+  Zuordnung stehen (das Cockpit meldet die Abweichung), gibt aber keine Rechte mehr – das Inventar
+  nennt in `zuordnung.kunden` nur bestehende Kunden und `automato_zugeordnet` erst mit einem davon;
+  ohne verbliebenen Kunden bekommen Benutzer des Realms die Meldung „noch kein Mandant zugeordnet“
+  statt eines leeren Automato, das Kunden-Portal markiert den Kunden.
 
 Kacheln der Startseite aus dem Cockpit (Anwender 2026-11-16: „alles solche Dinge in das globale
 Cockpit holen“, Cockpit ADR 0011 Stufe B). ADR 0054 zweiter Nachtrag.

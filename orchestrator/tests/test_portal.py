@@ -291,16 +291,29 @@ def test_auth_config_je_adresse(oidc_client, session_factory):
 # --- Realm-Benutzer ohne Zuordnung (1.13.0) --------------------------------------------------
 
 
-@pytest.mark.parametrize("zuordnung", ["ohne_mandant", "ohne_kunden"])
+@pytest.mark.parametrize("zuordnung", ["ohne_mandant", "ohne_kunden", "kunde_geloescht"])
 def test_kunden_realm_ohne_zuordnung_klare_meldung(oidc_client, session_factory, keys, zuordnung):
     """Fund 2026-11-16: statt „insufficient role“ sagt Automato, dass der Mandant fehlt - und
-    gibt weiterhin keine Rechte (fail-closed)."""
+    gibt weiterhin keine Rechte (fail-closed). Ebenso, wenn der einzige zugeordnete Kunde in
+    Automato geloescht wurde (Fund aus der Kette mit dem Cockpit: sonst ein leeres Automato ohne
+    Meldung, im Inventar und im Kunden-Portal „zugeordnet“)."""
     with session_factory() as s:
         tid, _ = _tenant(s, "dc")
+        weg = Customer(tenant_id=tid, name="Kunde weg")
+        s.add(weg)
+        s.flush()
+        weg_id = weg.id
         s.add(PortalCustomer(short_name="kunde-a", name="Kunde A", doc=True, realm="kunde-a",
-                             tenant_id=tid if zuordnung == "ohne_kunden" else None,
-                             customer_ids=[], links=[]))  # fmt: skip
+                             tenant_id=None if zuordnung == "ohne_mandant" else tid,
+                             customer_ids=[weg_id] if zuordnung == "kunde_geloescht" else [],
+                             links=[]))  # fmt: skip
+        s.delete(weg)
         s.commit()
+    if zuordnung == "kunde_geloescht":
+        listing = oidc_client.get("/portal/customers", headers={
+            "Authorization": f"Bearer {_token(keys['vb'], 'vb', realm_access={'roles': ['admin']})}"
+        }).json()["customers"]  # fmt: skip
+        assert listing[0]["assigned"] is False and listing[0]["customer_ids"] == [weg_id]
     auth = {"Authorization": f"Bearer {_token(keys['kunde-a'], 'kunde-a')}"}
     r = oidc_client.get("/auth/me", headers=auth)
     assert r.status_code == 200, r.text

@@ -22,6 +22,7 @@ import os
 import re
 import tempfile
 import unicodedata
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -231,37 +232,69 @@ def realm_of(issuer: str) -> tuple[str, str] | None:
     return (head, realm) if sep and head and realm and "/" not in realm else None
 
 
+def live_customers(session: Session, tenant_ids: Iterable[int | None]) -> dict[int, set[int]]:
+    """Kunden, die es in Automato gibt, je Mandant (1.13.0, Fund aus der Kette mit dem Cockpit):
+    eine Zuordnung zaehlt nur sie. Ein geloeschter Kunde bleibt in `customer_ids` stehen (wie
+    bisher; das Cockpit meldet die Abweichung, ADR 0054 Nachtrag), gibt aber keine Rechte und
+    zaehlt nicht als zugeordnet - sonst saehe ein Benutzer des Realms ein leeres Automato statt
+    der Meldung „noch kein Mandant zugeordnet“."""
+    ids = {int(t) for t in tenant_ids if t is not None}
+    out: dict[int, set[int]] = {t: set() for t in ids}
+    if ids:
+        rows = session.execute(
+            select(Customer.tenant_id, Customer.id).where(Customer.tenant_id.in_(ids))
+        )
+        for tid, cid in rows:
+            out[tid].add(cid)
+    return out
+
+
+def live_ids(pc: PortalCustomer, live: dict[int, set[int]] | None = None) -> list[int]:
+    """Kunden der Zuordnung (sortiert) - mit `live` (`live_customers`) nur die, die es im
+    Mandanten noch gibt; ohne Mandant keine."""
+    ids = sorted({int(c) for c in pc.customer_ids or []})
+    if live is None:
+        return ids
+    vorhanden = live.get(pc.tenant_id, set()) if pc.tenant_id is not None else set()
+    return [c for c in ids if c in vorhanden]
+
+
 def realm_scopes(session: Session, main_realm: str | None) -> dict[str, RealmScope]:
     """Realm -> Ausschnitt fuer alle Kunden mit eigenem Realm (ohne den Realm von Automato
-    selbst: dessen Benutzer melden sich wie bisher an)."""
+    selbst: dessen Benutzer melden sich wie bisher an). Nur Kunden, die es noch gibt
+    (`live_customers`)."""
     out: dict[str, RealmScope] = {}
-    for pc in session.scalars(select(PortalCustomer).where(PortalCustomer.realm.is_not(None))):
-        if not pc.realm or pc.realm == main_realm:
-            continue
+    kunden = [pc for pc in session.scalars(
+        select(PortalCustomer).where(PortalCustomer.realm.is_not(None))
+    ) if pc.realm and pc.realm != main_realm]  # fmt: skip
+    live = live_customers(session, (pc.tenant_id for pc in kunden))
+    for pc in kunden:
         out[pc.realm] = RealmScope(
             realm=pc.realm,
             short_name=pc.short_name,
             tenant_id=pc.tenant_id,
-            customer_ids=tuple(int(c) for c in pc.customer_ids or ()),
+            customer_ids=tuple(live_ids(pc, live)),
             default_role=caps.normalize(pc.default_role),
             name=pc.name or pc.short_name,
         )
     return out
 
 
-def assigned(pc: PortalCustomer) -> bool | None:
-    """Hat der Kunde in Automato einen Ausschnitt (Mandant und mindestens ein Kunde)? None =
-    ohne Werkzeug Doku (seine Benutzer melden sich nicht in Automato an)."""
+def assigned(pc: PortalCustomer, live: dict[int, set[int]] | None = None) -> bool | None:
+    """Hat der Kunde in Automato einen Ausschnitt (Mandant und mindestens ein Kunde - mit `live`
+    einer, den es noch gibt)? None = ohne Werkzeug Doku (seine Benutzer melden sich nicht in
+    Automato an)."""
     if not pc.doc:
         return None
-    return pc.tenant_id is not None and bool(pc.customer_ids)
+    return pc.tenant_id is not None and bool(live_ids(pc, live))
 
 
-def scope_of(pc: PortalCustomer) -> dict:
-    """Zuordnung im Kunden-Portal (Inventar, 1.13.0): Mandant, Kunden, Rolle und wer sie setzt."""
+def scope_of(pc: PortalCustomer, live: dict[int, set[int]] | None = None) -> dict:
+    """Zuordnung im Kunden-Portal (Inventar, 1.13.0): Mandant, Kunden (mit `live` nur die, die es
+    noch gibt - der neue Stand nach dem Loeschen), Rolle und wer sie setzt."""
     return {
         "mandant": pc.tenant_id,
-        "kunden": sorted(int(c) for c in pc.customer_ids or []),
+        "kunden": live_ids(pc, live),
         "rolle": pc.default_role or caps.VIEWER,
         "von": pc.scope_source or SCOPE_AUTOMATO,
     }
@@ -278,7 +311,7 @@ def realm_for_host(session: Session, host: str | None) -> str | None:
     return pc.realm if pc is not None and pc.doc and pc.realm else None
 
 
-def out(pc: PortalCustomer, domain: str = "") -> dict:
+def out(pc: PortalCustomer, domain: str = "", live: dict[int, set[int]] | None = None) -> dict:
     addresses = {}
     if domain:
         addresses = {"start": f"https://{pc.short_name}.{domain}"}
@@ -307,7 +340,7 @@ def out(pc: PortalCustomer, domain: str = "") -> dict:
         "scope_source": pc.scope_source or SCOPE_AUTOMATO,
         # 1.13.0: Kacheln aus dem Cockpit (dann nur lesbar)
         "links_source": pc.links_source or SCOPE_AUTOMATO,
-        "assigned": assigned(pc),
+        "assigned": assigned(pc, live),
         "addresses": addresses,
         "updated_by": pc.updated_by,
         "updated_at": pc.updated_at,

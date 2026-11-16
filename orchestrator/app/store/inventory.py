@@ -199,12 +199,14 @@ def _herkunft(k: dict) -> dict:
     }
 
 
-def _zuordnung(pc: PortalCustomer | None) -> dict:
+def _zuordnung(pc: PortalCustomer | None, live: dict[int, set[int]]) -> dict:
     """Zuordnung in Automato je Kunde (1.13.0): ob ein Ausschnitt da ist und der Stand im
-    Kunden-Portal; ohne Eintrag im Kunden-Portal unbekannt (null)."""
+    Kunden-Portal - nur mit Kunden, die es noch gibt (`portal.live_customers`); ohne Eintrag im
+    Kunden-Portal unbekannt (null)."""
     if pc is None:
         return {"automato_zugeordnet": None, "zuordnung": None}
-    return {"automato_zugeordnet": portal.assigned(pc), "zuordnung": portal.scope_of(pc)}
+    return {"automato_zugeordnet": portal.assigned(pc, live),
+            "zuordnung": portal.scope_of(pc, live)}  # fmt: skip
 
 
 def _kachel(link: object) -> dict | None:
@@ -237,7 +239,8 @@ def _kacheln(pc: PortalCustomer | None) -> dict:
     return {"kacheln": kacheln, "kacheln_von": pc.links_source or portal.SCOPE_AUTOMATO}
 
 
-def _kunden(topo: dict, portal_kunden: dict[str, PortalCustomer]) -> list[dict]:
+def _kunden(topo: dict, portal_kunden: dict[str, PortalCustomer],
+            live: dict[int, set[int]]) -> list[dict]:  # fmt: skip
     kunden = topo.get("kunden") if isinstance(topo.get("kunden"), list) else []
     out = []
     for k in kunden[:1000]:
@@ -245,7 +248,7 @@ def _kunden(topo: dict, portal_kunden: dict[str, PortalCustomer]) -> list[dict]:
         if kurz:
             pc = portal_kunden.get(kurz)
             out.append({**{feld: _text(k.get(feld)) for feld in _KUNDE}, **_herkunft(k),
-                        **_zuordnung(pc), **_kacheln(pc)})  # fmt: skip
+                        **_zuordnung(pc, live), **_kacheln(pc)})  # fmt: skip
     return out
 
 
@@ -284,6 +287,11 @@ def inventory(settings: Settings, session: Session | None = None) -> dict:
     portal_kunden = (
         {pc.short_name: pc for pc in session.scalars(select(PortalCustomer))} if session else {}
     )
+    live = (
+        portal.live_customers(session, (pc.tenant_id for pc in portal_kunden.values()))
+        if session
+        else {}
+    )
     return {
         "vertrag": VERTRAG,
         "automato": {
@@ -294,5 +302,5 @@ def inventory(settings: Settings, session: Session | None = None) -> dict:
         },
         "keycloak": {"issuer": _text(issuer)},
         "front": _front(topo, settings.front_state_dir),
-        "kunden": _kunden(topo, portal_kunden),
+        "kunden": _kunden(topo, portal_kunden, live),
     }
