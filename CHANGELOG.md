@@ -7,6 +7,42 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 1.14.0 – 2026-11-16
+
+Kunden, Portale, Benutzer und Rollen nur aus dem Cockpit (Anwender 2026-11-16: „die Rollen und User
+… sollen nur noch im Cockpit sein. Die Kunden sollen dies nicht machen können“, „nicht ein Mix wie
+heute“). ADR 0058, R26 ergänzt.
+
+- **Kunden-Portal nur lesbar mit verbundenem Cockpit** (gekoppelt bzw. Token): Anlegen, Ändern,
+  Entfernen `409`, Oberfläche „Ansehen“, Kunden aus der Oberfläche „im Cockpit übernehmen“;
+  `front.sh kunde|link|entfernen` nur noch mit `--trotzdem` (Warnung); ohne Cockpit wie bisher.
+- **Kunde in Automato aus dem Cockpit:** `zuordnung.kunde_anlegen` legt ihn im Mandanten an
+  (idempotent, Audit `customer.created`, Name belegt → „<Name> (<Kurzname>)“), Inventar
+  `zuordnung.kunde_angelegt`.
+- **Benutzer und Rollen aus dem Cockpit:** `benutzer` je Kunde (Keycloak-Benutzername → Rolle);
+  dann haben nur diese Benutzer des Realms Rechte, alle anderen sehen „Für Sie ist in Automato
+  keine Rolle vergeben“; Inventar `benutzer`.
+- **Kunden vergeben keine Rechte mehr bei Kunden aus dem Cockpit:** kein Zuordnen durch den
+  Kunden-Admin (`409`, Seite ausgeblendet), seine früheren Zuordnungen wirken nicht, keine Rolle
+  aus dem Token des Realms; globaler Admin bleibt Notzugang.
+- Migration `0086_cockpit_verwaltung`.
+
+Abbau aus dem Cockpit (Anwender 2026-11-16 zum Abbau mit Frist: „Einstellbar, aber sonst ok, Dann
+sollten wir auch noch die Instanzen auslesen, damit wir sehen können, ob wir altlasten haben“).
+ADR 0059, R28 neu.
+
+- **Sperre während der Frist:** `gesperrt` je Kunde sperrt alle Adressen („Zugang gesperrt“),
+  Daten bleiben, das Kunden-Portal markiert ihn.
+- **Löschauftrag nach der Frist:** `entfernen` nur für Kunden, die das Cockpit selbst entfernt hat
+  – die NetBox löscht der Agent des NetBox-Hosts (immer mit Sicherung, je Auftrag einmal), das
+  Tor-Geheimnis `front.sh sync` (nur ohne Kunden, nie der Realm von Automato), den Kunden in
+  Automato nur ohne Daten. Gemeint ist der Kunde, den `zuordnung.kunde_anlegen` für diesen
+  Portal-Kunden angelegt hat (auch in einem früheren Mandanten); mit Daten bleibt er (`hat_daten`).
+- **Ist-Stand der Instanzen im Inventar** (`ist`): Front-Proxy, NetBox-Host über
+  `PUT /netbox-host/stand`, Kunden mit `hat_daten` (und `von_cockpit` für die angelegten), Stand
+  der Aufträge; verwaiste Tor-Dateien nur gemeldet.
+- Migration `0087` (nach `0086_cockpit_verwaltung`).
+
 ## 1.13.0 – 2026-11-16
 
 Client-Secret des Anmelde-Tors aus dem Cockpit (Anwender 2026-11-16: „Bitte auch einbauen, dass
