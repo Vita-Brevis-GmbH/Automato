@@ -1,4 +1,4 @@
-"""Abbau aus dem Cockpit (ADR 0059): Loeschauftraege mit Stand je Teil.
+"""Abbau aus dem Cockpit (1.14.0, ADR 0059): Loeschauftraege mit Stand je Teil.
 
 Anwender 2026-11-16 auf den Vorschlag „Abbau-Plan, Daten nie ohne Sicherung, Frist 7 Tage ‚zum
 Entfernen vorgemerkt‘, für Dev ‚sofort‘“: „Einstellbar, aber sonst ok“. Das Cockpit sperrt einen
@@ -18,9 +18,10 @@ Inventar (`ist.entfernen`) meldet, dass er erledigt ist.
   die Kennung des Auftrags - erledigt ist erledigt, auch wenn danach etwas mit diesem Namen neu
   entsteht.
 - **Kunde in Automato:** nur der, den Automato fuer diesen Portal-Kunden angelegt hat
-  (`ist_stand.angelegte_kunden`), und nur ohne Daten (`ist_stand.daten`) und ohne Zuordnung zu
-  einem anderen Portal-Kunden - sonst bleibt er und der Teil bleibt offen (`hat_daten`,
-  `zugeordnet`).
+  (`zuordnung.kunde_anlegen`, ADR 0058: `ist_stand.angelegte_kunden` ueber `cockpit_customer`;
+  beim Annehmen gemerkt, bevor die Freigaben den Portal-Kunden entfernen), und nur ohne Daten
+  (`ist_stand.daten`) und ohne Zuordnung zu einem anderen Portal-Kunden - sonst bleibt er und der
+  Teil bleibt offen (`hat_daten`, `zugeordnet`).
 - **Stand je Teil** (`teile`): `offen` mit dem Grund, worauf er wartet, oder `erledigt`; erledigt
   bleibt erledigt. Fortgeschrieben bei jeder Anfrage des Cockpits (`anwenden`) und bei jeder
   Meldung des NetBox-Hosts (Teil `netbox`).
@@ -30,14 +31,21 @@ import secrets
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app import audit
 from app.audit import decode_detail
 from app.config import Settings
 from app.i18n import L
-from app.models import AbbauAuftrag, AuditLog, Customer, IstMeldung, PortalCustomer
+from app.models import (
+    AbbauAuftrag,
+    AuditLog,
+    CockpitCustomer,
+    Customer,
+    IstMeldung,
+    PortalCustomer,
+)
 from app.store import ist_stand, portal
 from app.store.freigaben import AKTEUR, MAX_KUNDEN, FreigabenFehler, _fehler
 
@@ -304,6 +312,8 @@ def automato_kunde_entfernen(session: Session, kunde: Customer, akteur: str = AK
     audit.record(session, actor=akteur, action="customer.deleted", subject=str(kunde.id),
                  detail={"tenant_id": kunde.tenant_id, "customer_id": kunde.id,
                          "name": kunde.name, "selectors": 0})  # fmt: skip
+    # Verknuepfung `cockpit_customer` (ADR 0058) faellt mit - auch ohne FK (wie DELETE /customers)
+    session.execute(delete(CockpitCustomer).where(CockpitCustomer.customer_id == kunde.id))
     session.delete(kunde)
     session.flush()
     return None
@@ -323,11 +333,14 @@ def _netbox(a: AbbauAuftrag, meldung: IstMeldung | None, settings: Settings) -> 
 
 
 def _automato_kunde(session: Session, a: AbbauAuftrag, akteur: str) -> tuple[str, str]:
-    ids = set(a.automato_kunden or []) | set(ist_stand.angelegte_kunden(session, a.short_name))
-    if not ids:
+    """Entfernt werden nur Kunden, die (noch) fuer diesen Portal-Kunden angelegt sind (Verknuepfung
+    `cockpit_customer`, 1.14.0): eine beim Annehmen gemerkte Id ohne Verknuepfung ist weg - auch
+    wenn es die Id wieder gibt (SQLite vergibt Ids geloeschter Kunden neu), nie diesen Kunden."""
+    angelegt = set(ist_stand.angelegte_kunden(session, a.short_name))
+    if not (set(a.automato_kunden or []) | angelegt):
         return ERLEDIGT, KEINER_ANGELEGT
-    vorhanden = list(session.scalars(select(Customer).where(Customer.id.in_(ids))
-                                     .order_by(Customer.id)))  # fmt: skip
+    vorhanden = list(session.scalars(select(Customer).where(Customer.id.in_(angelegt))
+                                     .order_by(Customer.id))) if angelegt else []  # fmt: skip
     if not vorhanden:
         return ERLEDIGT, NICHT_VORHANDEN
     gruende = [g for g in (automato_kunde_entfernen(session, c, akteur) for c in vorhanden) if g]

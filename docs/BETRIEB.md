@@ -2494,7 +2494,8 @@ Client-Zertifikat und die passenden Zeilen der `agent.env`.
   schickt einen **Löschauftrag**: die NetBox löscht der Agent des NetBox-Hosts (immer mit Sicherung
   vorher, Sicherungen bleiben), das Tor-Geheimnis des Realms entfernt der Front-Proxy (nur, wenn
   kein anderer Kunde den Realm nutzt), den Kunden in Automato entfernt Automato nur, wenn es ihn
-  für diesen Portal-Kunden angelegt hat und ihm **keine Daten** zugeordnet sind (Selektoren,
+  für diesen Portal-Kunden angelegt hat (`zuordnung.kunde_anlegen`, ADR 0058 – auch in einem
+  früheren Mandanten) und ihm **keine Daten** zugeordnet sind (Selektoren,
   Zugehörigkeit, Benutzer, Zonen, Anordnung des Zonenplans) – sonst bleibt er und das Inventar
   meldet `hat_daten` (Daten von Hand entfernen bzw. den Kunden behalten). Kunden aus der
   Oberfläche nimmt der Abbau nie. Audit `portal.abbau.*` (angenommen, Fortschritt, erledigt,

@@ -1,4 +1,4 @@
-"""Ist-Stand der Instanzen fuers Cockpit (ADR 0059): `GET /inventory` -> `ist`.
+"""Ist-Stand der Instanzen fuers Cockpit (1.14.0, ADR 0059): `GET /inventory` -> `ist`.
 
 Anwender 2026-11-16: „Dann sollten wir auch noch die Instanzen auslesen, damit wir sehen können,
 ob wir altlasten haben“. Das Cockpit vergleicht den Ist-Stand aller Werkzeuge mit seinem
@@ -11,7 +11,8 @@ Kundenregister (Seite „Aufräumen“); Automato liefert seinen Teil - nur Name
 - `netbox_host`: letzte Meldung des Agenten des NetBox-Hosts (`PUT /netbox-host/stand` nach jedem
   `sync`): Instanzen, Instanzen ohne Freigabe, auf Auftrag geloeschte bzw. nicht geloeschte.
 - `automato_kunden`: die Kunden in Automato (ADR 0018) mit Mandant, fuer welchen Portal-Kunden
-  Automato sie angelegt hat und ob ihnen Daten zugeordnet sind (`hat_daten`, `daten`).
+  Automato sie angelegt hat (`von_cockpit`, `zuordnung.kunde_anlegen`, ADR 0058) und ob ihnen
+  Daten zugeordnet sind (`hat_daten`, `daten`).
 - `entfernen`: Stand der Loeschauftraege aus dem Cockpit (`store/abbau.py`).
 
 Ob ein Kunde in Automato Daten hat, entscheidet `daten`: Selektoren (sein Ausschnitt), abgeleitete
@@ -40,7 +41,7 @@ from app.models import (
     PortalCustomer,
     ZonePlanArrangement,
 )
-from app.store import portal
+from app.store import portal, verwaltung
 
 VERTRAG = 1
 NETBOX_HOST = "netbox_host"  # Quelle der Meldung des Agenten des NetBox-Hosts
@@ -73,15 +74,18 @@ def iso(value: datetime | None) -> str | None:
 
 # --- Daten eines Kunden in Automato ------------------------------------------------------------
 def angelegte_kunden(session: Session, kurzname: str | None = None) -> dict[int, str]:
-    """EINHAENGEPUNKT `zuordnung.kunde_anlegen` (Vertrag §1, anderer Zweig): je Kunde in Automato,
-    den Automato auf Wunsch des Cockpits fuer einen Portal-Kunden angelegt hat, dessen Kurzname
-    (`{customer_id: kurzname}`; mit `kurzname` nur die fuer diesen Portal-Kunden).
+    """Je Kunde in Automato, den Automato auf Wunsch des Cockpits fuer einen Portal-Kunden angelegt
+    hat (`zuordnung.kunde_anlegen`, ADR 0058), dessen Kurzname (`{customer_id: kurzname}`; mit
+    `kurzname` nur die fuer diesen Portal-Kunden - in allen Mandanten, ein frueherer Mandant
+    gehoert dazu).
 
-    Bis die Verknuepfung „von Automato fuer Portal-Kunde X angelegt“ da ist, kennt Automato keinen
-    solchen Kunden - der Abbau entfernt dann keinen Kunden in Automato (Teil `automato_kunde`
-    erledigt mit `keiner_angelegt`) und das Inventar meldet `von_cockpit: false`."""
-    del session, kurzname
-    return {}
+    Grundlage ist die Verknuepfung `cockpit_customer` (`store/verwaltung.py`): sie haengt am
+    Kurznamen, nicht am Portal-Kunden - sie bleibt also, wenn die Freigaben den Portal-Kunden
+    entfernen, und faellt erst mit dem Kunden in Automato (bzw. seinem Mandanten). Ohne
+    Verknuepfung entfernt der Abbau keinen Kunden in Automato (Teil `automato_kunde` erledigt mit
+    `keiner_angelegt`), und das Inventar meldet `von_cockpit: false`."""
+    namen = None if kurzname is None else [kurzname]
+    return {cid: kurz for (kurz, _tid), cid in verwaltung.angelegt_je_kunde(session, namen).items()}
 
 
 def daten(session: Session, ids: Iterable[int] | None = None) -> dict[int, list[str]]:

@@ -100,9 +100,17 @@ Verträge `freigaben.md` und `inventar.md` (v1, neue Felder optional). Ergänzt 
 - **Das Token des NetBox-Hosts** darf jetzt auch den Ist-Stand melden – nur Kurznamen und Zeit; eine
   falsche Meldung kann einen NetBox-Teil fälschlich als erledigt erscheinen lassen (Aufträge enden
   dann früher, gelöscht wird dadurch nichts).
-- **Einhängepunkt:** die Verknüpfung „von Automato für Portal-Kunde X angelegt“ baut
-  `zuordnung.kunde_anlegen`; bis sie da ist, entfernt der Abbau keinen Kunden in Automato
-  (`keiner_angelegt`), und das Inventar meldet `von_cockpit: false`.
+- **Kunde in Automato aus `zuordnung.kunde_anlegen` (ADR 0058):** welche Kunden Automato für
+  einen Portal-Kunden angelegt hat, steht in `cockpit_customer` (`ist_stand.angelegte_kunden`
+  über `store/verwaltung.py`; je Mandant einer, auch frühere Mandanten). Die Verknüpfung hängt am
+  Kurznamen, nicht am Portal-Kunden – sie bleibt, wenn die Freigaben den Portal-Kunden entfernen,
+  und fällt erst mit dem Kunden in Automato (bzw. seinem Mandanten). Der Abbau merkt sich die Ids
+  zusätzlich beim Annehmen, bevor die Freigaben derselben Anfrage den Portal-Kunden entfernen;
+  entfernt wird aber nur, was noch verknüpft ist – eine gemerkte Id, die es nur noch als anderen
+  Kunden gibt (SQLite vergibt Ids gelöschter Kunden neu), nie.
+  Dieselbe Verknüpfung liefert `zuordnung.kunde_angelegt` je Kunde und `von_cockpit` im Ist-Stand.
+  Ohne Verknüpfung (Kunde von Hand bzw. vom Cockpit nur gewählt) entfernt der Abbau keinen Kunden
+  in Automato (`keiner_angelegt`).
 - Realms in Keycloak löscht das Cockpit selbst (nur selbst angelegte, mit Export vorher); Automato
   meldet nur, was auf der VM liegt.
 - Vertrag v1 bleibt (nur optionale Felder); ein älteres Cockpit sendet weder `gesperrt` noch

@@ -17,6 +17,7 @@ from app.config import Settings, get_settings
 from app.models import (
     AbbauAuftrag,
     AuditLog,
+    CockpitCustomer,
     Customer,
     CustomerSelector,
     IpamType,
@@ -413,7 +414,8 @@ def _mandant(session_factory) -> tuple[int, int, int]:
 
 def test_automato_kunde_nur_ohne_daten(api, session_factory, monkeypatch):
     tid, leer, voll = _mandant(session_factory)
-    # Verknuepfung „von Automato fuer Portal-Kunde X angelegt“ (kommt mit `kunde_anlegen`)
+    # Verknuepfung „von Automato fuer Portal-Kunde X angelegt“ hier vorgegeben (sonst aus
+    # `kunde_anlegen` - der ganze Weg: test_ganzer_weg_von_kunde_anlegen_bis_entfernen)
     angelegt = {leer: "kunde-a", voll: "kunde-b"}
     monkeypatch.setattr(ist_stand, "angelegte_kunden", lambda session, kurzname=None: {
         cid: k for cid, k in angelegt.items() if kurzname in (None, k)})  # fmt: skip
@@ -461,6 +463,147 @@ def test_automato_kunde_bleibt_solange_ein_anderer_portal_kunde_ihn_nutzt(api, s
     with session_factory() as s:
         assert s.get(Customer, leer) is not None
     assert _ist_entfernen(api)["kunde-a"]["grund"] == "zugeordnet"
+
+
+# --- Zusammenspiel mit `zuordnung.kunde_anlegen` (1.14.0, ADR 0058) ------------------------------
+def _leerer_mandant(session_factory, name: str = "dc") -> tuple[int, int]:
+    """Mandant mit einem Kunden, den der Abbau nie anfassen darf (nicht fuer das Cockpit
+    angelegt)."""
+    with session_factory() as s:
+        t = Tenant(name=name, ipam_type=IpamType.NETBOX, dns_type=DnsType.ACTIVE_DIRECTORY)
+        s.add(t)
+        s.flush()
+        fremd = Customer(tenant_id=t.id, name="Kunde von Hand")
+        s.add(fremd)
+        s.commit()
+        return t.id, fremd.id
+
+
+def _angelegt(session_factory, kurz: str) -> dict[int, int]:
+    """Mandant -> Kunde, den Automato fuer diesen Portal-Kunden angelegt hat (Verknuepfung)."""
+    with session_factory() as s:
+        return {c.tenant_id: c.customer_id
+                for c in s.query(CockpitCustomer).filter_by(short_name=kurz)}  # fmt: skip
+
+
+def test_ganzer_weg_von_kunde_anlegen_bis_entfernen(api, session_factory):
+    """Der Kunde, den Automato fuer das Cockpit angelegt hat, ist der, den der Abbau entfernt:
+    `kunde_anlegen` -> Sperre waehrend der Frist -> nach der Frist aus `kunden[]` und `entfernen`
+    in derselben Anfrage -> ohne Daten weg (samt Verknuepfung), mit Daten bleibt er (`hat_daten`),
+    bis die Daten weg sind. Die Ids merkt sich der Abbau, bevor die Freigaben den Portal-Kunden
+    entfernen."""
+    tid, fremd = _leerer_mandant(session_factory)
+    z = {"mandant": tid, "kunden": [fremd], "rolle": "viewer", "kunde_anlegen": True}
+    kunden = [_kunde("kunde-a", name="Kunde A", zuordnung=z),
+              _kunde("kunde-b", name="Kunde B", zuordnung=z)]  # fmt: skip
+    assert _put(api, kunden).status_code == 200
+    a, b = _angelegt(session_factory, "kunde-a")[tid], _angelegt(session_factory, "kunde-b")[tid]
+    with session_factory() as s:
+        s.add(CustomerSelector(customer_id=b, kind="prefix", value="10.2.0.0/16"))
+        s.commit()
+
+    # Inventar: kunde_angelegt, von_cockpit und portal_kunde passen zusammen
+    (api.state_dir / "topologie.json").write_text(
+        json.dumps({"kunden": [{"kurzname": "kunde-a"}, {"kurzname": "kunde-b"}]}))  # fmt: skip
+    inv = _inventar(api)
+    assert {k["kurzname"]: k["zuordnung"]["kunde_angelegt"] for k in inv["kunden"]} == {
+        "kunde-a": a, "kunde-b": b}  # fmt: skip
+    ist = {k["id"]: k for k in inv["ist"]["automato_kunden"]}
+    herkunft = {c: (k["von_cockpit"], k["portal_kunde"], k["hat_daten"]) for c, k in ist.items()}
+    assert herkunft == {a: (True, "kunde-a", False), b: (True, "kunde-b", True),
+                        fremd: (False, "kunde-a", False)}  # fmt: skip
+
+    # waehrend der Frist gesperrt: nichts entfernt
+    gesperrt = [{**k, "gesperrt": True} for k in kunden]
+    assert _put(api, gesperrt).status_code == 200
+    with session_factory() as s:
+        assert {c.id for c in s.query(Customer)} == {fremd, a, b}
+
+    # nach der Frist: aus kunden[] und entfernen in derselben Anfrage
+    weg = [{"kurzname": k, "automato_kunde": True} for k in ("kunde-a", "kunde-b")]
+    r = _put(api, [], entfernen=weg)
+    assert r.status_code == 200, r.text
+    assert r.json()["entfernt"] == ["kunde-a", "kunde-b"]
+    assert r.json()["entfernen"] == {"angenommen": ["kunde-a", "kunde-b"], "abgelehnt": []}
+    with session_factory() as s:
+        # vor dem Entfernen des Portal-Kunden gemerkt
+        assert {x.short_name: x.automato_kunden for x in s.query(AbbauAuftrag)} == {
+            "kunde-a": [a], "kunde-b": [b]}  # fmt: skip
+        assert {c.id for c in s.query(Customer)} == {fremd, b}  # fremd und b (mit Daten) bleiben
+        assert s.query(PortalCustomer).count() == 0
+    assert _angelegt(session_factory, "kunde-a") == {}  # Verknuepfung faellt mit
+    assert _angelegt(session_factory, "kunde-b") == {tid: b}
+    assert [d[2] for d in _audit(session_factory, "customer.deleted")] == [str(a)]
+    e = _ist_entfernen(api)
+    assert e["kunde-a"]["teile"]["automato_kunde"] == {"stand": "erledigt", "grund": "geloescht"}
+    assert e["kunde-b"]["teile"]["automato_kunde"] == {"stand": "offen", "grund": "hat_daten"}
+    ist = {k["id"]: k for k in _inventar(api)["ist"]["automato_kunden"]}
+    assert set(ist) == {fremd, b}
+    assert (ist[b]["von_cockpit"], ist[b]["portal_kunde"], ist[b]["hat_daten"], ist[b]["daten"],
+            ist[b]["zugeordnet"]) == (True, "kunde-b", True, ["selektoren"], [])  # fmt: skip
+
+    # Daten weg: der naechste Abgleich entfernt ihn
+    with session_factory() as s:
+        s.query(CustomerSelector).filter_by(customer_id=b).delete()
+        s.commit()
+    _put(api, [], entfernen=weg)
+    with session_factory() as s:
+        assert {c.id for c in s.query(Customer)} == {fremd}
+        assert s.query(CockpitCustomer).count() == 0
+    e = _ist_entfernen(api)
+    assert (e["kunde-a"]["stand"], e["kunde-b"]["stand"]) == ("erledigt", "erledigt")
+
+
+def test_kunde_anlegen_spaeter_entfernen_auch_fruehere_mandanten(api, session_factory):
+    """Das Cockpit hat den Portal-Kunden schon frueher entfernt (die Verknuepfung haengt am
+    Kurznamen, nicht am Portal-Kunden); nach einem Wechsel des Mandanten gehoert auch der frueher
+    angelegte Kunde dazu."""
+    t1, fremd1 = _leerer_mandant(session_factory, "dc")
+    t2, fremd2 = _leerer_mandant(session_factory, "dr")
+    z = {"rolle": "viewer", "kunde_anlegen": True}
+    _put(api, [_kunde("kunde-c", name="Kunde C", zuordnung={**z, "mandant": t1})])
+    _put(api, [_kunde("kunde-c", name="Kunde C", zuordnung={**z, "mandant": t2})])
+    angelegt = _angelegt(session_factory, "kunde-c")
+    assert set(angelegt) == {t1, t2}
+    assert _put(api, []).json()["entfernt"] == ["kunde-c"]  # ohne Auftrag (aelteres Cockpit)
+    ist = {k["id"]: k for k in _inventar(api)["ist"]["automato_kunden"]}
+    assert all(ist[c]["von_cockpit"] and ist[c]["portal_kunde"] == "kunde-c"
+               for c in angelegt.values())  # fmt: skip
+
+    r = _put(api, [], entfernen=[{"kurzname": "kunde-c", "automato_kunde": True}])
+    assert r.json()["entfernen"]["angenommen"] == ["kunde-c"]
+    with session_factory() as s:
+        assert s.query(AbbauAuftrag).one().automato_kunden == sorted(angelegt.values())
+        assert {c.tenant_id: c.id for c in s.query(Customer)} == {t1: fremd1, t2: fremd2}
+        assert s.query(CockpitCustomer).count() == 0
+    assert _ist_entfernen(api)["kunde-c"]["stand"] == "erledigt"
+
+
+def test_gemerkte_id_ohne_verknuepfung_nie_entfernen(api, session_factory):
+    """Wird der angelegte Kunde waehrend des offenen Auftrags von Hand geloescht und entsteht danach
+    ein Kunde von Hand (SQLite vergibt die Id wieder), entfernt der Abbau diesen nie - massgebend
+    ist die Verknuepfung, nicht die beim Annehmen gemerkte Id."""
+    tid, fremd = _leerer_mandant(session_factory)
+    z = {"mandant": tid, "kunden": [], "rolle": "viewer", "kunde_anlegen": True}
+    _put(api, [_kunde("kunde-e", name="Kunde E", zuordnung=z)])
+    e = _angelegt(session_factory, "kunde-e")[tid]
+    with session_factory() as s:
+        s.add(CustomerSelector(customer_id=e, kind="prefix", value="10.5.0.0/16"))
+        s.commit()
+    weg = [{"kurzname": "kunde-e", "automato_kunde": True}]
+    _put(api, [], entfernen=weg)
+    assert _ist_entfernen(api)["kunde-e"]["teile"]["automato_kunde"]["grund"] == "hat_daten"
+    assert api.delete(f"/customers/{e}").status_code == 204  # von Hand samt Daten
+    with session_factory() as s:
+        hand = Customer(tenant_id=tid, name="Kunde von Hand 2")
+        s.add(hand)
+        s.commit()
+        hand_id = hand.id
+    _put(api, [], entfernen=weg)
+    with session_factory() as s:
+        assert {c.id for c in s.query(Customer)} == {fremd, hand_id}
+    teil = _ist_entfernen(api)["kunde-e"]["teile"]["automato_kunde"]
+    assert teil == {"stand": "erledigt", "grund": "nicht_vorhanden"}
 
 
 # --- Inventar -----------------------------------------------------------------------------------

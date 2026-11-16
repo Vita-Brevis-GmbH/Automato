@@ -48,7 +48,8 @@ mit Frist (`gesperrt`, `entfernen`) und der Ist-Stand (`ist`) sind eigene Teile 
    – **idempotent**: dieselbe Anfrage legt keinen zweiten an, ändert nichts und schreibt kein Audit.
    Neu angelegt: Audit `customer.created` mit Akteur `cockpit`, `quelle: cockpit` und dem
    Portal-Kunden. Wechselt der Mandant, entsteht dort ein neuer; der alte bleibt (Abbau mit Frist,
-   ADR 0059). Wird der Kunde in Automato gelöscht, fällt die Verknüpfung mit, und die nächste
+   ADR 0059: `entfernen` mit `automato_kunde` entfernt alle für diesen Portal-Kunden angelegten
+   Kunden, nur ohne Daten). Wird der Kunde in Automato gelöscht, fällt die Verknüpfung mit, und die nächste
    Anfrage legt ihn wieder an (Soll-Stand des Cockpits).
    - **Name belegt:** gibt es im Mandanten schon einen Kunden mit diesem Namen, heisst der neue
      „<Name> (<Kurzname>)“. Ein bestehender Kunde wird **nie still übernommen** – dafür wählt ihn
