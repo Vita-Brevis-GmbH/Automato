@@ -51,6 +51,22 @@ Vorschlag, Mandant und Kunden im Cockpit zu wählen: „Ja gerne“). ADR 0054 N
   `automato.rollen` und je Kunde `automato_zugeordnet` und `zuordnung` – die Auswahl und der
   Stand für das Cockpit.
 
+Kacheln der Startseite aus dem Cockpit (Anwender 2026-11-16: „alles solche Dinge in das globale
+Cockpit holen“, Cockpit ADR 0011 Stufe B). ADR 0054 zweiter Nachtrag.
+
+- **Freigaben mit Kacheln:** `PUT /freigaben` nimmt je Kunde optional `kacheln` (`titel`,
+  `adresse`, `text`) an. Gesetzt (auch leer) ersetzt Automato die weiteren Kacheln des Kunden in
+  der gesendeten Reihenfolge; im Kunden-Portal sind sie dann nur lesbar („Kacheln aus dem
+  Cockpit“, 409 beim Ändern über die API). Ohne `kacheln` bleibt der letzte Stand und ist in
+  Automato wieder änderbar. Audit nur mit der Anzahl, nie mit Titeln oder Adressen
+  (`portal_customer.links_source`, Migration 0085).
+- **Eine Prüfung für Oberfläche und Cockpit:** höchstens 20 Kacheln, Titel 1–60 Zeichen, Adresse
+  mit `https://` (höchstens 500 Zeichen, ohne Leerraum), Text höchstens 200 Zeichen, nirgends
+  Steuerzeichen – ungültig → 422 (alles oder nichts). In der Oberfläche vorher Titel bis 80
+  Zeichen.
+- **Inventar:** je Kunde `kacheln` und `kacheln_von` (`cockpit` | `automato`) – das Cockpit
+  übernimmt bestehende Kacheln, ohne sie zu verlieren.
+
 NetBox ohne Handgriffe und Kopplung mit dem Cockpit (Anwender 2026-11-16: „alles solche Dinge in das
 globale Cockpit holen“, Cockpit ADR 0011 Stufen B und C; „go für die nächsten 4-5 Punkte“).
 ADR 0056, 0057, R27.

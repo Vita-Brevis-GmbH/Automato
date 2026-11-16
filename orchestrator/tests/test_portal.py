@@ -86,6 +86,15 @@ def test_kunde_anlegen_schreibt_soll_stand(portal_client, session_factory, tmp_p
         ({"short_name": "Kunde_A"}, 422, "ungültig"),
         ({"realm": "master"}, 422, "Realm"),
         ({"links": [{"title": "x", "url": "http://a.example.ch"}]}, 422, "https://"),
+        # 1.13.0: dieselbe Pruefung wie fuer Kacheln aus dem Cockpit (Grenzen des Vertrags)
+        ({"links": [{"title": "T" * 61, "url": "https://a.example.ch"}]}, 422, "60 Zeichen"),
+        ({"links": [{"title": "x", "url": "https://a.example.ch/a b"}]}, 422, "Leerzeichen"),
+        (
+            {"links": [{"title": "x", "url": "https://a.example.ch", "text": "a\rb"}]},
+            422,
+            "Zeilenumbrüche",
+        ),
+        ({"links": [{"title": "x", "url": "https://k.example.ch"}] * 21}, 422, "höchstens 20"),
         ({"name": "A\tB"}, 422, "Tabulator"),
         ({"default_role": "admin"}, 422, "Rolle"),
         ({"access": "vpn"}, 422, "Zugriff"),

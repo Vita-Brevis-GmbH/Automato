@@ -613,3 +613,149 @@ def test_zuordnung_wird_geprueft(api, session_factory, tmp_path, zuordnung, grun
     with session_factory() as s:
         assert s.query(PortalCustomer).count() == 0
     assert not (tmp_path / "soll.json").exists()
+
+
+# --- Kacheln der Startseite aus dem Cockpit (1.13.0, ADR 0054 zweiter Nachtrag) --------------
+
+KACHEL_A = {"titel": "Ticketsystem", "adresse": "https://tickets.example.ch/", "text": "Störungen"}
+KACHEL_B = {"titel": "Handbuch", "adresse": "https://handbuch.example.ch/", "text": None}
+
+
+def _links(*kacheln: dict) -> list[dict]:
+    return [{"title": k["titel"].strip(), "url": k["adresse"].strip(),
+             "text": (k.get("text") or "").strip()} for k in kacheln]  # fmt: skip
+
+
+def _portal_body(pc: dict, **aenderung) -> dict:
+    keys = ("short_name", "name", "doc", "nb", "um", "cmdb", "realm", "tenant_id",
+            "customer_ids", "default_role", "access", "access_nets", "links")  # fmt: skip
+    return {**{k: pc[k] for k in keys}, **aenderung}
+
+
+def test_kacheln_aus_dem_cockpit_idempotent_reihenfolge_audit(api, session_factory, tmp_path):
+    rand = {"titel": "  Ticketsystem ", "adresse": " https://tickets.example.ch/ ",
+            "text": "Störungen "}  # fmt: skip
+    r = _put(api, [_kunde("kunde-a", kacheln=[rand, KACHEL_B])])
+    assert r.status_code == 200, r.text
+    assert r.json()["angelegt"] == ["kunde-a"]
+    with session_factory() as s:
+        pc = s.query(PortalCustomer).one()
+        assert (pc.links, pc.links_source) == (_links(KACHEL_A, KACHEL_B), "cockpit")
+    assert _soll(tmp_path)["kunde-a"]["links"] == _links(KACHEL_A, KACHEL_B)
+    created = [d for _, act, _, d in _audit(session_factory) if act == "portal.customer.created"]
+    assert created[0]["kacheln"] == 2 and created[0]["links_source"] == "cockpit"
+    # im Audit nur die Anzahl, nie Titel oder Adressen
+    assert "example.ch" not in json.dumps(created) and "Ticketsystem" not in json.dumps(created)
+
+    # dieselbe Anfrage (auch mit Leerraum am Rand): nichts, kein Audit, soll.json bleibt
+    anzahl, vorher = len(_audit(session_factory)), (tmp_path / "soll.json").read_bytes()
+    r = _put(api, [_kunde("kunde-a", kacheln=[rand, KACHEL_B])])
+    assert r.json()["unveraendert"] == 1 and len(_audit(session_factory)) == anzahl
+    assert (tmp_path / "soll.json").read_bytes() == vorher
+
+    # Reihenfolge wie gesendet
+    r = _put(api, [_kunde("kunde-a", kacheln=[KACHEL_B, KACHEL_A])])
+    assert r.json()["geaendert"] == ["kunde-a"]
+    assert _soll(tmp_path)["kunde-a"]["links"] == _links(KACHEL_B, KACHEL_A)
+    upd = [d for _, act, _, d in _audit(session_factory) if act == "portal.customer.updated"]
+    assert upd == [{"kacheln": 2, "quelle": "cockpit"}]
+
+    # in der Oberflaeche nur lesbar: andere Kacheln 409, unveraendert speichern geht (auch mit
+    # einer leeren Zeile) - und Mandant, Rolle usw. bleiben dort aenderbar
+    pc = api.get("/portal/customers").json()["customers"][0]
+    assert pc["links_source"] == "cockpit"
+    for links in ([], _links(KACHEL_B), _links(KACHEL_A, KACHEL_B),
+                  _links(KACHEL_B, {**KACHEL_A, "text": "anders"})):  # fmt: skip
+        r = api.put(f"/portal/customers/{pc['id']}", json=_portal_body(pc, links=links))
+        assert r.status_code == 409 and "aus dem Cockpit" in r.json()["detail"], links
+    leer = {"title": "", "url": "", "text": ""}
+    body = _portal_body(pc, links=[*pc["links"], leer], default_role="triage")
+    r = api.put(f"/portal/customers/{pc['id']}", json=body)
+    assert r.status_code == 200, r.text
+    assert r.json()["links"] == _links(KACHEL_B, KACHEL_A) and r.json()["default_role"] == "triage"
+
+
+def test_kacheln_leer_und_ohne_feld(api, session_factory, tmp_path):
+    """Uebernahme eines Kunden aus der Oberflaeche: `[]` nimmt alle Kacheln weg (nur lesbar), ohne
+    Feld bleibt der letzte Stand und ist in Automato wieder aenderbar."""
+    with session_factory() as s:
+        s.add(PortalCustomer(short_name="kunde-a", name="A", links=_links(KACHEL_A),
+                             customer_ids=[]))  # fmt: skip
+        s.commit()
+    # aelteres Cockpit ohne `kacheln` (bzw. null): die Kacheln bleiben
+    r = _put(api, [_kunde("kunde-a", kacheln=None)])
+    assert r.json()["uebernommen"] == ["kunde-a"]
+    with session_factory() as s:
+        pc = s.query(PortalCustomer).one()
+        assert (pc.links, pc.links_source) == (_links(KACHEL_A), "automato")
+
+    r = _put(api, [_kunde("kunde-a", kacheln=[])])
+    assert r.json()["geaendert"] == ["kunde-a"]
+    upd = [d for _, act, _, d in _audit(session_factory) if act == "portal.customer.updated"]
+    assert upd[-1] == {"kacheln": 0, "links_source": "cockpit", "quelle": "cockpit"}
+    assert _soll(tmp_path)["kunde-a"]["links"] == []
+    pc = api.get("/portal/customers").json()["customers"][0]
+    assert (pc["links"], pc["links_source"]) == ([], "cockpit")
+    r = api.put(f"/portal/customers/{pc['id']}", json=_portal_body(pc, links=_links(KACHEL_B)))
+    assert r.status_code == 409
+
+    # wieder ohne kacheln: der Stand bleibt (leer), in Automato wieder aenderbar
+    r = _put(api, [_kunde("kunde-a")])
+    assert r.json()["geaendert"] == ["kunde-a"]
+    upd = [d for _, act, _, d in _audit(session_factory) if act == "portal.customer.updated"]
+    assert upd[-1] == {"links_source": "automato", "quelle": "cockpit"}
+    r = api.put(f"/portal/customers/{pc['id']}", json=_portal_body(pc, links=_links(KACHEL_B)))
+    assert r.status_code == 200, r.text
+    assert (r.json()["links"], r.json()["links_source"]) == (_links(KACHEL_B), "automato")
+    assert _soll(tmp_path)["kunde-a"]["links"] == _links(KACHEL_B)
+    # die naechste Freigabe ohne kacheln aendert nichts daran
+    assert _put(api, [_kunde("kunde-a")]).json()["unveraendert"] == 1
+
+
+def test_kacheln_an_den_grenzen(api, session_factory):
+    erste = {"titel": "T" * 60, "adresse": "https://a.example.ch/" + "x" * 479, "text": "ä" * 200}
+    weitere = [{"titel": f"Kachel {i}", "adresse": f"https://k{i}.example.ch"} for i in range(19)]
+    r = _put(api, [_kunde("kunde-a", kacheln=[erste, *weitere])])
+    assert r.status_code == 200, r.text
+    with session_factory() as s:
+        links = s.query(PortalCustomer).one().links
+    assert len(links) == 20 and len(links[0]["url"]) == 500 and links[1]["text"] == ""
+
+
+_GUT = {"titel": "A", "adresse": "https://a.example.ch"}
+
+
+@pytest.mark.parametrize(
+    ("kacheln", "grund"),
+    [
+        ("x", "kacheln ist keine Liste"),
+        ({"titel": "A"}, "kacheln ist keine Liste"),
+        ([_GUT] * 21, "höchstens 20"),
+        (["x"], "Kachel 1 ist kein Objekt"),
+        ([{"adresse": "https://a.example.ch"}], "Kachel 1 – titel und adresse sind Text"),
+        ([{"titel": "A"}], "titel und adresse sind Text"),
+        ([{**_GUT, "text": 5}], "text Text oder null"),
+        ([_GUT, {**_GUT, "titel": " "}], "Kachel 2 – Kachel ohne Titel"),
+        ([{**_GUT, "titel": "T" * 61}], "länger als 60"),
+        ([{**_GUT, "titel": "A\x07B"}], "Steuerzeichen"),
+        ([{**_GUT, "titel": "A\tB"}], "Steuerzeichen"),
+        ([{**_GUT, "adresse": "http://a.example.ch"}], "https://"),
+        ([{**_GUT, "adresse": "https://"}], "https://"),
+        ([{**_GUT, "adresse": "https://a.example.ch/" + "x" * 480}], "höchstens 500"),
+        ([{**_GUT, "adresse": "https://a.example.ch/a b"}], "ohne Leerzeichen"),
+        ([{**_GUT, "adresse": "https://a.example.ch/a\u2003b"}], "ohne Leerzeichen"),
+        ([{**_GUT, "adresse": "https://a.example.ch/a\x7fb"}], "ohne Leerzeichen"),
+        ([{**_GUT, "text": "x" * 201}], "höchstens 200"),
+        ([{**_GUT, "text": "a\nb"}], "Zeilenumbrüche"),
+    ],
+)
+def test_kacheln_werden_geprueft(api, session_factory, tmp_path, kacheln, grund):
+    r = _put(api, [_kunde("kunde-b"), _kunde("kunde-a", kacheln=kacheln)])
+    assert r.status_code == 422, r.text
+    fehler = r.json()["fehler"]
+    assert len(fehler) == 1 and fehler[0]["kurzname"] == "kunde-a", fehler
+    assert fehler[0]["grund"].startswith("kacheln") and grund in fehler[0]["grund"], fehler
+    # alles oder nichts: auch der gueltige Kunde nicht, kein Soll-Stand, kein Audit
+    with session_factory() as s:
+        assert s.query(PortalCustomer).count() == 0
+    assert not (tmp_path / "soll.json").exists() and _audit(session_factory) == []

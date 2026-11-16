@@ -2434,7 +2434,12 @@ Client-Zertifikat und die passenden Zeilen der `agent.env`.
   bisher hier. Mandanten und Kunden selbst legt man weiterhin in Automato an. Ein Kunde aus dem
   Cockpit ohne Mandant bzw. ohne Kunden ist in der Liste markiert („noch kein Mandant – Benutzer
   haben keine Rechte“); seine Benutzer sehen nach der Anmeldung nur diese Meldung statt
-  „Keine Berechtigung“.
+  „Keine Berechtigung“. Ebenfalls seit 1.13.0 kann das Cockpit die **weiteren Kacheln der
+  Startseite** eines Kunden pflegen: dann zeigt „Bearbeiten“ sie mit „Kacheln aus dem Cockpit“ nur
+  lesbar (ändern beim Kunden im Cockpit); schickt das Cockpit keine Kacheln, bleiben die
+  bisherigen und sind hier wieder änderbar. Für eine Kachel gilt hier wie im Cockpit: Titel
+  höchstens 60 Zeichen, Adresse mit `https://` (höchstens 500 Zeichen, ohne Leerzeichen),
+  Beschreibung höchstens 200 Zeichen, höchstens 20 Kacheln.
 - **Kopplung mit dem Cockpit** (1.13.0, ADR 0057): Administration → Kunden-Portal, Karte
   „Cockpit“ (nur Admin) → „Code zum Koppeln erzeugen“ und den Code im Cockpit bei der
   Automato-Instanz unter „Koppeln“ eingeben (15 Minuten, einmal, höchstens 5 Fehlversuche; nur

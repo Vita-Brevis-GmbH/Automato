@@ -23,6 +23,8 @@ import { Empty, ErrorBox, fmtTime, Loading, Modal, Note, PageHead } from "./ui";
 // Befehlen an. Seit 1.11.0 (ADR 0054) kommen Kunden auch aus dem Cockpit (Kundenregister): dann
 // pflegt das Cockpit Kurzname, Name, Werkzeuge, Zugriff und Realm, hier nur Mandant, Kunden,
 // Rolle und Kacheln; NetBox (-nb) ist ein wählbares Werkzeug.
+// Seit 1.13.0 auf Wunsch des Cockpits auch Mandant, Kunden und Rolle bzw. die Kacheln aus dem
+// Cockpit – dann hier nur lesbar.
 
 const ROLES: [string, string][] = [
   ["viewer", L("liest die Doku", "reads the documentation")],
@@ -470,6 +472,8 @@ function PortalEditor({
   const locked = fromCockpit(existing);
   // 1.13.0: Mandant, Kunden und Rolle aus dem Cockpit – dann auch diese nur lesbar
   const scopeLocked = existing?.scope_source === "cockpit";
+  // 1.13.0: Kacheln aus dem Cockpit – dann auch diese nur lesbar
+  const linksLocked = existing?.links_source === "cockpit";
 
   useEffect(() => {
     if (f.tenant_id == null) {
@@ -657,31 +661,46 @@ function PortalEditor({
       </div>
 
       <h3 style={{ marginTop: 12 }}>{L("Weitere Kacheln der Startseite", "Further tiles of the start page")}</h3>
+      {linksLocked && (
+        <div id="portal-links-cockpit">
+          <Note>
+            {L(
+              "Kacheln aus dem Cockpit – dort beim Kunden ändern.",
+              "Tiles from the cockpit – change them there at the customer.",
+            )}
+          </Note>
+        </div>
+      )}
+      {linksLocked && f.links.length === 0 && <div className="hint">{L("Keine weiteren Kacheln.", "No further tiles.")}</div>}
       <table className="compact form-table" id="portal-links">
         <tbody>
           {f.links.map((l, i) => (
             <tr key={i}>
               <td>
-                <input className="input" value={l.title} placeholder={L("Titel", "Title")} onChange={(e) => setLink(i, { title: e.target.value })} />
+                <input className="input" value={l.title} disabled={linksLocked} maxLength={60} placeholder={L("Titel", "Title")} onChange={(e) => setLink(i, { title: e.target.value })} />
               </td>
               <td>
-                <input className="input mono" value={l.url} placeholder="https://…" onChange={(e) => setLink(i, { url: e.target.value })} />
+                <input className="input mono" value={l.url} disabled={linksLocked} maxLength={500} placeholder="https://…" onChange={(e) => setLink(i, { url: e.target.value })} />
               </td>
               <td>
-                <input className="input" value={l.text} placeholder={L("Beschreibung", "Description")} onChange={(e) => setLink(i, { text: e.target.value })} />
+                <input className="input" value={l.text} disabled={linksLocked} maxLength={200} placeholder={L("Beschreibung", "Description")} onChange={(e) => setLink(i, { text: e.target.value })} />
               </td>
               <td>
-                <button className="linkbtn danger" onClick={() => set({ links: f.links.filter((_, j) => j !== i) })} aria-label={L("Kachel entfernen", "Remove tile")}>
-                  ✕
-                </button>
+                {!linksLocked && (
+                  <button className="linkbtn danger" onClick={() => set({ links: f.links.filter((_, j) => j !== i) })} aria-label={L("Kachel entfernen", "Remove tile")}>
+                    ✕
+                  </button>
+                )}
               </td>
             </tr>
           ))}
         </tbody>
       </table>
-      <button className="btn btn-ghost btn-sm" onClick={() => set({ links: [...f.links, { title: "", url: "", text: "" }] })}>
-        {L("+ Kachel", "+ Tile")}
-      </button>
+      {!linksLocked && (
+        <button className="btn btn-ghost btn-sm" onClick={() => set({ links: [...f.links, { title: "", url: "", text: "" }] })}>
+          {L("+ Kachel", "+ Tile")}
+        </button>
+      )}
     </Modal>
   );
 }

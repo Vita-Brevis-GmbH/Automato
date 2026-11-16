@@ -92,6 +92,7 @@ def test_inventar_aus_der_topologie(client, tmp_path):
         "netbox": "https://kunde-a-nb.mgmt.example.ch", "automato": None, "magister": None,
         "cmdb": None, "quelle": None, "werkzeuge": None, "zugriff": None, "netze": [],
         "realm": None, "automato_zugeordnet": None, "zuordnung": None,
+        "kacheln": None, "kacheln_von": None,
     }]  # fmt: skip
 
 
@@ -259,3 +260,38 @@ def test_mandanten_rollen_und_zuordnung_je_kunde(client, tmp_path, session_facto
     assert kunden["kunde-c"]["automato_zugeordnet"] is None  # ohne Doku
     assert (kunden["kunde-d"]["automato_zugeordnet"], kunden["kunde-d"]["zuordnung"]) == (
         None, None)  # fmt: skip
+
+
+# --- Kacheln der Startseite fuers Cockpit (1.13.0, ADR 0054 zweiter Nachtrag) -----------------
+
+
+def test_kacheln_je_kunde(client, tmp_path, session_factory):
+    from app.models import PortalCustomer
+
+    alt = [
+        {"title": "Handbuch", "url": "https://h.example.ch", "text": "Doku"},
+        # aeltere Eintraege (vor 1.13.0 bis 80 Zeichen, \r erlaubt): auf die Grenzen gekuerzt
+        {"title": "T" * 70, "url": "https://t.example.ch", "text": "a\rb"},
+        {"title": "kaputt", "url": "http://k.example.ch", "text": ""},  # faellt weg
+        "kein Objekt",
+    ]
+    with session_factory() as s:
+        s.add_all([
+            PortalCustomer(short_name="kunde-a", name="A", links=alt, customer_ids=[]),
+            PortalCustomer(short_name="kunde-b", name="B", links=[], customer_ids=[],
+                           source="cockpit", links_source="cockpit"),
+        ])  # fmt: skip
+        s.commit()
+    basis = {"startseite": None, "netbox": None, "automato": None, "magister": None,
+             "cmdb": None}  # fmt: skip
+    _topologie(tmp_path, kunden=[{"kurzname": k, "name": k, **basis}
+                                 for k in ("kunde-a", "kunde-b", "kunde-c")])  # fmt: skip
+    kunden = {k["kurzname"]: k for k in _get(client, tmp_path).json()["kunden"]}
+    assert kunden["kunde-a"]["kacheln"] == [
+        {"titel": "Handbuch", "adresse": "https://h.example.ch", "text": "Doku"},
+        {"titel": "T" * 60, "adresse": "https://t.example.ch", "text": "ab"},
+    ]
+    assert kunden["kunde-a"]["kacheln_von"] == "automato"
+    assert (kunden["kunde-b"]["kacheln"], kunden["kunde-b"]["kacheln_von"]) == ([], "cockpit")
+    # ohne Eintrag im Kunden-Portal (z. B. per Befehl angelegt): unbekannt
+    assert (kunden["kunde-c"]["kacheln"], kunden["kunde-c"]["kacheln_von"]) == (None, None)

@@ -31,7 +31,7 @@ Freigaben“, Kundenregister (ADR 0005 dort), Vertrag `docs/vertraege/freigaben.
 2. **Wer Autor wofür ist:** das Cockpit für Kurzname, Name, Werkzeuge, Zugriff und Realm;
    Automato bleibt Autor für Mandant, Kunden (ADR 0018), Standard-Rolle und weitere Kacheln – das
    Cockpit kennt Automatos Mandanten nicht. *Geändert mit 1.13.0 (Nachtrag unten):* schickt das Cockpit eine
-   Zuordnung, ist es auch Autor für Mandant, Kunden und Rolle dieses Kunden. `portal_customer.source` hält die Herkunft fest
+   Zuordnung, ist es auch Autor für Mandant, Kunden und Rolle dieses Kunden; schickt es Kacheln, auch für die Kacheln (zweiter Nachtrag). `portal_customer.source` hält die Herkunft fest
    (`oberflaeche` | `cockpit`). In der Oberfläche sind die Felder des Cockpits bei solchen Kunden
    nur lesbar, entfernt werden sie nur im Cockpit (`409`).
 3. **Übernahme und Entfernen:** gibt es den Kurznamen schon aus der Oberfläche, übernimmt das
@@ -88,7 +88,8 @@ Cockpit: `inventar.md`, `freigaben.md` (v1, neue Felder optional).
   Cockpit“, `409` beim Ändern über die API). Geprüft wie in der Oberfläche (bestehender Mandant,
   Kunden nur dieses Mandanten, eindeutig, Kunden-Rolle – nie `admin`), sonst `422` (alles oder
   nichts). Fehlt `zuordnung`: keine Aussage, der Stand bleibt und ist in Automato wieder änderbar.
-  Automato bleibt Autor seiner Mandanten und Kunden (anlegen, umbenennen, löschen) und der Kacheln.
+  Automato bleibt Autor seiner Mandanten und Kunden (anlegen, umbenennen, löschen) und der Kacheln
+  (*seit dem zweiten Nachtrag auf Wunsch auch das Cockpit*).
 - **Inventar:** `automato.mandanten` (alle Mandanten mit ihren Kunden, nur Id und Name),
   `automato.rollen` (Kunden-Rollen) und je Kunde `automato_zugeordnet` (Mandant und mindestens ein
   Kunde; `null` ohne Doku bzw. unbekannt) sowie `zuordnung` (Stand im Kunden-Portal, `von`
@@ -100,3 +101,30 @@ Cockpit: `inventar.md`, `freigaben.md` (v1, neue Felder optional).
 - **Folge:** das Token des Cockpits darf jetzt auch Mandant, Kunden und Rolle eines Kunden-Realms
   setzen – Benutzer dieses Realms sehen dann diesen Ausschnitt (höchstens `customer_admin`, nie
   Verwaltung). Risiko R26.
+
+## Zweiter Nachtrag 1.13.0 (2026-11-16): Kacheln der Startseite aus dem Cockpit
+
+Anwender 2026-11-16: „alles solche Dinge in das globale Cockpit holen“ (Cockpit ADR 0011, Stufe B:
+„Kacheln der Startseite – bisher Kunden-Portal von Automato – künftig beim Kunden im Cockpit“),
+„go für die nächsten 4-5 Punkte“. Vertrag im Cockpit: `freigaben.md`, `inventar.md` (v1, neue
+Felder optional).
+
+- **Punkt 2 geändert:** je Kunde optional `kacheln` (`titel`, `adresse`, `text`) in
+  `PUT /freigaben`. Gesetzt (auch `[]`): das Cockpit ist Autor der weiteren Kacheln dieses
+  Kunden; Automato ersetzt sie vollständig in der gesendeten Reihenfolge
+  (`portal_customer.links_source = cockpit`), im Kunden-Portal nur lesbar („Kacheln aus dem
+  Cockpit“, `409` beim Ändern über die API). Fehlt `kacheln` bzw. `null`: keine Aussage, der
+  letzte Stand bleibt und ist in Automato wieder änderbar. Die Kacheln der Werkzeuge (NetBox,
+  Doku, Magister, CMDB) entstehen weiterhin aus den Werkzeugen.
+- **Eine Prüfung für beide Wege** (`portal.check_tile`): höchstens 20 Kacheln, Titel 1–60 Zeichen,
+  Adresse mit `https://` und höchstens 500 Zeichen ohne Leerraum, Text höchstens 200 Zeichen,
+  nirgends Steuerzeichen; ungültig → `422` (alles oder nichts). Die Oberfläche prüft seither mit
+  denselben Grenzen (vorher Titel bis 80 Zeichen, nur Tabulator/Umbruch verboten).
+- **Audit** wie die übrigen Felder (`portal.customer.*`): die Kacheln nur als Anzahl (`kacheln`),
+  dazu wer sie setzt (`links_source`) – nie Titel oder Adressen.
+- **Inventar:** je Kunde `kacheln` (Form und Grenzen wie oben; ältere Einträge gekürzt, ungültige
+  Adressen weggelassen) und `kacheln_von` (`cockpit` | `automato`); ohne Eintrag im Kunden-Portal
+  beide `null` – so verliert das Cockpit beim Übernehmen keine Kacheln.
+- **Folge:** das Token des Cockpits setzt jetzt auch die Links auf der Startseite eines Kunden –
+  vertrauenswürdig wie ein Admin des Kunden-Portals (wie R26); nur `https://`, auf der Startseite
+  maskiert (`front.sh`).
