@@ -94,6 +94,12 @@ class FindingType(enum.StrEnum):
     LINK_VLAN_MISMATCH = "link_vlan_mismatch"
     LINK_LAG_MISMATCH = "link_lag_mismatch"
     LINK_ONE_SIDED = "link_one_sided"
+    # Verkabelung im Detail (1.19.0, `store/cable_labels`): LLDP/CDP-Nachbar passt nicht zum Kabel
+    # in NetBox; Kabelnummer in NetBox und Automato verschieden; Duplex nicht voll (beide Enden
+    # gelesen)
+    CABLE_NEIGHBOR_MISMATCH = "cable_neighbor_mismatch"
+    CABLE_LABEL_MISMATCH = "cable_label_mismatch"
+    LINK_HALF_DUPLEX = "link_half_duplex"
     # Endpunkte (0.63.0, `store/l2`): VLAN der VMs eines ESXi-Hosts fehlt an seinem Uplink
     UPLINK_VLAN_MISSING = "uplink_vlan_missing"
     # L2-Sicht (0.64.0, `store/l2_topo`): Redundanz und VLAN-Wege

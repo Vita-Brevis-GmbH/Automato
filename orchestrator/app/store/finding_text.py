@@ -662,6 +662,56 @@ def _link_one_sided(subject: str, d: dict) -> tuple[str, str]:
     )
 
 
+def _cable_neighbor(subject: str, d: dict) -> tuple[str, str]:
+    """Verkabelung im Detail (1.19.0): CDP/LLDP meldet am Port eines Kabels in NetBox eine andere
+    Gegenstelle."""
+    nb = d.get("netbox") or "NetBox"
+    label = f" ({d['label']})" if d.get("label") else ""
+    seen = "; ".join(
+        f"{_end(w.get('at'))}: " + ", ".join(_end(s) for s in w.get("seen") or [])
+        for w in d.get("wrong") or []
+    )
+    return (
+        L(f"Kabel{label} {_end(d.get('a'))} ↔ {_end(d.get('b'))} in NetBox „{nb}“ – CDP/LLDP "
+          f"meldet andere Gegenstellen ({seen}).",
+          f"Cable{label} {_end(d.get('a'))} ↔ {_end(d.get('b'))} in NetBox “{nb}” – CDP/LLDP "
+          f"reports other peers ({seen})."),
+        L("Prüfen, wo das Kabel wirklich steckt: NetBox nachführen (bzw. mit dem Abschnitt "
+          "Verkabelung des NetBox-Syncs) oder das Kabel umstecken.",
+          "Check where the cable is really plugged in: update NetBox (or use the cabling "
+          "section of the NetBox sync) or re-plug the cable."),
+    )  # fmt: skip
+
+
+def _cable_label(subject: str, d: dict) -> tuple[str, str]:
+    """Verkabelung im Detail (1.19.0): Kabelnummer in NetBox und Automato verschieden."""
+    nb = d.get("netbox") or "NetBox"
+    ends = f"{_end(d.get('a'))} ↔ {_end(d.get('b'))}"
+    return (
+        L(f"Kabelnummer {ends}: in NetBox „{nb}“ „{d.get('netbox_label')}“, in Automato "
+          f"„{d.get('automato_label')}“.",
+          f"Cable number {ends}: in NetBox “{nb}” “{d.get('netbox_label')}”, in Automato "
+          f"“{d.get('automato_label')}”."),
+        L("Richtige Nummer festlegen: in Automato ändern bzw. mit dem NetBox-Sync (Abschnitt "
+          "Verkabelung, Kabelnummer bestätigen) nach NetBox schreiben.",
+          "Decide on the right number: change it in Automato or write it to NetBox with the "
+          "NetBox sync (cabling section, confirm the cable number)."),
+    )  # fmt: skip
+
+
+def _link_half(subject: str, d: dict) -> tuple[str, str]:
+    """Verkabelung im Detail (1.19.0): Duplex nicht voll (beide Enden gelesen)."""
+    half = ", ".join(d.get("half") or [])
+    ends = f"{_end(d.get('a'))} ↔ {_end(d.get('b'))}"
+    return (
+        L(f"Verbindung {ends}: Duplex halb auf {half}.", f"Link {ends}: half duplex on {half}."),
+        L("Beide Ports auf Vollduplex (bzw. beide auf Auto) stellen und das Kabel prüfen – "
+          "Halbduplex bremst und führt zu Kollisionen.",
+          "Set both ports to full duplex (or both to auto) and check the cable – half duplex "
+          "slows down and leads to collisions."),
+    )  # fmt: skip
+
+
 def _uplink_vlan(subject: str, d: dict) -> tuple[str, str]:
     """Endpunkte (0.63.0): VLAN der VMs fehlt am Uplink des ESXi-Hosts."""
     groups = d.get("portgroups") or {}
@@ -1162,6 +1212,9 @@ _TOPO_TEXT = {
     "link_vlan_mismatch": _link,
     "link_lag_mismatch": _link,
     "link_one_sided": _link_one_sided,
+    "cable_neighbor_mismatch": _cable_neighbor,  # 1.19.0: Verkabelung im Detail
+    "cable_label_mismatch": _cable_label,
+    "link_half_duplex": _link_half,
     "uplink_vlan_missing": _uplink_vlan,
     **{t: (lambda s, d, t=t: _l2(s, d, t)) for t in _L2_HINT},
 }

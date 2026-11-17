@@ -22,7 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 from importlib import resources
 
 from collectors.celery_app import app
-from collectors.cisco_switch import routing
+from collectors.cisco_switch import routing, transceiver
 from collectors.cisco_switch.client import COMMANDS, SwitchClient, fingerprint
 from collectors.cisco_switch.normalize import (
     PLATFORM_LABEL,
@@ -101,6 +101,14 @@ def read_switch(entry: str, target: Target) -> dict:
             if error and not quiet(platform, cmd, error):
                 notes.append(f"{cmd}: {error}")
             outputs[cmd] = text
+        # Transceiver (1.19.0): ein Befehl je Plattform; Fehler -> Status `unreadable`
+        for cmd in transceiver.COMMANDS.get(platform, ()):
+            if cmd in outputs:
+                continue
+            try:
+                outputs[cmd] = client.run(cmd)
+            except Exception as exc:  # noqa: BLE001 - Teil „nicht lesbar“, die anderen weiter
+                notes.append(f"{cmd}: {type(exc).__name__}")
         # Routing (ADR 0032): Fehler wertet `routing.device` aus (nicht lesbar bzw. Funktion aus)
         routing_errors: dict[str, str] = {}
         for i, cmd in enumerate(routing.COMMANDS.get(platform, ())):
@@ -244,6 +252,8 @@ def collect_once(
         message = [f"Switches: {len(switches)} gelesen ({', '.join(kinds)})"]
         if routing.summary(routed):
             message.append(routing.summary(routed))
+        if transceiver.summary(inventory):  # 1.19.0: gelesen, nicht lesbar, nicht unterstuetzt
+            message.append(transceiver.summary(inventory))
         took = durations(switches, total)
         if took:
             message.append(took)

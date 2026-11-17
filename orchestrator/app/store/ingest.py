@@ -42,6 +42,7 @@ from app.models import (
     InvInterface,
     InvNeighbor,
     InvSubnet,
+    InvTransceiver,
     InvVlan,
     InvVrf,
     MatchStatus,
@@ -561,8 +562,27 @@ def _replace_inventory(session: Session, run, inv: NetworkInventory) -> None:
         InvNeighbor(**base, **{**n.model_dump(), "remote_caps": n.remote_caps or None})
         for n in inv.neighbors
     ]
+    rows += _transceivers(base, inv, rows)  # Transceiver der Switches (1.19.0)
     session.add_all(rows)
     session.flush()
+
+
+def _transceivers(base: dict, inv: NetworkInventory, rows: list) -> list:
+    """Transceiver je Port (1.19.0) und Lesestatus am Geraet (`inv_device.transceivers`); ohne
+    Lieferung (andere Quellen, aeltere Agenten) bleibt der Status leer. Laengen wie die Spalten."""
+    status = {r.device: r.status for r in inv.transceiver_reads or []}
+    for row in rows:
+        if isinstance(row, InvDevice) and row.name in status:
+            row.transceivers = _cut(status[row.name], 16)
+    out, seen = [], set()
+    for t in inv.transceivers or []:
+        if (t.device, t.port) in seen:
+            continue
+        seen.add((t.device, t.port))
+        out.append(InvTransceiver(**base, device=_cut(t.device, 200), port=_cut(t.port, 200),
+                                  type=_cut(t.type, 100), vendor=_cut(t.vendor, 100),
+                                  part=_cut(t.part, 100), serial=_cut(t.serial, 100)))  # fmt: skip
+    return out
 
 
 ESXI = "esxi"  # Rolle der ESXi-Hosts im Netzinventar (1.8.0)

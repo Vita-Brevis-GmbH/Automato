@@ -939,6 +939,31 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     (MACs) je Port – ein Klick zeigt sie. Seit 0.65.0 unter der Konfiguration
     *vPC-Peer-Link (Domäne n)*, *STP blockiert VLAN …* (orange) und *Root-Port VLAN …* –
     Mitglieder eines Port-Channels zeigen die Werte des Channels.
+    Seit 1.19.0 eigene Spalten **Speed / Duplex**, **Transceiver** (Typ, Teilenummer,
+    Hersteller, Seriennummer – nur gelesen) und **Kabelnummer** mit Herkunft (siehe unten).
+  - **Kabelnummern** (1.19.0, ADR 0031 Nachtrag 1.19.0): je Port-Paar die Nummer aus **NetBox**
+    (Label des Kabels, gelesen mit der Referenzquelle NetBox) und die in **Automato** erfasste,
+    mit Herkunft: *Automato = NetBox*, *verschieden* (beide Werte), *Automato* (nur erfasst – der
+    NetBox-Sync schreibt sie), *NetBox* (nur dort – angezeigt, nie gelöscht). Dazu je Kabel in
+    NetBox, ob CDP/LLDP dazu passt (*passt*, *passt nicht* mit der gemeldeten Gegenstelle,
+    *unbekannt* ohne Nachbar-Daten). Filter Herkunft bzw. „Nachbar passt nicht“, Suche.
+    - **Erfassen** (Operator bzw. Admin): bei einer Verbindung, einem Port („+ Nummer“) oder hier
+      mit „Kabelnummer erfassen“ (Enden von Hand, z. B. für einen Port ohne CDP/LLDP). Je
+      Port-Paar eine Nummer (bis 100 Zeichen, wie das Label in NetBox), Notiz optional; Lang- und
+      Kurzform des Ports bzw. Gross-/Kleinschreibung und Domäne des Geräts sind dasselbe Paar.
+      Ändern bzw. „In Automato löschen“ im selben Dialog; was in NetBox steht, bleibt. Audit
+      `cable_label.set`/`.deleted`; die Befunde der Prüfung „Kabel“ rechnen gleich neu. Kein CSV.
+    - Die Nummern aus NetBox kommen mit dem nächsten Lauf der Referenzquelle NetBox (Lese-Token
+      mit Leserecht auf Kabel, wie die übrigen Objekte). Fehlt das Recht, steht „Kabel nicht
+      gelesen (HTTP 403)“ im Lauf; Kabel mit anderen Enden (Patchpanel, Circuit, mehrere Ports)
+      zählt ein Hinweis.
+  - **Transceiver** (1.19.0): je Switch gelesen mit IOS/IOS-XE `show inventory`, NX-OS `show
+    interface transceiver`, Catalyst 1200/1300 `show inventory`, Junos `show chassis hardware`,
+    Arista `show inventory | json`, Aruba CX `show interface transceiver` (Leserecht genügt).
+    Unter **Geräte** die Spalte *Transceiver*: *gelesen · n*, *nicht lesbar* (Befehl gescheitert,
+    Grund in der Meldung des Laufs) bzw. *nicht unterstützt* (Zugang SNMPv3); „–“ = nicht
+    geliefert (älterer Agent). Der Lauf meldet „Transceiver: n an m Switches; nicht lesbar auf …;
+    nicht unterstützt auf …“.
   - **Endpunkte** (0.63.0, ADR 0025 Nr. 8): aus der MAC-Tabelle und ARP der Switches.
     - **Wo hängt …:** MAC (jede Schreibweise), IP oder Name (VM, DNS-Name aus dem IPAM)
       eingeben → je MAC der **Anschluss** (Switch, Port, VLAN, Beschreibung, „über“ die
@@ -975,6 +1000,11 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     Information), *L2: Switch als einzelner Ausfallpunkt* (ohne ihn zerfällt das Netz),
     *Port-Channel unvollständig* (Mitglied nicht verbunden), *VLAN getrennt* (VLAN an Access-Ports
     bzw. SVI mehrerer Switches, die Trunks dazwischen sperren es).
+    Seit 1.19.0 (Prüfung „Kabel: NetBox, Kabelnummer, Duplex“): **Nachbar passt nicht zu
+    NetBox** (CDP/LLDP meldet am Port eines Kabels in NetBox eine andere Gegenstelle),
+    **Kabelnummer NetBox ≠ Automato** und **Duplex nicht voll** (nur, wenn beide Enden gelesen
+    sind; zwischen zwei Switches mit verschiedenem Duplex bleibt es beim Befund „Duplex
+    abweichend“). „In der Verkabelung öffnen“ führt zum Reiter Kabelnummern.
     Seit 0.65.0 **vPC-Paar uneinheitlich**: Peer nicht verbunden (Fehler, mit Keepalive-Status),
     vPC nur auf einem der beiden Peers (wenn beide gelesen), vPC down bzw. Konsistenz nicht
     erfolgreich (Warnung) – auf dem Switch `show vpc consistency-parameters vpc <n>`. Hängt ein
@@ -2208,7 +2238,16 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   Quellsystems, wenn NetBox sie anderswo mehrfach hat (vorher „VLAN … nicht eindeutig“), und
   das Netz eines Firewall-Ports bekommt das VLAN des Switch-Ports (Abschnitte Netzinventar und
   Verkabelung). Objekte eines nicht gewählten Abschnitts bleiben unangetastet (auch nicht
-  „veraltet“). Seit 1.19.0 *Reservierungen* (ADR 0066, nur ausdrücklich
+  „veraltet“). Für Kabel braucht der Sync-Benutzer `dcim.cable` – `sync-user.sh` erneut
+  ausführen. Seit 1.19.0 schreibt der Abschnitt *Verkabelung* die in Automato erfassten
+  **Kabelnummern** als Label der Kabel (ADR 0031 Nachtrag 1.19.0): neue Kabel bekommen sie gleich
+  mit; an bestehenden Kabeln steht je Kabel eine Aktion *Kabelnummer* mit NetBox alt → Automato
+  neu, und die Karte **Kabelnummern bestätigen** listet sie mit Kästchen (alle/keine) –
+  übernommen wird nur Angekreuztes, an von Hand gepflegten Kabeln dann nur das Label. Ohne
+  Bestätigung meldet „Übernehmen“ „nothing to apply“, wenn sonst nichts zu schreiben ist. Nummern
+  nur in NetBox bleiben (Hinweis „Kabelnummern: n nur in NetBox“), Nummern ohne Kabel in NetBox
+  ebenso (Hinweis).
+  Seit 1.19.0 *Reservierungen* (ADR 0066, nur ausdrücklich
   gewählt): reservierte VLANs mit Status `reserved` in der VLAN-Gruppe der Reservierung, sonst in
   der einen Gruppe am Standort (z. B. der Switches), ohne solche in „Reservierungen <Standort>“
   (mehrere Gruppen am Standort: Hinweis – Gruppe an der Reservierung wählen); AS-Nummern als
@@ -2219,8 +2258,7 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   reservierte VLAN, übernimmt der Abschnitt Verkabelung bzw. Netzinventar es als aktives VLAN.
   Freigegebene Reservierungen sind veraltet bzw. mit „Löschen zulassen“ entfernt; andere
   Abschnitte lassen reservierte VLANs stehen, und Ports bekommen nie ein reserviertes VLAN. Für
-  ASN braucht der Sync-Benutzer `ipam.asn` – `sync-user.sh` erneut ausführen. Für Kabel braucht der Sync-Benutzer `dcim.cable` – `sync-user.sh` erneut
-  ausführen. **Vorschau
+  ASN braucht der Sync-Benutzer `ipam.asn` – `sync-user.sh` erneut ausführen. **Vorschau
   erstellen** liest NetBox nur und zeigt je Art: anlegen / ändern / unverändert / Konflikt
   (von Hand gepflegtes Objekt weicht ab – bleibt unverändert) / löschen / veraltet, mit
   Aktionsliste. **Übernehmen** (Bestätigung) berechnet neu, schreibt nur bei unveränderter
@@ -2257,6 +2295,7 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
 | `GET/POST /customers`, `PUT/DELETE /customers/{id}`, `GET …/{id}/members?kind=`, `POST /customers/preview`, `GET /customers/suggestions`, `GET /customers/unassigned` (je `tenant_id`) | Kunden (ADR 0018; Schreiben = operator; Filter `customer_id` an den Listen, 0.32.0): Selektoren (`kind`, `value`, `source_system_id`, `exclude`), `shared`, Anzahl je Art (`epg`, `net`, `object`, `rule`, `vm`); Vorschau ohne Speichern (seit 0.58.0 mit `off_path`: Regeln über Netze nicht auf dem Weg, `count`/`samples` mit `why`); Vorschläge je ACI-Tenant; nicht Zugeordnetes |
 | `GET/POST /zones`, `PUT/DELETE /zones/{id}`, `GET /zones/{id}/nets`, `POST /zones/preview`, `GET /zones/matrix`, `GET /zones/matrix/rules?src=&dst=`, `PUT /zones/policy` (seit 0.57.0 mit `services`), `GET /zones/plan[?customer_id=&all=true]` (je `tenant_id`); seit 0.52.0 `GET /zones/plan/export?format=svg\|drawio\|pdf[&version_id=]` (seit 0.71.0 auch `docx`, `zip` = Word + draw.io), `GET/POST /zones/plan/versions`, `GET /zones/plan/versions/{id}[/diff?to=]`, `DELETE /zones/plan/versions/{id}` (admin); seit 0.54.0 `GET /zones/suggestions[?dismissed=true]`, `POST /zones/suggestions/accept` und `POST /zones/suggestions/dismiss[/undo]` (`keys`, operator); seit 0.55.0 `POST /zones/schema/intents` (`pairs`, `overwrite`, operator); seit 0.56.0 `POST /zones/{id}/nodes` (`nodes` = `<Quellsystem>\|<Kontext>`, operator) und `customer_id`/`all` auch am Export; seit 0.61.0 Filter an Plan und Export (`q`, `focus` mehrfach, `depth` 0–3, `hide_layer` mehrfach: dc/customer/edge/transfer/core/distribution/access/public/none/outside, `hide` mehrfach: nodes/labels/contacts/empty) und `PUT /zones/plan/arrangement` (`view` overview/all/customer:<id>, `positions` je Zone `[x, y]`), `DELETE /zones/plan/arrangement?view=` (operator); seit 0.66.0 `flows=true` an Plan und Export und `POST /zones/assist` (`name`, `code`, `kind`, `zone_id`, `selectors`; viewer, nicht für Kunden-Benutzer); seit 0.83.0 `POST /zones/plan/import/preview` und `POST /zones/plan/import` (`content` = draw.io, `positions`/`renames`/`intents`/`new_zones`; operator) | Logische Zonen (ADR 0024, 0.51.0; Schreiben = operator, nicht für Kunden-Benutzer): Selektoren wie beim Kunden plus `exit`; Netze je Zone mit Grund; Vorschau mit gleichen Netzen anderer Zonen; Matrix je Paar Quell-/Zielzone (`allow`, `deny`, `violations`, `intent`, Achsen inkl. `any`/`none`) und die Regeln einer Zelle; Absicht `allow`/`limited`/`deny` (leer = entfernen); Plan (seit 0.56.0 `format` 2) mit `view` (all/overview/customer), `customers`, `zones` (mit `nodes`, `internal`, zusammengefasste Kunden `collapsed`/`members`, Pseudo-Zonen `none`/`outside`), `nodes`, `transitions` (`name`, `networks` mit `legs`/`routers`, `l3out`, `contact`), `conflicts`, `unzoned`, `layout` (Zeichnung; seit 0.61.0 `offset`, `placed` je Zone), seit 0.61.0 `filter` (gezeigt/gesamt, `label`), `zone_choices`, `arrangement`, `positions`; Zonen mit `color_source` (schema/template/zone/kind), `nodes`, `transitions`; Export als Datei; Versionen mit `fingerprint` (Liste mit `current_fingerprint`), Stand `data` (Zonen, Plan, Matrix) und Vergleich (`zones`/`intents`/`attachments` mit `added`/`removed`/`changed`, `unzoned`, `matrix`, `same`); Vorschläge je `key` (normalisierter Name) mit `action` create/extend, `kind`/`kind_reason`, `customer_id`, `sources`, `evidence`, `selectors`, `counts` (nets/epgs/nodes), `nodes`, `code`, `conflicts`, `dismissed`, dazu `nodes` (Knoten ohne Zone) und `rest` (Netze ohne Zone und Vorschlag); übernehmen liefert `created`/`updated`/`missing`; seit 0.55.0 je Vorschlag `schema` und `schema` mit `missing`/`outside`/`intents`/`matched` (Grundschema), Absichten übernehmen liefert `changed`; seit 0.66.0 im Plan `flows` (`a`, `b`, `rules`, `ab`, `ba`), Zonen mit `partner`, Kanten mit `flow`; Vorschläge beim Erfassen mit `items` (`selector`, `source_label`, `label`, `reason`, `score`, `nets`, `epgs`, `samples`, `new`, `covered`, `conflicts`), `total`, `schema` |
 | `GET /cabling/devices`, `GET /cabling/links` (`device`, `state` both/one_sided/unread, `q`, `issues`, `limit`, `offset`), `GET /cabling/ports` (`device`, `status` up/down/disabled, `vlan`, `q`, `limit`, `offset`), `GET /cabling/vlans`, `GET /cabling/sources` (je `tenant_id`); seit 0.63.0 `GET /cabling/endpoints` (`device`, `port`, `vlan`, `q`, `uplinks`, `limit`, `offset`) und `GET /cabling/locate?q=`; seit 0.64.0 `GET /cabling/plan` (`ends`, `vlan`) und `GET /cabling/failure` (`device` bzw. `link`, seit 0.65.0 je mehrfach); seit 0.65.0 `GET /cabling/plan/export` (`format` svg/drawio, `ends`, `vlan`) | Verkabelung (0.62.0, ADR 0025; viewer, nicht für Kunden-Benutzer): Geräte mit `summary` (devices, switches, links, `states`, issues, unread, seit 0.63.0 `endpoints`) und je Gerät `read`, `kind`, Ports/verbunden, Verbindungen, Abweichungen; Verbindungen mit `a`/`b` (Gerät, Port, Schnittstelle), `state`, `protocols`, `issues`; Ports der Switches mit `peer`, `link_state`, `issues`, `endpoints`; VLANs mit Namen und je Switch Access-Ports/Trunks; Quellsysteme der Switches; Endpunkte mit `summary` (macs, ports, vms, with_ip) und je MAC-Eintrag `mac`, `vlan`, `device`, `port`, `uplink`, `via` (Gegenstelle am Port), `vm`, `ips`, `names`, `epgs`, `first_seen`/`last_seen`; Suche mit `kind` (mac/ip/name), `ips` und je MAC `reason`, `locations`, `behind`, `earlier`, `seen_on`; Plan mit `nodes` (`layer`, `x`, `y`, `switching`, `vlan_present`), `edges` (`ids`, `links`, `state`, `issues`, `lags`, `ports`, `vlan` yes/no/partial/unknown, seit 0.65.0 `standby` und `stp`), `pairs` (vPC: `a`, `b`, `domain`), `width`/`height`, `vlan` (`present`, `islands`); Ausfall mit `devices`, `links`, `parts`, `main`, `cut_off`, `cut_off_keys` (422 ohne Gerät/Kabel bzw. mehr als 50 Angaben, 404 unbekannt); Ports seit 0.65.0 mit `vpc_peer_link`, `stp_blocked`, `stp_root`; Export als Datei (`Content-Disposition`) |
+| `GET /cabling/labels` (`state` same/differs/automato/netbox/mismatch, `q`), `PUT /cabling/labels` (`tenant_id`, `a_device`, `a_port`, `b_device`, `b_port`, `label`, `note`), `DELETE /cabling/labels/{id}?tenant_id=`, `GET /cabling/transceivers` (`device`) | Verkabelung im Detail (1.19.0, ADR 0031 Nachtrag; lesen viewer, erfassen operator, nicht für Kunden-Benutzer): Kabelnummern je Port-Paar mit `state`, `automato`, `netbox` (Kabel mit Label, Quelle, Link), `link`, `neighbor` ok/mismatch/unknown und `summary`; Erfassen je Paar (422 bei gleichem Port, leer bzw. über 100 Zeichen), Antwort mit `previous`; Transceiver je Port und `devices` mit `status` read/unreadable/unsupported; dazu `label`/`transceiver` an Verbindungen, Ports (`netbox_cable`, `pair`), Patchungen und `transceivers`/`transceiver_count` an Geräten. NetBox-Sync: `POST …/plans/{id}/apply` mit `{"confirm": [<Schlüssel der Kabelnummern>]}` |
 | `GET /auth/me`, `GET/POST /customer-users`, `PATCH/DELETE /customer-users/{id}` | Wer bin ich laut Orchestrator (Rollen, Mandanten, Kunden, `customer_source` claim/automato) – die Oberfläche richtet sich danach; Zuordnung Benutzer → Kunde (0.53.0, Admin): `login`, `customer_id`, `role` viewer/operator, `note` |
 | `GET/POST /tenants/{id}/sites`, `PATCH/DELETE /tenants/{id}/sites/{sid}` | Standorte (`kind` virtual/physical, `physical_site_ids` bzw. `virtual_site_ids`) |
 | `POST /systems/{id}/check`, seit 1.7.0 `GET /systems/{id}/check/{check_id}` | Verbindung prüfen (operator). Zentral gelesene Quellsysteme vom Orchestrator aus: Schritte `dns`, `tcp`, bei NetBox `http` (`/api/status/` mit dem Lese-Token) je mit `ok`/`detail`, dazu `hint` (0.34.0). Geräte hinter einem Agenten (1.7.0): Prüfauftrag (`from: agent`, `check_id`, `status` queued → running → done bzw. expired) – der Agent bekommt ihn mit `next-run` samt Zugangsdaten, prüft read-only Name, Verbindung und Anmeldung (`dns`, `tcp`, `login`) und meldet über `POST /internal/agent/checks/{id}`; ohne Abholung nach 3 min bzw. ohne Antwort nach 5 min `expired` mit Hinweis; ein offener Auftrag je Gerät; deaktivierter Agent 409; Audit `agent_check.claimed` |

@@ -5,8 +5,10 @@ IP-Adressen (host) und Prefixe (network); Zonen kommen als Tags am Objekt mit
 (Konvention `zone-<name>` am Subnetz, siehe ADR 0004).
 
 `export()` liest Prefixe, IP-Adressen, IP-Ranges und VLANs komplett (seitenweise) als
-neutrale `ReferenceRecord`s (Referenzquelle, ADR 0010). Der Client ist per
-`enforce_read_only` auf GET beschraenkt - geschrieben wird nur ueber `netbox_writer`.
+neutrale `ReferenceRecord`s (Referenzquelle, ADR 0010), seit 1.19.0 auch die Kabel mit ihrem
+Label (Kabelnummer) und den Ports an beiden Enden - fehlt das Leserecht darauf, steht das als
+Hinweis in `notes` (der Lauf geht weiter). Der Client ist per `enforce_read_only` auf GET
+beschraenkt - geschrieben wird nur ueber `netbox_writer`.
 """
 
 from collections.abc import Iterator
@@ -43,6 +45,7 @@ class NetBoxAdapter:
         client: httpx.Client | None = None,
     ) -> None:
         self._api = f"{base_url.rstrip('/')}/api"
+        self.notes: list[str] = []  # Hinweise des Laufs (deutsch, gespeichert)
         self._client = enforce_read_only(
             client
             or httpx.Client(
@@ -141,6 +144,37 @@ class NetBoxAdapter:
                 extra={"vlan_group": group.get("slug") or group.get("name")} if group else {},
             )
 
+        yield from self._cables()
+
+    def _cables(self) -> Iterator[ReferenceRecord]:
+        """Kabel (1.19.0): je Kabel mit genau einem Port (`dcim.interface`) an beiden Enden ein
+        Eintrag; andere Enden (Patchpanel, Circuit, mehrere Ports) und Kabel ohne Leserecht
+        zaehlt ein Hinweis - nie still."""
+        other = 0
+        try:
+            for rec in self._paged("dcim/cables/"):
+                ends = [_cable_end(rec, side) for side in ("a_terminations", "b_terminations")]
+                if None in ends:
+                    other += 1
+                    continue
+                (a_dev, a_port), (b_dev, b_port) = ends
+                yield self._record(
+                    ReferenceKind.CABLE,
+                    rec,
+                    value=str(rec.get("id")),
+                    name=(rec.get("label") or "").strip() or None,
+                    extra={"a_device": a_dev, "a_port": a_port, "b_device": b_dev,
+                           "b_port": b_port, **_cable_extra(rec)},
+                )  # fmt: skip
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code not in (403, 404):
+                raise
+            self.notes.append(f"Kabel nicht gelesen (HTTP {exc.response.status_code})")
+            return
+        if other:
+            self.notes.append(f"{other} Kabel mit anderen Enden (Patchpanel, Circuit, mehrere "
+                              "Ports) nicht übernommen")  # fmt: skip
+
     def _paged(self, path: str) -> Iterator[dict[str, Any]]:
         offset = 0
         while True:
@@ -221,6 +255,30 @@ def _value(obj) -> str | None:
     if isinstance(obj, dict):
         return obj.get("value") or obj.get("label")
     return obj or None
+
+
+def _cable_end(rec: dict[str, Any], side: str) -> tuple[str, str] | None:
+    """(Geraet, Port) eines Kabelendes mit genau einem Port, sonst None."""
+    terms = rec.get(side) or []
+    if len(terms) != 1 or terms[0].get("object_type") != "dcim.interface":
+        return None
+    port = terms[0].get("object") or {}
+    device = (port.get("device") or {}).get("name")
+    return (str(device), str(port["name"])) if device and port.get("name") else None
+
+
+def _cable_extra(rec: dict[str, Any]) -> dict[str, str]:
+    """Merkmale eines Kabels als Text: Typ, Farbe, Laenge mit Einheit."""
+    out = {}
+    kind = _value(rec.get("type"))
+    if kind:
+        out["type"] = str(kind)
+    if rec.get("color"):
+        out["color"] = str(rec["color"])
+    if rec.get("length") not in (None, ""):
+        unit = _value(rec.get("length_unit")) or ""
+        out["length"] = f"{rec['length']} {unit}".strip()
+    return out
 
 
 def _ui_url(api_url: str | None) -> str | None:

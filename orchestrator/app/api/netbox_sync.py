@@ -10,7 +10,9 @@
 - `GET  /netbox-sync/plans/{id}/items`  Aktionen (Filter Art/Aktion/Suche, blaetterbar)
 - `POST /netbox-sync/plans/{id}/apply`  Uebernehmen, im Hintergrund; danach Nachkontrolle
                                         (0.115.0, ADR 0042: NetBox rein lesend neu lesen und
-                                        je geschriebenem Objekt vergleichen) und Neu-Einlesen
+                                        je geschriebenem Objekt vergleichen) und Neu-Einlesen;
+                                        seit 1.19.0 mit `confirm` = bestaetigte Kabelnummern
+                                        (Label bestehender Kabel, ADR 0031 Nachtrag 1.19.0)
 - `POST /netbox-sync/plans/{id}/cancel` laufende Vorschau/Uebernahme beenden
 
 Vorschau und Uebernahme laufen als Hintergrundaufgabe im Orchestrator-Prozess. Startet er neu
@@ -46,7 +48,7 @@ from app.db import get_session, get_session_factory
 from app.i18n import german_only, lang
 from app.jobs import celery_app
 from app.models import CollectorRun, Platform, SourceSystem, SyncPlan, SyncStatus, Tenant
-from app.store import netbox_sync
+from app.store import cable_label_sync, netbox_sync
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/netbox-sync", tags=["netbox-sync"])
@@ -93,6 +95,13 @@ class PlanIn(BaseModel):
     # ohne Angabe die bisherigen Abschnitte; `cabling`/`applications` nur ausdruecklich (ADR 0031)
     sections: list[str] = Field(default_factory=lambda: list(netbox_sync.DEFAULT_SECTIONS))
     allow_delete: bool = False
+
+
+class ApplyIn(BaseModel):
+    """Uebernehmen (1.19.0): Kabelnummern, die der Betreiber in der Vorschau bestaetigt hat
+    (Schluessel der Aktionen `cable_label`) - die uebrigen bleiben in NetBox, wie sie sind."""
+
+    confirm: list[str] = Field(default_factory=list, max_length=10000)
 
 
 class PlanOut(BaseModel):
@@ -448,6 +457,7 @@ def plan_items(
 def apply_plan(
     plan_id: int,
     background: BackgroundTasks,
+    body: ApplyIn | None = None,
     principal: Principal = Depends(require_admin),
     session: Session = Depends(get_session, scope="function"),
     factory: sessionmaker = Depends(get_session_factory),
@@ -461,6 +471,14 @@ def apply_plan(
         raise HTTPException(status_code=409, detail="sync for this netbox is already running")
     if not _can_apply(plan):
         raise HTTPException(status_code=409, detail="nothing to apply")
+    # Kabelnummern (1.19.0): nur bestaetigte; nur Unbestaetigtes -> nichts zu uebernehmen
+    asked = set(cable_label_sync.needs_confirm(plan.items or []))
+    confirm = sorted(set(body.confirm if body else []) & asked)
+    skip = cable_label_sync.unconfirmed(plan.items or [], set(confirm))
+    if not any(i["action"] in netbox_sync.WRITE_ACTIONS and (i["kind"], i["key"]) not in skip
+               for i in plan.items or []):  # fmt: skip
+        raise HTTPException(status_code=409, detail="nothing to apply (confirm cable numbers)")
+    plan.options = {**(plan.options or {}), "confirm": confirm}
     plan.status = SyncStatus.APPLYING.value
     plan.applied_by = principal.subject
     plan.started_at = plan.heartbeat_at = datetime.now(UTC)
@@ -587,14 +605,17 @@ def apply_job(factory: sessionmaker, plan_id: int) -> None:
             )
             if fresh.fingerprint != plan.fingerprint:
                 raise _Changed()
-            done = netbox_sync.apply(writer, fresh, progress=_progress(factory, plan_id))
+            confirm = frozenset(plan.options.get("confirm") or [])  # Kabelnummern (1.19.0)
+            done = netbox_sync.apply(writer, fresh, progress=_progress(factory, plan_id),
+                                     confirm=confirm)  # fmt: skip
         finally:
             writer.close()
         session.refresh(plan)
         if plan.status != SyncStatus.APPLYING.value:
             return  # inzwischen abgebrochen bzw. beendet - Meldung steht am Plan
         # geschrieben ist alles: ein Abbruch waehrend der Nachkontrolle aendert daran nichts
-        check = _verify(factory, session, plan, target, tenant, fresh.items)
+        written = cable_label_sync.written(fresh.items, set(confirm))  # ohne Unbestaetigtes
+        check = _verify(factory, session, plan, target, tenant, written)
         session.refresh(plan)
         plan.status = SyncStatus.APPLIED.value
         plan.result = done
@@ -742,6 +763,7 @@ def _audit_applied(session: Session, plan: SyncPlan, done: dict | None, status: 
             "source_system_id": plan.source_system_id,
             "status": status,
             "sections": list((plan.options or {}).get("sections") or []),
+            "labels_confirmed": len((plan.options or {}).get("confirm") or []),  # 1.19.0
             **totals,
             **_verified(plan.verification),
         },

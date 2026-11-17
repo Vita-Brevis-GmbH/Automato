@@ -39,8 +39,8 @@ from app.db import get_session
 from app.i18n import L
 from app.models import InvVlan, MacEntry, SourceSystem, Tenant
 from app.models.source_system import Platform
+from app.store import cable_labels, customer_infra, l2, l2_export, l2_topo
 from app.store import cabling as store
-from app.store import customer_infra, l2, l2_export, l2_topo
 from app.store import sites as site_store
 from app.store.customer_infra import SHARED
 
@@ -120,6 +120,7 @@ def devices(
     tid = _tenant(session, principal, tenant_id)
     infra = _infra(session, principal, tid, customer_id)
     cab = store.build(session, tid)
+    extra = cable_labels.Index(session, tid)  # Transceiver je Switch (1.19.0)
     edge_macs = _edge_macs(session, tid, cab, infra)  # vor dem Ausschnitt: Uplinks erkennen
     marks = _device_keys(infra, cab) if infra is not None else None
     if infra is not None:
@@ -149,6 +150,8 @@ def devices(
             "links": len(mine),
             "issues": sum(len(link.issues) for link in mine),
             "one_sided": sum(1 for link in mine if link.state == "one_sided"),
+            "transceivers": extra.reads.get(d.key), "transceiver_count": sum(
+                1 for p in own if extra.transceiver(p.device, p.name)),  # 1.19.0
             **({"shared": marks[d.key] == SHARED} if marks is not None else {}),
         })  # fmt: skip
     order = {"switch": 0, "leaf": 1, "spine": 1, "router": 2, "firewall": 2, "esxi": 4,
@@ -220,8 +223,12 @@ def links(
     rows.sort(key=lambda r: (not r.issues, r.state != "one_sided", r.a.device.name.casefold(),
                              store.port_key(r.a.port)))  # fmt: skip
     items = []
+    extra = cable_labels.Index(session, tid)  # Kabelnummer und Transceiver (1.19.0)
     for r in rows[offset : offset + limit]:
         item = r.out()
+        item["label"] = extra.label(r.id)
+        extra.end(item["a"])
+        extra.end(item["b"])
         if marks is not None:
             item["shared"] = marks[r.id] == SHARED
         items.append(item)
@@ -256,6 +263,7 @@ def patches(
         cab.links = {i: lk for i, lk in cab.links.items() if _link_mark(infra, lk)}
     lag_attrs = {(store.device_key(p.device), store.port_key(p.name)): p.attrs or {}
                  for p in cab.ports if p.kind == "lag"}  # fmt: skip
+    extra = cable_labels.Index(session, tid)  # Kabelnummer und Transceiver (1.19.0)
     rows = []
     for link in cab.links.values():
         ends = (link.a, link.b) if link.a.device.key == key else (link.b, link.a)
@@ -271,9 +279,10 @@ def patches(
             d["endpoints"] = macs.get(end.key, 0)
             d["model"], d["mgmt_ip"] = end.device.model, end.device.mgmt_ip
             out.append(d)
-        rows.append({"id": link.id, "a": out[0], "b": out[1], "state": link.state,
-                     "confirmed": link.confirmed, "protocols": sorted(link.protocols),
-                     "issues": link.issues})  # fmt: skip
+        rows.append({"id": link.id, "a": extra.end(out[0]), "b": extra.end(out[1]),
+                     "state": link.state, "confirmed": link.confirmed,
+                     "protocols": sorted(link.protocols), "issues": link.issues,
+                     "label": extra.label(link.id)})  # fmt: skip
     rows.sort(key=lambda r: (r["a"]["lag"] or "~", _port_order(r["a"]["port"] or "")))
     return {
         "device": {"name": dev.name, "key": dev.key, "kind": dev.kind, "model": dev.model,
@@ -350,6 +359,7 @@ def ports(
     by_port = {(store.device_key(p.device), store.port_key(p.name)): p.attrs or {}
                for p in cab.ports}  # fmt: skip
     out = []
+    extra = cable_labels.Index(session, tid)  # Kabelnummer und Transceiver (1.19.0)
     for p in rows[offset : offset + limit]:
         link, other = peer.get((store.device_key(p.device), store.port_key(p.name)), (None, None))
         own = p.attrs or {}
@@ -369,10 +379,21 @@ def ports(
             "link_confirmed": link.confirmed if link is not None else None,  # 1.8.0
             "issues": [i["text"] for i in link.issues] if link is not None else [],
             "endpoints": macs.get((store.device_key(p.device), store.port_key(p.name)), 0),
+            **_port_detail(extra, p, link),  # 1.19.0
         })  # fmt: skip
         if infra is not None:
             out[-1]["shared"] = port_marks[(p.source_system_id, p.device, p.name)] == SHARED
     return {"total": len(rows), "items": out}
+
+
+def _port_detail(extra: cable_labels.Index, p, link: store.Link | None) -> dict:
+    """Transceiver, Kabel in NetBox und Kabelnummer eines Ports (1.19.0): die Nummer gilt dem
+    Paar aus CDP/LLDP bzw. - ohne Verbindung - dem Kabel in NetBox am Port."""
+    cables = extra.by_end.get(cable_labels.end_key(p.device, p.name), [])
+    pair = link.id if link is not None else (cables[0].pair if cables else None)
+    return {"transceiver": extra.transceiver(p.device, p.name),
+            "netbox_cable": cables[0].out() if cables else None,
+            "pair": pair, "label": extra.label(pair) if pair else None}  # fmt: skip
 
 
 def _port_order(name: str) -> tuple:

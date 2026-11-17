@@ -56,7 +56,9 @@ export const VIEWS: ViewEntry[] = [
     icon: "cable",
     section: "doc",
     order: 70,
-    render: (p) => <Cabling tenantId={p.tenantId} tenantLabel={p.tenantLabel} />,
+    render: (p) => (
+      <Cabling key={p.paramsKey} tenantId={p.tenantId} tenantLabel={p.tenantLabel} canEdit={p.me.isAdmin || p.me.isOperator} params={p.params} />
+    ),
   },
   {
     key: "spanningtree",

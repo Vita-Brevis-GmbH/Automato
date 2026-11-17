@@ -39,6 +39,7 @@ from app.api import (
     zones,
 )
 from app.api import as_numbers as as_numbers_api
+from app.api import cable_labels as cable_labels_api
 from app.api import freigaben as freigaben_api
 from app.api import inventory as inventory_api
 from app.api import kopplung as kopplung_api
@@ -170,6 +171,8 @@ def create_app() -> FastAPI:
     app.include_router(kopplung_api.router)  # Kopplung mit dem Cockpit (1.13.0, ADR 0057)
     app.include_router(zones.router, dependencies=[Depends(modules.guard("design"))])
     app.include_router(cabling.router, dependencies=[Depends(modules.guard("analyse"))])
+    app.include_router(cable_labels_api.router,  # Kabelnummern, Transceiver (1.19.0)
+                       dependencies=[Depends(modules.guard("analyse"))])  # fmt: skip
     app.include_router(data_quality.router, dependencies=[Depends(modules.guard("analyse"))])
     app.include_router(vpn.router, dependencies=[Depends(modules.guard("analyse"))])  # 1.19.0
     app.include_router(stp_api.router, dependencies=[Depends(modules.guard("analyse"))])  # 1.19.0

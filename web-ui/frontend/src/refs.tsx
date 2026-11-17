@@ -87,6 +87,9 @@ export const FINDING_LABEL: Record<string, string> = {
   link_vlan_mismatch: L("Kabel: VLANs abweichend", "Link: VLANs differ"),
   link_lag_mismatch: L("Kabel: Port-Channel einseitig", "Link: Port-Channel one-sided"),
   link_one_sided: L("Kabel: nur eine Seite meldet", "Link: only one side reports"),
+  link_half_duplex: L("Kabel: Duplex nicht voll", "Link: duplex not full"), // 1.19.0
+  cable_neighbor_mismatch: L("Kabel: Nachbar passt nicht zu NetBox", "Cable: neighbor does not match NetBox"),
+  cable_label_mismatch: L("Kabelnummer: NetBox ≠ Automato", "Cable number: NetBox ≠ Automato"),
   uplink_vlan_missing: L("VLAN fehlt am ESXi-Uplink", "VLAN missing on ESXi uplink"),
   l2_single_link: L("L2: nur ein Kabel", "L2: single cable"),
   l2_single_switch: L("L2: alle Kabel am selben Switch", "L2: all cables on the same switch"),
@@ -301,6 +304,18 @@ export const FINDING_HINT: Record<string, string> = {
     "Verbindung, die nur einer von zwei gelesenen Switches per CDP/LLDP meldet",
     "Link that only one of two read switches reports via CDP/LLDP",
   ),
+  link_half_duplex: L(
+    "Halbduplex an einem Ende einer Verbindung, deren beide Enden gelesen sind",
+    "Half duplex at one end of a link whose two ends are read",
+  ),
+  cable_neighbor_mismatch: L(
+    "CDP/LLDP meldet am Port eines Kabels in NetBox eine andere Gegenstelle",
+    "CDP/LLDP reports another peer on the port of a cable in NetBox",
+  ),
+  cable_label_mismatch: L(
+    "Kabelnummer in NetBox und in Automato verschieden",
+    "Cable number differs between NetBox and Automato",
+  ),
   uplink_vlan_missing: L(
     "Port, an dem VMs eines ESXi-Hosts gesehen werden, lässt ein VLAN ihres Clusters/vSwitches nicht durch",
     "Port on which VMs of an ESXi host are seen does not pass a VLAN of their cluster/vSwitch",
@@ -491,10 +506,10 @@ export const FINDING_GROUPS: { key: string; label: string; help: string; types: 
     key: "cabling",
     label: L("Verkabelung", "Cabling"),
     help: L(
-      "Verbindungen zwischen Switches: Speed, Duplex, VLANs, Port-Channel, einseitig gemeldet",
-      "Links between switches: speed, duplex, VLANs, Port-Channel, reported one-sided",
+      "Verbindungen zwischen Switches: Speed, Duplex (auch nicht voll), VLANs, Port-Channel, einseitig gemeldet; Kabel in NetBox gegen CDP/LLDP, Kabelnummer NetBox ≠ Automato",
+      "Links between switches: speed, duplex (also not full), VLANs, Port-Channel, reported one-sided; cables in NetBox against CDP/LLDP, cable number NetBox ≠ Automato",
     ),
-    types: ["link_speed_mismatch", "link_duplex_mismatch", "link_vlan_mismatch", "link_lag_mismatch", "link_one_sided", "uplink_vlan_missing", "l2_single_link", "l2_single_switch", "l2_single_point", "lag_degraded", "vlan_split", "vpc_mismatch"],
+    types: ["link_speed_mismatch", "link_duplex_mismatch", "link_vlan_mismatch", "link_lag_mismatch", "link_one_sided", "uplink_vlan_missing", "l2_single_link", "l2_single_switch", "l2_single_point", "lag_degraded", "vlan_split", "vpc_mismatch", "link_half_duplex", "cable_neighbor_mismatch", "cable_label_mismatch"],
   },
   {
     key: "stp",

@@ -209,6 +209,7 @@ MODULES: tuple[Module, ...] = (
             "vpn",
             "static_routes",  # statische Routen (1.19.0)
             "stp",  # Spanning Tree (1.19.0)
+            "cable_labels",  # Kabelnummern und Transceiver (1.19.0)
             "reservations",  # Reservierungen VLAN/AS (1.19.0, ADR 0066)
             "as_numbers",  # AS-Nummern einzeln (1.19.0, ADR 0066)
         ),
@@ -219,6 +220,7 @@ MODULES: tuple[Module, ...] = (
             "bgp_zones",  # Soll je Nachbar aus den Zonen dahinter (0.114.0, ADR 0041 Stufe 2)
             "boundary",
             "cabling",
+            "cable_labels",  # Kabelnummern, Kabel der NetBox, Transceiver (1.19.0)
             "data_quality",
             "exits",
             "l2",
@@ -344,7 +346,8 @@ MODULES: tuple[Module, ...] = (
         role=WRITE,
         depends=("gateway",),
         api=("netbox_sync",),
-        store=("netbox_sync", "netbox_sync_reserv"),  # Reservierungen (1.19.0, ADR 0066)
+        # Kabelnummern als Label, Reservierungen (1.19.0, ADR 0066)
+        store=("netbox_sync", "cable_label_sync", "netbox_sync_reserv"),
         views=("netbox",),
         packages=("sot_gateway.adapters.netbox_writer",),
     ),  # fmt: skip

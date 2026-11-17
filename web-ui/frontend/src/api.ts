@@ -1121,6 +1121,7 @@ export interface SyncItem {
   action: string; // create | update | conflict | delete | obsolete
   id?: number | null; // null: Ziel wird im selben Sync angelegt (Applikations-Tags)
   manual?: boolean;
+  confirm?: boolean; // 1.19.0: Kabelnummer – nur übernommen, wenn bestätigt
   changes?: SyncChange[];
   fields?: Record<string, unknown>;
   note?: string; // Reservierungen (1.19.0): „exists“ = in NetBox schon vorhanden, nur angezeigt
@@ -1153,7 +1154,7 @@ export interface SyncPlan {
   target: string;
   target_url: string;
   status: string; // planning | ready | applying | applied | failed | superseded
-  options: { sections?: SyncSection[]; allow_delete?: boolean };
+  options: { sections?: SyncSection[]; allow_delete?: boolean; confirm?: string[] }; // confirm: 1.19.0
   summary: Record<string, Record<string, number>> | null;
   totals: Record<string, number>;
   warnings: string[];
@@ -2444,7 +2445,9 @@ export const fetchSyncItems = (
   id: number,
   params: { action?: string; kind?: string; q?: string; limit?: number; offset?: number } = {},
 ) => getJSON<Paged<SyncItem>>(`/api/netbox-sync/plans/${id}/items${qs({ ...params, q: params.q?.trim() })}`);
-export const applySyncPlan = (id: number) => sendJSON<SyncPlan>(`/api/netbox-sync/plans/${id}/apply`, "POST");
+// 1.19.0: `confirm` = bestätigte Kabelnummern (Schlüssel der Aktionen `cable_label`)
+export const applySyncPlan = (id: number, confirm?: string[]) =>
+  sendJSON<SyncPlan>(`/api/netbox-sync/plans/${id}/apply`, "POST", confirm?.length ? { confirm } : undefined);
 // Laufende Vorschau/Übernahme beenden (hängt z. B. nach einem Neustart des Orchestrators)
 export const cancelSyncPlan = (id: number) => sendJSON<SyncPlan>(`/api/netbox-sync/plans/${id}/cancel`, "POST");
 

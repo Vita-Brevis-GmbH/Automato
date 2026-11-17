@@ -6,7 +6,7 @@ Bereich, Standort (ohne Fremdschluessel, wie `stp_target`) und VLAN-Gruppe in Ne
 und wann, dazu die beim Reservieren schon gelesen belegten Nummern.
 
 Revision ID: 0093_reservierungen
-Revises: 0091_stp
+Revises: 0092_kabel
 Create Date: 2026-11-17
 """
 
@@ -14,7 +14,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "0093_reservierungen"
-down_revision = "0091_stp"
+down_revision = "0092_kabel"
 branch_labels = None
 depends_on = None
 

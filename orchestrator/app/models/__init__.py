@@ -18,6 +18,7 @@ from app.models.application import (
 )
 from app.models.audit import AuditLog
 from app.models.base import Base
+from app.models.cable_label import CableLabel
 from app.models.collector_run import CollectorRun, RunStatus
 from app.models.coupling import Coupling
 from app.models.customer import (
@@ -45,6 +46,7 @@ from app.models.inventory import (
     InvInterface,
     InvNeighbor,
     InvSubnet,
+    InvTransceiver,
     InvVlan,
     InvVrf,
 )
@@ -137,6 +139,7 @@ __all__ = [
     "ApplicationRuleHide",
     "AuditLog",
     "Base",
+    "CableLabel",
     "CollectorRun",
     "CockpitCustomer",
     "Coupling",
@@ -159,6 +162,7 @@ __all__ = [
     "InvDevice",
     "InvInterface",
     "InvNeighbor",
+    "InvTransceiver",
     "InvSubnet",
     "InvVlan",
     "InvVrf",

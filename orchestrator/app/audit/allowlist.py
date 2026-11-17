@@ -162,6 +162,9 @@ ALLOWLIST: dict[str, frozenset[str]] = {
         {"tenant_id", "source_system_id", "dn", "l3out", "origin", "firewalls"}
     ),
     "routing.l3out_firewall.removed": frozenset({"tenant_id", "source_system_id", "dn", "l3out"}),
+    # Kabelnummer in Automato (1.19.0): Enden, Nummer und die bisherige (Laufzeitdaten)
+    "cable_label.set": frozenset({"tenant_id", "label", "a", "b", "old"}),
+    "cable_label.deleted": frozenset({"tenant_id", "label", "a", "b"}),
     # Reservierungen von VLAN- und AS-Nummern (1.19.0, ADR 0066): Art, Bereich, Standort,
     # VLAN-Gruppe und Zweck; freigeben = loeschen
     "reservation.created": _RESERVATION,
@@ -192,6 +195,7 @@ ALLOWLIST: dict[str, frozenset[str]] = {
             "create",
             "update",
             "delete",
+            "labels_confirmed",  # bestaetigte Kabelnummern (1.19.0)
         }
     ),
     "netbox_sync.cancelled": frozenset({"plan_id", "tenant_id"}),
