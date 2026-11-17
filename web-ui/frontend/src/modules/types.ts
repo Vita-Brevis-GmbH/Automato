@@ -12,6 +12,7 @@ export type View =
   | "objekte"
   | "nat"
   | "routing"
+  | "statisch"
   | "verkabelung"
   | "wege"
   | "apps"

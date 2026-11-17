@@ -70,6 +70,7 @@ from app.store import (
     paths,
     policy_check,
     return_path,
+    static_routes,
 )
 from app.store import epgs as epg_store
 from app.store import nat as nat_store
@@ -355,6 +356,7 @@ def _build(session: Session, app: Application, doc: dict | None, graph: paths.Gr
     used |= {x["rule_id"] for x in unused}
     missing = [{"rule_id": rid, "label": _rule_label(rules[rid]), "reasons": sorted(why)}
                for rid, why in without.items() if rid in rules and rid not in used]  # fmt: skip
+    statics = static_routes.for_doc(session, tid, out)  # 1.19.0: statische Routen der Wege
     return {
         "connections": out,
         "notes": notes,
@@ -386,6 +388,7 @@ def _build(session: Session, app: Application, doc: dict | None, graph: paths.Gr
         },  # fmt: skip
         "without": sorted(missing, key=lambda x: x["label"].lower()),
         "members": members(doc),
+        "statics": statics,
         # 0.78.2: L3Out-Contracts, die weniger oeffnen als die Firewall (Befund)
         "narrower": doc.get("narrower") or [],
         # 0.132.1: Dauer je Teil und die langsamsten Wege (Sekunden)
@@ -1093,6 +1096,8 @@ def _connection(
         "parts": parts,
         # Netz groesser als die Routen (0.111.0, ADR 0040): wohin es gehoert
         "assign": assign,
+        # statische Routen auf den Wegen (1.19.0) - `_build` ersetzt sie durch ihre Schluessel
+        "statics": static_routes.on_paths(res["paths"]),
         # Eingaben des Wegs fuer „Warum dieser Weg?“ (0.109.0, `GET /routing/explain`)
         "trace": {
             "src": c.src.ip,

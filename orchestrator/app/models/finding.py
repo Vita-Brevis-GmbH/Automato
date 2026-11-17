@@ -133,6 +133,14 @@ class FindingType(enum.StrEnum):
     # Nachkontrolle des NetBox-Syncs (0.115.0, ADR 0042): nach dem Uebernehmen steht ein
     # geschriebenes Objekt nicht so in NetBox (fehlt, Felder anders, nicht geloescht)
     NETBOX_SYNC_MISMATCH = "netbox_sync_mismatch"
+    # Statische Routen (1.19.0, `store/static_routes`): Next-Hop nicht erreichbar (kein
+    # angeschlossenes Netz, keine Route im VRF), ueberdeckt (nie aktiv - keine bewusste
+    # Backup-Route), doppelt, Blackhole (Hinweis), nicht pruefbar (Hinweis je Kontext)
+    STATIC_NEXTHOP_UNREACHABLE = "static_nexthop_unreachable"
+    STATIC_SHADOWED = "static_shadowed"
+    STATIC_DUPLICATE = "static_duplicate"
+    STATIC_BLACKHOLE = "static_blackhole"
+    STATIC_UNCHECKED = "static_unchecked"
 
 
 class Severity(enum.StrEnum):

@@ -356,6 +356,34 @@ def _connections(out: Writer, data: dict) -> None:
 
     else:
         out.note(L("keine prüfbaren Verbindungen", "no checkable connections"))
+    if data.get("statics"):  # 1.19.0: statische Routen auf den Wegen
+        _statics(out, data["statics"])
+
+
+def _statics(out: Writer, items: list[dict]) -> None:
+    """Statische Routen, die die Wege der Applikation nutzen (1.19.0, `store/static_routes`)."""
+    out.heading(L("Statische Routen auf den Wegen", "Static routes on the paths"), 2)
+    rows = []
+    for s in items:
+        vrf = f" · VRF {s['vrf']}" if s.get("vrf") not in (None, 0) else ""
+        via = " ".join(x for x in (s.get("next_hop"), f"({s['interface']})"
+                                   if s.get("interface") else None) if x)  # fmt: skip
+        origin = {"config": L("Konfiguration", "configuration"), "rib":
+                  L("nur Routing-Tabelle", "routing table only"), "l3out": "L3Out"}.get(
+                      s.get("origin"), s.get("origin") or "")  # fmt: skip
+        extra = "; ".join(x for x in (
+            f"Seq {s['seq']}" if s.get("seq") else None,
+            f"L3Out {s['l3out']}" if s.get("l3out") else None, s.get("comment")) if x)  # fmt: skip
+        use = L("aktiv", "active") if s.get("use") == "active" else L("Backup-Weg", "backup path")
+        rows.append([f"{s.get('label') or '?'}{vrf}", s.get("prefix") or "", via or "–",
+                     "–" if s.get("distance") is None else str(s["distance"]),
+                     origin + (f" – {extra}" if extra else ""), use,
+                     str(s.get("count") or len(s.get("connections") or []))])  # fmt: skip
+    out.table([L("Gerät", "Device"), L("Ziel", "Destination"), "Next-Hop",
+               L("Distanz", "Distance"), L("Quelle", "Source"), L("Genutzt", "Used"),
+               L("Verbindungen", "Connections")],
+              _capped(out, rows, L("Statische Routen", "Static routes")),
+              [2.4, 1.6, 2.2, 0.8, 3.0, 1.1, 1.1])  # fmt: skip
 
 
 def _zones(z: dict | None) -> str:

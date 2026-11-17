@@ -6,6 +6,7 @@ import type { ViewEntry } from "../types";
 const Cabling = lazy(() => import("../../Cabling"));
 const Reconcile = lazy(() => import("../../Reconcile"));
 const Routing = lazy(() => import("../../Routing"));
+const StaticRoutes = lazy(() => import("./StaticRoutes"));
 
 export const VIEWS: ViewEntry[] = [
   {
@@ -24,6 +25,15 @@ export const VIEWS: ViewEntry[] = [
         params={p.params}
       />
     ),
+  },
+  {
+    key: "statisch",
+    module: "analyse",
+    label: L("Statische Routen", "Static routes"),
+    icon: "route",
+    section: "doc",
+    order: 61, // 1.19.0: statische Routen je Gerät und VRF (gehört später zu L3)
+    render: (p) => <StaticRoutes key={p.paramsKey} tenantId={p.tenantId} tenantLabel={p.tenantLabel} params={p.params} />,
   },
   {
     key: "verkabelung",
