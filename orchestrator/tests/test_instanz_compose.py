@@ -32,6 +32,9 @@ def test_zusatz_der_instanz():
     assert dienste["orchestrator"]["ports"] == "!reset"
     assert dienste["web-ui"]["ports"] == "!reset"
     assert dienste["orchestrator"]["environment"]["AUTOMATO_FRONT_STATE_DIR"] == ""
+    # 1.17.0: Kunde und Domain der Instanz für den Rücklink zur Startseite des Kunden-Portals
+    for name in ("AUTOMATO_INSTANZ_KUNDE", "AUTOMATO_INSTANZ_DOMAIN"):
+        assert dienste["orchestrator"]["environment"][name] == f"${{{name}:-}}"
     assert "networks" not in dienste["web-ui"]  # nie im gemeinsamen Netz
     a = dienste["anschluss"]
     assert a["image"] == "caddy:2-alpine" and "build" not in a and "ports" not in a

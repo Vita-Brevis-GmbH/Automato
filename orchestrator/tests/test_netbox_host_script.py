@@ -5,6 +5,7 @@ Sicherung laufen. Seit 1.1.0 (ADR 0044 Nachtrag) ein Backend hinter dem Front-Pr
 Automato-VM: NetBox unter <kunde>-nb, keine Startseiten hier, Proxy gehärtet, Konfiguration in
 der Sicherung."""
 
+import ast
 import json
 import os
 import re
@@ -779,3 +780,72 @@ def test_sync_im_takt_nur_bei_aenderung_voll(host):
                     {"kurzname": "kunde-b", "name": "B"}])  # fmt: skip
     neu = host("sync", "--takt")
     assert "Automato unverändert" not in neu.stdout and "kunde-b" in neu.stdout
+
+
+def test_ruecklink_zum_kunden_portal(host):
+    """1.17.0 (Anwender: „Ein Shortcut wäre schön, wenn ich einfach wieder zu dem Kundenportal
+    gelangen könnte.“): je Instanz ein BANNER_TOP mit einem Link auf https://<kunde>.<domain> –
+    beim Anlegen vor dem ersten Start, im vollen Abgleich nachgeführt; unverändert kein Neustart,
+    ein fehlgeschlagener Neustart wird im nächsten Abgleich wiederholt."""
+    assert host("neu", "kunde-a").returncode == 0
+    k = host.dir / "kunden" / "kunde-a"
+    datei = k / "netbox" / "configuration" / "zz_automato_portal.py"
+    stand = k / "portal-stand"
+    text = datei.read_text()
+    zuweisung = ast.parse(text).body[0]
+    assert isinstance(zuweisung, ast.Assign) and zuweisung.targets[0].id == "BANNER_TOP"  # type: ignore[attr-defined]
+    assert ast.literal_eval(zuweisung.value) == (
+        '<a href="https://kunde-a.mgmt.example.ch">← Kundenportal</a>'
+    )
+    assert datei.stat().st_mode & 0o777 == 0o644
+    assert stand.read_text().strip() == "ok"  # wirkt seit dem ersten Start
+    host("agent", "https://automato.int.example.ch", NBH_TOKEN=TOKEN)
+    _antwort(host, [{"kurzname": "kunde-a", "name": "Kunde A", "zugang": "vorhanden"}])
+
+    def neustarts() -> int:
+        return host.log.read_text().count("restart netbox netbox-worker")
+
+    # unverändert: nichts, kein Neustart
+    host.log.write_text("")
+    out = host("sync")
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert neustarts() == 0 and datei.read_text() == text
+
+    # vor 1.17.0 angelegt: einrichten und einmal neu starten
+    datei.unlink()
+    stand.unlink()
+    host.log.write_text("")
+    out = host("sync")
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert "kunde-a: Rücklink zum Kunden-Portal wird eingerichtet" in out.stdout
+    assert datei.read_text() == text and stand.read_text().strip() == "ok"
+    assert neustarts() == 1
+
+    # ältere Fassung: neu schreiben, neu starten
+    datei.write_text("BANNER_TOP = 'alt'\n")
+    host.log.write_text("")
+    assert host("sync").returncode == 0
+    assert neustarts() == 1 and datei.read_text() == text
+
+    # Neustart fehlgeschlagen: der nächste Abgleich startet wieder neu
+    datei.unlink()
+    Path(f"{host.log}.restart-aus").write_text("")
+    out = host("sync")
+    assert "NetBox nicht neu gestartet (Rücklink zum Kunden-Portal)" in out.stdout
+    assert datei.exists() and stand.read_text().strip() == "neustart"
+    Path(f"{host.log}.restart-aus").unlink()
+    host.log.write_text("")
+    assert host("sync").returncode == 0
+    assert neustarts() == 1 and stand.read_text().strip() == "ok"
+
+    # Domain mit Zeichen, die nicht in einen Namen gehören: kein Rücklink (sonst startet NetBox
+    # nicht)
+    conf = host.dir / "host.conf"
+    alt = conf.read_text()
+    domain = re.search(r"^DOMAIN=\"?([^\"\n]+)", alt, re.M)
+    assert domain is not None
+    conf.write_text(alt.replace(domain.group(0), 'DOMAIN="x\'.example.ch"'))
+    datei.unlink()
+    out = host("sync")
+    assert "ist kein Name – kein Rücklink zum Kunden-Portal" in out.stdout
+    assert not datei.exists()

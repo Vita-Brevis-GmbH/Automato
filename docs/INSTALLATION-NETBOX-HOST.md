@@ -222,6 +222,11 @@ Bei jedem Abgleich macht der Agent eine NetBox fertig:
   oder deren Einstellungen veraltet sind (wie `sso <kunde>`), und startet nur dann ihre NetBox neu.
   Instanzen, die schon eingerichtet sind, bleiben ohne Neustart. Entfernt der Proxy gefälschte
   Anmelde-Kopfzeilen nicht (alte Proxy-Vorlage), richtet er nichts ein und warnt: `init`.
+- **Rücklink zum Kunden-Portal** (seit 1.17.0): jede Instanz zeigt oben den Banner
+  „← Kundenportal“ auf die Startseite `https://<kunde>.<domain>` (`BANNER_TOP` in
+  `configuration/zz_automato_portal.py`, geht vor einem Banner aus der Oberfläche von NetBox).
+  `neu` schreibt ihn vor dem ersten Start; der volle Abgleich führt ihn nach und startet die NetBox
+  nur neu, wenn er fehlt oder veraltet ist – nach dem Update auf 1.17.0 also einmal je Instanz.
 - **Zugang für Automato:** sobald der Kunde in Automato einen **Mandanten** hat (Kunden-Portal
   bzw. Cockpit) und dieser noch keinen Zugang zu der NetBox hat, legt er `automato-collector`
   (nur lesen) und `automato-sync` (schreibt nur die Objekttypen des Syncs, ADR 0010) mit neuen

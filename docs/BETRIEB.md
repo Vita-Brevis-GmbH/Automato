@@ -2461,6 +2461,10 @@ Client-Zertifikat und die passenden Zeilen der `agent.env`.
   (mit verbundenem Cockpit seit 1.14.0 nur noch im Notfall mit `--trotzdem`, ADR 0058),
   prüfen mit `front.sh pruefen`; Einstellungen `AUTOMATO_FRONT_*` in `.env`, danach
   `front.sh erzeugen`. Kunden-Adressen nur von der WAF und aus dem Management-Netz.
+- **Zurück zum Kunden-Portal** (1.17.0): auf der Startseite eines Kunden öffnet NetBox einen neuen
+  Tab; Automato (unter `<kunde>-doc`), NetBox und Magister (unter `<kunde>-um`) führen mit
+  „Kundenportal“ oben zurück zur Startseite `https://<kunde>.<domain>`
+  (`docs/INSTALLATION-FRONT.md` 5).
 - **Kunden-Portal** (1.3.0, ADR 0050): Administration → Kunden-Portal (Admin) – Kunden anlegen,
   ändern, entfernen; der Host-Agent (`front.sh agent`, systemd) übernimmt sie in den Front-Proxy.
   Ein **eigener Realm** je Kunde: Anmeldung unter `<kurzname>-doc.<domain>` an diesem Realm; seine

@@ -18,6 +18,9 @@ services:
     ports: !reset []
     environment:
       AUTOMATO_FRONT_STATE_DIR: ""
+      # Rücklink zur Startseite des Kunden-Portals (1.17.0): Kunde und Domain dieser Instanz
+      AUTOMATO_INSTANZ_KUNDE: ${AUTOMATO_INSTANZ_KUNDE:-}
+      AUTOMATO_INSTANZ_DOMAIN: ${AUTOMATO_INSTANZ_DOMAIN:-}
 
   web-ui:
     ports: !reset []

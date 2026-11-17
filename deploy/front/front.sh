@@ -398,7 +398,8 @@ SEITE
 url_kodiert() { python3 -I -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$1"; }
 
 seite() {  # HTML-Gerüst: $1 Titel, $2 Untertitel, $3 Adresse zum Abmelden (Anmelde-Tor), Kacheln auf stdin
-  local t=$1 sub=$2 fuss="Anmeldung je Werkzeug · sign-in per tool" kt ku kb
+  # (Titel\tURL\tBeschreibung[\tneu] – „neu“: in einem neuen Tab öffnen, 1.17.0)
+  local t=$1 sub=$2 fuss="Anmeldung je Werkzeug · sign-in per tool" kt ku kb kz ziel
   # mit Anmelde-Tor: die Anmeldung gilt für alle Werkzeuge, Abmelden beendet auch die Keycloak-Sitzung
   [ -z "${3:-}" ] || fuss="<a href=\"$3\">Abmelden · sign out</a>"
   cat <<EOF
@@ -432,17 +433,21 @@ footer a { color: var(--accent); }
 <p class="sub">$(html "$sub")</p>
 <div class="grid">
 EOF
-  while IFS=$'\t' read -r kt ku kb; do
+  while IFS=$'\t' read -r kt ku kb kz; do
     [ -n "$kt" ] || continue
-    printf '<a class="tile" href="%s"><b>%s</b><span>%s</span></a>\n' "$(html "$ku")" "$(html "$kt")" "$(html "$kb")"
+    ziel=""
+    [ "$kz" != neu ] || ziel=' target="_blank" rel="noopener noreferrer"'
+    printf '<a class="tile" href="%s"%s><b>%s</b><span>%s</span></a>\n' "$(html "$ku")" "$ziel" "$(html "$kt")" "$(html "$kb")"
   done
   printf '</div>\n<footer>%s</footer>\n</main>\n</body>\n</html>\n' "$fuss"
 }
 
-kacheln() {  # Kacheln der Startseite eines Kunden (Titel\tURL\tBeschreibung)
+kacheln() {  # Kacheln der Startseite eines Kunden (Titel\tURL\tBeschreibung[\tneu])
   local k=$1
   lies_kunde "$k"
-  [ "$NB" != ja ] || printf 'NetBox\thttps://%s-nb.%s\tIPAM, Geräte, Verkabelung\n' "$k" "$DOMAIN"
+  # NetBox in einem neuen Tab (1.17.0, Anwender: „Netbox soll vom Kundenportal aus als neuer Tab
+  # öffnen“), die übrigen Werkzeuge im selben
+  [ "$NB" != ja ] || printf 'NetBox\thttps://%s-nb.%s\tIPAM, Geräte, Verkabelung\tneu\n' "$k" "$DOMAIN"
   [ "$DOC" != ja ] || printf 'Dokumentation\thttps://%s-doc.%s\tFirewall-Regeln, Applikationen, Wege\n' "$k" "$DOMAIN"
   [ "$UM" != ja ] || [ -z "$UM_ZIEL" ] || printf 'Magister\thttps://%s-um.%s\tBenutzer, Gruppen und Rechte\n' "$k" "$DOMAIN"
   [ "$CMDB_AN" != ja ] || [ -z "$CMDB" ] || printf 'CMDB\thttps://%s-cmdb.%s\tLizenzen und Geräte\n' "$k" "$DOMAIN"

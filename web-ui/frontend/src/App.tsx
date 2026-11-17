@@ -492,6 +492,19 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
           </label>
         )}
         <div className="spacer" />
+        {cfg.portal_url ? (
+          // 1.17.0 (Anwender: „Ein Shortcut wäre schön, wenn ich einfach wieder zu dem Kundenportal gelangen
+          // könnte.“): zurück zur Startseite des Kunden – die Adresse nennt der Server, nie geraten
+          <a
+            className="portal-link"
+            id="portal-link"
+            href={cfg.portal_url}
+            title={L("Zur Startseite des Kunden-Portals", "To the start page of the customer portal")}
+          >
+            <Icon name="back" size={14} />
+            <span>{L("Kundenportal", "Customer portal")}</span>
+          </a>
+        ) : null}
         <span
           className={`https ${https ? "ok" : "bad"}`}
           title={https ? L("Verbindung verschlüsselt", "Connection encrypted") : L("Unverschlüsselte Verbindung", "Unencrypted connection")}

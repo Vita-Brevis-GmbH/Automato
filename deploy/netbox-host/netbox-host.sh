@@ -281,6 +281,7 @@ cmd_neu() {
   nbc "$k" up -d >/dev/null 2>&1 || warn "Hintergrunddienste (worker) nicht gestartet – cd $nb && docker compose up -d"
   admin_anlegen "$k"
   sso_rechte "$k" || true
+  [ ! -f "$(portal_stand "$k")" ] || printf 'ok\n' >"$(portal_stand "$k")"  # wirkt seit dem Start
   proxy_reload
   if [ -n "${NBH_ADMIN_DATEI:-}" ]; then  # Agent (1.13.0): den Zugang übergibt er gleich danach
     info "Zugang für Automato: übergibt der Agent, sobald der Kunde in Automato einen Mandanten hat"
@@ -422,6 +423,57 @@ cmd_sso() {
   [ "$FEHLER" -eq 0 ]
 }
 
+# --- Rücklink zum Kunden-Portal (1.17.0) --------------------------------------------------------
+# Anwender: „Ein Shortcut wäre schön, wenn ich einfach wieder zu dem Kundenportal gelangen könnte.“
+# Je Instanz ein BANNER_TOP mit einem Link auf die Startseite des Kunden (https://<kunde>.<domain>,
+# Front-Proxy) – beim Anlegen und im vollen Abgleich nachgeführt. Stand wie bei der Anmeldung:
+# `neustart` = Einstellung neu, NetBox noch nicht neu gestartet; `ok` = wirkt.
+portal_stand() { printf '%s/portal-stand' "$(kdir "$1")"; }
+
+portal_inhalt() {  # NetBox-Einstellung mit dem Rücklink (im Konfig-Ordner der Instanz)
+  cat <<EOF
+# Rücklink zur Startseite des Kunden-Portals (Automato 1.17.0) – geschrieben von netbox-host.sh,
+# nicht von Hand ändern; gilt vor einem Banner aus der Oberfläche von NetBox.
+BANNER_TOP = '<a href="https://$1.$DOMAIN">← Kundenportal</a>'
+EOF
+}
+
+portal_datei() {  # Rücklink schreiben; 0 = geändert (wirkt erst mit dem (Neu-)Start der NetBox)
+  local k=$1 ziel
+  ziel="$(nbdir "$k")/configuration/zz_automato_portal.py"
+  [ -d "$(dirname "$ziel")" ] || return 1
+  # die Domain steht in Python und HTML: nur die Zeichen eines Namens (sonst startet NetBox nicht)
+  if ! [[ "$DOMAIN" =~ ^[A-Za-z0-9.-]+$ ]]; then
+    warn "$k: DOMAIN '$DOMAIN' in host.conf ist kein Name – kein Rücklink zum Kunden-Portal"
+    return 1
+  fi
+  [ -f "$ziel" ] && [ "$(cat "$ziel")" = "$(portal_inhalt "$k")" ] && return 1
+  portal_inhalt "$k" >"$ziel"
+  chmod 644 "$ziel"
+  printf 'neustart\n' >"$(portal_stand "$k")"
+  return 0
+}
+
+portal_nachfuehren() {  # Abgleich: Rücklink nachführen – Neustart nur bei geänderter Einstellung
+  local k=$1
+  [ -d "$(nbdir "$k")/configuration" ] || return 0
+  if portal_datei "$k"; then
+    info "$k: Rücklink zum Kunden-Portal wird eingerichtet (NetBox startet neu)"
+  fi
+  [ "$(cat "$(portal_stand "$k")" 2>/dev/null || true)" = neustart ] || return 0
+  # shellcheck disable=SC2046 # Dienste der Instanz, die NetBox nutzen (netbox, netbox-worker, …)
+  if ! nbc "$k" restart $(nbc "$k" config --services 2>/dev/null | grep '^netbox') </dev/null >/dev/null 2>&1; then
+    warn "$k: NetBox nicht neu gestartet (Rücklink zum Kunden-Portal) – der nächste Abgleich versucht es wieder"
+    return 1
+  fi
+  if ! warte_netbox "$k" </dev/null; then
+    fehler "$k: NetBox antwortet nach dem Neustart nicht – cd $(nbdir "$k") && docker compose logs netbox"
+    return 1
+  fi
+  printf 'ok\n' >"$(portal_stand "$k")"
+  ok "$k: Rücklink zum Kunden-Portal (https://$k.$DOMAIN)"
+}
+
 instanz_env() {  # .env der Instanz: Version, Projektname, Secrets (überschreibt die Vorgaben von netbox-docker)
   local k=$1 nb
   nb=$(nbdir "$k")
@@ -446,6 +498,7 @@ instanz_override() {  # Secrets, Name, Neustart-Regel und Netz zum Proxy für al
   local k=$1 nb svc
   nb=$(nbdir "$k")
   sso_datei "$k" || true
+  portal_datei "$k" || true  # 1.17.0: Rücklink zum Kunden-Portal
   local services
   services=$(nbc "$k" config --services 2>/dev/null) || abbruch "docker compose config in $nb fehlgeschlagen"
   printf '%s\n' "$services" | grep -qx netbox || abbruch "Dienst 'netbox' fehlt in netbox-docker $NETBOX_DOCKER_TAG"
@@ -987,6 +1040,7 @@ cmd_sync() {  # [--takt]: vom Timer – ohne Änderung in Automato nur alle 5 Mi
     gewollt="$gewollt$k "
     if [ -d "$(nbdir "$k")" ]; then
       ok "$k: NetBox vorhanden"
+      portal_nachfuehren "$k" || true
       sso_nachfuehren "$k" || true
     else
       info "$k: NetBox fehlt – wird angelegt"

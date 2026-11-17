@@ -335,6 +335,41 @@ def realm_for_host(session: Session, host: str | None) -> str | None:
     return pc.realm if pc is not None and pc.doc and pc.realm else None
 
 
+# Domain der Kunden-Adressen (Ruecklink, 1.17.0): Labels wie im DNS, mindestens zwei
+_LABEL = r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?"
+DOMAIN = re.compile(rf"^(?=.{{1,253}}$)({_LABEL}\.)+{_LABEL}$")
+
+
+def _start(host: str | None, domain: str) -> tuple[str, str] | None:
+    """Kurzname und Startseite zur Adresse der Oberflaeche `<kurzname>-doc.<domain>` (None = eine
+    andere Adresse bzw. keine gueltige Domain)."""
+    name = (host or "").strip().lower().split(":")[0].rstrip(".")
+    domain = (domain or "").strip().lower().strip(".")
+    suffix = f"-doc.{domain}"
+    if not DOMAIN.match(domain) or not name.endswith(suffix):
+        return None
+    short = name[: -len(suffix)]
+    return (short, f"https://{short}.{domain}") if SHORT_NAME.match(short) else None
+
+
+def start_for_host(session: Session, host: str | None, domain: str) -> str:
+    """Startseite des Kunden-Portals zur Adresse der Oberflaeche (1.17.0, Ruecklink in der
+    Kopfzeile): unter `<kurzname>-doc.<domain>` die eines Kunden des Portals mit Doku, sonst leer -
+    nie aus dem Namen allein geraten."""
+    found = _start(host, domain)
+    if found is None:
+        return ""
+    pc = session.scalar(select(PortalCustomer).where(PortalCustomer.short_name == found[0]))
+    return found[1] if pc is not None and pc.doc else ""
+
+
+def instance_start(host: str | None, short_name: str, domain: str) -> str:
+    """Startseite des Kunden einer eigenen Instanz (ADR 0061, Kunde und Domain aus ihrer .env) -
+    nur unter seiner Adresse `<kurzname>-doc.<domain>`, sonst leer."""
+    found = _start(host, domain)
+    return found[1] if found is not None and found[0] == short_name.strip().lower() else ""
+
+
 def out(pc: PortalCustomer, domain: str = "", live: dict[int, set[int]] | None = None) -> dict:
     addresses = {}
     if domain:

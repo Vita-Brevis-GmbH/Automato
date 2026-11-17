@@ -492,6 +492,8 @@ export interface AuthConfig {
   client_id: string;
   scope: string;
   admin_console_url: string; // Keycloak-Benutzerverwaltung (leer = unbekannt)
+  // Startseite des Kunden-Portals unter <kurzname>-doc.<domain> (1.17.0; vom Server, leer = kein Link)
+  portal_url?: string;
 }
 
 export interface AgentSystem {

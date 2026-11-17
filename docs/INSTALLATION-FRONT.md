@@ -171,6 +171,13 @@ sudo deploy/front/front.sh entfernen kunde-a --ja             # NetBox und Daten
   `<kunde>-um.<domain>` (im Cockpit „Adresse ändern“). CA mit `AUTOMATO_FRONT_MAGISTER_CA` bzw.
   der der übrigen Namen.
 - **`--cmdb`:** wirkt erst mit `AUTOMATO_FRONT_CMDB`.
+- **Startseite und Rücklink (1.17.0):** die Kachel NetBox öffnet einen neuen Tab, die übrigen
+  Kacheln bleiben im selben. Zurück zur Startseite `https://<kunde>.<domain>` führt in Automato
+  unter `<kunde>-doc` der Link „Kundenportal“ oben (die Adresse nennt der Orchestrator: Kunde des
+  Kunden-Portals mit Doku und `AUTOMATO_FRONT_DOMAIN`, in einer eigenen Instanz deren
+  `AUTOMATO_INSTANZ_KUNDE`/`_DOMAIN`; von Hand angelegte Kunden ohne Link), in NetBox der Banner
+  „← Kundenportal“ (NetBox-Host, `docs/INSTALLATION-NETBOX-HOST.md` 4b) und in Magister unter
+  `<kunde>-um` „Kundenportal“ in der Kopfzeile.
 - **Kunde von Hand → Portal:** wird im Kunden-Portal ein Kunde mit demselben Kurznamen gespeichert,
   gilt ab dann der Eintrag aus dem Portal (Werkzeuge, Realm, Zugriff und Kacheln – eigene Kacheln
   vorher dort eintragen). `front.sh liste` zeigt die Quelle (Portal bzw. Hand).

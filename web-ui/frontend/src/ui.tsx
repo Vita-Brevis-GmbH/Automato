@@ -99,6 +99,7 @@ const ICONS: Record<string, ReactNode> = {
   play: <path d="M7 4v16l13-8z" />,
   chevron: <path d="m6 9 6 6 6-6" />,
   external: <path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" />,
+  back: <path d="M19 12H5m0 0 6-6m-6 6 6 6" />,
   plus: <path d="M12 5v14M5 12h14" />,
   objects: (
     <>

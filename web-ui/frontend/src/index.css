@@ -140,6 +140,12 @@ a { color: var(--accent); }
 .https { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; white-space: nowrap; }
 .https.ok { color: var(--good); }
 .https.bad { color: var(--warn); }
+/* Rücklink zur Startseite des Kunden-Portals (1.17.0) */
+.portal-link { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; white-space: nowrap;
+  color: var(--accent); text-decoration: none; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface-2); }
+.portal-link:hover, .portal-link:focus-visible { border-color: var(--accent); }
+@media (max-width: 560px) { .portal-link span { display: none; } }
 .usermenu { position: relative; }
 .usermenu-btn { display: flex; align-items: center; gap: 9px; padding: 4px 10px 4px 4px; border-radius: 20px; border: 1px solid var(--border);
   background: var(--surface-2); cursor: pointer; color: var(--fg); text-align: left; }

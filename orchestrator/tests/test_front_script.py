@@ -311,6 +311,27 @@ def test_link_wird_maskiert(front):
     assert boese.returncode != 0 and "https://" in boese.stderr
 
 
+def test_netbox_in_neuem_tab(front):
+    """1.17.0 (Anwender: „Netbox soll vom Kundenportal aus als neuer Tab öffnen“): nur die Kachel
+    NetBox mit target=_blank (ohne Zugriff des neuen Tabs auf die Startseite), die übrigen
+    Werkzeuge und eigene Kacheln im selben Tab – auch eine Kachel mit dem Text „neu“."""
+    front.env_file.write_text(ENV + "AUTOMATO_FRONT_MAGISTER=https://magister.int.example.ch\n")
+    assert front("kunde", "kunde-a", "Kunde A", "--doc", "--um").returncode == 0
+    out = front("link", "kunde-a", "Handbuch", "https://handbuch.example.ch", "neu")
+    assert out.returncode == 0, out.stdout + out.stderr
+    seite = (front.gen / "www" / "kunde-a" / "index.html").read_text()
+    neu = ' target="_blank" rel="noopener noreferrer"'
+    assert re.findall(r'<a class="tile" href="([^"]+)"([^>]*)>', seite) == [
+        ("https://kunde-a-nb.mgmt.example.ch", neu),
+        ("https://kunde-a-doc.mgmt.example.ch", ""),
+        ("https://kunde-a-um.mgmt.example.ch", ""),
+        ("https://handbuch.example.ch", ""),
+    ]
+    assert "<span>neu</span>" in seite
+    # das Portal (alle Kunden) bleibt im selben Tab
+    assert "_blank" not in (front.gen / "www" / "_portal" / "index.html").read_text()
+
+
 def test_entfernen_nur_mit_bestaetigung(front):
     front("kunde", "kunde-a", "Kunde A")
     front("kunde", "kunde-b", "Kunde B")

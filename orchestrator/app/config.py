@@ -85,6 +85,11 @@ class Settings(BaseSettings):
     # Domain der Kunden-Adressen (wie AUTOMATO_FRONT_DOMAIN im Front-Proxy) - nur fuer die
     # Anzeige der Adressen und Keycloak-Eintraege in der Oberflaeche
     front_domain: str = ""
+    # Eigene Automato-Instanz (1.16.0, ADR 0061): Kurzname des Kunden und Domain der Kunden-Adressen
+    # aus der .env der Instanz (schreibt `deploy/betrieb.sh installieren`; in der Hauptinstanz
+    # leer) - fuer den Ruecklink zur Startseite des Kunden-Portals (1.17.0)
+    instanz_kunde: str = ""
+    instanz_domain: str = ""
     # Inventar fuers Cockpit (1.10.0, ADR 0053): GET /inventory nur mit diesem Token (Bearer),
     # erzeugt mit `deploy/aufbau.sh cockpit-token`. Leer = der Endpunkt gibt es nicht (404).
     cockpit_token: str = ""
