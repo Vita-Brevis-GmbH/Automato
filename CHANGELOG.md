@@ -7,6 +7,38 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 1.17.0 – 2026-11-17
+
+Rückmeldungen nach dem Einspielen von P3–P5 (Anwender 2026-11-17). ADR 0062, R31 neu.
+
+- **Update und Neustart für NetBox-Host und Keycloak aus dem Cockpit** („Update und Neustart soll
+  für alle eingesetzt werden können, hier in Plattform“):
+  - **`deploy/netbox-host/betrieb.sh`** (Host-Agent, Produkt `netbox-host`, Vertrag `betrieb/v1`):
+    `stand`, `sichern` (alle Instanzen), `aktualisieren --ref` (Sicherung aller Instanzen →
+    Checkout → `init` → neue NetBox je Instanz mit `update` → Health → sonst zurück mit Checkout
+    und Datenbanken), `zurueck` (einmal), `neustart` (Proxy und Instanzen); nie eine ältere NetBox
+    als eine Instanz, der Abgleich des Agenten ruht währenddessen.
+  - **NetBox-Version mit dem Werkzeug:** `deploy/netbox-host/netbox-version.conf`; in `host.conf`
+    nur noch zum Festhalten – die Zeilen `NETBOX_DOCKER_TAG`/`NETBOX_VERSION` aus der Vorlage bis
+    1.16.0 entfernen.
+  - **`deploy/keycloak/betrieb.sh`** (Produkt `keycloak`, Konfiguration
+    `/etc/automato/keycloak-betrieb.conf`): Version aus dem Container, Health `/health/ready`,
+    Sicherung `pg_dump` nur mit age verschlüsselt, `aktualisieren --version` (Image geprüft,
+    Version mit Digest in `docker-compose.override.yml`, sonst zurück mit Datenbank), `zurueck`,
+    `neustart`; das Ansible-Playbook legt Checkout, Konfiguration, age-Schlüssel und tägliche
+    Sicherung an (ersetzt den Klartext-Dump aus PROD-INSTALL §10).
+  - Gemeinsam: `deploy/lib-betrieb.sh` (Antwort, Sperre, Eingaben).
+- **Zurück zum Kunden-Portal, NetBox in einem neuen Tab** („Ein Shortcut wäre schön, wenn ich
+  einfach wieder zu dem Kundenportal gelangen könnte.“, „Netbox soll vom Kundenportal aus als neuer
+  Tab öffnen“):
+  - Startseite eines Kunden (`front.sh`): die Kachel NetBox öffnet in einem neuen Tab.
+  - Automato: unter `<kunde>-doc.<domain>` zeigt die Kopfzeile „Kundenportal“ (`portal_url` aus
+    `GET /api/auth/config`; Hauptinstanz nur für Kunden des Kunden-Portals mit Doku, eigene Instanz
+    aus `AUTOMATO_INSTANZ_KUNDE`/`_DOMAIN`), sonst kein Link.
+  - NetBox (`netbox-host.sh`): je Instanz der Banner „← Kundenportal“ (`BANNER_TOP`), beim
+    Anlegen und im vollen Abgleich nachgeführt; nach dem Update startet jede Instanz einmal neu.
+  - Magister: „Kundenportal“ in der Kopfzeile unter `<kunde>-um.<domain>` (eigenes Repo).
+
 ## 1.16.0 – 2026-11-16
 
 Eigene Automato-Instanz je Kunde aus dem Cockpit (Anwender 2026-11-16: „Bitte weiter bis P5“,
