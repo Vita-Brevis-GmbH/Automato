@@ -194,7 +194,7 @@ def test_hook_in_normalize_und_snmp():
     )
     transceiver.add(inv, part, {"platform": "snmp", "outputs": {}})
     assert inv.transceivers == [] and inv.transceiver_reads[0].status == "unsupported"
-    assert transceiver.summary(inv) == ("Transceiver: 0 an 0 Switches; nicht unterstützt auf 1 "
+    assert transceiver.summary(inv) == ("Transceiver: nicht unterstützt auf 1 "
                                         "(über SNMPv3 nicht lesbar (nur per SSH))")  # fmt: skip
     # Beispieldaten: Catalyst und Nexus
     inv = normalize(tasks._sample())
@@ -245,5 +245,5 @@ def test_befehle_nur_lesend_und_lauf(monkeypatch):
     assert result.status == "completed" and "show interface transceiver" in asked
     # Befehl gescheitert: Status „nicht lesbar“, gezaehlt in der Meldung und als Hinweis
     assert result.inventory.transceiver_reads[0].status == "unreadable"
-    assert "Transceiver: 0 an 0 Switches; nicht lesbar auf 1" in result.message
+    assert "Transceiver: nicht lesbar auf 1 (10.0.0.1)" in result.message
     assert "show interface transceiver: TimeoutError" in result.message

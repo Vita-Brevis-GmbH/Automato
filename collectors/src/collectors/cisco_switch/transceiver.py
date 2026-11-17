@@ -308,12 +308,12 @@ def summary(inv: NetworkInventory) -> str | None:
     if not reads or (not inv.transceivers and all(r.status == READ for r in reads)):
         return None  # nichts gelesen und nichts ausgefallen (nur Kupfer): keine Zeile
     ok = [r for r in reads if r.status == READ]
-    text = f"Transceiver: {len(inv.transceivers or [])} an {len(ok)} Switches"
+    parts = [f"{len(inv.transceivers or [])} an {len(ok)} Switches"] if ok else []
     bad = [r for r in reads if r.status == UNREADABLE]
     if bad:
         names = ", ".join(r.device for r in bad[:5]) + (" …" if len(bad) > 5 else "")
-        text += f"; nicht lesbar auf {len(bad)} ({names})"
+        parts.append(f"nicht lesbar auf {len(bad)} ({names})")
     unsupported = [r for r in reads if r.status == UNSUPPORTED]
     if unsupported:
-        text += f"; nicht unterstützt auf {len(unsupported)} ({unsupported[0].note})"
-    return text
+        parts.append(f"nicht unterstützt auf {len(unsupported)} ({unsupported[0].note})")
+    return "Transceiver: " + "; ".join(parts)
