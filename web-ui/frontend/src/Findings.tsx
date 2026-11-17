@@ -271,6 +271,12 @@ function viewLinks(f: Finding): { label: string; view: View; params: ViewParams 
   if (f.type.startsWith("vpn_") && d.ref)
     return [{ label: L(`VPN ${String(d.tunnel ?? "")} öffnen`, `Open VPN ${String(d.tunnel ?? "")}`), view: "vpn",
               params: { tunnel: String(d.ref) } }];
+  // 1.19.0: Kabel in NetBox bzw. Kabelnummer im Reiter „Kabelnummern“ der Verkabelung
+  if (f.type === "cable_neighbor_mismatch" || f.type === "cable_label_mismatch") {
+    const end = (d.a ?? {}) as { device?: string; port?: string };
+    return [{ label: L("In der Verkabelung öffnen", "Open in cabling"), view: "verkabelung",
+              params: { tab: "labels", q: String(end.port ?? end.device ?? "") } }];
+  }
   // 0.134.0: VIP ohne Ziel in NAT / VIPs öffnen
   if (f.type === "vip_target_missing" && d.name)
     return [{ label: L(`${String(d.name)} in NAT / VIPs`, `${String(d.name)} in NAT / VIPs`), view: "nat", params: { q: String(d.name) } }];

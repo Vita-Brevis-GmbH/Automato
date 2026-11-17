@@ -19,6 +19,7 @@ import {
   SyncVerification,
 } from "./api";
 import type { View } from "./App";
+import { CableLabelConfirm } from "./modules/schreibpfad/CableLabelConfirm";
 import { L } from "./i18n";
 import { REF_ROLE_LABEL } from "./refs";
 import { Dash, Empty, ErrorBox, fmtTime, Icon, Loading, Modal, Note, PageHead } from "./ui";
@@ -42,6 +43,7 @@ const KIND_LABEL: Record<string, string> = {
   device: L("Gerät", "Device"),
   interface: "Port",
   cable: L("Kabel", "Cable"),
+  cable_label: L("Kabelnummer", "Cable number"), // 1.19.0: Label bestehender Kabel, je Kabel bestätigt
   virtual_machine: "VM",
   vm_interface: L("VM-Interface", "VM interface"),
   ip_address: L("IP-Adresse", "IP address"),
@@ -213,6 +215,9 @@ export default function NetBoxSync({
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState(false);
+  const [labels, setLabels] = useState<string[]>([]); // bestätigte Kabelnummern (1.19.0)
+  const planId = plan?.id;
+  useEffect(() => setLabels([]), [planId]);
 
   const loadPlans = useCallback(() => {
     if (tenantId === null) return;
@@ -300,7 +305,7 @@ export default function NetBoxSync({
     setConfirm(false);
     setError(null);
     try {
-      setPlan(await applySyncPlan(plan.id));
+      setPlan(await applySyncPlan(plan.id, labels));
     } catch (e) {
       setError(e);
     }
@@ -452,6 +457,9 @@ export default function NetBoxSync({
           onCancel={() => cancelSyncPlan(plan.id).then((p) => (setPlan(p), loadPlans()), setError)}
         />
       )}
+      {plan?.status === "ready" && (plan.summary?.cable_label?.update ?? 0) > 0 && (
+        <CableLabelConfirm plan={plan} value={labels} onChange={setLabels} />
+      )}
 
       {plans.length > 0 && (
         <div className="card">
@@ -532,6 +540,18 @@ export default function NetBoxSync({
               </>,
             )}
           </p>
+          {(plan.summary?.cable_label?.update ?? 0) > 0 && (
+            <Note>
+              {L(
+                <>
+                  Kabelnummern: {labels.length} von {plan.summary?.cable_label?.update} bestätigt – nur diese werden geschrieben.
+                </>,
+                <>
+                  Cable numbers: {labels.length} of {plan.summary?.cable_label?.update} confirmed – only these are written.
+                </>,
+              )}
+            </Note>
+          )}
           {plan.totals.conflict > 0 && (
             <Note>
               {L(

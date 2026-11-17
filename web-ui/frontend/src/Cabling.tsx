@@ -3,6 +3,8 @@
 // (Speed, Duplex, VLANs, Port-Channel); Geräte, Ports der Switches und VLANs. Seit 0.63.0 Endpunkte aus
 // MAC-Tabelle und ARP: „Wo hängt …“ und die MACs je Port (ohne Uplinks). Seit 0.64.0 der Plan (L2-Sicht):
 // Geräte nach Ebenen, VLAN-Wege mit Inseln, Ausfall eines Geräts bzw. Kabels simulieren. Rein lesend.
+// Seit 1.19.0 je Port Transceiver, Speed/Duplex und Kabelnummer mit Herkunft (NetBox bzw. Automato), Reiter
+// „Kabelnummern“ und Dialog zum Erfassen (`modules/analyse/Kabel.tsx`) – erfasst wird nur in Automato.
 import { FormEvent, Fragment, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
   CablingDevice,
@@ -33,11 +35,13 @@ import {
   locateEndpoint,
 } from "./api";
 import { Pager, useDebounced } from "./Objects";
+import { CableLabelDialog, CableLabelsTab, LabelCell, TransceiverCell, transceiverText, TransceiverStatusChip } from "./modules/analyse/Kabel";
+import type { CableLabelInfo, NetboxCable, Transceiver, TransceiverStatus } from "./modules/analyse/kabelApi";
 import { Dash, download, Empty, ErrorBox, ExportLangSelect, fmtTime, Loading, Note, PageHead, SharedChip } from "./ui";
 import { L } from "./i18n";
 
 const PAGE = 200;
-type Tab = "plan" | "links" | "devices" | "ports" | "endpoints" | "vlans";
+type Tab = "plan" | "links" | "devices" | "ports" | "endpoints" | "vlans" | "labels";
 const TABS: { key: Tab; label: string }[] = [
   { key: "links", label: L("Verbindungen", "Links") },
   { key: "plan", label: "Plan" },
@@ -45,7 +49,14 @@ const TABS: { key: Tab; label: string }[] = [
   { key: "ports", label: "Ports" },
   { key: "endpoints", label: L("Endpunkte", "Endpoints") },
   { key: "vlans", label: "VLANs" },
+  { key: "labels", label: L("Kabelnummern", "Cable numbers") }, // 1.19.0
 ];
+// 1.19.0 (Verkabelung im Detail): Transceiver je Ende bzw. Port, Kabelnummer mit Herkunft
+type WithTx = { transceiver?: Transceiver | null };
+type Link = CablingLink & { label?: CableLabelInfo | null; a: CablingEnd & WithTx; b: CablingEnd & WithTx };
+type Port = CablingPort & WithTx & { label?: CableLabelInfo | null; pair?: string | null; netbox_cable?: NetboxCable | null };
+type Device = CablingDevice & { transceivers?: TransceiverStatus | null; transceiver_count?: number };
+type LabelEdit = { a: { device: string; port: string }; b: { device: string; port: string }; info: CableLabelInfo | null };
 const STATE: Record<LinkState, [string, string, string]> = {
   both: ["ok", L("beidseitig", "two-sided"), L("beide Geräte melden die Verbindung per CDP/LLDP", "both devices report the link via CDP/LLDP")],
   one_sided: [
@@ -89,18 +100,26 @@ function StateChip({ state, confirmed }: { state: LinkState; confirmed?: LinkCon
   );
 }
 
-function portText(e: CablingEnd | CablingPort): string {
+function speedText(e: CablingEnd | CablingPort): string {
+  return [e.speed, e.duplex].filter(Boolean).join("/");
+}
+
+function portText(e: CablingEnd | CablingPort, speed = true): string {
   const parts: string[] = [];
-  const speed = [e.speed, e.duplex].filter(Boolean).join("/");
-  if (speed) parts.push(speed);
+  if (speed && speedText(e)) parts.push(speedText(e));
   if (e.mode === "access") parts.push(`Access ${e.vlan ?? "?"}`);
   if (e.mode === "tagged") parts.push(`Trunk ${e.trunk_vlans ?? "?"}${e.native_vlan ? L(` (nativ ${e.native_vlan})`, ` (native ${e.native_vlan})`) : ""}`);
   if (e.lag) parts.push(e.lag + (e.vpc ? ` vPC ${e.vpc}` : ""));
   return parts.join(" · ");
 }
 
-export default function Cabling({ tenantId, tenantLabel }: { tenantId: number | null; tenantLabel: string }) {
-  const [tab, setTab] = useState<Tab>("links");
+export default function Cabling({ tenantId, tenantLabel, canEdit = false, params = {} }: {
+  tenantId: number | null;
+  tenantLabel: string;
+  canEdit?: boolean;
+  params?: Record<string, string>; // 1.19.0: `tab`, `q` (z. B. aus einem Befund)
+}) {
+  const [tab, setTab] = useState<Tab>(TABS.some((t) => t.key === params.tab) ? (params.tab as Tab) : "links");
   const [data, setData] = useState<{ summary: CablingSummary; items: CablingDevice[] } | null>(null);
   const [device, setDevice] = useState("");
   const [epPort, setEpPort] = useState<{ device: string; port: string } | null>(null);
@@ -180,16 +199,17 @@ export default function Cabling({ tenantId, tenantLabel }: { tenantId: number | 
       </div>
       {tenantId !== null && tab === "plan" && <PlanTab tenantId={tenantId} onEndpoints={endpointsAt} />}
       {tenantId !== null && tab === "links" && (
-        <LinksTab tenantId={tenantId} devices={data?.items ?? []} device={device} onDevice={setDevice} />
+        <LinksTab tenantId={tenantId} devices={data?.items ?? []} device={device} onDevice={setDevice} canEdit={canEdit} />
       )}
       {tab === "devices" && <DevicesTab items={data?.items ?? []} onOpen={open} />}
       {tenantId !== null && tab === "ports" && (
-        <PortsTab tenantId={tenantId} devices={data?.items ?? []} device={device} onDevice={setDevice} onEndpoints={endpointsAt} />
+        <PortsTab tenantId={tenantId} devices={data?.items ?? []} device={device} onDevice={setDevice} onEndpoints={endpointsAt} canEdit={canEdit} />
       )}
       {tenantId !== null && tab === "endpoints" && (
         <EndpointsTab tenantId={tenantId} devices={data?.items ?? []} at={epPort} onClearAt={() => setEpPort(null)} />
       )}
       {tenantId !== null && tab === "vlans" && <VlansTab tenantId={tenantId} />}
+      {tenantId !== null && tab === "labels" && <CableLabelsTab tenantId={tenantId} canEdit={canEdit} initialQ={params.q} />}
     </>
   );
 }
@@ -215,29 +235,32 @@ function DeviceSelect({ devices, value, onChange, readOnly = false }: {
   );
 }
 
-function LinksTab({ tenantId, devices, device, onDevice }: {
+function LinksTab({ tenantId, devices, device, onDevice, canEdit }: {
   tenantId: number;
   devices: CablingDevice[];
   device: string;
   onDevice: (v: string) => void;
+  canEdit: boolean;
 }) {
+  const [edit, setEdit] = useState<LabelEdit | null>(null);
+  const [tick, setTick] = useState(0);
   const [state, setState] = useState<LinkState | "">("");
   const [issues, setIssues] = useState(false);
   const [q, setQ] = useState("");
   const query = useDebounced(q);
   const [offset, setOffset] = useState(0);
-  const [data, setData] = useState<{ total: number; items: CablingLink[] } | null>(null);
+  const [data, setData] = useState<{ total: number; items: Link[] } | null>(null);
   const [err, setErr] = useState<unknown>(null);
   useEffect(() => setOffset(0), [device, state, issues, query]);
   useEffect(() => {
     let live = true;
     fetchCablingLinks(tenantId, { device, state, issues, q: query, offset, limit: PAGE })
-      .then((d) => live && setData(d))
+      .then((d) => live && setData(d as { total: number; items: Link[] }))
       .catch((e) => live && setErr(e));
     return () => {
       live = false;
     };
-  }, [tenantId, device, state, issues, query, offset]);
+  }, [tenantId, device, state, issues, query, offset, tick]);
   return (
     <div className="card" id="cabling-links">
       <div className="card-head">
@@ -275,6 +298,7 @@ function LinksTab({ tenantId, devices, device, onDevice }: {
                 <th>{L("Gegenstelle", "Peer")}</th>
                 <th>Port</th>
                 <th>{L("Zustand", "State")}</th>
+                <th>{L("Kabelnummer", "Cable number")}</th>
                 <th>{L("Abweichung / Konfiguration", "Deviation / configuration")}</th>
               </tr>
             </thead>
@@ -300,12 +324,29 @@ function LinksTab({ tenantId, devices, device, onDevice }: {
                     <StateChip state={l.state} confirmed={l.confirmed} /> <span className="faint">{l.protocols.join("/").toUpperCase()}</span>
                   </td>
                   <td>
+                    <LabelCell
+                      info={l.label}
+                      onEdit={
+                        canEdit && l.a.port && l.b.port
+                          ? () => setEdit({ a: { device: l.a.device, port: l.a.port! }, b: { device: l.b.device, port: l.b.port! }, info: l.label ?? null })
+                          : undefined
+                      }
+                    />
+                  </td>
+                  <td>
                     {l.issues.map((i) => (
                       <div key={i.type} className="crit">
                         {i.text}
                       </div>
                     ))}
                     {!l.issues.length && <span className="faint">{portText(l.a) || <Dash />}</span>}
+                    {[l.a, l.b].map((e) =>
+                      e.transceiver ? (
+                        <div key={e.device} className="port-l2 faint" title={L("Transceiver", "Transceiver")}>
+                          {e.device}: {transceiverText(e.transceiver)}
+                        </div>
+                      ) : null,
+                    )}
                   </td>
                 </tr>
               ))}
@@ -314,11 +355,24 @@ function LinksTab({ tenantId, devices, device, onDevice }: {
         )}
         {data && <Pager total={data.total} offset={offset} onOffset={setOffset} pageSize={PAGE} />}
       </div>
+      {edit && (
+        <CableLabelDialog
+          tenantId={tenantId}
+          a={edit.a}
+          b={edit.b}
+          info={edit.info}
+          onClose={() => setEdit(null)}
+          onSaved={() => {
+            setEdit(null);
+            setTick((x) => x + 1);
+          }}
+        />
+      )}
     </div>
   );
 }
 
-function DevicesTab({ items, onOpen }: { items: CablingDevice[]; onOpen: (key: string, tab: Tab) => void }) {
+function DevicesTab({ items, onOpen }: { items: Device[]; onOpen: (key: string, tab: Tab) => void }) {
   if (items.length === 0) return <Empty title={L("keine Geräte", "no devices")} />;
   return (
     <div className="card" id="cabling-devices">
@@ -333,6 +387,7 @@ function DevicesTab({ items, onOpen }: { items: CablingDevice[]; onOpen: (key: s
               <th>Ports</th>
               <th>{L("Verbindungen", "Links")}</th>
               <th>{L("Abweichungen", "Deviations")}</th>
+              <th title={L("Transceiver gelesen (Anzahl)", "Transceivers read (count)")}>Transceiver</th>
             </tr>
           </thead>
           <tbody>
@@ -353,6 +408,7 @@ function DevicesTab({ items, onOpen }: { items: CablingDevice[]; onOpen: (key: s
                   {d.one_sided ? <span className="faint">{L(` (${d.one_sided} einseitig)`, ` (${d.one_sided} one-sided)`)}</span> : ""}
                 </td>
                 <td className={d.issues ? "crit" : "faint"}>{d.issues || "–"}</td>
+                <td>{d.read ? <TransceiverStatusChip status={d.transceivers} count={d.transceiver_count} /> : <span className="faint">–</span>}</td>
               </tr>
             ))}
           </tbody>
@@ -362,32 +418,43 @@ function DevicesTab({ items, onOpen }: { items: CablingDevice[]; onOpen: (key: s
   );
 }
 
-function PortsTab({ tenantId, devices, device, onDevice, onEndpoints }: {
+function PortsTab({ tenantId, devices, device, onDevice, onEndpoints, canEdit }: {
   tenantId: number;
   devices: CablingDevice[];
   device: string;
   onDevice: (v: string) => void;
   onEndpoints: (device: string, port: string) => void;
+  canEdit: boolean;
 }) {
+  const [edit, setEdit] = useState<LabelEdit | null>(null);
+  const [tick, setTick] = useState(0);
   const [status, setStatus] = useState("");
   const [vlan, setVlan] = useState("");
   const [q, setQ] = useState("");
   const query = useDebounced(q);
   const vlanNo = useDebounced(vlan);
   const [offset, setOffset] = useState(0);
-  const [data, setData] = useState<{ total: number; items: CablingPort[] } | null>(null);
+  const [data, setData] = useState<{ total: number; items: Port[] } | null>(null);
   const [err, setErr] = useState<unknown>(null);
   useEffect(() => setOffset(0), [device, status, vlanNo, query]);
   useEffect(() => {
     let live = true;
     const v = /^\d+$/.test(vlanNo) ? Number(vlanNo) : null;
     fetchCablingPorts(tenantId, { device, status, vlan: v, q: query, offset, limit: PAGE })
-      .then((d) => live && setData(d))
+      .then((d) => live && setData(d as { total: number; items: Port[] }))
       .catch((e) => live && setErr(e));
     return () => {
       live = false;
     };
-  }, [tenantId, device, status, vlanNo, query, offset]);
+  }, [tenantId, device, status, vlanNo, query, offset, tick]);
+  // Gegenstelle eines Ports: aus CDP/LLDP, sonst das Kabel in NetBox (1.19.0)
+  const other = (p: Port) => {
+    if (p.peer?.port) return { device: p.peer.device, port: p.peer.port };
+    const c = p.netbox_cable;
+    if (!c) return { device: "", port: "" };
+    const mine = c.a.device.toLowerCase() === p.device.toLowerCase() ? c.b : c.a;
+    return { device: mine.device, port: mine.port };
+  };
   return (
     <div className="card" id="cabling-ports">
       <div className="card-head">
@@ -417,9 +484,12 @@ function PortsTab({ tenantId, devices, device, onDevice, onEndpoints }: {
                 <th>Switch</th>
                 <th>Port</th>
                 <th>Status</th>
+                <th>{L("Speed / Duplex", "Speed / duplex")}</th>
+                <th>Transceiver</th>
                 <th>{L("Konfiguration", "Configuration")}</th>
                 <th>{L("Beschreibung", "Description")}</th>
                 <th>{L("Gegenstelle", "Peer")}</th>
+                <th>{L("Kabelnummer", "Cable number")}</th>
                 <th title={L("MACs am Port (ohne Uplinks)", "MACs on the port (without uplinks)")}>{L("Endpunkte", "Endpoints")}</th>
               </tr>
             </thead>
@@ -433,8 +503,12 @@ function PortsTab({ tenantId, devices, device, onDevice, onEndpoints }: {
                       {p.enabled === false ? L("abgeschaltet", "disabled") : (p.status ?? "?")}
                     </span>
                   </td>
+                  <td className="nowrap mono port-speed">{speedText(p) || <span className="faint">–</span>}</td>
+                  <td>
+                    <TransceiverCell t={p.transceiver} />
+                  </td>
                   <td className="faint">
-                    {portText(p) || <Dash />}
+                    {portText(p, false) || <Dash />}
                     {p.vpc_peer_link && (
                       <div className="port-l2">
                         {L(<>vPC-Peer-Link (Domäne {p.vpc_peer_link})</>, <>vPC peer link (domain {p.vpc_peer_link})</>)}
@@ -467,6 +541,12 @@ function PortsTab({ tenantId, devices, device, onDevice, onEndpoints }: {
                     )}
                   </td>
                   <td>
+                    <LabelCell
+                      info={p.label}
+                      onEdit={canEdit ? () => setEdit({ a: { device: p.device, port: p.name }, b: other(p), info: p.label ?? null }) : undefined}
+                    />
+                  </td>
+                  <td>
                     {p.endpoints ? (
                       <button className="chip linkchip" onClick={() => onEndpoints(p.device, p.name)} title={L("Endpunkte am Port", "Endpoints on the port")}>
                         {p.endpoints}
@@ -482,6 +562,20 @@ function PortsTab({ tenantId, devices, device, onDevice, onEndpoints }: {
         )}
         {data && <Pager total={data.total} offset={offset} onOffset={setOffset} pageSize={PAGE} />}
       </div>
+      {edit && (
+        <CableLabelDialog
+          tenantId={tenantId}
+          a={edit.a}
+          b={edit.b}
+          info={edit.info}
+          fixed={!!edit.b.port}
+          onClose={() => setEdit(null)}
+          onSaved={() => {
+            setEdit(null);
+            setTick((x) => x + 1);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -1201,6 +1295,8 @@ function endText(e: CablingPatchEnd): string {
   const parts = [portText(e)];
   if (e.status) parts.push(e.enabled === false ? L("deaktiviert", "disabled") : e.status);
   if (e.media) parts.push(e.media);
+  const tx = transceiverText((e as CablingPatchEnd & WithTx).transceiver); // 1.19.0
+  if (tx) parts.push(tx);
   if (e.stp_blocked) parts.push(L(`STP blockiert ${e.stp_blocked}`, `STP blocks ${e.stp_blocked}`));
   if (e.epgs?.length) parts.push(`EPG ${e.epgs.slice(0, 3).join(", ")}${e.epgs.length > 3 ? ` +${e.epgs.length - 3}` : ""}`);
   return parts.filter(Boolean).join(" · ");
