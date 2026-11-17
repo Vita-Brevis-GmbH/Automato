@@ -26,6 +26,11 @@ _PORTAL = frozenset(
 # Namen und Codes
 _ABBAU = frozenset({"netbox", "automato_kunde", "tor", "realm", "grund", "teil", "stand"})
 
+# Reservierungen (1.19.0, ADR 0066): nur Nummern, Standort, Gruppe und Zweck
+_RESERVATION = frozenset(
+    {"tenant_id", "reservation_id", "kind", "low", "high", "site_id", "vlan_group", "purpose"}
+)
+
 # action -> erlaubte detail-Keys. Nur unkritische, benannte Felder.
 ALLOWLIST: dict[str, frozenset[str]] = {
     "collector_run.queued": frozenset(
@@ -157,6 +162,11 @@ ALLOWLIST: dict[str, frozenset[str]] = {
         {"tenant_id", "source_system_id", "dn", "l3out", "origin", "firewalls"}
     ),
     "routing.l3out_firewall.removed": frozenset({"tenant_id", "source_system_id", "dn", "l3out"}),
+    # Reservierungen von VLAN- und AS-Nummern (1.19.0, ADR 0066): Art, Bereich, Standort,
+    # VLAN-Gruppe und Zweck; freigeben = loeschen
+    "reservation.created": _RESERVATION,
+    "reservation.updated": _RESERVATION,
+    "reservation.released": _RESERVATION,
     "reconcile.run": frozenset({"tenant_id", "findings"}),
     "reconcile.version": frozenset({"version", "findings"}),  # 0.133.0: nach einem Update
     # NetBox-Sync (ADR 0010): nur Anzahlen und die gewaehlten Abschnitte (ADR 0031), keine Inhalte

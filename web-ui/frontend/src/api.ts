@@ -1093,7 +1093,14 @@ export interface IpamCompare extends Paged<IpamRow> {
 
 // NetBox-Sync (ADR 0010): Vorschau -> Übernahme per Klick (admin)
 // Abschnitte; Verkabelung und Applikationen (ADR 0031) nur ausdrücklich gewählt
-export type SyncSection = "inventory" | "mirror" | "virtualization" | "cabling" | "firewall_objects" | "applications";
+export type SyncSection =
+  | "inventory"
+  | "mirror"
+  | "virtualization"
+  | "cabling"
+  | "firewall_objects"
+  | "applications"
+  | "reservations"; // 1.19.0, ADR 0066
 export interface SyncTarget {
   id: number;
   name: string;
@@ -1116,6 +1123,8 @@ export interface SyncItem {
   manual?: boolean;
   changes?: SyncChange[];
   fields?: Record<string, unknown>;
+  note?: string; // Reservierungen (1.19.0): „exists“ = in NetBox schon vorhanden, nur angezeigt
+  reservation?: string;
 }
 // Nachkontrolle des NetBox-Syncs (0.115.0, ADR 0042): NetBox nach dem Schreiben rein lesend neu
 // gelesen, je geschriebenem Objekt verglichen

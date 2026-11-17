@@ -37,6 +37,7 @@ from app.models import (
     ParallelRejection,
     Portgroup,
     ReferenceRecordRow,
+    Reservation,
     Rule,
     RuleEndpoint,
     RulePairDecision,
@@ -203,7 +204,8 @@ def delete_tenant(session: Session, tenant: Tenant) -> dict[str, int]:
     counts["findings"] = _count(session, delete(Finding).where(Finding.tenant_id == tid))
     session.execute(delete(DeviceObject).where(DeviceObject.tenant_id == tid))
     for model in (*INVENTORY_MODELS, *TOPOLOGY_MODELS, *L2_MODELS, *STP_MODELS, TopoChange,
-                  TopoExit, TopoExitDismissal, ParallelRejection, L3OutFirewall):  # fmt: skip
+                  TopoExit, TopoExitDismissal, ParallelRejection, L3OutFirewall,
+                  Reservation):  # fmt: skip
         session.execute(delete(model).where(model.tenant_id == tid))
     counts["vms"] = _delete_vms(session, Vm.tenant_id == tid)
     session.execute(delete(Portgroup).where(Portgroup.tenant_id == tid))

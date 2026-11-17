@@ -16,6 +16,8 @@ export type View =
   | "vpn"
   | "verkabelung"
   | "spanningtree"
+  | "reservierungen"
+  | "asn"
   | "wege"
   | "apps"
   | "findings"

@@ -75,6 +75,7 @@ from app.models.network_object import (
 from app.models.parallel import ParallelRejection
 from app.models.portal import PortalCustomer
 from app.models.reference_record import ReferenceRecordRow
+from app.models.reservation import RESERVATION_KINDS, Reservation
 from app.models.rule import (
     EndpointKind,
     EndpointRole,
@@ -182,6 +183,8 @@ __all__ = [
     "Rule",
     "RuleAction",
     "RuleDomain",
+    "RESERVATION_KINDS",
+    "Reservation",
     "RuleEndpoint",
     "RuleIndex",
     "RuleIpRange",

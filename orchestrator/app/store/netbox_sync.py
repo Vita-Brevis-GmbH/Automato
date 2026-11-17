@@ -13,8 +13,11 @@ Einziger Schreibweg der Plattform. Ablauf:
    - Verkabelung (Abschnitt `cabling`, ADR 0031): gelesene Switches/Router mit Ports und Kabel
      zwischen zwei Ports, die beide Seiten per CDP/LLDP melden;
    - Applikationen (Abschnitt `applications`, ADR 0031): je Applikation ein Tag mit Praefix
-     `automato-app-` an den VMs und IP-Adressen ihrer Systeme.
-   Die beiden letzten nur, wenn ausdruecklich gewaehlt (`DEFAULT_SECTIONS`).
+     `automato-app-` an den VMs und IP-Adressen ihrer Systeme;
+   - Reservierungen (Abschnitt `reservations`, 1.19.0, ADR 0066, `netbox_sync_reserv`): in
+     Automato reservierte VLANs mit Status `reserved` und AS-Nummern als ASN-Objekte.
+   Verkabelung, Applikationen und Reservierungen nur, wenn ausdruecklich gewaehlt
+   (`DEFAULT_SECTIONS`).
 2. **Ist** (`read_state`): NetBox lesen (nur GET); danach `resolve_after_read` (VLANs der
    Switch-Ports, Kabel und Tags nur an Objekten, die es in NetBox gibt bzw. die der Sync anlegt).
 3. **Vorschau** (`diff`): je Objekt anlegen | aendern | unveraendert | Konflikt | loeschen.
@@ -61,13 +64,15 @@ from app.models import (
     Vm,
 )
 from app.store import cabling as cabling_store
+from app.store import netbox_sync_reserv as reserv
 from app.store import references
 from app.store import sites as site_store
 from app.store import virtual as virtual_store
 from app.store.epgs import inventory_label
 
 TAG = "automato"
-SECTIONS = ("inventory", "mirror", "virtualization", "cabling", "firewall_objects", "applications")
+SECTIONS = ("inventory", "mirror", "virtualization", "cabling", "firewall_objects", "applications",
+            reserv.SECTION)  # fmt: skip
 # ohne Angabe die bisherigen Abschnitte; Verkabelung/Applikationen nur ausdruecklich (ADR 0031),
 # Firewall-Objekte (1.8.0) waehlt die Oberflaeche vor, wenn die Ziel-NetBox das IPAM ist
 DEFAULT_SECTIONS = ("inventory", "mirror", "virtualization")
@@ -104,6 +109,9 @@ class Kind:
 KINDS = (
     Kind("tag", "extras/tags", "Tag", (), "app", owned=("name", "color", "description")),
     Kind("tenant", "tenancy/tenants", "Tenant", ("name",)),
+    # Reservierungen (1.19.0, ADR 0066): RIR nur gelesen (nie angelegt), ASN mit RIR und Mandant
+    Kind("rir", "ipam/rirs", "RIR", ()),
+    Kind("asn", "ipam/asns", "ASN", (), "tenant", owned=("rir", "tenant", "description")),
     Kind("site_group", "dcim/site-groups", "Standort-Gruppe", ("name", "description")),
     Kind("site", "dcim/sites", "Standort", ("name",), owned=("group", "comments")),
     Kind("manufacturer", "dcim/manufacturers", "Hersteller", ()),
@@ -211,6 +219,7 @@ KIND_SECTIONS = {
     "prefix": frozenset({"inventory", "mirror"}),
     "ip_range": frozenset({"mirror"}),
     "ip_address": frozenset({"inventory", "mirror", "virtualization"}),
+    "asn": frozenset({reserv.SECTION}),
 }
 FW_KINDS = frozenset({"prefix", "ip_range", "ip_address"})  # Arten des Abschnitts Firewall-Objekte
 TERMINATIONS = ("a_terminations", "b_terminations")  # Enden eines Kabels (je ein Port)
@@ -345,6 +354,8 @@ class Wants:
     switch_vlans: list[SwitchVlans] = field(default_factory=list)  # Verkabelung (1.7.0)
     prefix_vlans: list[PrefixVlan] = field(default_factory=list)  # Native VLAN (1.9.0)
     cable_ends: set[str] = field(default_factory=set)  # Geraete an Kabeln: Ports in NetBox lesen
+    reserved: Any = None  # Reservierungen (1.19.0): Gruppe bzw. RIR nach dem Lesen
+    reserved_notes: list[dict] = field(default_factory=list)  # nur angezeigte Nummern
 
     def add(self, want: Want) -> Want:
         return self.items.setdefault((want.kind, want.key), want)
@@ -424,6 +435,8 @@ def build_wants(
         _firewall_object_wants(session, w, tenant, target, tenant_ref)
     if "applications" in sections:
         _application_wants(session, w, tenant)
+    if reserv.SECTION in sections:  # Gruppe bzw. RIR erst nach dem Lesen (`reserv.after_read`)
+        reserv.wants(session, w, tenant, sites, tenant_ref, tslug)
     return w
 
 
@@ -1503,6 +1516,7 @@ def _key_of(kind: str, obj: dict) -> str | None:
     if kind in (
         "tag",
         "tenant",
+        "rir",
         "site_group",
         "site",
         "manufacturer",
@@ -1536,6 +1550,8 @@ def _key_of(kind: str, obj: dict) -> str | None:
         return _ip(obj.get("address"))
     if kind == "cable":
         return _cable_key(obj)
+    if kind == "asn":
+        return str(obj["asn"]) if obj.get("asn") else None
     return None
 
 
@@ -1591,6 +1607,8 @@ def read_state(
             continue
         # VMs auch fuer die Applikations-Tags - geloescht bzw. veraltet nur mit `virtualization`
         if k.name in VIRTUAL_KINDS and not virtual and not (apps and k.name == "virtual_machine"):
+            continue
+        if k.name in reserv.KINDS and reserv.SECTION not in chosen:
             continue
         # alle Tags nur mit den Applikationen (Namen muessen in NetBox eindeutig sein)
         params = {"slug": TAG} if k.name == "tag" and not apps else {}
@@ -1717,6 +1735,8 @@ def _vlan_candidates(wants: Wants, state: State) -> dict[int, list[tuple]]:
     known: set[str] = set()
     for key, have in state["vlan_ref"].items():
         o = have.obj
+        if reserv.owned_vlan(o):
+            continue  # reserviert (1.19.0): kein VLAN fuer Ports und Netze
         group = (o.get("group") or {}).get("slug")
         site = (o.get("site") or {}).get("slug")
         gkey = f"{group}/{o.get('vid')}" if group else None
@@ -2199,6 +2219,8 @@ def diff(
         for key, have in sorted(state[kind.name].items()):
             if key in wanted or not _in_scope(kind, have, state, tslug, gprefix, foreign, groups):
                 continue
+            if reserv.owned(kind.name, have.obj):
+                continue  # reservierte VLANs und ihre Gruppen: nur ihr Abschnitt (`reserv.items`)
             # Werte der Firewall-Objekte gehoeren nur ihrem Abschnitt, die uebrigen den anderen
             # (1.8.0): so fuehrt auch ein Sync nur mit „Firewall-Objekte“ entfernte Objekte
             if not (fw_kind if _fw_owned(have) else all_sections):
@@ -2212,6 +2234,7 @@ def diff(
                     id=have.id,
                 )
             )
+    items += reserv.items(wants, state, tslug, allow_delete, chosen)  # Reservierungen (1.19.0)
     if "applications" in chosen:
         gone = {(i["kind"], i["key"]) for i in items if i["action"] == "delete"}
         items += _assignments(wants, state, gone)
@@ -2337,6 +2360,7 @@ def compute(
     tenants = [tenant_slug(t) for t in session.scalars(select(Tenant))]
     state = read_state(writer, wants, tslug, gprefix, sections, tenants)
     resolve_after_read(wants, state)
+    reserv.after_read(writer, wants, state, sections)  # Reservierungen (1.19.0, ADR 0066)
     unique_names(wants, state, tenant.name)
     platforms = dict(
         session.execute(
@@ -2652,7 +2676,7 @@ WARNINGS_EN = (
         "Applications: {vms} VMs and {ips} IP addresses not in NetBox – without application tag "
         "(synchronize the sections virtualization or DDI mirror), e.g. {examples}.",
     ),
-)
+) + reserv.WARNINGS_EN  # Reservierungen (1.19.0)
 
 
 def kind_label(name: str) -> str:

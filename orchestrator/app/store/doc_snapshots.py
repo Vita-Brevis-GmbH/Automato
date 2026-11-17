@@ -59,10 +59,12 @@ DOC, CONNECTIONS = "doc", "connections"
 KINDS = (DOC, CONNECTIONS)
 # Audit, das die Doku nicht aendert: Lesen, Laeufe (zaehlen ueber `CollectorRun`), Agenten,
 # Befunde (immer aktuell), NetBox-Sync, Versionen des Zonenplans, Vorschlaege, Benutzer der Kunden,
-# Kopplung mit dem Cockpit (1.13.0, ADR 0057), Stand der Loeschauftraege (1.14.0, ADR 0059)
+# Kopplung mit dem Cockpit (1.13.0, ADR 0057), Stand der Loeschauftraege (1.14.0, ADR 0059),
+# Reservierungen (1.19.0, ADR 0066)
 _QUIET = ("read.", "collector_run.", "agent.", "finding.", "reconcile.", "retention.",
           "netbox_sync.", "zone_plan.version_", "zone_suggestion.", "customer_user.",
-          "check.", "cockpit.kopplung.", "portal.abbau.")  # fmt: skip
+          "check.", "cockpit.kopplung.", "portal.abbau.",
+          "reservation.")  # fmt: skip
 # Aenderungen an einer Applikation zaehlen nur fuer sie (Subjekt = ihre ID); der Import betrifft
 # mehrere und zaehlt fuer alle
 _OWN, _ALL_APPS = "application.", "application.imported"

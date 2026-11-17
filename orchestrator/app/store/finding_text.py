@@ -1191,6 +1191,10 @@ def explain(ftype: str, subject: str, detail: dict | None) -> tuple[str, str]:
         return _PARALLEL_TEXT[ftype](subject, d, on)
     if ftype in _SOURCE_TEXT:
         return _SOURCE_TEXT[ftype](subject, d)
+    if ftype.startswith("reservation_"):  # Reservierungen (1.19.0, ADR 0066)
+        from app.store import reservations
+
+        return reservations.explain(ftype, subject, d)
     if ftype.startswith("stp_"):  # Spanning Tree (1.19.0)
         from app.store import stp_findings
 

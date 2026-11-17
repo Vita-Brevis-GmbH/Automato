@@ -156,6 +156,12 @@ class FindingType(enum.StrEnum):
     STP_BPDU_GUARD = "stp_bpdu_guard"
     STP_MODE_MIXED = "stp_mode_mixed"
     STP_TOPOLOGY_CHANGES = "stp_topology_changes"
+    # Reservierungen (1.19.0, ADR 0066, `store/reservations`): reservierte VLAN- bzw. AS-Nummer
+    # jetzt gelesen in Gebrauch (Hinweis) bzw. schon beim Reservieren in Gebrauch (Konflikt);
+    # Reservierungen derselben Art ueberschneiden sich (doppelt reserviert)
+    RESERVATION_IN_USE = "reservation_in_use"
+    RESERVATION_CONFLICT = "reservation_conflict"
+    RESERVATION_OVERLAP = "reservation_overlap"
 
 
 class Severity(enum.StrEnum):
@@ -188,6 +194,7 @@ class SubjectKind(enum.StrEnum):
     PATH = "path"  # Weg `<Quelle> → <Ziel>` (von Hand erfasst, 0.109.0)
     NETBOX = "netbox"  # Objekt in der Ziel-NetBox (`<NetBox>|<Art>|<Schluessel>`, 0.115.0)
     APPLICATION = "application"  # Applikation (Name, 0.140.0)
+    RESERVATION = "reservation"  # Reservierung (`vlan|<Nummer>` bzw. `asn|<Nummer>`, 1.19.0)
 
 
 class Finding(Base):

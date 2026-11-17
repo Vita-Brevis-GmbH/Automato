@@ -860,6 +860,26 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     eigener Knoten zwischen den Firewalls.
   - **Befunde** (Prüfung „VPN-Tunnel (IPsec)“): Tunnel bzw. Phase 2 down, Selektor deckt eine
     Route über den Tunnel nur teilweise, Route über den Tunnel ohne passenden Selektor.
+- **AS-Nummern** (1.19.0, ADR 0066, Modul Analyse): die AS-Nummern im Routing einzeln, nur aus den
+  schon gelesenen BGP-Daten. Je AS die Geräte mit diesem AS (FortiGate aus dem BGP-Prozess als
+  Firewall, Router aus dem lokalen AS ihrer Nachbarn) und die BGP-Nachbarn mit diesem AS – an
+  welchem Gerät die Sitzung steht (auch ACI-L3Out), Zustand, eBGP/iBGP, Name aus dem IPAM und das
+  gelesene Gerät dahinter; abgeschaltete bzw. nur konfigurierte Nachbarn als solche. **Eigen** sind
+  die AS der gelesenen Geräte und ihrer iBGP-Nachbarn (wie die Firmengrenze), **privat** die
+  privaten AS; Reservierungen stehen am AS, reservierte AS ohne Gebrauch darunter. Filter nach
+  Nummer bzw. Text und eigen/fremd. Das lokale AS des ACI-Fabrics liest Automato nicht.
+- **Reservierungen** (1.19.0, ADR 0066, Modul Analyse): VLAN- und AS-Nummern reservieren, ändern
+  und freigeben (Operator; Reiter VLANs bzw. AS-Nummern). Nummer oder Bereich, bei VLANs der
+  Standort (wie die VLAN-Ansicht der Verkabelung; ohne = alle Standorte) und wahlweise die
+  VLAN-Gruppe in NetBox (Vorschläge: die Gruppen der Quellsysteme), Zweck; reserviert von/am und
+  geändert von/am stehen dabei. Je Reservierung der **Stand** gegen das Gelesene: *frei*, *jetzt
+  belegt* (beim Reservieren frei, jetzt gelesen in Gebrauch – ist die Reservierung umgesetzt,
+  freigeben) bzw. *Konflikt* (schon beim Reservieren in Gebrauch), dazu wo (Quellsystem bzw.
+  Gerät/Nachbar). Nach dem Speichern nennt die Ansicht, was schon in Gebrauch ist und mit welchen
+  Reservierungen sie sich überschneidet. **Befunde** (Prüfungen „Reservierung in Gebrauch“ und
+  „Doppelt reserviert“, gleich nach dem Speichern und nach jedem Lauf): Hinweis jetzt belegt,
+  Konflikt, doppelt reserviert – mit Link zurück. Ein gelöschter Standort bleibt als „Standort
+  fehlt“ stehen. Nach NetBox nur über den NetBox-Sync (Abschnitt *Reservierungen*).
 - **Verkabelung** (0.62.0, ADR 0025): welches Gerät an welchem Port welches anderen hängt –
   abgeleitet aus CDP/LLDP aller gelesenen Geräte (Switches & Router, ACI-Leafs), nichts von Hand.
   Seit 0.68.0 auch Catalyst 1200/1300 und Juniper MX/EX/QFX; ein MX steht als **Router** da
@@ -2188,7 +2208,18 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   Quellsystems, wenn NetBox sie anderswo mehrfach hat (vorher „VLAN … nicht eindeutig“), und
   das Netz eines Firewall-Ports bekommt das VLAN des Switch-Ports (Abschnitte Netzinventar und
   Verkabelung). Objekte eines nicht gewählten Abschnitts bleiben unangetastet (auch nicht
-  „veraltet“). Für Kabel braucht der Sync-Benutzer `dcim.cable` – `sync-user.sh` erneut
+  „veraltet“). Seit 1.19.0 *Reservierungen* (ADR 0066, nur ausdrücklich
+  gewählt): reservierte VLANs mit Status `reserved` in der VLAN-Gruppe der Reservierung, sonst in
+  der einen Gruppe am Standort (z. B. der Switches), ohne solche in „Reservierungen <Standort>“
+  (mehrere Gruppen am Standort: Hinweis – Gruppe an der Reservierung wählen); AS-Nummern als
+  ASN-Objekte mit der RIR, die die ASN gleicher Art (privat/öffentlich) in NetBox schon tragen,
+  sonst der einzigen passenden RIR – ohne eindeutige RIR ein Hinweis (in NetBox eine RIR anlegen;
+  der Sync legt keine an), AS-Bereiche über 1024 nur als Hinweis. Was NetBox schon hat, zeigt die
+  Vorschau nur an („Reservierung – nur angezeigt“) und überschreibt es nie; liest ein Gerät das
+  reservierte VLAN, übernimmt der Abschnitt Verkabelung bzw. Netzinventar es als aktives VLAN.
+  Freigegebene Reservierungen sind veraltet bzw. mit „Löschen zulassen“ entfernt; andere
+  Abschnitte lassen reservierte VLANs stehen, und Ports bekommen nie ein reserviertes VLAN. Für
+  ASN braucht der Sync-Benutzer `ipam.asn` – `sync-user.sh` erneut ausführen. Für Kabel braucht der Sync-Benutzer `dcim.cable` – `sync-user.sh` erneut
   ausführen. **Vorschau
   erstellen** liest NetBox nur und zeigt je Art: anlegen / ändern / unverändert / Konflikt
   (von Hand gepflegtes Objekt weicht ab – bleibt unverändert) / löschen / veraltet, mit
@@ -2238,6 +2269,8 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
 | `POST /internal/collector-runs/{id}/result`, `GET …/{id}/target` | Ergebnis (Agent-Token des abholenden Agenten oder internes Token; Antwort = Quittung `status`/`message`); Ziel für den zentralen Worker |
 | `POST /internal/collector-runs/{id}/references` | Teil-Upload einer Referenzquelle (Infoblox/NetBox, je bis 2000 Einträge; das Ergebnis meldet `reference_count`, sonst wird der Lauf verworfen) |
 | `GET /netbox-sync/targets`, `GET/POST /netbox-sync/plans`, `GET …/plans/{id}[/items]`, `POST …/plans/{id}/apply` | NetBox-Sync (admin): Vorschau, Aktionen, Übernahme |
+| `GET /reservations` (`tenant_id`, `kind` vlan/asn, `q`), `GET /reservations/options`, `POST /reservations`, `PUT/DELETE /reservations/{id}` | Reservierungen (1.19.0, ADR 0066; lesen viewer, schreiben operator, nicht für Kunden-Benutzer): `kind`, `low`, `high`, `site_id`, `vlan_group`, `purpose`; Antwort mit `state` (free/in_use/conflict), `in_use`, `used_before`, `findings`, nach dem Speichern `overlaps`; Optionen `sites`, `vlan_groups`, `limits`; freigeben = `DELETE` |
+| `GET /routing/as-numbers` (`tenant_id`, `q`, `scope` own/foreign, `customer_id`) | AS-Nummern einzeln (1.19.0, ADR 0066; viewer): je AS `devices`, `neighbors` (`peer_ip`, Namen, `peer_node`, `at`, `state`, `session`, `configured_only`), `own`, `private`, `reservations`; `summary`, reservierte AS mit `used` |
 | `GET/POST /naming-profiles`, `…/{id}/dictionary`, `DELETE …/dictionary/{id}`; seit 0.55.0 `GET/PUT/DELETE …/{id}/zone-schema`, `POST …/{id}/zone-schema/preview`, `GET …/{id}/zone-schema/drawing`, `GET /naming-profiles/zone-schema/template[?tenant_id=]`; seit 0.104.0 `GET/PUT/DELETE …/{id}/appdoc-catalog`, `GET /naming-profiles/appdoc-catalog/default`, `GET /zones/appdoc/catalog?tenant_id=` | Namensprofile; Kategorien der Applikations-Doku (`categories`, `areas`, `options`; schreiben = admin; je Mandant mit `suggestions` je Zone); Grundschema der Zonen (`content` = draw.io-XML, `filename`; schreiben = admin): `schema` mit `zones` (Name, Art, Kurzname, Farbe, `match`, Gruppe, Position) und `links` (`src`, `dst`, `intent`, `reason`), `warnings`, Vorschau mit `diff`; Zeichnung bzw. Vorlage als Datei |
 | `GET /system/status` | Betriebsstand (admin, siehe System-Seite) |
 | `GET /system/connections` (`?tenant_id=`) | Verbindungen jetzt prüfen (admin, 0.40.0): `status`, `problems`, `container.network`, `items` je Ziel mit `area`, `status` (ok/warn/error/info), `steps`, `hint`, `ufw` (Regel); dasselbe auf der VM: `automato check-connections [--json]` |

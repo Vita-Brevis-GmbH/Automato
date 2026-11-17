@@ -38,12 +38,14 @@ from app.api import (
     vpn,
     zones,
 )
+from app.api import as_numbers as as_numbers_api
 from app.api import freigaben as freigaben_api
 from app.api import inventory as inventory_api
 from app.api import kopplung as kopplung_api
 from app.api import modules as module_api
 from app.api import netbox_host as netbox_host_api
 from app.api import portal as portal_api
+from app.api import reservations as reservations_api
 from app.api import static_routes as static_routes_api
 from app.api import stp as stp_api
 from app.config import Settings, check_security_config, get_settings
@@ -151,6 +153,8 @@ def create_app() -> FastAPI:
     # vor dem Routing: /routing/net-assignments gehoert zum Wegsucher (0.111.0)
     app.include_router(net_assign.router, dependencies=[Depends(modules.guard("wege"))])
     app.include_router(bgp.router, dependencies=[Depends(modules.guard("analyse"))])  # 0.113.0
+    # AS-Nummern einzeln (1.19.0, ADR 0066) - vor dem Routing (gleiches Praefix)
+    app.include_router(as_numbers_api.router, dependencies=[Depends(modules.guard("analyse"))])
     app.include_router(routing.router, dependencies=[Depends(modules.guard(None))])
     app.include_router(topology.router, dependencies=[Depends(modules.guard("analyse"))])
     app.include_router(
@@ -169,6 +173,9 @@ def create_app() -> FastAPI:
     app.include_router(data_quality.router, dependencies=[Depends(modules.guard("analyse"))])
     app.include_router(vpn.router, dependencies=[Depends(modules.guard("analyse"))])  # 1.19.0
     app.include_router(stp_api.router, dependencies=[Depends(modules.guard("analyse"))])  # 1.19.0
+    app.include_router(  # Reservierungen VLAN/AS (1.19.0, ADR 0066)
+        reservations_api.router, dependencies=[Depends(modules.guard("analyse"))]
+    )
     app.include_router(module_api.router)
     return app
 

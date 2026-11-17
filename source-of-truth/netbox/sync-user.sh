@@ -6,7 +6,7 @@
 #   - Anlegen/Aendern/Loeschen NUR auf den Objekttypen, die der Sync schreibt
 #     (Tags, Tenants, Standort-Gruppen, Sites, Hersteller, Geraeterollen/-typen, Geraete, Interfaces,
 #      VRFs, VLAN-Gruppen, VLANs, Prefixe, IP-Ranges, IP-Adressen; Cluster-Typen/-Gruppen,
-#      Cluster, VMs, VM-Interfaces - ADR 0017; Kabel - ADR 0031)
+#      Cluster, VMs, VM-Interfaces - ADR 0017; Kabel - ADR 0031; ASN - ADR 0066)
 # und einen Legacy-v1-Token mit Schreibrecht. Der Token gehoert in Automato ins
 # NetBox-Quellsystem unter "Schreib-Token (optional, nur NetBox-Sync)".
 # Andere Benutzer/Tokens (admin, automato-collector) bleiben unveraendert.
@@ -47,6 +47,7 @@ WRITABLE = [
     ("dcim", "device"),
     ("dcim", "interface"),
     ("dcim", "cable"),
+    ("ipam", "asn"),  # Reservierungen (1.19.0, ADR 0066) - RIR nur gelesen
     ("ipam", "vrf"),
     ("ipam", "vlangroup"),
     ("ipam", "vlan"),

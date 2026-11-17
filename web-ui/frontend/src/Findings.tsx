@@ -296,6 +296,18 @@ function viewLinks(f: Finding): { label: string; view: View; params: ViewParams 
               params: f.type === "stp_bpdu_guard" || f.type === "stp_topology_changes" ? { tab: "devices" }
                 : vlan ? { vlan } : q ? { q } : {} }];
   }
+  // Reservierungen (1.19.0, ADR 0066): Ansicht mit der Reservierung bzw. das AS im Routing
+  if (f.type.startsWith("reservation_") && d.reservation_id != null) {
+    const tab = d.kind === "asn" ? "asn" : "vlan";
+    const out: { label: string; view: View; params: ViewParams }[] = [
+      { label: L(`Reservierung ${String(d.label ?? "")} öffnen`, `Open reservation ${String(d.label ?? "")}`),
+        view: "reservierungen", params: { tab, id: String(d.reservation_id) } },
+    ];
+    if (d.kind === "asn" && f.type !== "reservation_overlap" && Array.isArray(d.numbers) && d.numbers.length)
+      out.push({ label: L(`AS ${String(d.numbers[0])} im Routing`, `AS ${String(d.numbers[0])} in routing`), view: "asn",
+                 params: { q: String(d.numbers[0]) } });
+    return out;
+  }
   // Datenqualität (ADR 0029): Läufe des Quellsystems, nicht lesbarer Routing-Kontext
   if ((f.type === "source_stale" || f.type === "source_partial") && sid != null) {
     const out: { label: string; view: View; params: ViewParams }[] = [

@@ -20,6 +20,7 @@ import {
 } from "./api";
 import type { View } from "./App";
 import { L } from "./i18n";
+import { RESERVATION_KINDS, RESERVATION_SECTION, ReservationNote } from "./modules/schreibpfad/reservationsSync";
 import { REF_ROLE_LABEL } from "./refs";
 import { Dash, Empty, ErrorBox, fmtTime, Icon, Loading, Modal, Note, PageHead } from "./ui";
 
@@ -47,6 +48,7 @@ const KIND_LABEL: Record<string, string> = {
   ip_address: L("IP-Adresse", "IP address"),
   app_tag_vm: L("Applikations-Tag an VM", "Application tag on VM"),
   app_tag_ip: L("Applikations-Tag an IP-Adresse", "Application tag on IP address"),
+  ...RESERVATION_KINDS,
 };
 const ACTION: Record<string, [string, string]> = {
   create: ["ok", L("anlegen", "create")],
@@ -180,6 +182,7 @@ const SECTIONS: { key: SyncSection; label: string; hint: string; more?: ReactNod
       </>,
     ),
   },
+  RESERVATION_SECTION, // 1.19.0, ADR 0066
 ];
 const PAGE = 200;
 
@@ -849,6 +852,7 @@ function Items({ plan, kinds }: { plan: SyncPlan; kinds: string[] }) {
                   <td className="nowrap">{KIND_LABEL[i.kind] ?? i.kind}</td>
                   <td className="mono">{i.label}</td>
                   <td className="muted" style={{ fontSize: 12 }}>
+                    <ReservationNote item={i} />
                     {i.changes?.length ? (
                       i.changes.map((c) => (
                         <div key={c.field}>
