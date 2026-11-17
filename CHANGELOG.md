@@ -7,6 +7,26 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 1.18.0 – 2026-11-17
+
+Alles privat (Anwender 2026-11-17: „alle auf Privat umstellen“; Cockpit ADR 0019): nur das
+Cockpit hat einen GitHub-Zugang. ADR 0060 und ADR 0062 je Nachtrag.
+
+- **Code als git-Bundle aus dem Cockpit:** `deploy/betrieb.sh aktualisieren … --bundle <datei>`
+  holt den Commit des Manifests aus dem Bundle statt von origin (`git bundle verify`, Commit muss
+  zum Bundle gehören, vor der Sicherung; defekt bzw. ohne Commit → abgelehnt, nichts geändert) –
+  origin wird nie kontaktiert. NetBox-Host: `aktualisieren --ref <ref> --bundle <datei> --commit
+  <sha>` (Branch lokal ohne Upstream, sonst losgelöst). Gemeinsam `deploy/lib-bundle.sh`. Ohne
+  Bundle wie bisher.
+- **Private Images:** den Pull-Zugang gibt der Agent als `DOCKER_CONFIG` mit; die Skripte setzen
+  und nennen ihn nie.
+- **`deploy/update.sh`** holt den Code vor der Sicherung; ohne origin, ohne Zugang (Repo privat)
+  bzw. nicht erreichbar bricht es mit klarer Meldung ab (Exit 2, nichts geändert) – weiter mit dem
+  Update aus dem Cockpit bzw. einem eigenen Lese-Zugang.
+- `stand`, `zurueck`, `neustart` brauchen kein origin (auch in einem Checkout aus dem Bundle).
+- Reihenfolge: zuerst jeden Host auf 1.18.0 und den Host-Agenten neu einrichten (Agent 1.3.0), dann
+  Repos und Pakete auf privat stellen.
+
 ## 1.17.0 – 2026-11-17
 
 Rückmeldungen nach dem Einspielen von P3–P5 (Anwender 2026-11-17). ADR 0062, R31 neu.
