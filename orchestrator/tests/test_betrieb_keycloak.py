@@ -165,7 +165,7 @@ def vm(tmp_path) -> Vm:
 
 
 STAND_FELDER = {"version", "commit", "quelle", "kanal", "gesund", "zurueck_moeglich", "vorher",
-                "letzte_sicherung"}  # fmt: skip
+                "letzte_sicherung", "herkunft"}  # fmt: skip
 
 
 def _format(antwort: dict, aktion: str) -> None:
@@ -176,6 +176,7 @@ def _format(antwort: dict, aktion: str) -> None:
     assert set(antwort["stand"]) == STAND_FELDER
     stand = antwort["stand"]
     assert stand["commit"] is None and stand["quelle"] == "images" and stand["kanal"] is None
+    assert set(stand["herkunft"]) == {"branch", "losgeloest"}
 
 
 def _unveraendert(vm: Vm) -> None:
@@ -209,6 +210,7 @@ def test_stand(vm):
     assert antwort["stand"] == {
         "version": "26.0.7", "commit": None, "quelle": "images", "kanal": None, "gesund": True,
         "zurueck_moeglich": False, "vorher": None, "letzte_sicherung": None,
+        "herkunft": {"branch": None, "losgeloest": True},  # kein git-Checkout
     }  # fmt: skip
     assert f"Auftrag {AUFTRAG}: keycloak stand" in stderr
     (vm.stub / "kc-aus").write_text("")
@@ -452,3 +454,27 @@ def test_schon_vorher_krank_kein_update(vm):
     )
     _unveraendert(vm)
     assert not [z for z in vm.protokoll() if "pull" in z]
+
+
+@pytest.mark.skipif(not shutil.which("git"), reason="git fehlt")
+def test_stand_meldet_die_herkunft_des_checkouts(vm):
+    """1.18.2: `herkunft` nennt den Branch des Automato-Checkouts, der das Skript liefert (bzw.
+    losgelöst) - wie deploy/betrieb.sh, ohne Kanal."""
+    env = {**os.environ, "GIT_AUTHOR_NAME": "Test", "GIT_AUTHOR_EMAIL": "test@example.ch",
+           "GIT_COMMITTER_NAME": "Test", "GIT_COMMITTER_EMAIL": "test@example.ch",
+           "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull}  # fmt: skip
+
+    def git(*args: str) -> None:
+        subprocess.run(["git", *args], cwd=vm.checkout, env=env, check=True,  # noqa: S603, S607
+                       capture_output=True)  # fmt: skip
+
+    git("init", "-q", "-b", "claude/zweig")
+    git("add", "-A")
+    git("commit", "-q", "-m", "Werkzeug")
+    rc, antwort, _ = vm.betrieb("stand")
+    assert rc == 0
+    _format(antwort, "stand")
+    assert antwort["stand"]["herkunft"] == {"branch": "claude/zweig", "losgeloest": False}
+    git("checkout", "-q", "--detach")
+    rc, antwort, _ = vm.betrieb("stand")
+    assert rc == 0 and antwort["stand"]["herkunft"] == {"branch": None, "losgeloest": True}

@@ -344,8 +344,10 @@ stand_json() {
     fi
     sicherung=$(letzte_sicherung)
   fi
-  printf '{"version":%s,"commit":null,"quelle":"images","kanal":null,"gesund":%s,"zurueck_moeglich":%s,"vorher":%s,"letzte_sicherung":%s}' \
-    "$(json_text "$version")" "$(json_bool "$S_GESUND")" "$zurueck" "$vorher" "$(json_text "$sicherung")"
+  # herkunft: Branch des Automato-Checkouts, der dieses Skript liefert (1.18.2)
+  printf '{"version":%s,"commit":null,"quelle":"images","kanal":null,"gesund":%s,"zurueck_moeglich":%s,"vorher":%s,"letzte_sicherung":%s,"herkunft":%s}' \
+    "$(json_text "$version")" "$(json_bool "$S_GESUND")" "$zurueck" "$vorher" "$(json_text "$sicherung")" \
+    "$(herkunft_json)"
 }
 
 # --- Aktionen ----------------------------------------------------------------------------------------

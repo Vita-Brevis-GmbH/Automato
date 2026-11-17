@@ -5,7 +5,8 @@
 # eine Zeile JSON.
 #
 #   betrieb.sh stand                    Version des Checkouts, NetBox-Version, Instanzen gesund,
-#                                       ob zurueck geht (nur lesen)
+#                                       ob zurueck geht, Herkunft (Branch des Checkouts bzw.
+#                                       losgelöst, 1.18.2) – nur lesen
 #   betrieb.sh sichern                  alle Instanzen und die Konfiguration (netbox-host.sh sichern alle)
 #   betrieb.sh aktualisieren --ref <git-ref> [--bundle <datei> --commit <sha>]
 #                                       Sperre → Sicherung aller Instanzen → Checkout auf die Ref
@@ -18,6 +19,8 @@
 #                                       kommt aus dem git-Bundle des Cockpits, origin wird nie
 #                                       kontaktiert (deploy/lib-bundle.sh); Bundle defekt bzw.
 #                                       ohne den Commit → Exit 3; Branch ohne Upstream
+#                                       Nur Nachfahren des laufenden Stands (1.18.2): ältere bzw.
+#                                       eine andere Linie (anderer Branch) → Exit 3, vor der Sicherung
 #   betrieb.sh zurueck                  auf den Stand vor dem letzten erfolgreichen aktualisieren
 #                                       (Checkout und Instanzen aus der Sicherung jenes Updates) – einmal
 #   betrieb.sh neustart                 Proxy und Instanzen neu starten (ohne neue Images) + Health
@@ -378,9 +381,9 @@ stand_json() {
     fi
     sicherung=$(letzte_sicherung)
   fi
-  printf '{"version":%s,"commit":%s,"quelle":"git","kanal":null,"gesund":%s,"zurueck_moeglich":%s,"vorher":%s,"letzte_sicherung":%s}' \
+  printf '{"version":%s,"commit":%s,"quelle":"git","kanal":null,"gesund":%s,"zurueck_moeglich":%s,"vorher":%s,"letzte_sicherung":%s,"herkunft":%s}' \
     "$(json_text "$version")" "$(json_text "$commit")" "$(json_bool "$S_GESUND")" "$zurueck" \
-    "$vorher" "$(json_text "$sicherung")"
+    "$vorher" "$(json_text "$sicherung")" "$(herkunft_json)"
 }
 
 checkout_text() { # 1.17.0 (main) bzw. 1.17.0 (losgelöst)
@@ -491,6 +494,15 @@ aktualisieren() {
     ! git_c merge-base --is-ancestor "refs/heads/$ZIEL_BRANCH" "$ZIEL_COMMIT" 2>/dev/null; then
     ende 3 "Der lokale Branch $ZIEL_BRANCH hat Commits, die $herkunft nicht hat – nichts geändert"
   fi
+  # nur Nachfahren des laufenden Stands (1.18.2): eine andere Linie (anderer Branch, umgeschrieben)
+  # nie, auch nicht mit neuerer Version – nur mit Objekten im Repo, auch mit Bundle nie origin
+  local linie=0
+  nachfahre "$alt_commit" "$ZIEL_COMMIT" || linie=$?
+  case $linie in
+    0) ;;
+    1) ende 3 "Abgelehnt: $ref liegt auf einer anderen Linie als der laufende Stand $alt_version (${alt_branch:-losgelöst}) – nichts geändert" ;;
+    *) ende 3 "Abgelehnt: Abstammung von $ref gegenüber dem laufenden Stand $alt_version nicht prüfbar (git merge-base) – nichts geändert" ;;
+  esac
   git_c cat-file -e "$ZIEL_COMMIT:deploy/netbox-host/betrieb.sh" 2>/dev/null ||
     ende 3 "$ref hat keinen Einstiegspunkt für das Cockpit (deploy/netbox-host/betrieb.sh) – nichts geändert"
   ziel_conf=$(git_c show "$ZIEL_COMMIT:deploy/netbox-host/netbox-version.conf" 2>/dev/null) ||

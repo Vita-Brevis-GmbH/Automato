@@ -101,6 +101,35 @@ checkout_branch() { # angehängter Branch oder leer (losgelöst)
   if ref_gueltig "$b"; then printf '%s' "$b"; fi
 }
 
+herkunft_json() { # Objekt "herkunft" im Stand (1.18.2, wie deploy/betrieb.sh seit 1.18.1, ohne
+  # Kanal): angehängter Branch des Checkouts bzw. losgelöst – das Cockpit nimmt den Branch als
+  # Vorgabe seiner Quelle. Branch mit ungültigem Namen: null, aber nicht losgelöst; ohne git-Checkout
+  # wie losgelöst
+  local b
+  if b=$(git_c symbolic-ref -q --short HEAD 2>/dev/null) && [ -n "$b" ]; then
+    if ref_gueltig "$b"; then
+      printf '{"branch":%s,"losgeloest":false}' "$(json_text "$b")"
+    else
+      printf '{"branch":null,"losgeloest":false}'
+    fi
+  else
+    printf '{"branch":null,"losgeloest":true}'
+  fi
+}
+
+nachfahre() { # $1 laufender Commit, $2 Ziel -> 0 = Ziel baut auf dem laufenden Stand auf (bzw. ist
+  # er), 1 = andere Linie, 2 = nicht prüfbar (Commit fehlt im Repo). Nur mit Objekten im Repo
+  # (Checkout bzw. aus dem Bundle geholt), nie mit origin
+  local rc=0
+  [ "$1" != "$2" ] || return 0
+  git_c merge-base --is-ancestor "$1" "$2" </dev/null 2>/dev/null || rc=$?
+  case $rc in
+    0) return 0 ;;
+    1) return 1 ;;
+    *) return 2 ;;
+  esac
+}
+
 ref_aufloesen() { # $1 Ref: Branch auf origin, dann Tag, dann Commit -> ZIEL_COMMIT, ZIEL_BRANCH
   local c
   ZIEL_COMMIT="" ZIEL_BRANCH=""

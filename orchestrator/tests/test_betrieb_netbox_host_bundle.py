@@ -224,3 +224,37 @@ def test_ohne_bundle_origin_privat_klare_meldung(host):
     assert "Repo privat: Code als Bundle aus dem Cockpit" in antwort["meldung"]
     _unveraendert(host)
     assert marke.exists()  # ohne Bundle fragt es origin
+
+
+def test_andere_linie_aus_dem_bundle_abgelehnt(host):
+    """Getrennte Linie auch aus dem Bundle (1.18.2): Exit 3 vor der Sicherung, nichts geändert,
+    origin nie kontaktiert - die Abstammung prüft das Skript nur mit Objekten im Repo."""
+    origin = host.tmp / "origin"
+    _git(origin, "checkout", "-q", "-b", "andere", host.commits["1.17.0"])
+    (origin / "VERSION").write_text("1.19.0\n")
+    _git(origin, "commit", "-qam", "Version 1.19.0 auf einer anderen Linie")
+    anders = _git(origin, "rev-parse", "HEAD")
+    _git(host.checkout, "checkout", "-q", "-B", "main", host.commits["1.18.0"])
+    marke = _origin_unerreichbar(host)
+    bundle = _bundle(host, "andere")
+    rc, antwort, stderr = host.betrieb("aktualisieren", "--ref", "andere", "--bundle", str(bundle),
+                                       "--commit", anders)  # fmt: skip
+    assert rc == 3, stderr
+    _format(antwort, "aktualisieren")
+    assert antwort["meldung"] == (
+        "Abgelehnt: andere liegt auf einer anderen Linie als der laufende Stand 1.18.0 (main) – "
+        "nichts geändert"
+    )
+    assert host.head() == host.commits["1.18.0"] and host.branch() == "main"
+    assert not host.dumps("kunde-a") and host.db() == []
+    assert not (host.nbh / "betrieb").exists()
+    assert not marke.exists(), "origin kontaktiert"
+    # ein Nachfahre aus dem Bundle geht weiter
+    commit = _neuer_stand(host)
+    rc, antwort, stderr = host.betrieb("aktualisieren", "--ref", "main", "--bundle",
+                                       str(_bundle(host, "main", name="main.bundle")),
+                                       "--commit", commit)  # fmt: skip
+    assert rc == 0, stderr
+    assert host.head() == commit and host.branch() == "main"
+    assert antwort["stand"]["herkunft"] == {"branch": "main", "losgeloest": False}
+    assert not marke.exists(), "origin kontaktiert"

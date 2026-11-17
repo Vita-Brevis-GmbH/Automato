@@ -141,3 +141,21 @@ git-Bundle mit:
 - Ohne `--bundle` wie bisher von origin; scheitert `git fetch`, nennt die Meldung den Weg über das
   Bundle (Host-Agent aktualisieren).
 - Keycloak bleibt unverändert (Images, kein git).
+
+## Nachtrag 1.18.2 (2026-11-17) – nur Nachfahren, Herkunft im Stand
+
+Befund des Anwenders (Cockpit 0.8.0, Plattform → Updates): ein Host auf einem Entwicklungs-Branch
+bekam die Vorgabe `main` als Update angeboten – eine andere Linie; erst der Rückfall hat es
+abgefangen. Es darf gar nicht erst laufen:
+
+- **NetBox-Host `aktualisieren --ref`** (mit und ohne Bundle): ist das Ziel kein Nachfahre des
+  laufenden Commits (und nicht derselbe), Exit 3 „Abgelehnt: <ref> liegt auf einer anderen Linie
+  als der laufende Stand <version> (<branch>) – nichts geändert“ – auch mit neuerer Version, vor
+  Sicherung und Umschalten. Geprüft nur mit Objekten im Repo (`git merge-base --is-ancestor`,
+  `nachfahre` in `deploy/lib-betrieb.sh`), mit Bundle nie origin; fehlt ein Commit, Exit 3 „nicht
+  prüfbar“. Ältere Stände lehnt es wie bisher ab; zurück nur über `zurueck`.
+- **`stand.herkunft`** bei NetBox-Host und Keycloak (rückwärts verträglich, wie `deploy/betrieb.sh`
+  seit 1.18.1, ohne Kanal): `{"branch": <Branch des Checkouts>|null, "losgeloest": true|false}`
+  (`herkunft_json` in `deploy/lib-betrieb.sh`). Das Cockpit nimmt den Branch als Vorgabe seiner
+  Quelle und bietet nur an, was nach dem Vergleich bei GitHub vorne liegt (Cockpit ADR 0015
+  Nachtrag „Updates mit Übersicht“).

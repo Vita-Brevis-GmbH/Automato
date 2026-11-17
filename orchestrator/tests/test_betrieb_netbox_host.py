@@ -235,7 +235,7 @@ def host(vorlage, tmp_path) -> Host:
 
 
 STAND_FELDER = {"version", "commit", "quelle", "kanal", "gesund", "zurueck_moeglich", "vorher",
-                "letzte_sicherung"}  # fmt: skip
+                "letzte_sicherung", "herkunft"}  # fmt: skip
 
 
 def _format(antwort: dict, aktion: str) -> None:
@@ -245,6 +245,9 @@ def _format(antwort: dict, aktion: str) -> None:
     assert isinstance(antwort["ok"], bool) and 0 < len(antwort["meldung"]) <= 300
     assert set(antwort["stand"]) == STAND_FELDER
     assert antwort["stand"]["quelle"] == "git" and antwort["stand"]["kanal"] is None
+    herkunft = antwort["stand"]["herkunft"]
+    assert set(herkunft) == {"branch", "losgeloest"} and isinstance(herkunft["losgeloest"], bool)
+    assert (herkunft["branch"] is None) is herkunft["losgeloest"]
 
 
 def _unveraendert(host: Host) -> None:
@@ -263,6 +266,7 @@ def test_stand(host):
     assert antwort["stand"] == {
         "version": "1.17.0", "commit": host.commits["1.17.0"], "quelle": "git", "kanal": None,
         "gesund": True, "zurueck_moeglich": False, "vorher": None, "letzte_sicherung": None,
+        "herkunft": {"branch": "main", "losgeloest": False},
     }  # fmt: skip
     assert f"Auftrag {AUFTRAG}: netbox-host stand" in stderr
     (host.stub / "aus-kunde-b").write_text("")
@@ -290,6 +294,7 @@ def test_aktualisieren_neue_netbox_je_instanz(host):
     assert re.match(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$", stand["letzte_sicherung"])
     # Tag: losgelöst; jede Instanz auf der neuen NetBox, vorher gesichert (alle + je update)
     assert host.head() == host.commits["1.18.0"] and host.branch() == ""
+    assert stand["herkunft"] == {"branch": None, "losgeloest": True}
     for k in ("kunde-a", "kunde-b"):
         assert host.version(k) == NEU
         assert (host.nb(k) / ".stub-head").read_text().strip() == "5.1.0"
@@ -330,6 +335,7 @@ def test_aktualisieren_neue_netbox_je_instanz(host):
     assert host.head() == host.commits["1.18.1"] and host.branch() == "main"
     assert not [z for z in host.protokoll() if "origin tag" in z]
     assert antwort["stand"]["vorher"]["version"] == "1.18.0"
+    assert antwort["stand"]["herkunft"] == {"branch": "main", "losgeloest": False}
 
 
 def test_health_scheitert_rueckfall_mit_datenbank(host):
@@ -534,3 +540,44 @@ def test_schon_vorher_krank_kein_update(host):
         "Health schon vor dem Update nicht ok (1 von 2 Instanzen nicht gesund: kunde-b)"
     )
     _unveraendert(host)
+
+
+def _andere_linie(host: Host) -> str:
+    """1.19.0 auf dem Branch `andere` im Ursprung, abgezweigt von 1.17.0 - kein Nachfahre von
+    1.18.0 (anderer Branch, wie ein Host auf einem Entwicklungs-Branch und `main` als Quelle)."""
+    origin = host.tmp / "origin"
+    _git(origin, "checkout", "-q", "-b", "andere", host.commits["1.17.0"])
+    (origin / "VERSION").write_text("1.19.0\n")
+    _git(origin, "commit", "-qam", "Version 1.19.0 auf einer anderen Linie")
+    commit = _git(origin, "rev-parse", "HEAD")
+    _git(origin, "checkout", "-q", "main")
+    return commit
+
+
+def test_andere_linie_abgelehnt_nachfahre_geht_weiter(host):
+    """Ziel kein Nachfahre des laufenden Stands (1.18.2): Exit 3 vor der Sicherung, auch mit
+    neuerer Version; ein Nachfahre geht weiter."""
+    _andere_linie(host)
+    _git(host.checkout, "checkout", "-q", "-B", "main", host.commits["1.18.0"])
+    rc, antwort, stderr = host.betrieb("aktualisieren", "--ref", "andere")
+    assert rc == 3, stderr
+    _format(antwort, "aktualisieren")
+    assert antwort["ok"] is False
+    assert antwort["meldung"] == (
+        "Abgelehnt: andere liegt auf einer anderen Linie als der laufende Stand 1.18.0 (main) – "
+        "nichts geändert"
+    )
+    assert host.head() == host.commits["1.18.0"] and host.branch() == "main"
+    assert host.version("kunde-a") == ALT and not host.dumps("kunde-a") and host.db() == []
+    assert not (host.nbh / "betrieb").exists()
+    assert not [z for z in host.protokoll() if "pg_dump" in z or "compose up" in z]
+    # losgelöst: die Meldung sagt es
+    _git(host.checkout, "checkout", "-q", "--detach", host.commits["1.18.0"])
+    rc, antwort, _ = host.betrieb("aktualisieren", "--ref", "andere")
+    assert rc == 3 and "laufende Stand 1.18.0 (losgelöst)" in antwort["meldung"]
+    assert antwort["stand"]["herkunft"] == {"branch": None, "losgeloest": True}
+    # ein Nachfahre (main = 1.18.1) geht weiter
+    _git(host.checkout, "checkout", "-q", "-B", "main", host.commits["1.18.0"])
+    rc, antwort, stderr = host.betrieb("aktualisieren", "--ref", "main")
+    assert rc == 0, stderr
+    assert host.head() == host.commits["1.18.1"] and host.branch() == "main"
