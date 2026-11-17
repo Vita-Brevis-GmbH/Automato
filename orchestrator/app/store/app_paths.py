@@ -95,7 +95,9 @@ class _Cuts:
     """Was eine Grenze nicht prueft (0.140.0): je Art die betroffenen Regeln und wie viele
     Gegenstellen, Dienste bzw. Teile fehlen - fuer `coverage` und den Befund `app_coverage`."""
 
-    KINDS = ("counter", "services", "parts", "limit", "failed")
+    # vpn (1.19.0, ADR 0063): Verbindungen, deren Weg an der Gegenstelle eines IPsec-Tunnels ohne
+    # gelesenes Geraet endet - der Weg dahinter ist nicht geprueft
+    KINDS = ("counter", "services", "parts", "limit", "failed", "vpn")
 
     def __init__(self) -> None:
         self.rules: dict[str, set[int]] = defaultdict(set)
@@ -130,6 +132,10 @@ def cut_text(kind: str, x: dict) -> str:
                    f"{n} connections not checked (limit AUTOMATO_APP_TRACES_MAX)"),
         "failed": L(f"{n} Wege wegen eines Fehlers im Programm nicht berechnet",
                     f"{n} paths not computed because of a program error"),
+        "vpn": L(f"{n} Verbindungen von {rules} Regeln enden an der Gegenstelle eines VPN-Tunnels "
+                 "ohne gelesenes Gerät – der Weg dahinter ist nicht geprüft",
+                 f"{n} connections of {rules} rules end at the peer of a VPN tunnel without a "
+                 "device read – the path behind it is not checked"),
     }[kind]  # fmt: skip
 
 
@@ -281,6 +287,9 @@ def _build(session: Session, app: Application, doc: dict | None, graph: paths.Gr
                 progress(traced, len(todo))
             continue
         slow.append((time.monotonic() - t_one, conn["key"]))
+        if conn.get("vpn_end"):  # Ende an einer fremden VPN-Gegenstelle: gezaehlt (ADR 0063)
+            cuts.add("vpn", None, 1)
+            cuts.rules["vpn"].update(c.rules)
         if progress is not None:
             progress(traced, len(todo))
         if time.monotonic() - logged > PROGRESS_SECONDS:  # lange Berechnung: Fortschritt im Log
@@ -344,7 +353,7 @@ def _build(session: Session, app: Application, doc: dict | None, graph: paths.Gr
             )
         )
     cuts.add("failed", None, len(failed))
-    for kind in ("counter", "services", "parts"):  # Grenzen je Regel (0.140.0): nie still
+    for kind in ("counter", "services", "parts", "vpn"):  # Grenzen je Regel (0.140.0): nie still
         if kind in cuts.out():
             notes.append(cut_text(kind, cuts.out()[kind]))
     t_traces = time.monotonic()
@@ -376,7 +385,11 @@ def _build(session: Session, app: Application, doc: dict | None, graph: paths.Gr
                 1 for c in out if (c.get("return") or {}).get("state") == "asymmetric"
             ),  # fmt: skip
             "unused": len({x["rule_id"] for x in unused}),  # 0.107.0
+            # ueber einen IPsec-Tunnel (1.19.0, ADR 0063) - nur, wenn es welche gibt
+            **({"vpn": len(over)} if (over := [c for c in out if _over_vpn(c)]) else {}),
         },
+        # IPsec-Tunnel auf den Wegen (1.19.0, ADR 0063) - je Tunnel die Verbindungen
+        **({"vpn": vpn_tunnels(over)} if over else {}),
         "unused": unused,
         # Vollstaendigkeit (0.140.0): geprueft von allen, was eine Grenze ausliess - nicht
         # vollstaendig = Befund `app_coverage`
@@ -405,6 +418,24 @@ def _build(session: Session, app: Application, doc: dict | None, graph: paths.Gr
             ],
         },  # fmt: skip
     }
+
+
+def _over_vpn(c: dict) -> bool:
+    return any(h.get("vpn") for h in c.get("hops") or [])
+
+
+def vpn_tunnels(conns: list[dict]) -> list[dict]:
+    """IPsec-Tunnel auf den Wegen der Verbindungen (1.19.0, ADR 0063): je Tunnel (beide Enden
+    eine Kennung) das Geraet, Zustand, Gegenstelle und die Zahl der Verbindungen."""
+    out: dict[str, dict] = {}
+    for c in conns:
+        for h in c.get("hops") or []:
+            v = h.get("vpn")
+            if not v:
+                continue
+            entry = out.setdefault(v["id"], {**v, "device": h["label"], "connections": 0})
+            entry["connections"] += 1
+    return sorted(out.values(), key=lambda x: (x["device"], x["name"]))
 
 
 def members(doc: dict) -> dict:
@@ -1062,6 +1093,10 @@ def _connection(
     foreign = [x["rule_id"] for x in off if x["rule_id"] not in c.specific]
     mismatch = _mismatch(states, verdict, text, reached)
     variants = path_variants(res["paths"])
+    # Ende an der Gegenstelle eines IPsec-Tunnels ohne gelesenes Geraet (1.19.0, ADR 0063)
+    vpn_end = [{k: v for k, v in (_last_egress(p).get("vpn") or {}).items()
+                if k in ("name", "remote_gw", "kind", "instance")}
+               for p in active if p["end"]["kind"] == "vpn"]  # fmt: skip
     parts = _net_parts(c, first)
     assign = _assign(c, first, assigner)
     return {
@@ -1087,6 +1122,7 @@ def _connection(
         "variants": variants if len(variants) > 1 else [],
         "inconsistent": inconsistent(variants),
         "notes": res["notes"],
+        **({"vpn_end": vpn_end} if vpn_end else {}),
         # Rueckweg ueber dieselben Firewalls (0.136.0, ausser ACI und Verbund)
         "return": return_path.summary(active),
         # Ports entlang des Wegs, wenn sie sich aendern: Client, VIP, Load Balancer, Server
@@ -1158,7 +1194,7 @@ def entries_of(session: Session, tid: int, graph: paths.Graph, checks: policy_ch
             continue
         for part in _parts(p["hops"][-1]):
             egress = part.get("egress") or {}
-            left = end.get("kind") in ("exit", "external") or (
+            left = end.get("kind") in ("exit", "external", "vpn") or (
                 end.get("kind") == "unknown" and egress.get("next_hop"))  # fmt: skip
             key = paths.parse_key(part.get("key"))
             if not left or key not in graph.nodes:
@@ -1379,7 +1415,24 @@ def _hop(h: dict, l3: L3Outs | None = None) -> dict:
         # NSX ALB (0.77.0): an diesem Hop vom Load Balancer weiter zum Server; seit 0.85.0 mit
         # der EPG bzw. dem Interface, an dem seine VIP liegt (Netzwerkplan)
         **({"lb": _balancer(h, checks, l3)} if h.get("lb") else {}),
+        # IPsec-Tunnel am Ausgang (1.19.0, ADR 0063): Verbindungen, Netzwerkplan, Export
+        **({"vpn": vpn} if (vpn := _vpn_of(h)) else {}),
     }
+
+
+def _last_egress(p: dict) -> dict:
+    hops = p.get("hops") or []
+    return (_parts(hops[-1])[0].get("egress") or {}) if hops else {}
+
+
+def _vpn_of(h: dict) -> dict | None:
+    """Tunnel am Ausgang eines Hops (bei einem Verbund der erste)."""
+    for p in _parts(h):
+        v = (p.get("egress") or {}).get("vpn")
+        if v:
+            return {k: v[k] for k in ("id", "name", "kind", "status", "remote_gw", "instance",
+                                      "covered", "phase2", "peer") if v.get(k)}  # fmt: skip
+    return None
 
 
 def _balancer(h: dict, checks: list[dict], l3: "L3Outs | None") -> dict:

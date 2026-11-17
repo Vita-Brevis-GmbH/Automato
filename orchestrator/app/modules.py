@@ -194,10 +194,21 @@ MODULES: tuple[Module, ...] = (
         "analyse",
         ("Analyse", "Analysis"),
         (
-            "Routing, Verkabelung, Abgleich IPAM, Topologie, Datenqualität",
-            "Routing, cabling, IPAM reconciliation, topology, data quality",
+            "Routing, statische Routen, VPN-Tunnel, Verkabelung, Abgleich IPAM, Topologie, "
+            "Datenqualität",
+            "Routing, static routes, VPN tunnels, cabling, IPAM reconciliation, topology, "
+            "data quality",
         ),
-        api=("routing", "bgp", "cabling", "reconcile", "topology", "data_quality", "static_routes"),
+        api=(
+            "routing",
+            "bgp",
+            "cabling",
+            "reconcile",
+            "topology",
+            "data_quality",
+            "vpn",
+            "static_routes",  # statische Routen (1.19.0)
+        ),
         store=(
             "bgp_cache",  # Routing-Filter vorab berechnet (0.131.0)
             "bgp_filters",  # BGP-Filter Soll/Ist (0.113.0, ADR 0041)
@@ -217,8 +228,9 @@ MODULES: tuple[Module, ...] = (
             "topo_changes",
             "topo_model",
             "version_refresh",  # Befunde nach einem Update neu (0.133.0)
+            "vpn",  # IPsec-Tunnel (1.19.0, ADR 0063)
         ),
-        views=("routing", "statisch", "verkabelung", "abgleich"),
+        views=("routing", "statisch", "verkabelung", "abgleich", "vpn"),
     ),  # fmt: skip
     Module(
         "wege",

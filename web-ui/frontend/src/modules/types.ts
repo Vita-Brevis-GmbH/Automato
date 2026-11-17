@@ -13,6 +13,7 @@ export type View =
   | "nat"
   | "routing"
   | "statisch"
+  | "vpn"
   | "verkabelung"
   | "wege"
   | "apps"

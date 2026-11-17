@@ -90,6 +90,13 @@ const DETAIL_LABEL: Record<string, string | null> = {
   // Wege uneinheitlich (0.73.0, vorher Regel ↔ Weg): Verbindungen stehen im Satz
   application: L("Applikation", "Application"),
   application_id: null,
+  // VPN-Tunnel (1.19.0): Tunnel, Gegenstelle und Netze stehen im Satz
+  tunnel: null,
+  ref: null,
+  remote_gw: null,
+  problem: null,
+  phase2_down: null,
+  selectors: L("Selektoren der Gegenstelle", "Selectors of the peer"),
   // Unvollständig geprüft (0.140.0): die Kürzungen stehen im Satz
   checked: L("geprüfte Verbindungen", "connections checked"),
   cuts: null,
@@ -260,6 +267,10 @@ function viewLinks(f: Finding): { label: string; view: View; params: ViewParams 
   if (f.type === "app_coverage" && d.application_id != null)
     return [{ label: L(`Applikation ${String(d.application ?? "")} öffnen`, `Open application ${String(d.application ?? "")}`),
               view: "apps", params: { app: String(d.application_id) } }];
+  // 1.19.0: IPsec-Tunnel in „VPN-Tunnel“ öffnen (über seinen festen Schlüssel)
+  if (f.type.startsWith("vpn_") && d.ref)
+    return [{ label: L(`VPN ${String(d.tunnel ?? "")} öffnen`, `Open VPN ${String(d.tunnel ?? "")}`), view: "vpn",
+              params: { tunnel: String(d.ref) } }];
   // 0.134.0: VIP ohne Ziel in NAT / VIPs öffnen
   if (f.type === "vip_target_missing" && d.name)
     return [{ label: L(`${String(d.name)} in NAT / VIPs`, `${String(d.name)} in NAT / VIPs`), view: "nat", params: { q: String(d.name) } }];

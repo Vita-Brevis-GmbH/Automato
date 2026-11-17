@@ -53,6 +53,7 @@ import { Capture, CAPTURE_KEY, Hops, matchText, Missing, Names, policyText, VrfC
 import { Dash, Drawer, Empty, ErrorBox, Icon, Loading, Note, PageHead } from "./ui";
 import { FoldTitle, useFolds } from "./fold";
 import { L } from "./i18n";
+import { VpnChip } from "./modules/analyse/VpnChip";
 
 // -- Details am Weg (ADR 0019 Ergänzung) -------------------------------------------------------
 // Ein Klick öffnet das Detail im Seitenpanel – die Weg-Suche bleibt stehen; Ctrl-/Cmd-/Mittelklick
@@ -147,6 +148,7 @@ const END: Record<TracePath["end"]["kind"], [string, string]> = {
   fabric: ["ok", L("im Fabric", "in the fabric")],
   exit: ["info", L("Anbindung", "Exit")],
   external: ["info", L("extern", "external")],
+  vpn: ["info", L("VPN-Gegenstelle", "VPN peer")], // 1.19.0: Gegenstelle nicht gelesen (gezählt)
   unknown: ["warn", L("Weg endet", "Path ends")],
   no_route: ["warn", L("keine Route", "no route")],
   loop: ["crit", L("Schleife", "Loop")],
@@ -824,6 +826,7 @@ function HopPort({ p, hop }: { p: TracePort | undefined; hop: TraceHop }) {
           <NewTab href={EXITS_HREF} />
         </>
       )}
+      {p.vpn && <VpnChip v={p.vpn} sid={hop.source_system_id} context={hop.context} />}
     </div>
   );
 }
@@ -992,6 +995,7 @@ function HopFacts({ h, zone, title }: { h: TraceHop; zone?: TraceZone | null; ti
             </span>
           )}
           {h.egress?.exit && ` · ${EXIT_KIND[h.egress.exit.kind as ExitKind] ?? ""} ${h.egress.exit.name}`}
+          {h.egress?.vpn && <VpnChip v={h.egress.vpn} sid={h.source_system_id} context={h.context} />}
         </dd>
         {zone && (
           <>
@@ -1359,6 +1363,7 @@ function NodeDrawer({ hop, tenantId, onClose }: { hop: TraceHop; tenantId: numbe
                 <Names r={h.egress} />
               </div>
             )}
+            {h.egress?.vpn && <VpnChip v={h.egress.vpn} sid={h.source_system_id} context={h.context} />}
           </dd>
         </dl>
       ))}
@@ -1551,7 +1556,9 @@ function TraceCard({
   const last = path.hops[path.hops.length - 1];
   const out = last?.egress;
   // Weg endet an einem Next-Hop ohne gelesenes Gerät: als Anbindung erfassen (Internet, MPLS, …)
-  const capturable = onCapture && out?.next_hop && (path.end.kind === "unknown" || path.end.kind === "external");
+  // 1.19.0: Weg endet an einer VPN-Gegenstelle ohne gelesenes Gerät – den Tunnel als Anbindung (Partner) erfassen
+  const vpnPeer = path.end.kind === "vpn" ? out?.vpn?.remote_gw : undefined;
+  const capturable = onCapture && ((out?.next_hop && (path.end.kind === "unknown" || path.end.kind === "external")) || vpnPeer);
   // je Hop „mehr“ (ADR 0019 Ergänzung): aufgeklappte Hops
   const [more, setMore] = useState<Set<number>>(() => new Set());
   const toggle = (i: number) =>
@@ -1630,10 +1637,10 @@ function TraceCard({
             )}
             onClick={() =>
               onCapture({
-                kind: path.end.kind === "external" ? "internet" : "wan",
+                kind: vpnPeer ? "partner" : path.end.kind === "external" ? "internet" : "wan",
                 source_system_id: last.source_system_id,
                 interface: out?.interface ?? null,
-                next_hop: out!.next_hop!,
+                next_hop: out?.next_hop ?? vpnPeer!,
               })
             }
           >

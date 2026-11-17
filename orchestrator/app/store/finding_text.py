@@ -493,15 +493,26 @@ def _app_coverage(subject: str, d: dict) -> tuple[str, str]:
     cuts = d.get("cuts") or {}
     parts = "; ".join(cut_text(k, v) for k, v in cuts.items() if isinstance(v, dict))
     app = _q(d.get("application") or subject)
+    hint = L(
+        "Für den nicht geprüften Teil fehlen Befunde (Abweichungen, Regeln nie gebraucht). "
+        "Grenze erhöhen (z. B. AUTOMATO_APP_TRACES_MAX, 0 = ohne Grenze) bzw. die "
+        "Applikation kleiner schneiden; danach rechnet sie neu.",
+        "Findings for the part not checked are missing (deviations, rules never needed). "
+        "Raise the limit (e.g. AUTOMATO_APP_TRACES_MAX, 0 = no limit) or split the "
+        "application; it is computed again afterwards.",
+    )
+    if "vpn" in cuts:  # 1.19.0 (ADR 0063): Weg endet an einer fremden VPN-Gegenstelle
+        vpn = L(
+            "VPN-Gegenstelle ohne gelesenes Gerät: die FortiGate dort einlesen (dann geht der "
+            "Weg weiter) bzw. den Tunnel als Anbindung erfassen (bewusste Grenze).",
+            "VPN peer without a device read: collect the FortiGate there (the path then "
+            "continues) or capture the tunnel as an exit (deliberate boundary).",
+        )
+        hint = vpn if set(cuts) == {"vpn"} else f"{hint} {vpn}"
     return (
         L(f"Applikation {app} nicht vollständig geprüft: {parts}.",
           f"Application {app} not completely checked: {parts}."),
-        L("Für den nicht geprüften Teil fehlen Befunde (Abweichungen, Regeln nie gebraucht). "
-          "Grenze erhöhen (z. B. AUTOMATO_APP_TRACES_MAX, 0 = ohne Grenze) bzw. die Applikation "
-          "kleiner schneiden; danach rechnet sie neu.",
-          "Findings for the part not checked are missing (deviations, rules never needed). Raise "
-          "the limit (e.g. AUTOMATO_APP_TRACES_MAX, 0 = no limit) or split the application; it "
-          "is computed again afterwards."),
+        hint,
     )  # fmt: skip
 
 
@@ -1061,7 +1072,64 @@ def _netbox_sync(subject: str, d: dict) -> tuple[str, str]:
     return text, hint
 
 
+def _vpn_where(d: dict) -> str:
+    vdom = f" (VDOM {d['vdom']})" if d.get("vdom") not in (None, "root") else ""
+    return L(f"VPN {_q(d.get('tunnel'))} auf {d.get('source')}{vdom}",
+             f"VPN {_q(d.get('tunnel'))} on {d.get('source')}{vdom}")  # fmt: skip
+
+
+def _vpn_down(subject: str, d: dict) -> tuple[str, str]:
+    """IPsec-Tunnel bzw. Phase 2 down (1.19.0, ADR 0063)."""
+    gw = L(f" zur Gegenstelle {d['remote_gw']}", f" to the peer {d['remote_gw']}") \
+        if d.get("remote_gw") else ""  # fmt: skip
+    down = d.get("phase2_down") or []
+    if d.get("status") == "partial":
+        text = L(
+            f"{_vpn_where(d)}{gw} ist nur teilweise up – Phase 2 down: {_list(down)}.",
+            f"{_vpn_where(d)}{gw} is only partially up – phase 2 down: {_list(down)}.",
+        )
+    else:
+        text = L(f"{_vpn_where(d)}{gw} ist down.", f"{_vpn_where(d)}{gw} is down.")
+    hint = L(
+        "Tunnel auf beiden Seiten prüfen (Gegenstelle erreichbar, Phase 1/2 passend, "
+        "Proposals, Selektoren); Wege über den Tunnel tragen derzeit nicht.",
+        "Check the tunnel on both sides (peer reachable, phase 1/2 matching, proposals, "
+        "selectors); paths via the tunnel do not carry traffic at the moment.",
+    )
+    return text, hint
+
+
+def _vpn_selector(subject: str, d: dict) -> tuple[str, str]:
+    """Route ueber den Tunnel, die ein Phase-2-Selektor nur teilweise bzw. gar nicht deckt."""
+    nets = _list(d.get("prefixes") or [], 4)
+    sel = _list(d.get("selectors") or [], 4) or "–"
+    if d.get("problem") == "partial":
+        text = L(
+            f"{_vpn_where(d)}: die Phase-2-Selektoren ({sel}) decken die Route(n) über den "
+            f"Tunnel nur teilweise: {nets}.",
+            f"{_vpn_where(d)}: the phase 2 selectors ({sel}) cover the route(s) via the "
+            f"tunnel only partly: {nets}.",
+        )
+    else:
+        text = L(
+            f"{_vpn_where(d)}: Route(n) über den Tunnel ohne passenden Phase-2-Selektor "
+            f"({sel}): {nets}.",
+            f"{_vpn_where(d)}: route(s) via the tunnel without a matching phase 2 selector "
+            f"({sel}): {nets}.",
+        )
+    hint = L(
+        "Verkehr in diese Netze geht nicht (bzw. nur teilweise) durch den Tunnel: Selektor "
+        "der Phase 2 erweitern (auf beiden Seiten) bzw. die Route korrigieren.",
+        "Traffic to these networks does not (or only partly) pass the tunnel: widen the "
+        "phase 2 selector (on both sides) or correct the route.",
+    )
+    return text, hint
+
+
 _TOPO_TEXT = {
+    "vpn_tunnel_down": _vpn_down,
+    "vpn_selector_partial": _vpn_selector,
+    "vpn_route_no_selector": _vpn_selector,
     "netbox_sync_mismatch": _netbox_sync,
     "bgp_zone_out_mismatch": _bgp_zones_out,
     "aci_import_zone_mismatch": _aci_import_zones,

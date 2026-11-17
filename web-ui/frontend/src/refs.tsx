@@ -62,6 +62,9 @@ export const FINDING_LABEL: Record<string, string> = {
   static_blackhole: L("Blackhole-Route", "Blackhole route"),
   static_unchecked: L("Statische Routen nicht geprüft", "Static routes not checked"),
   topo_bgp_down: L("BGP nicht aufgebaut", "BGP not established"),
+  vpn_tunnel_down: L("VPN-Tunnel down", "VPN tunnel down"),
+  vpn_selector_partial: L("VPN: Selektor deckt Route nicht", "VPN: selector does not cover route"),
+  vpn_route_no_selector: L("VPN: Route ohne Selektor", "VPN: route without selector"),
   zone_policy_violation: L("Zone: gegen die Absicht", "Zone: against the intent"),
   zone_overlap: L("Netz in mehreren Zonen", "Network in several zones"),
   zone_outside_schema: L("Zone ausserhalb des Schemas", "Zone outside the schema"),
@@ -193,6 +196,15 @@ export const FINDING_HINT: Record<string, string> = {
     "static routes the checks could not judge (routing table not readable, address object, SD-WAN, dynamic, interface)",
   ),
   topo_bgp_down: L("BGP-Sitzung eines gelesenen Knotens nicht aufgebaut", "BGP session of a read node not established"),
+  vpn_tunnel_down: L("IPsec-Tunnel bzw. eine seiner Phase 2 ist down (nicht Dial-up)", "IPsec tunnel or one of its phase 2 is down (not dial-up)"),
+  vpn_selector_partial: L(
+    "Phase-2-Selektor deckt eine Route über den Tunnel nur teilweise – ein Teil des Verkehrs geht nicht durch den Tunnel",
+    "Phase 2 selector covers a route via the tunnel only partly – part of the traffic does not pass the tunnel",
+  ),
+  vpn_route_no_selector: L(
+    "Route über den Tunnel ohne passenden Phase-2-Selektor – der Verkehr geht nicht durch den Tunnel",
+    "Route via the tunnel without a matching phase 2 selector – the traffic does not pass the tunnel",
+  ),
   zone_policy_violation: L(
     "erlaubende Regel zwischen Zonen, die laut Zonenmatrix gesperrt sind",
     "accepting rule between zones that are blocked according to the zone matrix",
@@ -392,6 +404,15 @@ export const FINDING_GROUPS: { key: string; label: string; help: string; types: 
       "Next-hop unreachable, shadowed (never active), duplicated, blackhole, not checked",
     ),
     types: ["static_nexthop_unreachable", "static_shadowed", "static_duplicate", "static_blackhole", "static_unchecked"],
+  },
+  {
+    key: "vpn",
+    label: L("VPN-Tunnel", "VPN tunnels"),
+    help: L(
+      "IPsec der FortiGates: Tunnel bzw. Phase 2 down, Routen über den Tunnel ohne passenden bzw. nur teilweise passenden Phase-2-Selektor",
+      "IPsec of the FortiGates: tunnel or phase 2 down, routes via the tunnel without a matching or only partly matching phase 2 selector",
+    ),
+    types: ["vpn_tunnel_down", "vpn_selector_partial", "vpn_route_no_selector"],
   },
   {
     key: "bgp_filter",

@@ -295,6 +295,10 @@ def _hop(h: dict) -> str:
     deciding = list(dict.fromkeys(deciding))
     text = f"{h.get('label')} ({', '.join(deciding)})" if deciding else str(h.get("label"))
     lb = h.get("lb") or {}
+    vpn = h.get("vpn") or {}  # IPsec-Tunnel am Ausgang (1.19.0, ADR 0063)
+    if vpn.get("name"):
+        gw = f" ({vpn['remote_gw']})" if vpn.get("remote_gw") else ""
+        text += f" → VPN {vpn['name']}{gw}"
     return f"{text} → LB {lb['name']}" if lb.get("name") else text
 
 

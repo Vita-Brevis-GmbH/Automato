@@ -22,6 +22,7 @@ import {
 } from "./api";
 import { Fold, FoldTitle } from "./fold";
 import { UsedStatics } from "./modules/analyse/StaticRoutes";
+import { VpnChip } from "./modules/analyse/VpnChip";
 import { NetAssignChip, NetAssignDialog } from "./modules/wege/NetAssign";
 import PathExplainDrawer from "./PathExplain";
 import { ReturnLegs, Verdict, VERDICT } from "./Paths";
@@ -483,6 +484,11 @@ function ConnDetail({ c, onRule, onExplain }: { c: AppConnection; onRule: (id: n
                       </div>
                     )}
                     {k?.leak && <div className="faint">→ VRF {k.leak.vrf}</div>}
+                    {j === 0 && h.vpn && (
+                      <div className="faint conn-vpn">
+                        <VpnChip v={h.vpn} sid={h.source_system_id} context={h.context} />
+                      </div>
+                    )}
                   </td>
                   <td>{k ? <Verdict v={k.verdict} title={k.text} /> : <Dash />}</td>
                   <td>
@@ -1091,6 +1097,17 @@ export default function ConnectionsCard({
                 )}
               >
                 {L(`${s.asymmetric} Rückweg über andere Firewall`, `${s.asymmetric} return via other firewall`)}
+              </span>
+            )}
+            {(s.vpn ?? 0) > 0 && (
+              <span
+                className="chip info"
+                id="conn-vpn"
+                title={(data?.vpn ?? [])
+                  .map((v) => `VPN ${v.name} (${v.device}${v.peer?.label ? ` ↔ ${v.peer.label}` : ` → ${v.remote_gw ?? "?"}`}, ${v.status ?? "?"}): ${v.connections}`)
+                  .join("\n")}
+              >
+                {L(`${s.vpn} über VPN`, `${s.vpn} via VPN`)}
               </span>
             )}
             {(s.zone_violations ?? 0) > 0 && (

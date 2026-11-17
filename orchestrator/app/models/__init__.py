@@ -108,6 +108,7 @@ from app.models.topology import (
     TopoPeer,
     TopoPolicyRoute,
     TopoRoute,
+    TopoVpnTunnel,
 )
 from app.models.verwaltung import CockpitCustomer
 from app.models.virtual import Portgroup, Vm, VmIp, VmNic
@@ -212,6 +213,7 @@ __all__ = [
     "TopoPeer",
     "TopoPolicyRoute",
     "TopoRoute",
+    "TopoVpnTunnel",
     "Vm",
     "VmIp",
     "VmNic",

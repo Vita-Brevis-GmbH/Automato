@@ -2070,6 +2070,7 @@ export interface AppConnHop {
   verdict: string | null;
   checks: AppConnCheck[];
   lb?: TraceHop["lb"]; // NSX ALB: vom Load Balancer weiter zum Server (0.77.0)
+  vpn?: Omit<TraceVpn, "underlay" | "ike" | "phase2_status">; // IPsec-Tunnel am Ausgang (1.19.0)
 }
 export interface AppConnState {
   rule_id: number;
@@ -2203,7 +2204,9 @@ export interface AppConnections {
   connections: AppConnection[];
   notes: string[];
   without?: AppConnWithout[];
-  summary: { total: number; allow: number; blocked: number; open: number; mismatch: number; inconsistent?: number; zone_violations?: number; asymmetric?: number; unused?: number };
+  summary: { total: number; allow: number; blocked: number; open: number; mismatch: number; inconsistent?: number; zone_violations?: number; asymmetric?: number; unused?: number; vpn?: number };
+  // 1.19.0 (ADR 0063): IPsec-Tunnel auf den Wegen, je Tunnel die Verbindungen
+  vpn?: (NonNullable<AppConnHop["vpn"]> & { device: string; connections: number })[];
   plan?: AppPlan;
   snapshot?: DocSnapshot; // 0.108.0
   // 0.140.0: vollständig geprüft? sonst je Art, was eine Grenze ausgelassen hat (Befund app_coverage)
@@ -2576,6 +2579,23 @@ export interface TracePort extends Resolved {
   zone?: string;
   next_hop?: string | null;
   exit?: { id: number; name: string; kind: string }; // Anbindung nach aussen (0.18.0)
+  vpn?: TraceVpn; // IPsec-Tunnel am Ausgang (1.19.0, ADR 0063)
+}
+// IPsec-Tunnel als Schritt des Wegs (1.19.0, ADR 0063): Gegenstelle, Zustand, ob das Ziel in den
+// Netzen der Gegenstelle (Phase 2) liegt, und die gelesene FortiGate dort (sonst endet der Weg)
+export interface TraceVpn {
+  id: string;
+  name: string;
+  kind: "static" | "dialup" | "ddns";
+  status?: string | null; // up | partial | down | idle
+  remote_gw?: string;
+  underlay?: string;
+  ike?: number;
+  instance?: string; // Dial-up: verbundene Gegenstelle
+  covered?: "full" | "partial" | "none";
+  phase2?: string;
+  phase2_status?: string;
+  peer?: { key: string; source_system_id: number; context: string; label: string | null; tunnel: string | null; how: "gw" | "reverse" };
 }
 // Ziel-Server einer VIP bzw. eines Pools in der Weg-Suche (0.114.1)
 export interface VipServer {
@@ -2814,7 +2834,7 @@ export interface TracePath {
   zones?: TraceZoneStep[]; // Zonen auf dem Weg (0.57.0)
   l2_src?: L2Segment; // vom Anschluss der Quelle zum ersten Hop (0.64.0)
   end: {
-    kind: "connected" | "fabric" | "exit" | "external" | "unknown" | "no_route" | "loop" | "max_hops";
+    kind: "connected" | "fabric" | "exit" | "external" | "vpn" | "unknown" | "no_route" | "loop" | "max_hops";
     text: string;
     also?: string[]; // Ende über die anderen Firewalls eines Verbunds (0.29.0)
   };
@@ -4857,6 +4877,66 @@ export async function exportL2Plan(
   const match = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") ?? "");
   return { blob: await response.blob(), filename: match?.[1] ?? `verkabelung.${format}` };
 }
+// VPN-Tunnel (IPsec, 1.19.0, ADR 0063): Liste und Detail
+export interface VpnPeer {
+  source_system_id: number;
+  context: string | null;
+  tunnel: string | null;
+  interface: string;
+  how: "gw" | "reverse";
+  label: string;
+}
+export interface VpnTunnel {
+  id: number;
+  ref: string; // <Quellsystem>|<VDOM>|<Tunnel> - bleibt über Läufe gleich
+  source_system_id: number;
+  source: string;
+  node: string;
+  context: string;
+  name: string;
+  kind: "static" | "dialup" | "ddns";
+  interface: string | null;
+  remote_gw: string | null;
+  local_gw: string | null;
+  ike_version: number | null;
+  status: string | null; // up | partial | down | idle; null = unbekannt
+  phase2_total: number;
+  phase2_up: number;
+  instances: number;
+  routes: number;
+  uncovered: number;
+  partial: number;
+  peers: VpnPeer[];
+  proposal?: string | null;
+}
+export interface VpnPhase2 {
+  name: string;
+  src: string[];
+  dst: string[];
+  src_names: string[];
+  dst_names: string[];
+  unresolved: string[];
+  status: string | null;
+  attrs: Record<string, unknown>;
+}
+export interface VpnTunnelDetail extends VpnTunnel {
+  phase2: VpnPhase2[];
+  dialup: { name: string; remote_gw: string | null; status: string; phase2: Record<string, string>; nets: string[] }[];
+  route_list: { prefix: string; family: number; table: string; protocol: string | null; distance: number | null; next_hop?: string; instance?: string; covered: "full" | "partial" | "none" | null }[];
+  behind: { net: string; from: string[] }[];
+  unresolved: string[];
+  attrs: Record<string, unknown>;
+}
+export interface VpnList {
+  tunnels: VpnTunnel[];
+  total: number;
+  counts: Record<string, number>;
+  missing: { source_system_id: number; source: string | null; context: string; missing: string[] }[];
+}
+export const fetchVpnTunnels = (tenantId: number, f: { q?: string; status?: string; system?: number | null } = {}) =>
+  getJSON<VpnList>(`/api/vpn/tunnels${cq({ tenant_id: tenantId, q: f.q, status: f.status, system: f.system ?? undefined })}`);
+export const fetchVpnTunnel = (tenantId: number, id: number) =>
+  getJSON<VpnTunnelDetail>(`/api/vpn/tunnels/${id}${cq({ tenant_id: tenantId })}`);
 export const locateEndpoint = (tenantId: number, q: string) =>
   getJSON<{ query: string; kind: string | null; ips: string[]; items: EndpointLocation[] }>(
     `/api/cabling/locate${cq({ tenant_id: tenantId, q })}`,

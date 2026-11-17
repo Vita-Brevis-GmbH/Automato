@@ -7,6 +7,20 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 1.18.2 – 2026-11-17
+
+Korrektur: Das Cockpit bot einem Host auf einem Entwicklungs-Branch `main` (eine andere Linie)
+als Update an; erst der Rückfall hat es abgefangen. ADR 0062 Nachtrag 1.18.2.
+
+- **NetBox-Host nur Nachfahren:** `deploy/netbox-host/betrieb.sh aktualisieren --ref` (mit und ohne
+  Bundle) lehnt ein Ziel ab, das kein Nachfahre des laufenden Commits ist – Exit 3 „Abgelehnt: <ref>
+  liegt auf einer anderen Linie als der laufende Stand <version> (<branch>) – nichts geändert“, auch
+  mit neuerer Version, vor der Sicherung, nur mit Objekten im Repo (`nachfahre` in
+  `deploy/lib-betrieb.sh`), nie origin. Ältere Stände wie bisher abgelehnt.
+- **`stand.herkunft` bei NetBox-Host und Keycloak** (rückwärts verträglich, wie `deploy/betrieb.sh`
+  seit 1.18.1, ohne Kanal): `{"branch": <Branch des Checkouts>|null, "losgeloest": bool}`
+  (`herkunft_json`); das Cockpit nimmt den Branch als Vorgabe seiner Quelle.
+
 ## 1.18.1 – 2026-11-17
 
 Korrektur: Update aus dem Cockpit scheiterte mit „Kein Manifest unter …/kanal-stable/manifest.json

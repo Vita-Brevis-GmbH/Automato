@@ -35,6 +35,7 @@ from app.api import (
     tenants,
     topology,
     virtual,
+    vpn,
     zones,
 )
 from app.api import freigaben as freigaben_api
@@ -165,6 +166,7 @@ def create_app() -> FastAPI:
     app.include_router(zones.router, dependencies=[Depends(modules.guard("design"))])
     app.include_router(cabling.router, dependencies=[Depends(modules.guard("analyse"))])
     app.include_router(data_quality.router, dependencies=[Depends(modules.guard("analyse"))])
+    app.include_router(vpn.router, dependencies=[Depends(modules.guard("analyse"))])  # 1.19.0
     app.include_router(module_api.router)
     return app
 
