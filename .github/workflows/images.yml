@@ -3,12 +3,19 @@
 # Nur nach gruener CI desselben Commits:
 #   - Push auf main bzw. den Entwicklungs-Branch: als Job `images` am Ende von ci.yml (needs auf
 #     alle Jobs - ein roter Stand bekommt kein Manifest)
+#   - Kanal stable ohne Tag (1.18.1): als Job `stable` am Ende von ci.yml, wenn kanal-stable die
+#     Version aus deploy/release/stable noch nicht hat - erst, wenn ein CI-Lauf des freigegebenen
+#     Commits erfolgreich war
 #   - Tag v<X.Y.Z> und von Hand: erst, wenn ein CI-Lauf dieses Commits erfolgreich war
 #
-#   main                                   -> Kanal latest, Version <VERSION>-latest.<sha7>
-#   claude/projekt-roadmap-planung-0mk5v0  -> Kanal dev,    Version <VERSION>-dev.<sha7>
+#   main                                   -> Kanal latest, Version <VERSION>-latest.<n>.<sha7>
+#   claude/projekt-roadmap-planung-0mk5v0  -> Kanal dev,    Version <VERSION>-dev.<n>.<sha7>
+#   deploy/release/stable (X.Y.Z <commit>) -> Kanal stable, Version X.Y.Z aus genau diesem Commit
+#                                             (Vorfahre des Stands, VERSION dort = X.Y.Z), ohne Tag
 #   Tag v<X.Y.Z> (= VERSION)               -> Kanal stable, Version X.Y.Z, dazu Release v<X.Y.Z>
-#   von Hand (workflow_dispatch)           -> gewaehlter Kanal; stable nur auf dem Tag v<VERSION>
+#   von Hand (workflow_dispatch)           -> gewaehlter Kanal; stable auf dem Tag v<VERSION>, ohne
+#                                             Tag aus deploy/release/stable
+#   n = git rev-list --count <commit> - waechst mit jedem Commit derselben Linie (1.18.1)
 #
 # Eigene Images (Dienste mit build: in docker-compose.yml, Liste aus `docker compose config`)
 # nach ghcr.io/<owner>/automato-<dienst>:<version> und :<kanal>; manifest.json (Digests) und
@@ -22,6 +29,10 @@ on:
     inputs:
       aus_ci:
         description: "Aufruf aus ci.yml nach gruener CI dieses Commits"
+        type: boolean
+        default: false
+      stable_freigabe:
+        description: "Kanal stable aus deploy/release/stable (Commit der Datei, ohne Tag)"
         type: boolean
         default: false
     secrets:
@@ -46,26 +57,32 @@ jobs:
       contents: write # Releases kanal-<kanal> bzw. v<X.Y.Z>
       packages: write # GHCR
       actions: read # CI-Lauf dieses Commits pruefen (Tag, von Hand)
-    # je Branch bzw. Tag nacheinander - ein spaeterer Lauf ersetzt den Stand des frueheren
+    # je Branch nacheinander, stable (Tag, Freigabe-Datei, von Hand) immer nacheinander - ein
+    # spaeterer Lauf ersetzt den Stand des frueheren
     concurrency:
-      group: images-${{ github.ref }}
+      group: >-
+        images-${{ (inputs.stable_freigabe || startsWith(github.ref, 'refs/tags/v') ||
+        github.event.inputs.kanal == 'stable') && 'stable' || github.ref }}
       cancel-in-progress: false
     env:
       GH_TOKEN: ${{ github.token }}
       KANAL_EINGABE: ${{ github.event.inputs.kanal }}
+      STABLE_FREIGABE: ${{ inputs.stable_freigabe == true }}
       DEV_BRANCH: claude/projekt-roadmap-planung-0mk5v0
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0 # Tags und Vorfahren (ist der veroeffentlichte Stand neuer?)
 
-      - name: Kanal und Version
+      - name: Kanal, Version und Commit
         id: plan
         run: |
           set -euo pipefail
           basis=$(tr -d '[:space:]' < VERSION)
-          kanal=""
-          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+          kanal="" aus_datei=0 commit=$GITHUB_SHA
+          if [ "$STABLE_FREIGABE" = true ]; then
+            kanal=stable aus_datei=1
+          elif [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
             kanal=$KANAL_EINGABE
           elif [[ $GITHUB_REF == refs/tags/v* ]]; then
             kanal=stable
@@ -79,35 +96,62 @@ jobs:
             echo "kanal=" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if [ "$kanal" = stable ]; then
-            version=$basis
-            # stable nur fuer den Tag v<VERSION> auf genau diesem Commit
-            if ! git tag --points-at "$GITHUB_SHA" | grep -qxF "v$basis"; then
+          # stable mit Tag v<VERSION> auf genau diesem Commit; von Hand ohne Tag aus der Datei
+          if [ "$kanal" = stable ] && [ "$aus_datei" = 0 ] &&
+            ! git tag --points-at "$GITHUB_SHA" | grep -qxF "v$basis"; then
+            if [ "$GITHUB_EVENT_NAME" != workflow_dispatch ]; then
               echo "::error::stable nur mit Tag v$basis (= VERSION) auf $GITHUB_SHA"
               exit 1
             fi
+            aus_datei=1
+          fi
+          if [ "$aus_datei" = 1 ]; then
+            # Kanal stable ohne Tag (1.18.1): Version und Commit aus deploy/release/stable - der
+            # Commit ist im Repo, Vorfahre dieses Stands und hat VERSION = Version
+            if ! python3 scripts/release_manifest.py freigabe --datei deploy/release/stable \
+              --repo . --stand "$GITHUB_SHA" > "$RUNNER_TEMP/freigabe.txt"; then
+              echo "::error::deploy/release/stable ungueltig bzw. passt nicht zu $GITHUB_SHA (Grund oben)"
+              exit 1
+            fi
+            basis=$(sed -n 's/^version=//p' "$RUNNER_TEMP/freigabe.txt")
+            commit=$(sed -n 's/^commit=//p' "$RUNNER_TEMP/freigabe.txt")
+          fi
+          if [ "$kanal" = stable ]; then
+            version=$basis
           else
-            version="$basis-$kanal.${GITHUB_SHA:0:7}"
+            # monoton: n = Anzahl Commits bis hier (fetch-depth 0), dann sha7
+            n=$(git rev-list --count "$commit")
+            version="$basis-$kanal.$n.${commit:0:7}"
           fi
           if ! [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]{1,40})?$ ]]; then
             echo "::error::Version ungueltig: $version"
             exit 1
           fi
+          if ! [[ $commit =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Commit ungueltig: $commit"
+            exit 1
+          fi
           {
             echo "kanal=$kanal"
             echo "version=$version"
+            echo "commit=$commit"
+            echo "aus_datei=$aus_datei"
             echo "owner=${GITHUB_REPOSITORY_OWNER,,}"
           } >> "$GITHUB_OUTPUT"
-          echo "Kanal $kanal, Version $version"
+          echo "Kanal $kanal, Version $version, Commit $commit"
 
-      - name: CI dieses Commits gruen? (Tag, von Hand)
-        if: steps.plan.outputs.kanal != '' && inputs.aus_ci != true
+      - name: CI dieses Commits gruen? (Tag, Freigabe-Datei, von Hand)
+        if: >-
+          steps.plan.outputs.kanal != '' &&
+          (inputs.aus_ci != true || steps.plan.outputs.commit != github.sha)
+        env:
+          COMMIT: ${{ steps.plan.outputs.commit }}
         run: |
           set -euo pipefail
           n=$(gh api -X GET "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs" \
-            -f head_sha="$GITHUB_SHA" -f status=success --jq '.total_count')
+            -f head_sha="$COMMIT" -f status=success --jq '.total_count')
           if [ "${n:-0}" -lt 1 ]; then
-            echo "::error::Kein erfolgreicher CI-Lauf fuer $GITHUB_SHA - erst CI, dann Images"
+            echo "::error::Kein erfolgreicher CI-Lauf fuer $COMMIT - erst CI, dann Images"
             exit 1
           fi
 
@@ -126,29 +170,37 @@ jobs:
         env:
           KANAL: ${{ steps.plan.outputs.kanal }}
           VERSION_NEU: ${{ steps.plan.outputs.version }}
+          COMMIT: ${{ steps.plan.outputs.commit }}
           OWNER: ${{ steps.plan.outputs.owner }}
         run: |
           set -euo pipefail
+          quelle=.
+          if [ "$COMMIT" != "$GITHUB_SHA" ]; then
+            # stable aus der Freigabe-Datei: gebaut wird genau der freigegebene Commit (eigener
+            # Arbeitsbaum); Werkzeuge (release_manifest.py) aus dem gepushten Stand
+            quelle="$RUNNER_TEMP/quelle"
+            git worktree add --detach "$quelle" "$COMMIT"
+          fi
           # eigene Dienste aus docker-compose.yml (build:), alle Profile, Vorgaben ohne .env
           profile=()
-          while IFS= read -r p; do profile+=(--profile "$p"); done < <(docker compose config --profiles)
-          docker compose "${profile[@]}" config --format json > "$RUNNER_TEMP/compose.json"
+          while IFS= read -r p; do profile+=(--profile "$p"); done < <(cd "$quelle" && docker compose config --profiles)
+          (cd "$quelle" && docker compose "${profile[@]}" config --format json) > "$RUNNER_TEMP/compose.json"
           python3 scripts/release_manifest.py dienste --compose "$RUNNER_TEMP/compose.json" \
-            --wurzel . > "$RUNNER_TEMP/dienste.tsv"
+            --wurzel "$quelle" > "$RUNNER_TEMP/dienste.tsv"
           : > "$RUNNER_TEMP/images.txt"
-          quelle="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          herkunft="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
           while IFS=$'\t' read -r dienst kontext dockerfile ziel; do
             repo="ghcr.io/$OWNER/automato-$dienst"
             ziel_args=()
             if [ "$ziel" != "-" ]; then ziel_args=(--target "$ziel"); fi
             echo "::group::$dienst -> $repo:$VERSION_NEU"
             docker buildx build --push --provenance=false --sbom=false \
-              --file "$dockerfile" "${ziel_args[@]}" \
-              --label "org.opencontainers.image.source=$quelle" \
-              --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+              --file "$quelle/$dockerfile" "${ziel_args[@]}" \
+              --label "org.opencontainers.image.source=$herkunft" \
+              --label "org.opencontainers.image.revision=$COMMIT" \
               --label "org.opencontainers.image.version=$VERSION_NEU" \
               --tag "$repo:$VERSION_NEU" --tag "$repo:$KANAL" \
-              --metadata-file "$RUNNER_TEMP/meta-$dienst.json" "$kontext"
+              --metadata-file "$RUNNER_TEMP/meta-$dienst.json" "$quelle/$kontext"
             digest=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["containerimage.digest"])' \
               "$RUNNER_TEMP/meta-$dienst.json")
             echo "$dienst=$repo@$digest" >> "$RUNNER_TEMP/images.txt"
@@ -161,6 +213,7 @@ jobs:
         env:
           KANAL: ${{ steps.plan.outputs.kanal }}
           VERSION_NEU: ${{ steps.plan.outputs.version }}
+          COMMIT: ${{ steps.plan.outputs.commit }}
           MANIFEST_SIGNING_KEY: ${{ secrets.MANIFEST_SIGNING_KEY }}
         run: |
           set -euo pipefail
@@ -170,7 +223,7 @@ jobs:
           args=()
           while IFS= read -r zeile; do args+=(--image "$zeile"); done < "$RUNNER_TEMP/images.txt"
           python3 scripts/release_manifest.py erstellen --kanal "$KANAL" --version "$VERSION_NEU" \
-            --commit "$GITHUB_SHA" "${args[@]}" > "$aus/manifest.json"
+            --commit "$COMMIT" "${args[@]}" > "$aus/manifest.json"
           python3 scripts/release_manifest.py pruefen --manifest "$aus/manifest.json" \
             --ohne-signatur --version "$VERSION_NEU" > /dev/null
           cat "$aus/manifest.json"
@@ -204,18 +257,20 @@ jobs:
         env:
           KANAL: ${{ steps.plan.outputs.kanal }}
           VERSION_NEU: ${{ steps.plan.outputs.version }}
+          COMMIT: ${{ steps.plan.outputs.commit }}
+          AUS_DATEI: ${{ steps.plan.outputs.aus_datei }}
         run: |
           set -euo pipefail
           aus="$RUNNER_TEMP/release"
           dateien=("$aus/manifest.json")
           if [ -f "$aus/manifest.sig" ]; then dateien+=("$aus/manifest.sig"); fi
-          notes="Automato $VERSION_NEU, Kanal $KANAL, Commit $GITHUB_SHA. manifest.json: Images per Digest; manifest.sig: Ed25519-Signatur (Vertrag vitabrevis-manifest/v1, ADR 0060)."
+          notes="Automato $VERSION_NEU, Kanal $KANAL, Commit $COMMIT. manifest.json: Images per Digest; manifest.sig: Ed25519-Signatur (Vertrag vitabrevis-manifest/v1, ADR 0060)."
 
           veroeffentlichen() { # $1 Release, $2 Titel, $3 Vorabversion, $4 neustes Release (true|false)
             if gh release view "$1" > /dev/null 2>&1; then
               gh release edit "$1" --title "$2" --notes "$notes" --prerelease="$3"
             else
-              gh release create "$1" --target "$GITHUB_SHA" --title "$2" --notes "$notes" \
+              gh release create "$1" --target "$COMMIT" --title "$2" --notes "$notes" \
                 --prerelease="$3" --latest="$4"
             fi
             gh release upload "$1" "${dateien[@]}" --clobber
@@ -232,11 +287,15 @@ jobs:
             feld() { python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get(sys.argv[2], ""))' "$RUNNER_TEMP/bisher.json" "$1" 2> /dev/null || true; }
             bisher_version=$(feld version)
             bisher_commit=$(feld commit)
-            if [ -n "$bisher_version" ] && [ "$bisher_commit" != "$GITHUB_SHA" ]; then
-              vergleich=$(python3 scripts/release_manifest.py vergleichen "$VERSION_NEU" "$GITHUB_SHA" \
+            if [ -n "$bisher_version" ] && [ "$bisher_commit" != "$COMMIT" ]; then
+              vergleich=$(python3 scripts/release_manifest.py vergleichen "$VERSION_NEU" "$COMMIT" \
                 "$bisher_version" "$bisher_commit" || echo neuer)
-              if [ "$vergleich" = aelter ] || git merge-base --is-ancestor "$GITHUB_SHA" "$bisher_commit" 2> /dev/null; then
+              if [ "$vergleich" = aelter ] || git merge-base --is-ancestor "$COMMIT" "$bisher_commit" 2> /dev/null; then
                 echo "::notice::$tag hat schon den neueren Stand $bisher_version - nicht ersetzt"
+                ersetzen=0
+              elif [ "$KANAL" = stable ] && [ "$bisher_version" = "$VERSION_NEU" ]; then
+                # eine stable-Version gehoert zu genau einem Commit
+                echo "::warning::$tag hat $VERSION_NEU schon mit Commit $bisher_commit - nicht ersetzt"
                 ersetzen=0
               fi
             fi
@@ -246,6 +305,7 @@ jobs:
           if [ "$ersetzen" = 1 ]; then
             veroeffentlichen "$tag" "Automato - Kanal $KANAL" "$vorab" false
           fi
-          if [ "$KANAL" = stable ]; then
+          # Release v<X.Y.Z> nur zum Tag - die Freigabe-Datei legt keinen Tag an
+          if [ "$KANAL" = stable ] && [ "$AUS_DATEI" != 1 ]; then
             veroeffentlichen "v$VERSION_NEU" "Automato $VERSION_NEU" false true
           fi

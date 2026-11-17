@@ -1,0 +1,6 @@
+# Kanal stable ohne Tag (1.18.1, ADR 0060 Nachtrag „stable ohne Tag: Freigabe-Datei“).
+# Eine Zeile: abgenommene Version und der volle Commit, auf dem VERSION genau diese Version ist.
+# Bei jeder Abnahme nachführen (CLAUDE.md „Abnahme“); nach dem Push veröffentlicht die CI
+# (ci.yml, Job stable) diesen Commit als Kanal stable – nie eine ältere Version als die schon
+# veröffentlichte. Kommentarzeilen beginnen mit #.
+1.17.0 315b05ff8e6ff73406f94c70c75af654e31671a5

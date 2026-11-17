@@ -12,13 +12,23 @@
                                 --ohne-signatur) [--produkt automato] [--version <v>]
         Format, Inhalt, Produkt, Version und Signatur; gibt `name=wert` je Zeile aus
     release_manifest.py vergleichen <neu> <neu-commit> <laufend> <laufend-commit>
-        `neuer`, `gleich` oder `aelter` (nur der Kern X.Y.Z zaehlt; gleicher Kern mit anderem
-        Commit gilt als neuer - Vertrag betrieb/v1)
+        `neuer`, `gleich` oder `aelter`: der Kern X.Y.Z zaehlt, bei gleichem Kern im selben Kanal
+        die Zahl n aus `-dev.<n>.<sha7>` bzw. `-latest.<n>.<sha7>` (1.18.1); sonst gilt gleicher
+        Kern mit anderem Commit als neuer (Vertrag betrieb/v1) - deploy/betrieb.sh prueft dann die
+        Abstammung im Checkout
+    release_manifest.py freigabe --datei deploy/release/stable [--repo <git> --stand <commit>]
+                                 [--bisher <manifest.json>]
+        Kanal stable ohne Tag (1.18.1, ADR 0060 Nachtrag): Freigabe-Datei lesen (eine Zeile
+        `X.Y.Z <commit>`, Kommentare mit #); mit --repo/--stand: Commit im Repo, Vorfahre des
+        Stands, VERSION dort = X.Y.Z; mit --bisher: das veroeffentlichte Manifest von kanal-stable.
+        Gibt `version=`, `commit=`, `aktion=` (veroeffentlichen | vorhanden | behalten) und
+        `grund=` aus; nie eine aeltere Version als die veroeffentlichte
 
 Nur Standardbibliothek; Ed25519 ueber `openssl` (>= 3.0, `pkeyutl -rawin`), so prueft auch der
 Host (deploy/betrieb.sh) ohne weitere Werkzeuge. Exit-Codes von `pruefen`: 0 gueltig, 3 Inhalt
 ungueltig, 4 Signatur fehlt bzw. ungueltig, 5 Schluessel ungueltig bzw. openssl fehlt,
-6 Produkt bzw. Version passt nicht, 2 Aufruf.
+6 Produkt bzw. Version passt nicht, 2 Aufruf. `freigabe`: 0 ok, 3 Datei ungueltig, 6 passt nicht
+zum Repo (Commit fehlt, kein Vorfahre, VERSION anders).
 """
 
 from __future__ import annotations  # auch mit aelterem python3 auf dem Host
@@ -42,6 +52,10 @@ MAX_BYTES = 64 * 1024
 FELDER = ("format", "produkt", "kanal", "version", "commit", "erstellt", "images")
 
 VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]{1,40})?$")
+KERN_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
+# dev bzw. latest (1.18.1): <X.Y.Z>-<kanal>.<n>.<sha7>, n = `git rev-list --count <commit>` -
+# waechst mit jedem Commit derselben Linie (bis 1.18.0 ohne n: <X.Y.Z>-<kanal>.<sha7>)
+ZAEHLER_RE = re.compile(r"^(dev|latest)\.([0-9]{1,9})\.([0-9a-f]{7})$")
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 ERSTELLT_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")
 DIENST_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
@@ -66,8 +80,17 @@ def _kern(version: str) -> tuple[int, int, int]:
     return int(teile[0]), int(teile[1]), int(teile[2])
 
 
+def _zaehler(version: str) -> tuple[str, int] | None:
+    """Kanal und n aus `<X.Y.Z>-<kanal>.<n>.<sha7>`, sonst None (stable, bis 1.18.0, gebaut)."""
+    m = ZAEHLER_RE.match(version.split("-", 1)[1]) if "-" in version else None
+    return (m.group(1), int(m.group(2))) if m else None
+
+
 def vergleichen(neu: str, neu_commit: str, laufend: str, laufend_commit: str) -> str:
-    """`neuer`, `gleich` oder `aelter` - Vertrag betrieb/v1."""
+    """`neuer`, `gleich` oder `aelter` - Vertrag betrieb/v1.
+
+    Gleicher Kern: gleicher Commit -> gleich; im selben Kanal mit n entscheidet n (1.18.1);
+    sonst `neuer` wie bisher - die Abstammung prueft deploy/betrieb.sh im Checkout."""
     if not VERSION_RE.match(neu):
         raise Abgelehnt(INHALT, "neue Version ungueltig")
     if not VERSION_RE.match(laufend):
@@ -78,6 +101,9 @@ def vergleichen(neu: str, neu_commit: str, laufend: str, laufend_commit: str) ->
         return "gleich"
     if neu == laufend and not laufend_commit:
         return "gleich"
+    z_neu, z_laufend = _zaehler(neu), _zaehler(laufend)
+    if z_neu and z_laufend and z_neu[0] == z_laufend[0] and z_neu[1] != z_laufend[1]:
+        return "neuer" if z_neu[1] > z_laufend[1] else "aelter"
     return "neuer"
 
 
@@ -148,12 +174,17 @@ def erstellen(
         "images": {k: images[k] for k in sorted(images)},
     }
     pruefe_inhalt(daten)
-    # Kanal und Version passen zusammen (Vertrag: stable X.Y.Z, sonst <VERSION>-<kanal>.<sha7>)
+    # Kanal und Version passen zusammen (Vertrag: stable X.Y.Z, sonst <VERSION>-<kanal>.<n>.<sha7>,
+    # n = Anzahl Commits bis hier - monoton auf derselben Linie, 1.18.1)
     if kanal == "stable":
         if "-" in version:
             raise Abgelehnt(INHALT, "stable nur mit X.Y.Z")
-    elif not version.endswith(f"-{kanal}.{commit[:7]}"):
-        raise Abgelehnt(INHALT, f"Version fuer {kanal}: <VERSION>-{kanal}.<sha7 des Commits>")
+    else:
+        zaehler = _zaehler(version)
+        if not zaehler or zaehler[0] != kanal or not version.endswith(f".{commit[:7]}"):
+            raise Abgelehnt(
+                INHALT, f"Version fuer {kanal}: <VERSION>-{kanal}.<n>.<sha7 des Commits>"
+            )
     roh = (json.dumps(daten, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
     if len(roh) > MAX_BYTES:
         raise Abgelehnt(INHALT, "groesser als 64 KiB")
@@ -271,6 +302,72 @@ def dienste(config: dict, wurzel: str) -> list[tuple[str, str, str, str]]:
     return zeilen
 
 
+def freigabe_lesen(roh: bytes) -> tuple[str, str]:
+    """deploy/release/stable (1.18.1): genau eine Zeile `X.Y.Z <commit>`, Kommentarzeilen mit #."""
+    try:
+        text = roh.decode("utf-8")
+    except UnicodeDecodeError:
+        raise Abgelehnt(INHALT, "Freigabe-Datei ist kein UTF-8") from None
+    zeilen = [z.strip() for z in text.splitlines()]
+    eintraege = [z for z in zeilen if z and not z.startswith("#")]
+    if len(eintraege) != 1:
+        raise Abgelehnt(INHALT, "Freigabe-Datei: genau eine Zeile `X.Y.Z <commit>` erwartet")
+    teile = eintraege[0].split()
+    if len(teile) != 2 or not KERN_RE.match(teile[0]) or not COMMIT_RE.match(teile[1]):
+        raise Abgelehnt(INHALT, "Freigabe-Datei: `X.Y.Z <commit>` (ohne Zusatz, 40 Hex-Zeichen)")
+    return teile[0], teile[1]
+
+
+def _git(repo: str, *args: str) -> subprocess.CompletedProcess:
+    git = shutil.which("git")
+    if not git:
+        raise Abgelehnt(PASST_NICHT, "git fehlt")
+    try:
+        return subprocess.run(  # noqa: S603 - fester Argumentvektor
+            [git, "-C", repo, *args], capture_output=True, text=True, timeout=60, check=False
+        )
+    except (OSError, subprocess.SubprocessError):
+        raise Abgelehnt(PASST_NICHT, "git nicht ausfuehrbar") from None
+
+
+def freigabe_im_repo(repo: str, stand: str, version: str, commit: str) -> None:
+    """Commit im Repo, Vorfahre des gepushten Stands und dort VERSION = version."""
+    if _git(repo, "cat-file", "-e", f"{commit}^{{commit}}").returncode != 0:
+        raise Abgelehnt(PASST_NICHT, f"Commit {commit[:12]} nicht im Repo")
+    abstammung = _git(repo, "merge-base", "--is-ancestor", commit, stand).returncode
+    if abstammung == 1:
+        raise Abgelehnt(PASST_NICHT, f"Commit {commit[:12]} ist kein Vorfahre von {stand[:12]}")
+    if abstammung != 0:
+        raise Abgelehnt(PASST_NICHT, f"Abstammung von {commit[:12]} nicht pruefbar")
+    datei = _git(repo, "show", f"{commit}:VERSION")
+    gefunden = datei.stdout.strip() if datei.returncode == 0 else ""
+    if gefunden != version:
+        raise Abgelehnt(
+            PASST_NICHT, f"VERSION am Commit {commit[:12]} ist {gefunden or '?'}, nicht {version}"
+        )
+
+
+def freigabe_entscheiden(version: str, commit: str, bisher: bytes | None) -> tuple[str, str]:
+    """Aktion fuer kanal-stable: `veroeffentlichen` (fehlt bzw. aelter), `vorhanden` (diese
+    Version mit diesem Commit) oder `behalten` (neuer bzw. gleiche Version mit anderem Commit)."""
+    if bisher is None:
+        return "veroeffentlichen", "kanal-stable hat noch kein Manifest"
+    try:
+        daten = lesen(bisher)
+    except Abgelehnt:
+        return "veroeffentlichen", "Manifest in kanal-stable ungueltig - wird ersetzt"
+    b_version, b_commit = daten["version"], daten["commit"]
+    if _kern(version) > _kern(b_version):
+        return "veroeffentlichen", f"kanal-stable hat {b_version}"
+    if _kern(version) < _kern(b_version):
+        return "behalten", f"kanal-stable hat schon die neuere Version {b_version} - nie aelter"
+    if b_version != version:  # gleicher Kern mit Zusatz: X.Y.Z ist neuer als X.Y.Z-<zusatz>
+        return "veroeffentlichen", f"kanal-stable hat {b_version}"
+    if b_commit == commit:
+        return "vorhanden", f"kanal-stable hat schon {version}"
+    return "behalten", f"kanal-stable hat {version} schon mit {b_commit[:12]} - nicht ersetzt"
+
+
 def _images_aus_args(werte: list[str]) -> dict[str, str]:
     images: dict[str, str] = {}
     for wert in werte:
@@ -317,6 +414,11 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("vergleichen")
     for name in ("neu", "neu_commit", "laufend", "laufend_commit"):
         p.add_argument(name)
+    p = sub.add_parser("freigabe")
+    p.add_argument("--datei", required=True)
+    p.add_argument("--repo")
+    p.add_argument("--stand")
+    p.add_argument("--bisher")
     args = parser.parse_args(argv)
 
     try:
@@ -341,6 +443,18 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"{feld}={daten[feld]}")
             for dienst, ref in sorted(daten["images"].items()):
                 print(f"image.{dienst}={ref}")
+        elif args.befehl == "freigabe":
+            if (args.repo is None) != (args.stand is None):
+                raise Abgelehnt(AUFRUF, "--repo und --stand nur zusammen")
+            version, commit = freigabe_lesen(_lies(args.datei, 4096))
+            if args.repo is not None:
+                freigabe_im_repo(args.repo, args.stand, version, commit)
+            bisher = None
+            if args.bisher is not None:
+                with open(args.bisher, "rb") as fh:
+                    bisher = fh.read(MAX_BYTES + 1)
+            aktion, grund = freigabe_entscheiden(version, commit, bisher)
+            print(f"version={version}\ncommit={commit}\naktion={aktion}\ngrund={grund}")
         else:
             print(vergleichen(args.neu, args.neu_commit, args.laufend, args.laufend_commit))
     except Abgelehnt as exc:

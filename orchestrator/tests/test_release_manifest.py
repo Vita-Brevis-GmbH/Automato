@@ -1,10 +1,12 @@
 """scripts/release_manifest.py (1.15.0, ADR 0060, Format vitabrevis-manifest/v1): Manifest der
 Images je Kanal erstellen (deterministisch, nur per Digest), signieren und pruefen (Ed25519 ueber
-openssl, Testschluessel zur Laufzeit), Versionen vergleichen, eigene Dienste aus Compose."""
+openssl, Testschluessel zur Laufzeit), Versionen vergleichen (1.18.1 mit n), eigene Dienste aus
+Compose, Kanal stable aus der Freigabe-Datei (1.18.1, echtes git-Repo im Temp-Ordner)."""
 
 import base64
 import importlib.util
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -20,6 +22,7 @@ rm = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(rm)
 
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
+DEV = f"1.15.0-dev.42.{COMMIT[:7]}"  # <VERSION>-<kanal>.<n>.<sha7> (1.18.1)
 DIGEST = "sha256:" + "ab" * 32
 IMAGES = {
     "web-ui": f"ghcr.io/kunde-a/automato-web-ui@{DIGEST}",
@@ -40,7 +43,7 @@ openssl3 = pytest.mark.skipif(not _openssl3(), reason="OpenSSL >= 3 fehlt")
 
 
 def _manifest(**aenderung) -> bytes:
-    args = {"kanal": "dev", "version": f"1.15.0-dev.{COMMIT[:7]}", "commit": COMMIT,
+    args = {"kanal": "dev", "version": DEV, "commit": COMMIT,
             "images": IMAGES, "erstellt": ERSTELLT, **aenderung}  # fmt: skip
     return rm.erstellen(**args)
 
@@ -81,12 +84,17 @@ def test_erstellen_deterministisch_und_nur_per_digest():
         {"version": "1.15"},
         {"erstellt": "16.11.2026"},
         {"kanal": "stable", "version": "1.15.0-dev.x"},  # stable nur X.Y.Z
-        {"version": "1.15.0-dev.fffffff"},  # sha7 passt nicht zum Commit
+        {"version": "1.15.0-dev.42.fffffff"},  # sha7 passt nicht zum Commit
+        {"version": f"1.15.0-dev.{COMMIT[:7]}"},  # ohne n (bis 1.18.0) nicht mehr erstellt
+        {"version": f"1.15.0-dev.x2.{COMMIT[:7]}"},  # n keine Zahl
+        {"version": f"1.15.0-latest.42.{COMMIT[:7]}"},  # Kanal der Version passt nicht
         {"kanal": "latest"},  # Version mit -dev. im Kanal latest
     ):
         with pytest.raises(rm.Abgelehnt):
             _manifest(**kaputt)
     assert json.loads(_manifest(kanal="stable", version="1.15.0"))["version"] == "1.15.0"
+    latest = f"1.15.0-latest.7.{COMMIT[:7]}"
+    assert json.loads(_manifest(kanal="latest", version=latest))["version"] == latest
 
 
 def test_lesen_lehnt_ab():
@@ -113,10 +121,7 @@ def test_signieren_und_pruefen(tmp_path):
     roh = _manifest()
     sig = rm.signieren(privat, roh)
     assert len(base64.b64decode(sig)) == 64 and "\n" not in sig
-    assert (
-        rm.pruefen(roh, sig.encode(), pub, "automato", f"1.15.0-dev.{COMMIT[:7]}")["commit"]
-        == COMMIT
-    )
+    assert rm.pruefen(roh, sig.encode(), pub, "automato", DEV)["commit"] == COMMIT
     # wie auf dem Host: openssl pkeyutl -verify -rawin ueber die exakten Bytes (Vertrag)
     (tmp_path / "m.json").write_bytes(roh)
     (tmp_path / "s.bin").write_bytes(base64.b64decode(sig))
@@ -156,7 +161,7 @@ def test_signieren_und_pruefen(tmp_path):
 @openssl3
 def test_cli_wie_im_workflow_und_auf_dem_host(tmp_path):
     privat, pub = _schluessel(tmp_path)
-    version = f"1.15.0-dev.{COMMIT[:7]}"
+    version = DEV
     out = _cli("erstellen", "--kanal", "dev", "--version", version, "--commit", COMMIT,
                "--erstellt", ERSTELLT, "--image", f"web-ui={IMAGES['web-ui']}",
                "--image", f"orchestrator={IMAGES['orchestrator']}")  # fmt: skip
@@ -205,6 +210,18 @@ def test_cli_wie_im_workflow_und_auf_dem_host(tmp_path):
         ("1.15.0", "b", "1.15.0-dev.ab12cd3", "a", "neuer"),
         ("1.15.0-latest.ab12cd3", "a", "1.15.0", "a", "gleich"),  # gleicher Commit, gebaut
         ("1.15.0", "a", "?", "", "neuer"),  # laufende Version unbekannt
+        # 1.18.1: monoton mit n im selben Kanal (Zahl, nicht Text)
+        ("1.18.1-dev.120.aaaaaaa", "a", "1.18.1-dev.119.bbbbbbb", "b", "neuer"),
+        ("1.18.1-dev.119.aaaaaaa", "a", "1.18.1-dev.120.bbbbbbb", "b", "aelter"),
+        ("1.18.1-dev.9.aaaaaaa", "a", "1.18.1-dev.10.bbbbbbb", "b", "aelter"),
+        ("1.18.1-latest.9.aaaaaaa", "a", "1.18.1-latest.10.bbbbbbb", "b", "aelter"),
+        ("1.18.1-dev.120.aaaaaaa", "a", "1.18.1-dev.120.aaaaaaa", "a", "gleich"),
+        ("1.19.0-dev.3.aaaaaaa", "a", "1.18.1-dev.120.bbbbbbb", "b", "neuer"),  # Kern zuerst
+        # ohne vergleichbares n: neuer wie bisher - die Abstammung prueft deploy/betrieb.sh
+        ("1.18.1-dev.120.aaaaaaa", "a", "1.18.1-dev.120.bbbbbbb", "b", "neuer"),  # gleiches n
+        ("1.18.1-latest.9.aaaaaaa", "a", "1.18.1-dev.10.bbbbbbb", "b", "neuer"),  # anderer Kanal
+        ("1.18.1", "a", "1.18.1-dev.10.bbbbbbb", "b", "neuer"),  # stable gegen dev
+        ("1.18.1-dev.9.aaaaaaa", "a", "1.18.1-dev.bbbbbbb", "b", "neuer"),  # bis 1.18.0 ohne n
     ],
 )
 def test_vergleichen(neu, neu_commit, laufend, laufend_commit, ergebnis):
@@ -271,3 +288,139 @@ def test_eigene_dienste_mit_image_variable():
         var = "AUTOMATO_IMAGE_" + name.upper().replace("-", "_")
         lokal = "${COMPOSE_PROJECT_NAME:-automato}-" + name
         assert dienst.get("image") == "${" + var + ":-" + lokal + "}", name
+
+
+# --- Kanal stable ohne Tag: Freigabe-Datei (1.18.1, ADR 0060 Nachtrag) -------------------------
+
+GIT_ENV = {
+    "GIT_AUTHOR_NAME": "Test", "GIT_AUTHOR_EMAIL": "test@example.ch",
+    "GIT_COMMITTER_NAME": "Test", "GIT_COMMITTER_EMAIL": "test@example.ch",
+    "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
+}  # fmt: skip
+
+
+def _git(cwd: Path, *args: str) -> str:
+    out = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True,  # noqa: S603, S607
+                         env={**os.environ, **GIT_ENV}, check=True)  # fmt: skip
+    return out.stdout.strip()
+
+
+def test_freigabe_datei_lesen():
+    text = "# abgenommen 2026-11-17\n\n  1.17.0   " + COMMIT + "  \n# Ende\n"
+    assert rm.freigabe_lesen(text.encode()) == ("1.17.0", COMMIT)
+    for kaputt in (
+        "",  # keine Zeile
+        "# nur Kommentar\n",
+        f"1.17.0 {COMMIT}\n1.16.0 {COMMIT}\n",  # zwei Zeilen
+        f"v1.17.0 {COMMIT}\n",
+        f"1.17.0-dev.4.{COMMIT[:7]} {COMMIT}\n",  # stable nur X.Y.Z
+        f"1.17 {COMMIT}\n",
+        f"1.17.0 {COMMIT[:7]}\n",  # nur voller Commit
+        f"1.17.0 {COMMIT.upper()}\n",
+        f"1.17.0 {COMMIT} # Kommentar am Ende\n",
+        "1.17.0\n",
+    ):
+        with pytest.raises(rm.Abgelehnt) as exc:
+            rm.freigabe_lesen(kaputt.encode())
+        assert exc.value.code == rm.INHALT, kaputt
+    with pytest.raises(rm.Abgelehnt):
+        rm.freigabe_lesen(b"\xff\xfe")
+
+
+def test_freigabe_datei_im_repo():
+    """deploy/release/stable im Repo: gueltig, Kanal stable ohne Tag (Startinhalt 1.17.0)."""
+    version, commit = rm.freigabe_lesen((REPO / "deploy/release/stable").read_bytes())
+    assert rm.KERN_RE.match(version) and rm.COMMIT_RE.match(commit)
+    assert rm._kern(version) >= (1, 17, 0)
+
+
+@pytest.fixture
+def git_repo(tmp_path):
+    """1.16.0 -> 1.17.0 -> Doku (VERSION 1.17.0) auf main, dazu eine eigene Linie ab 1.16.0."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "main")
+    commits = {}
+    for name, version in (("a", "1.16.0"), ("b", "1.17.0"), ("doku", "1.17.0")):
+        (repo / "VERSION").write_text(version + "\n")
+        (repo / "NOTIZ").write_text(name + "\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-q", "-m", name)
+        commits[name] = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "-q", "-b", "seite", commits["a"])
+    (repo / "NOTIZ").write_text("seite\n")
+    _git(repo, "commit", "-q", "-am", "seite")
+    commits["seite"] = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "-q", "main")
+    return repo, commits
+
+
+@pytest.mark.skipif(not shutil.which("git"), reason="git fehlt")
+def test_freigabe_im_repo_geprueft(git_repo):
+    repo, c = git_repo
+    rm.freigabe_im_repo(str(repo), c["doku"], "1.17.0", c["b"])  # Vorfahre, VERSION passt
+    rm.freigabe_im_repo(str(repo), "HEAD", "1.17.0", c["doku"])  # auch der Stand selbst
+
+    def grund(*args: str) -> str:
+        with pytest.raises(rm.Abgelehnt) as exc:
+            rm.freigabe_im_repo(str(repo), *args)
+        assert exc.value.code == rm.PASST_NICHT
+        return exc.value.grund
+
+    assert "kein Vorfahre" in grund(c["doku"], "1.16.0", c["seite"])  # andere Linie
+    assert "kein Vorfahre" in grund(c["a"], "1.17.0", c["b"])  # nach dem Stand
+    falsch = grund(c["doku"], "1.16.0", c["b"])
+    assert falsch == f"VERSION am Commit {c['b'][:12]} ist 1.17.0, nicht 1.16.0"
+    assert "nicht im Repo" in grund(c["doku"], "1.17.0", "f" * 40)
+
+
+@pytest.mark.parametrize(
+    ("bisher", "aktion"),
+    [
+        (None, "veroeffentlichen"),  # noch kein Manifest
+        (("1.15.0", COMMIT), "veroeffentlichen"),  # aelter
+        (("1.17.0", COMMIT), "vorhanden"),
+        (("1.17.0", "f" * 40), "behalten"),  # gleiche Version, anderer Commit
+        (("1.17.1", "f" * 40), "behalten"),  # schon neuer - nie aelter
+        (("1.18.0", "f" * 40), "behalten"),
+        (("1.17.0-rc.1", "f" * 40), "veroeffentlichen"),  # X.Y.Z neuer als X.Y.Z-<zusatz>
+        ("kaputt", "veroeffentlichen"),  # ungueltig - wird ersetzt
+    ],
+)
+def test_freigabe_entscheiden(bisher, aktion):
+    if bisher is None or bisher == "kaputt":
+        roh = None if bisher is None else b"kein json"
+    else:
+        daten = json.loads(_manifest(kanal="stable", version="1.15.0"))
+        daten["version"], daten["commit"] = bisher
+        roh = json.dumps(daten).encode()
+    assert rm.freigabe_entscheiden("1.17.0", COMMIT, roh)[0] == aktion
+
+
+@pytest.mark.skipif(not shutil.which("git"), reason="git fehlt")
+def test_freigabe_cli_wie_im_workflow(git_repo, tmp_path):
+    repo, c = git_repo
+    datei = tmp_path / "stable"
+    datei.write_text(f"# Kanal stable\n1.17.0 {c['b']}\n")
+    bisher = tmp_path / "bisher.json"
+    out = _cli("freigabe", "--datei", str(datei), "--repo", str(repo), "--stand", c["doku"])
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.splitlines() == [
+        "version=1.17.0", f"commit={c['b']}", "aktion=veroeffentlichen",
+        "grund=kanal-stable hat noch kein Manifest",
+    ]  # fmt: skip
+    for version, aktion in (("1.16.0", "veroeffentlichen"), ("1.17.0", "vorhanden"),
+                            ("1.18.0", "behalten")):  # fmt: skip
+        daten = json.loads(_manifest(kanal="stable", version=version))
+        daten["commit"] = c["b"]
+        bisher.write_text(json.dumps(daten))
+        out = _cli("freigabe", "--datei", str(datei), "--bisher", str(bisher))
+        assert out.returncode == 0 and f"aktion={aktion}" in out.stdout.splitlines()
+    # passt nicht zum Repo bzw. zum Stand: Exit 6, Datei ungueltig: Exit 3, Aufruf: Exit 2
+    falsch = _cli("freigabe", "--datei", str(datei), "--repo", str(repo), "--stand", c["seite"])
+    assert falsch.returncode == rm.PASST_NICHT and falsch.stdout == ""
+    assert falsch.stderr.startswith("abgelehnt: ") and "kein Vorfahre" in falsch.stderr
+    datei.write_text("1.17.0\n")
+    assert _cli("freigabe", "--datei", str(datei)).returncode == rm.INHALT
+    assert _cli("freigabe", "--datei", str(tmp_path / "fehlt")).returncode == rm.INHALT
+    assert _cli("freigabe", "--datei", str(datei), "--repo", str(repo)).returncode == rm.AUFRUF
