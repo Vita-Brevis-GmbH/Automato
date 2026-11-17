@@ -2,7 +2,10 @@
 # Betrieb aus dem Cockpit (1.15.0, ADR 0060, Vertrag betrieb/v1): einziger Einstiegspunkt fuer
 # den Host-Agenten des Cockpits. Fortschritt auf stderr, auf stdout genau eine Zeile JSON.
 #
-#   deploy/betrieb.sh stand            Version, Commit, Quelle (images|git), Health, ob zurueck geht
+#   deploy/betrieb.sh stand            Version, Commit, Quelle (images|git), Health, ob zurueck geht;
+#                                      Herkunft (1.18.1): Branch bzw. losgeloest und Kanal (dev,
+#                                      latest, stable bzw. unbekannt) - das Cockpit waehlt damit den
+#                                      Kanal ohne Zutun
 #   deploy/betrieb.sh sichern          verschluesselte Sicherung wie vor einem Update
 #   deploy/betrieb.sh aktualisieren --version <v> --manifest <manifest.json> --signatur <manifest.sig>
 #                                   [--bundle <datei>]
@@ -13,6 +16,9 @@
 #                                      Mit --bundle (1.18.0, Repo privat): den Commit aus dem
 #                                      git-Bundle des Cockpits statt von origin - origin wird nie
 #                                      kontaktiert; Bundle defekt bzw. ohne den Commit -> Exit 3
+#                                      Nie aelter (1.18.1): gleicher Versionskern -> git-Abstammung,
+#                                      wenn beide Commits da sind (Ziel Vorfahre -> Exit 3, nur
+#                                      ueber zurueck; getrennte Linien -> Exit 3)
 #   deploy/betrieb.sh zurueck          auf den Stand vor dem letzten Update (einmal)
 #   deploy/betrieb.sh neustart         Container neu starten (ohne Bau, ohne neue Images) + Health
 #
@@ -61,6 +67,8 @@ VERSION_RE='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]{1,40})?$'
 COMMIT_RE='^[0-9a-f]{40}$'
 ZEIT_RE='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
 PROFILES=(--profile core)
+# Kanal eines aus git gebauten Checkouts nach Branch (wie DEV_BRANCH in .github/workflows/images.yml)
+ENTWICKLUNGS_BRANCH=claude/projekt-roadmap-planung-0mk5v0
 # shellcheck source=deploy/lib-update.sh
 . deploy/lib-update.sh
 # shellcheck source=deploy/lib-instanz.sh
@@ -86,6 +94,41 @@ json_text() { # $1 -> JSON-String, leer -> null
 
 passt() { [[ ${1-} =~ $2 ]] && printf '%s' "$1"; } # Wert nur, wenn er dem Muster folgt
 
+herkunft_erheben() { # Branch (oder losgeloest) und Kanal (1.18.1) - das Cockpit waehlt damit
+  # den Kanal ohne Zutun. Kanal: 1. Manifest der gepinnten Images, 2. Versions-Suffix (-dev. bzw.
+  # -latest., X.Y.Z aus dem Manifest = stable), 3. Branch (main = latest, Entwicklungs-Branch =
+  # dev), 4. Tag v<VERSION> auf dem losgeloesten Commit = stable; sonst unbekannt
+  local branch k=""
+  S_BRANCH="" S_LOSGELOEST=true S_HERKUNFT_KANAL=unbekannt S_HERKUNFT_AUS=""
+  if branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null) && [ -n "$branch" ]; then
+    S_BRANCH=${branch:0:200} S_LOSGELOEST=false
+  fi
+  if [ -f "$IMAGES_DATEI" ]; then
+    k=$(passt "${AUTOMATO_MANIFEST_KANAL:-}" '^(stable|latest|dev)$') && S_HERKUNFT_AUS=manifest
+    if [ -z "$k" ]; then
+      case $S_VERSION in
+        *-dev.*) k=dev ;;
+        *-latest.*) k=latest ;;
+        *-* | "") ;;
+        *) k=stable ;;
+      esac
+      [ -z "$k" ] || S_HERKUNFT_AUS=version
+    fi
+  fi
+  if [ -z "$k" ] && [ -n "$S_BRANCH" ]; then
+    case $S_BRANCH in
+      main) k=latest ;;
+      "$ENTWICKLUNGS_BRANCH") k=dev ;;
+    esac
+    [ -z "$k" ] || S_HERKUNFT_AUS=branch
+  fi
+  if [ -z "$k" ] && [ "$S_LOSGELOEST" = true ] && [[ $S_VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] &&
+    git tag --points-at HEAD 2>/dev/null | grep -qxF "v$S_VERSION"; then
+    k=stable S_HERKUNFT_AUS=tag
+  fi
+  [ -z "$k" ] || S_HERKUNFT_KANAL=$k
+}
+
 stand_erheben() {
   S_SICHERUNG=$(lu_letzte_sicherung)
   S_VERSION=$(passt "$(lu_laufende_version)" "$VERSION_RE")
@@ -95,6 +138,7 @@ stand_erheben() {
     S_QUELLE=images
     S_KANAL=$(passt "${AUTOMATO_MANIFEST_KANAL:-}" '^(stable|latest|dev)$')
   fi
+  herkunft_erheben
   S_ZURUECK=false S_VORHER=null
   [ "${NOTFALL:-}" != 1 ] || return 0 # nach einem Abbruch nur das Sichere
   if lu_zurueck_moeglich; then S_ZURUECK=true; fi
@@ -115,10 +159,11 @@ ende() { # $1 Exit-Code, $2 Meldung (fester Text, hoechstens 300 Zeichen) - Antw
   stand_erheben
   printf '{"format":"betrieb/v1","produkt":"automato","aktion":%s,"ok":%s,"meldung":%s,%s%s}\n' \
     "$(json_text "$AKTION")" "$erfolg" "$(json_text "$meldung")" \
-    "$(printf '"stand":{"version":%s,"commit":%s,"quelle":%s,"kanal":%s,"gesund":%s,"zurueck_moeglich":%s,"vorher":%s,"letzte_sicherung":%s}' \
+    "$(printf '"stand":{"version":%s,"commit":%s,"quelle":%s,"kanal":%s,"gesund":%s,"zurueck_moeglich":%s,"vorher":%s,"letzte_sicherung":%s,"herkunft":{"branch":%s,"losgeloest":%s,"kanal":%s,"aus":%s}}' \
       "$(json_text "$S_VERSION")" "$(json_text "$S_COMMIT")" "$(json_text "$S_QUELLE")" \
       "$(json_text "$S_KANAL")" "${S_GESUND:-null}" "$S_ZURUECK" "$S_VORHER" \
-      "$(json_text "$S_SICHERUNG")")" "$(instanz_antwort)" >"$ANTWORT_DATEI"
+      "$(json_text "$S_SICHERUNG")" "$(json_text "$S_BRANCH")" "$S_LOSGELOEST" \
+      "$(json_text "$S_HERKUNFT_KANAL")" "$(json_text "$S_HERKUNFT_AUS")")" "$(instanz_antwort)" >"$ANTWORT_DATEI"
   exit "$1"
 }
 
@@ -164,6 +209,13 @@ sichern() {
   echo "Sicherung nach $BACKUP_DIR"
   lu_sicherung || ende 2 "Sicherung fehlgeschlagen – Protokoll des Agenten bzw. deploy/aufbau.sh pruefen"
   ende 0 "Sicherung fertig"
+}
+
+abstammung_ablehnen() { # $1 Ergebnis von lu_abstammung, $2 neue, $3 laufende Version, $4 Zusatz
+  case $1 in
+    aelter) ende 3 "$2 ist älter als $3 – zurück nur über die Aktion zurueck" ;;
+    getrennt) ende 3 "$2 liegt auf einer anderen Linie als $3 (weder Vorfahre noch Nachfolger) – $4" ;;
+  esac
 }
 
 datei_ok() { # vorhanden, nicht leer, hoechstens 64 KiB
@@ -250,6 +302,14 @@ aktualisieren() {
     echo "Code aus dem Bundle des Cockpits pruefen ($m_commit, ohne origin)"
     bundle_holen "$bundle" "$m_commit" </dev/null || ende 3 "$BUNDLE_FEHLER – nichts geändert"
   fi
+  # Gleicher Kern, anderer Commit (1.18.1): nie aelter, keine fremde Linie - entscheidet die
+  # Abstammung, wenn beide Commits da sind (Checkout bzw. eben aus dem Bundle); sonst wie bisher
+  local gleicher_kern=0 abstammung=unbekannt
+  [ "${version%%-*}" != "${laufend%%-*}" ] || gleicher_kern=1
+  if [ "$gleicher_kern" = 1 ]; then
+    abstammung=$(lu_abstammung "$laufend_commit" "$m_commit")
+    abstammung_ablehnen "$abstammung" "$version" "$laufend" "nichts geändert"
+  fi
   lu_compose_pruefen || ende 3 "docker compose kann das Projekt nicht lesen – deploy/aufbau.sh pruefen"
   lu_sicherung_moeglich ||
     ende 3 "Keine verschlüsselte Sicherung möglich (age-Schlüssel fehlt) – deploy/aufbau.sh backup-schluessel"
@@ -266,6 +326,11 @@ aktualisieren() {
       git fetch --quiet origin "$m_commit" 2>/dev/null || true
       git cat-file -e "$m_commit^{commit}" 2>/dev/null ||
         ende 1 "Commit des Manifests nicht im Repo – nichts umgestellt, läuft auf $laufend"
+    fi
+    if [ "$gleicher_kern" = 1 ] && [ "$abstammung" = unbekannt ]; then
+      # erst jetzt im Repo: Abstammung nachholen, bevor etwas umgestellt ist
+      abstammung=$(lu_abstammung "$laufend_commit" "$m_commit")
+      abstammung_ablehnen "$abstammung" "$version" "$laufend" "nichts umgestellt, läuft auf $laufend"
     fi
   fi
   echo "3/5 Images holen (nur per Digest, kein Bau)"
@@ -404,7 +469,7 @@ if [ ! -s "$ANTWORT_DATEI" ]; then # unerwarteter Abbruch: trotzdem eine Antwort
     ende 2 "Unerwarteter Abbruch (Exit $rc) – Protokoll des Agenten bzw. deploy/aufbau.sh pruefen"
   ) >&2
   rc=2
-  [ -s "$ANTWORT_DATEI" ] || printf '{"format":"betrieb/v1","produkt":"automato","aktion":%s,"ok":false,"meldung":"Unerwarteter Abbruch","stand":{"version":null,"commit":null,"quelle":null,"kanal":null,"gesund":null,"zurueck_moeglich":false,"vorher":null,"letzte_sicherung":null}}\n' \
+  [ -s "$ANTWORT_DATEI" ] || printf '{"format":"betrieb/v1","produkt":"automato","aktion":%s,"ok":false,"meldung":"Unerwarteter Abbruch","stand":{"version":null,"commit":null,"quelle":null,"kanal":null,"gesund":null,"zurueck_moeglich":false,"vorher":null,"letzte_sicherung":null,"herkunft":null}}\n' \
     "$(json_text "$AKTION")" >"$ANTWORT_DATEI"
 fi
 cat "$ANTWORT_DATEI"

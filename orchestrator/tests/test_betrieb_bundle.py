@@ -218,3 +218,32 @@ def test_update_sh_ohne_zugang_klare_meldung_nichts_geaendert(host, vorbereiten,
     assert _git(host.checkout, "symbolic-ref", "--short", "HEAD") == "main"
     assert not [z for z in host.protokoll() if z.startswith("backup") or " build" in z]
     assert not (host.checkout / ".automato-update").exists()
+
+
+def test_bundle_gleicher_kern_aelter_bzw_eigene_linie_abgelehnt(host):
+    """Nie älter (1.18.1) auch mit --bundle: die Abstammung mit den Objekten aus dem Bundle, vor
+    der Sicherung, ohne origin."""
+    c4 = host.commit_im_ursprung("Doku 1")
+    dev4 = f"1.17.0-dev.4.{c4[:7]}"
+    assert host.aktualisieren_auf(c4, dev4, "dev")[0] == 0
+    seite = host.commit_im_ursprung("Seite", von=host.commits["1.17.0"], branch="seite")
+    marke = _origin_unerreichbar(host)
+    host.leeren()
+    # eigene Linie, nur aus dem Bundle bekannt (Voraussetzung 1.17.0 hat der Checkout)
+    bundle = _bundle(host, f"{host.commits['1.17.0']}..seite")
+    latest = f"1.17.0-latest.4.{seite[:7]}"
+    rc, antwort, stderr = host.aktualisieren_auf(seite, latest, "latest", "--bundle", str(bundle))
+    assert rc == 3, stderr
+    _format(antwort, "aktualisieren")
+    assert antwort["meldung"] == (
+        f"{latest} liegt auf einer anderen Linie als {dev4} (weder Vorfahre noch Nachfolger)"
+        " – nichts geändert"
+    )
+    # Vorfahre des laufenden Stands: älter, nur über zurueck
+    voll = _bundle(host, "main", name="main.bundle")
+    rc, antwort, _ = host.aktualisieren_auf(host.commits["1.17.0"], "1.17.0", "stable",
+                                            "--bundle", str(voll))  # fmt: skip
+    assert rc == 3
+    assert antwort["meldung"] == f"1.17.0 ist älter als {dev4} – zurück nur über die Aktion zurueck"
+    assert host.head() == c4 and host.protokoll() == []  # weder Sicherung noch docker
+    assert not marke.exists(), "origin kontaktiert"

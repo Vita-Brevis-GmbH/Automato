@@ -23,6 +23,7 @@ from test_betrieb_script import (  # noqa: F401 - Fixture vorlage
     _git,
     rm,
     vorlage,
+    zaehler,
 )
 
 pytestmark = pytest.mark.skipif(
@@ -174,7 +175,7 @@ class Instanz:
         return out.returncode, json.loads(zeilen[0]), out.stderr
 
     def manifest(self, v: str = "1.16.0") -> tuple[str, Path, Path]:
-        version = f"{v}-dev.{self.commits[v][:7]}"
+        version = f"{v}-dev.{zaehler(v)}.{self.commits[v][:7]}"
         digest = {d: hashlib.sha256((v + d).encode()).hexdigest() for d in DIGEST_DIENSTE}
         images = {d: f"ghcr.io/kunde-a/automato-{d}@sha256:{h}" for d, h in digest.items()}
         roh = rm.erstellen("dev", version, self.commits[v], images, "2026-11-16T12:00:00Z")
@@ -224,7 +225,7 @@ def _env(host: Instanz) -> dict[str, str]:
 
 def test_installieren_legt_instanz_an(host):
     rc, antwort, stderr = host.installieren("--kopplung", CODE.lower())
-    version = f"1.16.0-dev.{host.commits['1.16.0'][:7]}"
+    version = f"1.16.0-dev.{zaehler('1.16.0')}.{host.commits['1.16.0'][:7]}"
     assert rc == 0, stderr
     assert set(antwort) == {"format", "produkt", "aktion", "ok", "meldung", "stand", "instanz"}
     assert antwort["aktion"] == "installieren" and antwort["ok"] is True

@@ -163,6 +163,47 @@ lu_images_lokal_markieren() { # lokale Namen <projekt>-<dienst> auf die gepinnte
   done < <(lu_images_refs "$IMAGES_DATEI")
 }
 
+lu_abstammung() { # $1 laufender Commit, $2 Ziel-Commit -> aelter | neuer | getrennt | gleich |
+  # unbekannt (1.18.1): bei gleichem Versionskern entscheidet die git-Abstammung - nur mit Objekten
+  # im Repo (Checkout bzw. aus dem Bundle geholt), nie mit origin. Ein Vorfahre des laufenden
+  # Stands ist immer im Repo; fehlt ein Commit bzw. ist der Checkout flach (die gemeinsame
+  # Geschichte kann fehlen): unbekannt - dann wie bisher
+  local laufend=${1-} ziel=${2-} rc
+  if ! [[ $laufend =~ ^[0-9a-f]{40}$ && $ziel =~ ^[0-9a-f]{40}$ ]]; then
+    echo unbekannt
+    return 0
+  fi
+  if [ "$laufend" = "$ziel" ]; then
+    echo gleich
+    return 0
+  fi
+  if ! git cat-file -e "$laufend^{commit}" 2>/dev/null 8>&- 9>&- ||
+    ! git cat-file -e "$ziel^{commit}" 2>/dev/null 8>&- 9>&-; then
+    echo unbekannt
+    return 0
+  fi
+  rc=0
+  git merge-base --is-ancestor "$ziel" "$laufend" </dev/null 2>/dev/null 8>&- 9>&- || rc=$?
+  case $rc in
+    0) echo aelter; return 0 ;;
+    1) ;;
+    *) echo unbekannt; return 0 ;;
+  esac
+  rc=0
+  git merge-base --is-ancestor "$laufend" "$ziel" </dev/null 2>/dev/null 8>&- 9>&- || rc=$?
+  case $rc in
+    0) echo neuer ;;
+    1)
+      if [ "$(git rev-parse --is-shallow-repository 2>/dev/null)" = true ]; then
+        echo unbekannt
+      else
+        echo getrennt
+      fi
+      ;;
+    *) echo unbekannt ;;
+  esac
+}
+
 lu_rueckfall() { # Code, Images und Datenbank auf den Stand vor dem letzten Update
   # 0 = Health ok, 1 = Health nicht ok, 2 = ein Schritt gescheitert
   lu_stand_lesen || { echo "FEHLER: kein vorheriges Update gefunden ($STATE)" >&2; return 2; }

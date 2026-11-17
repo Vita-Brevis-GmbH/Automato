@@ -29,6 +29,14 @@ DATEIEN = (
 )
 AUFTRAG = "3f1c2b6e-0000-4000-8000-000000000001"
 VERSIONEN = ("1.15.0", "1.16.0", "1.17.0")
+DEV_BRANCH = "claude/projekt-roadmap-planung-0mk5v0"  # Entwicklungs-Branch = Kanal dev
+
+
+def zaehler(v: str) -> int:
+    """n in <X.Y.Z>-<kanal>.<n>.<sha7> (1.18.1): Commits bis zur Version, je Version einer."""
+    return VERSIONEN.index(v) + 1
+
+
 GIT_ENV = {
     "GIT_AUTHOR_NAME": "Test", "GIT_AUTHOR_EMAIL": "test@example.ch",
     "GIT_COMMITTER_NAME": "Test", "GIT_COMMITTER_EMAIL": "test@example.ch",
@@ -203,7 +211,7 @@ class Host:
 
     def version(self, v: str, kanal: str = "dev") -> str:
         c = self.commits[v]
-        return v if kanal == "stable" else f"{v}-{kanal}.{c[:7]}"
+        return v if kanal == "stable" else f"{v}-{kanal}.{zaehler(v)}.{c[:7]}"
 
     def images(self, v: str) -> dict:
         return {
@@ -212,9 +220,11 @@ class Host:
         }
 
     def manifest(self, v: str, kanal: str = "dev", privat: Path | None = None,
-                 version: str | None = None) -> tuple[str, Path, Path]:  # fmt: skip
+                 version: str | None = None, commit: str | None = None,
+                 ) -> tuple[str, Path, Path]:  # fmt: skip
         version = version or self.version(v, kanal)
-        roh = rm.erstellen(kanal, version, self.commits[v], self.images(v), "2026-11-16T12:00:00Z")
+        roh = rm.erstellen(kanal, version, commit or self.commits[v], self.images(v),
+                           "2026-11-16T12:00:00Z")  # fmt: skip
         auftrag = self.tmp / "auftrag"
         auftrag.mkdir(exist_ok=True, mode=0o700)
         m, s = auftrag / "manifest.json", auftrag / "manifest.sig"
@@ -226,6 +236,26 @@ class Host:
         version, m, s = self.manifest(v, kanal)
         return self.betrieb("aktualisieren", "--version", version, "--manifest", str(m),
                             "--signatur", str(s), **extra)  # fmt: skip
+
+    def commit_im_ursprung(self, name: str, *, von: str | None = None, branch: str = "main") -> str:
+        """Weiterer Commit im Ursprung (VERSION bleibt), auf main bzw. neuer Linie ab `von`."""
+        origin = self.tmp / "origin"
+        if von:
+            _git(origin, "checkout", "-q", "-b", branch, von)
+        else:
+            _git(origin, "checkout", "-q", branch)
+        (origin / "NOTIZ").write_text(name + "\n")
+        _git(origin, "add", "NOTIZ")
+        _git(origin, "commit", "-q", "-m", name)
+        commit = _git(origin, "rev-parse", "HEAD")
+        _git(origin, "checkout", "-q", "main")
+        return commit
+
+    def aktualisieren_auf(self, commit: str, version: str, kanal: str, *mehr: str, **extra: str):
+        """Update auf einen beliebigen Commit (Images wie 1.17.0), z. B. gleicher Kern."""
+        version, m, s = self.manifest("1.17.0", kanal, version=version, commit=commit)
+        return self.betrieb("aktualisieren", "--version", version, "--manifest", str(m),
+                            "--signatur", str(s), *mehr, **extra)  # fmt: skip
 
     def protokoll(self) -> list[str]:
         return self.log.read_text().splitlines()
@@ -244,7 +274,7 @@ def host(vorlage, tmp_path) -> Host:
 
 
 STAND_FELDER = {"version", "commit", "quelle", "kanal", "gesund", "zurueck_moeglich", "vorher",
-                "letzte_sicherung"}  # fmt: skip
+                "letzte_sicherung", "herkunft"}  # fmt: skip
 
 
 def _format(antwort: dict, aktion: str) -> None:
@@ -265,6 +295,7 @@ def test_stand_gebaut_aus_git(host):
     assert antwort["stand"] == {
         "version": "1.15.0", "commit": host.commits["1.15.0"], "quelle": "git", "kanal": None,
         "gesund": True, "zurueck_moeglich": False, "vorher": None, "letzte_sicherung": None,
+        "herkunft": {"branch": "main", "losgeloest": False, "kanal": "latest", "aus": "branch"},
     }  # fmt: skip
     assert f"Auftrag {AUFTRAG}: stand" in stderr
     (host.stub / "health-aus").write_text("")
@@ -282,6 +313,8 @@ def test_aktualisieren_mit_images_per_digest(host):
     stand = antwort["stand"]
     assert stand["version"] == version and stand["commit"] == host.commits["1.16.0"]
     assert stand["quelle"] == "images" and stand["kanal"] == "dev" and stand["gesund"] is True
+    assert stand["herkunft"] == {"branch": None, "losgeloest": True, "kanal": "dev",
+                                 "aus": "manifest"}  # fmt: skip
     assert stand["zurueck_moeglich"] is True
     assert stand["vorher"]["version"] == "1.15.0"
     assert stand["vorher"]["commit"] == host.commits["1.15.0"]
@@ -595,3 +628,121 @@ def test_unerwarteter_abbruch_gibt_trotzdem_eine_antwort(host):
     assert (
         antwort["stand"]["vorher"] is None and antwort["stand"]["commit"] == host.commits["1.15.0"]
     )
+
+
+def test_stand_meldet_herkunft(host):
+    """Branch bzw. losgelöst und Kanal (1.18.1) - das Cockpit wählt damit den Kanal ohne Zutun."""
+
+    def herkunft() -> dict:
+        rc, antwort, stderr = host.betrieb("stand")
+        assert rc == 0, stderr
+        _format(antwort, "stand")
+        return antwort["stand"]["herkunft"]
+
+    def erwartet(branch, kanal, aus) -> dict:
+        return {"branch": branch, "losgeloest": branch is None, "kanal": kanal, "aus": aus}
+
+    # aus git gebaut: Kanal nach Branch, losgelöst nur mit Tag v<VERSION>
+    assert herkunft() == erwartet("main", "latest", "branch")
+    _git(host.checkout, "checkout", "-q", "-b", DEV_BRANCH)
+    assert herkunft() == erwartet(DEV_BRANCH, "dev", "branch")
+    _git(host.checkout, "checkout", "-q", "-b", "andere-arbeit")
+    assert herkunft() == erwartet("andere-arbeit", "unbekannt", None)
+    _git(host.checkout, "checkout", "-q", "--detach")
+    assert herkunft() == erwartet(None, "unbekannt", None)
+    _git(host.checkout, "tag", "v1.15.0")
+    assert herkunft() == erwartet(None, "stable", "tag")
+    # aus dem Manifest: dessen Kanal; ohne Kanal-Zeile nach dem Suffix der Version
+    _git(host.checkout, "checkout", "-q", "main")
+    assert host.aktualisieren("1.16.0", kanal="stable")[0] == 0
+    assert herkunft() == erwartet(None, "stable", "manifest")
+    datei = host.checkout / ".automato-images.env"
+    zeilen = [z for z in datei.read_text().splitlines() if "MANIFEST_KANAL=" not in z]
+    neu = f"AUTOMATO_MANIFEST_VERSION=1.16.0-latest.2.{host.commits['1.16.0'][:7]}"
+    datei.write_text("\n".join(neu if "MANIFEST_VERSION=" in z else z for z in zeilen) + "\n")
+    assert herkunft() == erwartet(None, "latest", "version")
+
+
+def test_gleicher_kern_nie_aelter(host):
+    """Nie älter, auch bei gleichem Kern (1.18.1): im selben Kanal entscheidet n, sonst (anderer
+    Kanal, stable gegen dev) die Abstammung im Checkout - Vorfahre des laufenden Stands = älter."""
+    c4 = host.commit_im_ursprung("Doku 1")
+    c5 = host.commit_im_ursprung("Doku 2")
+    assert host.aktualisieren("1.17.0", kanal="stable")[0] == 0
+    # Nachfolger mit gleichem Kern: angenommen
+    dev5 = f"1.17.0-dev.5.{c5[:7]}"
+    rc, antwort, stderr = host.aktualisieren_auf(c5, dev5, "dev")
+    assert rc == 0, stderr
+    assert host.head() == c5 and antwort["meldung"] == f"1.17.0 → {dev5}, Health ok"
+    host.leeren()
+    aelter = "ist älter als {} – zurück nur über die Aktion zurueck"
+    # stable 1.17.0 ist Vorfahre des laufenden Stands (vergleichen allein sagte „neuer“)
+    rc, antwort, _ = host.aktualisieren_auf(host.commits["1.17.0"], "1.17.0", "stable")
+    assert rc == 3 and antwort["meldung"] == "1.17.0 " + aelter.format(dev5)
+    # selber Kanal, kleineres n: älter schon nach der Version
+    rc, antwort, _ = host.aktualisieren_auf(c4, f"1.17.0-dev.4.{c4[:7]}", "dev")
+    assert rc == 3 and antwort["meldung"] == f"1.17.0-dev.4.{c4[:7]} " + aelter.format(dev5)
+    # anderer Kanal, Vorfahre: älter
+    rc, antwort, _ = host.aktualisieren_auf(c4, f"1.17.0-latest.4.{c4[:7]}", "latest")
+    assert rc == 3 and antwort["meldung"] == f"1.17.0-latest.4.{c4[:7]} " + aelter.format(dev5)
+    assert host.head() == c5 and host.protokoll() == []  # weder Sicherung noch docker
+    assert antwort["stand"]["version"] == dev5
+
+
+def test_gleicher_kern_getrennte_linie_abgelehnt(host):
+    """Eine eigene Linie mit gleichem Kern (weder Vorfahre noch Nachfolger) wird abgelehnt - kennt
+    der Checkout den Commit erst nach dem Holen, vor dem Umstellen."""
+    c4 = host.commit_im_ursprung("Doku 1")
+    dev4 = f"1.17.0-dev.4.{c4[:7]}"
+    assert host.aktualisieren_auf(c4, dev4, "dev")[0] == 0
+    seite = host.commit_im_ursprung("Seite", von=host.commits["1.17.0"], branch="seite")
+    host.leeren()
+    latest = f"1.17.0-latest.4.{seite[:7]}"
+    rc, antwort, stderr = host.aktualisieren_auf(seite, latest, "latest")
+    assert rc == 3, stderr
+    assert antwort["meldung"] == (
+        f"{latest} liegt auf einer anderen Linie als {dev4} (weder Vorfahre noch Nachfolger)"
+        f" – nichts umgestellt, läuft auf {dev4}"
+    )
+    assert host.head() == c4 and antwort["stand"]["version"] == dev4
+    assert not [z for z in host.protokoll() if "pull" in z or " up " in z or "restore" in z]
+    assert dev4 in (host.checkout / ".automato-images.env").read_text()
+    # jetzt im Checkout: abgelehnt, bevor etwas geschieht (auch gleiches n im selben Kanal)
+    host.leeren()
+    rc, antwort, _ = host.aktualisieren_auf(seite, f"1.17.0-dev.4.{seite[:7]}", "dev")
+    assert rc == 3
+    assert antwort["meldung"].endswith("(weder Vorfahre noch Nachfolger) – nichts geändert")
+    assert host.head() == c4 and host.protokoll() == []
+
+
+def test_abstammung_im_repo_auch_flach(vorlage, tmp_path):
+    """lu_abstammung (deploy/lib-update.sh): nur mit Objekten im Repo; flach nie „getrennt“."""
+    basis, commits, _ = vorlage
+    origin = tmp_path / "origin"
+    shutil.copytree(basis / "origin", origin, symlinks=True)
+    c1, c2, c3 = (commits[v] for v in VERSIONEN)
+    _git(origin, "checkout", "-q", "-b", "seite", c2)
+    (origin / "NOTIZ").write_text("seite\n")
+    _git(origin, "add", "NOTIZ")
+    _git(origin, "commit", "-q", "-m", "seite")
+    seite = _git(origin, "rev-parse", "HEAD")
+    _git(origin, "checkout", "-q", "main")
+
+    def abstammung(repo: Path, laufend: str, ziel: str) -> str:
+        skript = '. "$0"; lu_abstammung "$1" "$2"'
+        out = subprocess.run(["bash", "-c", skript, str(REPO / "deploy/lib-update.sh"),  # noqa: S603, S607
+                              laufend, ziel], cwd=repo, capture_output=True, text=True,
+                             env={**os.environ, **GIT_ENV}, check=True)  # fmt: skip
+        return out.stdout.strip()
+
+    assert abstammung(origin, c3, c1) == "aelter"
+    assert abstammung(origin, c1, c3) == "neuer"
+    assert abstammung(origin, c3, seite) == "getrennt"
+    assert abstammung(origin, c3, c3) == "gleich"
+    assert abstammung(origin, c3, "0" * 40) == "unbekannt"  # nicht im Repo
+    assert abstammung(origin, c3, "HEAD") == "unbekannt"  # nur volle Commits
+    flach = tmp_path / "flach"
+    _git(tmp_path, "clone", "-q", "--depth", "1", "--branch", "main", f"file://{origin}", "flach")
+    _git(flach, "fetch", "-q", "--depth", "1", "origin", "seite")
+    assert abstammung(flach, c3, seite) == "unbekannt"
+    assert abstammung(flach, c3, c1) == "unbekannt"  # fehlt im flachen Checkout
