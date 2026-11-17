@@ -131,6 +131,7 @@ def test_lauf(monkeypatch):
     result = tasks.collect_once("run-eos", target)
     assert result.status == "completed"
     # 1.9.0: Dauer des Laufs in der Meldung
-    assert re.fullmatch(r"Switches: 1 gelesen \(Arista EOS\) · Dauer \d+ s", result.message)
+    assert re.fullmatch(r"Switches: 1 gelesen \(Arista EOS\) · Transceiver: 1 an 1 Switches · "
+                        r"Dauer \d+ s", result.message)  # fmt: skip
     assert result.inventory.devices[0].name == "leaf-ar-01"
     assert any(a.ip == "2001:db8:10::21" for a in result.inventory.arps)

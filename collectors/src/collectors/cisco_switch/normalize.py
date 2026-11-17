@@ -538,6 +538,7 @@ def normalize(raw: dict) -> NetworkInventory:
             )
         inv.interfaces += named
         inv.neighbors += part.neighbors
+        _transceivers(inv, part, sw)  # Transceiver je Port (1.19.0), SNMPv3 ausgewiesen
         inv.macs += part.macs
         inv.arps += part.arps
         inv.subnets += part.subnets  # Junos: Netze der Interface-Adressen (0.68.0)
@@ -545,3 +546,11 @@ def normalize(raw: dict) -> NetworkInventory:
             seen_vlans.setdefault(v.vid, v)
     inv.vlans = sorted(seen_vlans.values(), key=lambda v: v.vid)
     return inv
+
+
+def _transceivers(inv: NetworkInventory, part: NetworkInventory, sw: dict) -> None:
+    """Transceiver eines Switches (1.19.0, `transceiver.py`): je Plattform aus `show inventory`
+    bzw. `show interface(s) transceiver`, Junos aus `show chassis hardware`; SNMPv3 ausgewiesen."""
+    from collectors.cisco_switch import transceiver
+
+    transceiver.add(inv, part, sw)

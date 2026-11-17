@@ -41,7 +41,7 @@ import time
 import paramiko
 from sot_gateway.readonly import ReadOnlyViolation
 
-from collectors.cisco_switch import routing
+from collectors.cisco_switch import routing, transceiver
 from collectors.common.i18n import L
 
 # Feste Befehle je Plattform - nur lesend; `show version` erkennt die Plattform
@@ -128,7 +128,7 @@ COMMANDS: dict[str, tuple[str, ...]] = {
         "show ipv6 neighbors all-vrfs",
     ),
 }
-ALLOWED = frozenset(c for cmds in COMMANDS.values() for c in cmds) | routing.ALL
+ALLOWED = frozenset(c for cmds in COMMANDS.values() for c in cmds) | routing.ALL | transceiver.ALL
 # nur in der begrenzten Sitzung: Seitenumbruch fuer diese Sitzung aus (keine Konfiguration)
 SESSION: dict[str, str] = {"cbs": "terminal datadump", "ios": "terminal length 0",
                            "nxos": "terminal length 0", "eos": "terminal length 0",
