@@ -133,6 +133,12 @@ class FindingType(enum.StrEnum):
     # Nachkontrolle des NetBox-Syncs (0.115.0, ADR 0042): nach dem Uebernehmen steht ein
     # geschriebenes Objekt nicht so in NetBox (fehlt, Felder anders, nicht geloescht)
     NETBOX_SYNC_MISMATCH = "netbox_sync_mismatch"
+    # IPsec-Tunnel (1.19.0, ADR 0063, `store/vpn`): Tunnel bzw. eine Phase 2 down; ein
+    # Phase-2-Selektor deckt eine Route ueber den Tunnel nur teilweise; Route ueber den Tunnel
+    # ohne passenden Selektor (der Verkehr dorthin geht nicht durch den Tunnel)
+    VPN_TUNNEL_DOWN = "vpn_tunnel_down"
+    VPN_SELECTOR_PARTIAL = "vpn_selector_partial"
+    VPN_ROUTE_NO_SELECTOR = "vpn_route_no_selector"
 
 
 class Severity(enum.StrEnum):

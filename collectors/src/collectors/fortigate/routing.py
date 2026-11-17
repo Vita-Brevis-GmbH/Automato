@@ -54,6 +54,10 @@ TABLE_LABELS = {
     "route_maps": "Route-Maps",
     "access_lists4": "Access-Listen IPv4",
     "access_lists6": "Access-Listen IPv6",
+    # IPsec (1.19.0, ADR 0063, `fortigate/vpn.py`)
+    "ipsec_phase1": "IPsec Phase 1",
+    "ipsec_phase2": "IPsec Phase 2",
+    "ipsec_status": "IPsec-Zustand",
 }
 
 _PROTOCOL = {"connect": "connected", "connected": "connected"}
@@ -436,6 +440,9 @@ def normalize(
             inv.bgp.append(process)
         inv.bgp += bgp_filters(raw, node, vdom)
         _attach_config(inv.peers, neighbors, node, vdom)
+        from collectors.fortigate import vpn  # IPsec (1.19.0, ADR 0063) - nutzt `prefix`
+
+        inv.vpn += vpn.tunnels(raw, v, node, vdom)
     if global_ha:
         cluster = ha(global_ha.get("ha"), global_ha.get("peers"), global_ha.get("sync"), node)
         if cluster is not None:

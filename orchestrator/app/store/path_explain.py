@@ -447,6 +447,17 @@ class Explainer:
         out = (f" über {iface}" if iface else "") + (f" (Zone {zone})" if zone else "")
         out_en = (f" via {iface}" if iface else "") + (f" (zone {zone})" if zone else "")
         via = target.get("via") or ""
+        vpn = egress.get("vpn") or {}
+        if vpn:  # IPsec-Tunnel (1.19.0, ADR 0063): durch den Tunnel zur gelesenen Gegenstelle
+            gw = vpn.get("remote_gw") or "?"
+            return _step(
+                "next_hop",
+                OK,
+                L(f"Weiter durch VPN {vpn.get('name')} (Gegenstelle {gw}) zu {target['label']}: "
+                  f"{via}",
+                  f"Onward through VPN {vpn.get('name')} (peer {gw}) to {target['label']}: "
+                  f"{via}"),
+            )  # fmt: skip
         if nh:
             owner = next((i for k, i, _z in self.g.owners().get(nh, [])
                           if paths.parse_key(target.get("key")) == k), None)  # fmt: skip
@@ -481,6 +492,20 @@ class Explainer:
                 L(
                     "Der Weg verlässt das gelesene Netz über eine erfasste Anbindung.",
                     "The path leaves the network read via a captured exit.",
+                ),
+            )
+        if kind == "vpn":  # 1.19.0 (ADR 0063): Gegenstelle eines IPsec-Tunnels nicht gelesen
+            return _step(
+                "end",
+                INFO,
+                text,
+                L(
+                    "Der Weg verlässt das gelesene Netz durch einen VPN-Tunnel. Ist die "
+                    "Gegenstelle eine FortiGate, sie einlesen – dann geht der Weg dort weiter; "
+                    "sonst den Tunnel als Anbindung erfassen.",
+                    "The path leaves the network read through a VPN tunnel. If the peer is a "
+                    "FortiGate, collect it – the path then continues there; otherwise capture "
+                    "the tunnel as an exit.",
                 ),
             )
         if kind == "external":

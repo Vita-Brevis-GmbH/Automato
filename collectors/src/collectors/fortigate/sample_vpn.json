@@ -1,0 +1,104 @@
+{
+  "phase1": [
+    {
+      "name": "vpn-kunde-b",
+      "type": "static",
+      "interface": "port1",
+      "ike-version": "2",
+      "remote-gw": "203.0.113.20",
+      "local-gw": "0.0.0.0",
+      "proposal": "aes256gcm-prfsha384",
+      "dhgrp": "20",
+      "net-device": "disable",
+      "psksecret": "ENC beispiel-nicht-uebernommen",
+      "comments": "Standort Kunde B"
+    },
+    {
+      "name": "vpn-partner",
+      "type": "static",
+      "interface": "port1",
+      "ike-version": "1",
+      "remote-gw": "198.51.100.77",
+      "proposal": "aes256-sha256",
+      "dhgrp": "14",
+      "mode": "main",
+      "psksecret": "ENC beispiel-nicht-uebernommen"
+    },
+    {
+      "name": "dialup-aussen",
+      "type": "dynamic",
+      "interface": "port1",
+      "ike-version": "2",
+      "proposal": "aes256-sha256",
+      "dhgrp": "20",
+      "net-device": "disable",
+      "add-route": "enable",
+      "psksecret": "ENC beispiel-nicht-uebernommen"
+    }
+  ],
+  "phase2": [
+    {
+      "name": "vpn-kunde-b-p2",
+      "phase1name": "vpn-kunde-b",
+      "proposal": "aes256gcm",
+      "pfs": "enable",
+      "src-addr-type": "subnet",
+      "src-subnet": "10.10.10.0 255.255.255.0",
+      "dst-addr-type": "subnet",
+      "dst-subnet": "10.200.0.0 255.255.0.0"
+    },
+    {
+      "name": "vpn-partner-p2",
+      "phase1name": "vpn-partner",
+      "proposal": "aes256-sha256",
+      "src-addr-type": "name",
+      "src-name": "G_web-servers",
+      "dst-addr-type": "subnet",
+      "dst-subnet": "192.0.2.128 255.255.255.192"
+    },
+    {
+      "name": "dialup-aussen-p2",
+      "phase1name": "dialup-aussen",
+      "proposal": "aes256-sha256",
+      "src-addr-type": "subnet",
+      "src-subnet": "0.0.0.0 0.0.0.0",
+      "dst-addr-type": "subnet",
+      "dst-subnet": "0.0.0.0 0.0.0.0"
+    }
+  ],
+  "status": [
+    {
+      "name": "vpn-kunde-b",
+      "rgwy": "203.0.113.20",
+      "type": "automatic",
+      "proxyid": [
+        {
+          "p2name": "vpn-kunde-b-p2",
+          "status": "up",
+          "proxy_src": [{"subnet": "10.10.10.0/255.255.255.0"}],
+          "proxy_dst": [{"subnet": "10.200.0.0/255.255.0.0"}]
+        }
+      ]
+    },
+    {
+      "name": "vpn-partner",
+      "rgwy": "198.51.100.77",
+      "type": "automatic",
+      "proxyid": [{"p2name": "vpn-partner-p2", "status": "down"}]
+    },
+    {
+      "name": "dialup-aussen_0",
+      "parent": "dialup-aussen",
+      "rgwy": "192.0.2.150",
+      "type": "dialup",
+      "proxyid": [
+        {
+          "p2name": "dialup-aussen-p2",
+          "status": "up",
+          "proxy_src": [{"subnet": "0.0.0.0/0.0.0.0"}],
+          "proxy_dst": [{"subnet": "10.77.0.0/255.255.255.0"}]
+        }
+      ]
+    }
+  ]
+}

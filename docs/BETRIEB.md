@@ -839,6 +839,27 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     - Kunde oben: Router-Kontexte sind geteilt und gehören zum Ausschnitt, wenn sie ein Netz des
       Kunden routen; Kunden-Benutzer sehen in der Doku „Router“. Der Verlauf des Routings nimmt
       die Router mit.
+- **VPN-Tunnel** (1.19.0, ADR 0063, Modul Analyse): die IPsec-Tunnel der FortiGates im
+  Interface-Modus, nur gelesen mit dem Routing (SSL-VPN nicht). Je Tunnel Firewall/VDOM, Art
+  (statisch, Dial-up, DDNS), Gegenstelle – mit der gelesenen FortiGate dort bzw. „nicht gelesen –
+  der Weg endet hier“ –, gebundenes Interface, IKE-Version, Zustand (up, teilweise, down, keine
+  Gegenstelle verbunden, unbekannt), Phase 2 up/gesamt und die Routen über den Tunnel mit
+  „ohne Selektor“ bzw. „teilweise“. Klick öffnet das Detail: Phase 2 mit den Selektoren (Namen
+  aufgelöst), bei Dial-up die verbundenen Gegenstellen, die Routen über den Tunnel mit „gedeckt“,
+  „nur teilweise“ bzw. „kein Selektor“ und die Netze dahinter (aus Phase 2, Dial-up und Routen).
+  - **Recht:** das Profil des REST-API-Benutzers braucht `set vpngrp read`
+    (`collectors/fortigate/LAB.md`). Fehlt es, steht „IPsec nicht lesbar …“ oben in der Ansicht,
+    im Lauf („Routing nicht lesbar: IPsec Phase 1 (HTTP 403)“) und in der Datenqualität; der
+    Zustand ist dann unbekannt (kein Befund „down“).
+  - **Weg-Suche und Verbindungen:** der Tunnel steht als Chip am Ausgang des Hops („VPN vpn-b →
+    Gegenstelle“, Klick öffnet ihn hier). Gehört die Gegenstelle einer gelesenen FortiGate, geht
+    der Weg dort weiter (Eingang = ihr Tunnel); sonst endet er mit „VPN-Gegenstelle“ – in den
+    Verbindungen gezählt, die Applikation ist dann „unvollständig geprüft“. Abhilfe: die FortiGate
+    der Gegenstelle einlesen oder den Tunnel als Anbindung (Partner) erfassen – „Als Anbindung
+    erfassen“ am Weg füllt Interface und Gegenstelle vor. Im Netzwerkplan ist der Tunnel ein
+    eigener Knoten zwischen den Firewalls.
+  - **Befunde** (Prüfung „VPN-Tunnel (IPsec)“): Tunnel bzw. Phase 2 down, Selektor deckt eine
+    Route über den Tunnel nur teilweise, Route über den Tunnel ohne passenden Selektor.
 - **Verkabelung** (0.62.0, ADR 0025): welches Gerät an welchem Port welches anderen hängt –
   abgeleitet aus CDP/LLDP aller gelesenen Geräte (Switches & Router, ACI-Leafs), nichts von Hand.
   Seit 0.68.0 auch Catalyst 1200/1300 und Juniper MX/EX/QFX; ein MX steht als **Router** da
@@ -2709,7 +2730,8 @@ Client-Zertifikat und die passenden Zeilen der `agent.env`.
 
 - **Lauf mit „Routing nicht lesbar: … (HTTP 403)“** (ab 0.16.0) — Regeln und Objekte sind
   eingelesen, aber dem Konto fehlt das Leserecht auf diese Routing-Tabelle (FortiGate: Profil
-  mit Router/System lesen; APIC: Fabric-Knoten lesen). Unter **Routing** steht der
+  mit Router/System lesen, seit 1.19.0 für „IPsec …“ auch VPN lesen `vpngrp`; APIC:
+  Fabric-Knoten lesen). Unter **Routing** steht der
   Kontext dann als nicht lesbar. Recht ergänzen und neu einlesen. „zu gross“ heisst: mehr als
   50 000 Einträge (z. B. volle Internet-Tabelle per BGP) – diese Tabelle wird nicht übernommen.
 

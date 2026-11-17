@@ -274,6 +274,10 @@ class FortiGateClient:
             "route_maps": lambda: self._get("router/route-map", vdom),
             "access_lists4": lambda: self._get("router/access-list", vdom),
             "access_lists6": lambda: self._get("router/access-list6", vdom),
+            # IPsec (1.19.0, ADR 0063): Phase 1/2 im Interface-Modus und Zustand der Tunnel
+            "ipsec_phase1": lambda: self._get("vpn.ipsec/phase1-interface", vdom),
+            "ipsec_phase2": lambda: self._get("vpn.ipsec/phase2-interface", vdom),
+            "ipsec_status": lambda: self._monitor_rows("vpn/ipsec", vdom),
         }
         out: dict[str, Any] = {"missing": []}
         for key, read in reads.items():
