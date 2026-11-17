@@ -125,7 +125,7 @@ def test_vorschau_leer_gleich_abweichend_mehrdeutig_unbekannt(client, netbox):
     actions = {k: i["action"] for k, i in rows.items()}
     assert actions == {
         "10.20.0.5": "update",  # leer -> setzen (der Alias www zaehlt nicht)
-        "10.20.0.7": "confirm",  # abweichend -> nur nach Bestaetigung
+        "10.20.0.7": "update",  # abweichend -> nur nach Bestaetigung (`confirm`)
         "10.20.0.8": "ambiguous",  # zwei A-Records, kein PTR
         "10.20.0.9": "update",  # zwei A-Records, der PTR entscheidet
         "10.20.0.12": "ambiguous",  # zweimal in NetBox (VRF A, VRF B)
@@ -134,10 +134,12 @@ def test_vorschau_leer_gleich_abweichend_mehrdeutig_unbekannt(client, netbox):
     }, actions
     # gleich (auch wenn NetBox einen von mehreren A-Records traegt) nur gezaehlt
     assert plan["summary"]["dns_name"] == {
-        "create": 0, "update": 3, "unchanged": 2, "conflict": 0, "delete": 0, "obsolete": 0,
-        "confirm": 1, "ambiguous": 3,
+        "create": 0, "update": 4, "unchanged": 2, "conflict": 0, "delete": 0, "obsolete": 0,
+        "ambiguous": 3,
     }  # fmt: skip
-    assert plan["totals"]["confirm"] == 1 and plan["can_apply"]
+    assert plan["can_apply"]
+    # nur die Abweichung braucht die Bestaetigung (wie die Kabelnummern)
+    assert {k for k, i in rows.items() if i.get("confirm")} == {"10.20.0.7"}
     assert rows["10.20.0.5"]["changes"] == [
         {"field": "dns_name", "old": "", "new": "app01.example.ch"}
     ]
@@ -164,7 +166,9 @@ def test_vorschau_leer_gleich_abweichend_mehrdeutig_unbekannt(client, netbox):
     assert any("1 IPs gehören in NetBox einem anderen Mandanten" in w for w in warnings)
     assert "10.20.0.11" not in rows and "10.20.0.99" not in rows
     # Filter der Vorschau
-    assert set(_dns_items(client, plan["id"], action="confirm")) == {"10.20.0.7"}
+    assert set(_dns_items(client, plan["id"], action="ambiguous")) == {
+        "10.20.0.8", "10.20.0.12", "10.30.0.5"
+    }  # fmt: skip
     # Englisch: Art, Bezeichnung und Hinweise
     en = client.get(f"/netbox-sync/plans/{plan['id']}", headers=ADMIN_EN).json()
     assert any(w.startswith("DNS names from the AD: 1 A records point to IPs that NetBox does")
@@ -200,17 +204,17 @@ def test_uebernehmen_nur_bestaetigte_abweichungen(client, netbox, session_factor
     assert ("POST", "ipam/ip-addresses") not in {(m, p) for m, p, _ in netbox.writes}
 
     plan = _plan(client, ids, sections=["dns"])  # die Abweichung steht weiter zur Auswahl
-    assert plan["totals"]["update"] == 0 and plan["totals"]["confirm"] == 1
-    assert plan["can_apply"]
+    assert plan["totals"]["update"] == 1 and plan["can_apply"]
+    assert _dns_items(client, plan["id"], action="update")["10.20.0.7"]["confirm"]
     # ohne Auswahl nichts zu tun; nur Abweichungen des Plans lassen sich bestaetigen
     url = f"/netbox-sync/plans/{plan['id']}/apply"
-    assert client.post(url, headers=ADMIN).status_code == 409
-    r = client.post(url, json={"confirm": ["10.20.0.8"]}, headers=ADMIN)
-    assert r.status_code == 422, r.text
+    r = client.post(url, headers=ADMIN)
+    assert r.status_code == 409 and "confirm" in r.text
+    assert client.post(url, json={"confirm": ["10.20.0.8"]}, headers=ADMIN).status_code == 409
     r = client.post(url, json={"confirm": ["10.20.0.7"]}, headers=ADMIN)
     assert r.status_code == 202, r.text
     done = client.get(f"/netbox-sync/plans/{plan['id']}", headers=ADMIN).json()
-    assert done["status"] == "applied" and done["options"]["confirmed"] == ["10.20.0.7"]
+    assert done["status"] == "applied" and done["options"]["confirm"] == ["10.20.0.7"]
     assert done["verification"]["deviation_count"] == 0 and done["verification"]["checked"] == 1
     db = find("ipam/ip-addresses", address="10.20.0.7/24")
     assert db["dns_name"] == "db01.example.ch" and db["tags"] == [
@@ -221,10 +225,11 @@ def test_uebernehmen_nur_bestaetigte_abweichungen(client, netbox, session_factor
                if a.action == "netbox_sync.applied"}  # fmt: skip
     s.close()
     assert applied[str(plan["id"])]["dns_confirmed"] == 1
+    assert applied[str(plan["id"])]["labels_confirmed"] == 0
     assert applied[str(plan["id"])]["update"] == 1
 
     again = _plan(client, ids, sections=["dns"])  # stabil
-    assert again["totals"]["update"] == again["totals"]["confirm"] == 0
+    assert again["totals"]["update"] == 0
     assert again["totals"]["ambiguous"] == 3 and not again["can_apply"]
 
 

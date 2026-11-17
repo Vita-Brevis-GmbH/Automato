@@ -174,6 +174,28 @@ class NormalizedNeighbor(BaseModel):
     remote_description: str | None = None
 
 
+class NormalizedTransceiver(BaseModel):
+    """Transceiver (SFP, SFP+, QSFP …) an einem Port eines Switches (1.19.0, nur lesend): Typ,
+    Hersteller und Teilenummer, soweit das Geraet sie nennt, und die Seriennummer."""
+
+    device: str
+    port: str  # Kurzform wie die Ports (Gi1/0/49, Eth1/1, xe-0/0/0, 1/1/49)
+    type: str | None = None  # z. B. SFP-10GBase-SR, 10Gbase-SR, SFP+SR
+    vendor: str | None = None
+    part: str | None = None  # Teilenummer (Cisco-PID bzw. Part Number)
+    serial: str | None = None
+
+
+class NormalizedTransceiverRead(BaseModel):
+    """Lesestatus der Transceiver je Switch (1.19.0): gelesen, nicht lesbar (Befehl gescheitert)
+    bzw. nicht unterstuetzt (Plattform bzw. Zugang SNMPv3) - gezaehlt statt still weggelassen."""
+
+    device: str
+    status: str = "read"  # read | unreadable | unsupported
+    count: int = 0
+    note: str | None = None
+
+
 class NormalizedMac(BaseModel):
     """Eintrag der MAC-Adress-Tabelle eines Switches (0.63.0): wo die MAC gelernt ist."""
 
@@ -275,6 +297,10 @@ class NetworkInventory(BaseModel):
     # ACI-Route-Leaking zwischen VRFs (0.44.0): {vrf, prefix, to: [Tenant:VRF], external}
     vrf_leaks: list[dict] = Field(default_factory=list)
     neighbors: list[NormalizedNeighbor] = Field(default_factory=list)  # CDP/LLDP (0.62.0)
+    # Transceiver der Switches und Lesestatus je Switch (1.19.0); None = nicht geliefert (andere
+    # Quellen, aeltere Agenten)
+    transceivers: list[NormalizedTransceiver] | None = None
+    transceiver_reads: list[NormalizedTransceiverRead] | None = None
     macs: list[NormalizedMac] = Field(default_factory=list)  # MAC-Tabelle (0.63.0)
     arps: list[NormalizedArp] = Field(default_factory=list)  # ARP (0.63.0)
     # Spanning Tree der Switches (1.19.0); None = nicht geliefert (andere Quellen, aeltere

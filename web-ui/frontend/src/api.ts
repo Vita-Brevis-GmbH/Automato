@@ -1118,9 +1118,10 @@ export interface SyncItem {
   kind: string;
   key: string;
   label: string;
-  action: string; // create | update | conflict | delete | obsolete | confirm | ambiguous (DNS-Namen)
+  action: string; // create | update | conflict | delete | obsolete | ambiguous (DNS-Namen, 1.19.0)
   id?: number | null; // null: Ziel wird im selben Sync angelegt (Applikations-Tags)
   manual?: boolean;
+  confirm?: boolean; // 1.19.0: Kabelnummer bzw. abweichender DNS-Name – nur übernommen, wenn bestätigt
   changes?: SyncChange[];
   fields?: Record<string, unknown>;
   dns?: SyncDns; // DNS-Namen aus dem AD (1.19.0)
@@ -1160,7 +1161,7 @@ export interface SyncPlan {
   target: string;
   target_url: string;
   status: string; // planning | ready | applying | applied | failed | superseded
-  options: { sections?: SyncSection[]; allow_delete?: boolean; confirmed?: string[] };
+  options: { sections?: SyncSection[]; allow_delete?: boolean; confirm?: string[] }; // confirm: 1.19.0
   summary: Record<string, Record<string, number>> | null;
   totals: Record<string, number>;
   warnings: string[];
@@ -2451,9 +2452,9 @@ export const fetchSyncItems = (
   id: number,
   params: { action?: string; kind?: string; q?: string; limit?: number; offset?: number } = {},
 ) => getJSON<Paged<SyncItem>>(`/api/netbox-sync/plans/${id}/items${qs({ ...params, q: params.q?.trim() })}`);
-// `confirm`: bestätigte abweichende DNS-Namen (IPs, 1.19.0) – nur sie werden überschrieben
-export const applySyncPlan = (id: number, confirm: string[] = []) =>
-  sendJSON<SyncPlan>(`/api/netbox-sync/plans/${id}/apply`, "POST", { confirm });
+// 1.19.0: `confirm` = bestätigte Kabelnummern (Schlüssel der Aktionen `cable_label`) bzw. abweichende DNS-Namen (IPs)
+export const applySyncPlan = (id: number, confirm?: string[]) =>
+  sendJSON<SyncPlan>(`/api/netbox-sync/plans/${id}/apply`, "POST", confirm?.length ? { confirm } : undefined);
 // Laufende Vorschau/Übernahme beenden (hängt z. B. nach einem Neustart des Orchestrators)
 export const cancelSyncPlan = (id: number) => sendJSON<SyncPlan>(`/api/netbox-sync/plans/${id}/cancel`, "POST");
 

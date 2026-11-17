@@ -84,11 +84,13 @@ der NetBox-Sync (Vorschau → Übernehmen, ADR 0010); neu ist, was er schreibt.
    Aliase per CNAME zählen nie als Name. Gleich heisst ohne Gross-/Kleinschreibung; trägt NetBox
    bei einer mehrdeutigen IP einen ihrer A-Records, ist das „gleich“.
 5. **Leer → setzen, abweichend → nur nach Bestätigung je Eintrag.** Leerer `dns_name` in NetBox:
-   Aktion `update`, wird mit „Übernehmen“ geschrieben. Abweichender Name: Aktion `confirm`, die
-   Vorschau zeigt beide Werte; `POST /netbox-sync/plans/{id}/apply` nimmt `confirm` (Liste der IPs).
-   Nur sie werden überschrieben, alle anderen bleiben in NetBox, wie sie sind. Die Abweichungen
-   stehen im Fingerabdruck: ändert sich ein Name nach der Vorschau, wird nichts geschrieben. Die
-   Anzahl der Bestätigungen steht im Audit (`dns_confirmed`), die IPs am Plan (`confirmed`).
+   Aktion `update`, wird mit „Übernehmen“ geschrieben. Abweichender Name: Aktion `update` mit
+   `confirm` – derselbe Weg wie die Kabelnummern (ADR 0031 Nachtrag 1.19.0). Die Vorschau zeigt
+   beide Werte; `POST /netbox-sync/plans/{id}/apply` nimmt `confirm` (Liste der IPs bzw.
+   Kabel). Nur sie werden überschrieben, alle anderen bleiben in NetBox, wie sie sind. Die
+   Abweichungen stehen im Fingerabdruck: ändert sich ein Name nach der Vorschau, wird nichts
+   geschrieben. Die Anzahl der Bestätigungen steht im Audit (`dns_confirmed`, neben
+   `labels_confirmed`), die Schlüssel am Plan (`confirm`).
 6. **Ein Abschnitt entscheidet:** für IPs mit A-Record fällt `dns_name` aus dem Soll der anderen
    Abschnitte weg (Firewall-Objekte). Legt ein anderer Abschnitt die IP im selben Sync erst an,
    bekommt sie den Namen gleich beim Anlegen (ohne eindeutigen Namen keinen, Hinweis). Das
@@ -113,8 +115,9 @@ der NetBox-Sync (Vorschau → Übernehmen, ADR 0010); neu ist, was er schreibt.
 
 - Gegenüber dem AD bleibt alles nur lesend (Zonentransfer). Geschrieben wird nur nach NetBox, mit
   dem Schreib-Token der Ziel-NetBox, über die Vorschau.
-- Neue Aktionen der Vorschau `confirm` und `ambiguous`. „Übernehmen“ ist auch ohne andere
-  Änderungen möglich, sobald eine Abweichung bestätigt ist.
+- Neue Aktion der Vorschau `ambiguous` (mehrdeutig, nie geschrieben). Stehen nur unbestätigte
+  Abweichungen an, gibt es nichts zu übernehmen (HTTP 409, „Übernehmen“ in der Oberfläche
+  gesperrt, bis etwas bestätigt ist).
 - Keine Migration (Befund-Typen als Text).
 - Verworfen:
   - Abweichungen ohne Bestätigung überschreiben. Ein von Hand gepflegter Name kann richtig sein.

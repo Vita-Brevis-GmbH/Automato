@@ -94,9 +94,11 @@ def collect_references(
         if batch:
             submit_references(run_id, ReferenceBatch(records=batch), via_agent=via_agent)
             total += len(batch)
-        result = CollectorResult(
-            status="completed", reference_count=total, message=f"{total} Referenzeintraege gelesen"
-        )
+        message = f"{total} Referenzeintraege gelesen"
+        notes = getattr(adapter, "notes", None) or []  # NetBox: Kabel nicht lesbar (1.19.0)
+        if notes:
+            message += f" · Hinweise: {'; '.join(notes)}"
+        result = CollectorResult(status="completed", reference_count=total, message=message)
     except Exception as exc:  # noqa: BLE001 - Fehler sichtbar an die interne API melden
         result = CollectorResult(
             status="failed", reference_count=total, message=diagnose.device_error(exc, platform)

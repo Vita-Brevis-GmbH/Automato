@@ -154,6 +154,11 @@ EOS = {
         "imageOptimization": "Strata-4GB", "bootupTimestamp": 1754000000.0, "uptime": 7500000.0,
         "memTotal": 8099732, "memFree": 6243124, "isIntlVersion": False}),
     "show hostname | json": _json({"hostname": "leaf-ar-01", "fqdn": "leaf-ar-01.example.ch"}),
+    # Transceiver (1.19.0): Schacht 49 (QSFP, erste Lane Eth49/1), Schacht 1 leer
+    "show inventory | json": _json({"xcvrSlots": {
+        "1": {"mfgName": "Not Present", "modelName": "", "serialNum": ""},
+        "49": {"mfgName": "Arista Networks", "modelName": "QSFP-100G-SR4",
+               "serialNum": "XCW2345A0E", "hardwareRev": "11"}}}),
     "show interfaces status | json": _json({"interfaceStatuses": {
         "Ethernet1": _status("srv-esx01 vmnic0", "connected", "trunk", 10_000_000_000, "10GBASE-T"),
         "Ethernet2": _status("Drucker 3.OG", "notconnect", "bridged", 1_000_000_000, "1000BASE-T",
@@ -301,6 +306,14 @@ def _cx_port(name, state, desc, speed, vlan_lines, admin="up", itype="1GbT"):
 
 AOSCX = {
     "show version": AOSCX_VERSION,
+    # Transceiver (1.19.0)
+    "show interface transceiver": """------------------------------------------------------------
+                                  Product  Serial      Part
+Port    Type                      Number   Number      Number
+------------------------------------------------------------
+1/1/49  SFP+SR                    J9150D   CN2345A0F   1990-4634
+1/1/50  --                        --       --          --
+""",
     "show system": """Hostname                        : acc-cx-01
 System Description              : FL.10.10.1060
 System Contact                  :

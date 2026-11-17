@@ -198,6 +198,9 @@ def delete_tenant(session: Session, tenant: Tenant) -> dict[str, int]:
     tid = tenant.id
     session.execute(delete(SyncPlan).where(SyncPlan.tenant_id == tid))
     session.execute(delete(TenantModule).where(TenantModule.tenant_id == tid))  # 0.107.0
+    from app.models import CableLabel  # Kabelnummern (1.19.0)
+
+    session.execute(delete(CableLabel).where(CableLabel.tenant_id == tid))
     counts = {"rules": _delete_rules(session, Rule.tenant_id == tid)}
     counts["nat_rules"] = _count(session, delete(NatRule).where(NatRule.tenant_id == tid))
     counts["findings"] = _count(session, delete(Finding).where(Finding.tenant_id == tid))

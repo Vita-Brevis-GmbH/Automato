@@ -1,7 +1,8 @@
 // NetBox-Sync, Abschnitt „DNS-Namen aus dem AD“ (1.19.0, Anwender 2026-11-17 Priorität 7 „DNS aus AD“, ADR 0045
 // Nachtrag): Abschnitt wählbar; in der Vorschau die Abweichungen (NetBox ≠ A-Record) mit beiden Werten und Auswahl je
-// Eintrag, mehrdeutige IPs mit Kandidaten und Grund; übernommen werden nur die bestätigten Abweichungen. Die
-// Sync-API ist simuliert (keine NetBox in den Beispieldaten), jeder Test läuft für sich.
+// Eintrag (Aktion „ändern“ mit `confirm` wie die Kabelnummern), mehrdeutige IPs mit Kandidaten und Grund; übernommen
+// werden nur die bestätigten Abweichungen. Die Sync-API ist simuliert (keine NetBox in den Beispieldaten), jeder Test
+// läuft für sich.
 import { expect, test } from "./fixtures";
 import type { Page } from "@playwright/test";
 
@@ -13,12 +14,12 @@ const ITEMS = [
     changes: [{ field: "dns_name", old: "", new: "app01.example.ch" }], dns: { names: ["app01.example.ch"], ptr: [], by: "a" },
   },
   {
-    kind: "dns_name", key: "10.20.0.7", label: "DNS-Name 10.20.0.7", action: "confirm", id: 7, manual: true,
+    kind: "dns_name", key: "10.20.0.7", label: "DNS-Name 10.20.0.7", action: "update", confirm: true, id: 7, manual: true,
     changes: [{ field: "dns_name", old: "db-alt.example.ch", new: "db01.example.ch" }],
     dns: { names: ["db01.example.ch"], ptr: [], by: "a" },
   },
   {
-    kind: "dns_name", key: "10.20.0.9", label: "DNS-Name 10.20.0.9", action: "confirm", id: 9, manual: false,
+    kind: "dns_name", key: "10.20.0.9", label: "DNS-Name 10.20.0.9", action: "update", confirm: true, id: 9, manual: false,
     changes: [{ field: "dns_name", old: "print-alt.example.ch", new: "print01.example.ch" }],
     dns: { names: ["print01.example.ch", "scan01.example.ch"], ptr: ["print01.example.ch"], by: "ptr" },
   },
@@ -29,12 +30,14 @@ const ITEMS = [
   },
 ];
 
-function plan(update: number, extra: Record<string, unknown> = {}) {
+// `empty`: IPs mit leerem Namen in NetBox (werden ohne Rückfrage gesetzt); dazu immer zwei Abweichungen
+function plan(empty: number, extra: Record<string, unknown> = {}) {
+  const update = empty + 2;
   return {
     id: 41, tenant_id: 1, source_system_id: 7, target: "netbox", target_url: TARGET.base_url, status: "ready",
     options: { sections: ["dns"], allow_delete: false },
-    summary: { dns_name: { create: 0, update, unchanged: 3, conflict: 0, delete: 0, obsolete: 0, confirm: 2, ambiguous: 1 } },
-    totals: { create: 0, update, unchanged: 3, conflict: 0, delete: 0, obsolete: 0, confirm: 2, ambiguous: 1 },
+    summary: { dns_name: { create: 0, update, unchanged: 3, conflict: 0, delete: 0, obsolete: 0, ambiguous: 1 } },
+    totals: { create: 0, update, unchanged: 3, conflict: 0, delete: 0, obsolete: 0, ambiguous: 1 },
     warnings: ["DNS-Namen aus dem AD: 1 A-Records zeigen auf IPs, die NetBox nicht kennt – keine neuen IP-Adressen (z. B. 10.20.0.99)."],
     message: null, result: null, verification: null, created_by: "admin", created_at: new Date().toISOString(),
     applied_by: null, applied_at: null, can_apply: true, ...extra,
@@ -54,7 +57,7 @@ async function mock(page: Page, current: Record<string, unknown>, applied: unkno
       applied.push(body);
       state = {
         ...state, status: "applied", applied_by: "admin", applied_at: new Date().toISOString(), can_apply: false,
-        options: { ...(state.options as object), confirmed: body.confirm },
+        options: { ...(state.options as object), confirm: body.confirm },
         result: { dns_name: { create: 0, update: 1 + body.confirm.length, delete: 0 } },
         message: "Übernommen und nachkontrolliert: geschrieben = gelesen (2 Objekte) – NetBox wird neu eingelesen.",
       };
@@ -64,9 +67,9 @@ async function mock(page: Page, current: Record<string, unknown>, applied: unkno
     if (path === "plans/41/items") {
       const action = url.searchParams.get("action");
       const kind = url.searchParams.get("kind");
-      const update = (state.totals as Record<string, number>).update;
+      const empty = (state.totals as Record<string, number>).update - 2;
       const rows = ITEMS.filter(
-        (i) => (!action || action.split(",").includes(i.action)) && (!kind || i.kind === kind) && (update || i.action !== "update"),
+        (i) => (!action || action.split(",").includes(i.action)) && (!kind || i.kind === kind) && (empty || i.key !== "10.20.0.5"),
       );
       return route.fulfill({ json: { total: rows.length, rows } });
     }
@@ -105,8 +108,8 @@ test("NetBox-Sync: DNS-Namen – Abweichungen bestätigen, mehrdeutig ohne Vorsc
   await expect(mail).toContainText("mail01.example.ch, smtp.example.ch");
   await expect(mail).toContainText("mehrere A-Records, kein PTR");
   await expect(mail.locator("input")).toHaveCount(0);
-  // Übersicht je Art mit den Spalten der DNS-Namen
-  await expect(page.locator("th", { hasText: "abweichend – bestätigen" })).toBeVisible();
+  // Übersicht je Art mit der Spalte „mehrdeutig“
+  await expect(page.locator("th.num", { hasText: "mehrdeutig" })).toBeVisible();
 
   // eine Abweichung bestätigen
   await expect(panel.locator("#sync-dns-picked")).toHaveText("0 von 2 bestätigt");

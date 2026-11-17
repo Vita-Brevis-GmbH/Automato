@@ -1,7 +1,8 @@
 // NetBox-Sync, Abschnitt „DNS-Namen aus dem AD“ (1.19.0, ADR 0045 Nachtrag): Teil der Vorschau mit den Einträgen,
-// die eine Entscheidung brauchen. Abweichende Namen (NetBox ≠ A-Record) werden nur übernommen, wenn der Betreiber
-// sie hier je Eintrag bestätigt; mehrdeutige IPs (mehrere A-Records ohne entscheidenden PTR, IP mehrfach in NetBox)
-// bekommen keinen Vorschlag. Leere Namen setzt der Sync ohne Rückfrage (Aktion „ändern“).
+// die eine Entscheidung brauchen. Abweichende Namen (NetBox ≠ A-Record, Aktion „ändern“ mit `confirm` wie die
+// Kabelnummern) werden nur übernommen, wenn der Betreiber sie hier je Eintrag bestätigt; mehrdeutige IPs (mehrere
+// A-Records ohne entscheidenden PTR, IP mehrfach in NetBox) bekommen keinen Vorschlag. Leere Namen setzt der Sync
+// ohne Rückfrage.
 import { useEffect, useMemo, useState } from "react";
 import { fetchSyncItems, SyncItem, SyncPlan } from "../../api";
 import { L } from "../../i18n";
@@ -29,35 +30,46 @@ export default function SyncDns({
   plan,
   picked,
   onPick,
+  onAsked,
 }: {
   plan: SyncPlan;
   picked: Set<string>;
   onPick: (keys: Set<string>) => void;
+  onAsked: (n: number) => void; // wie viele Abweichungen zur Bestätigung anstehen
 }) {
   const counts = plan.summary?.dns_name ?? {};
-  const [confirm, setConfirm] = useState<{ rows: SyncItem[]; total: number } | null>(null);
+  const [updates, setUpdates] = useState<{ rows: SyncItem[]; total: number } | null>(null);
   const [ambiguous, setAmbiguous] = useState<{ rows: SyncItem[]; total: number } | null>(null);
   const [q, setQ] = useState("");
   const [error, setError] = useState<unknown>(null);
   const ready = plan.status === "ready";
-  const confirmed = useMemo(() => new Set(plan.options.confirmed ?? []), [plan.options.confirmed]);
+  const confirmed = useMemo(() => new Set(plan.options.confirm ?? []), [plan.options.confirm]);
 
   useEffect(() => {
-    setConfirm(null);
+    setUpdates(null);
     setAmbiguous(null);
     let current = true;
     const load = (action: string, set: (d: { rows: SyncItem[]; total: number }) => void) =>
       fetchSyncItems(plan.id, { kind: "dns_name", action, limit: LIMIT })
         .then((d) => current && set(d))
         .catch((e) => current && setError(e));
-    if (counts.confirm) load("confirm", setConfirm);
-    else setConfirm({ rows: [], total: 0 });
+    if (counts.update) load("update", setUpdates);
+    else setUpdates({ rows: [], total: 0 });
     if (counts.ambiguous) load("ambiguous", setAmbiguous);
     else setAmbiguous({ rows: [], total: 0 });
     return () => {
       current = false;
     };
-  }, [plan.id, counts.confirm, counts.ambiguous]);
+  }, [plan.id, counts.update, counts.ambiguous]);
+  // abweichend = „ändern“ mit Bestätigung; die übrigen „ändern“ setzen einen leeren Namen
+  const confirm = useMemo(() => {
+    if (updates === null) return null;
+    const rows = updates.rows.filter((i) => i.confirm);
+    return { rows, total: rows.length + (updates.total - updates.rows.length) };
+  }, [updates]);
+  const toSet = (counts.update ?? 0) - (confirm?.rows.length ?? 0);
+  const done = (confirm?.rows ?? []).filter((i) => confirmed.has(i.key)).length; // nach dem Übernehmen
+  useEffect(() => onAsked(confirm?.rows.length ?? 0), [confirm, onAsked]);
 
   const match = (i: SyncItem) => {
     const s = q.trim().toLowerCase();
@@ -88,8 +100,8 @@ export default function SyncDns({
     <div className="card-body pad" id="sync-dns">
       <h3 style={{ margin: "0 0 8px" }}>{L("DNS-Namen aus dem AD", "DNS names from the AD")}</h3>
       <div className="chips" id="sync-dns-counts" style={{ marginBottom: 8 }}>
-        <span className="chip info">{L(`${counts.update ?? 0} setzen (leer in NetBox)`, `${counts.update ?? 0} to set (empty in NetBox)`)}</span>
-        <span className="chip warn">{L(`${counts.confirm ?? 0} abweichend`, `${counts.confirm ?? 0} differing`)}</span>
+        <span className="chip info">{L(`${toSet} setzen (leer in NetBox)`, `${toSet} to set (empty in NetBox)`)}</span>
+        <span className="chip warn">{L(`${confirm?.rows.length ?? 0} abweichend`, `${confirm?.rows.length ?? 0} differing`)}</span>
         <span className="chip na">{L(`${counts.ambiguous ?? 0} mehrdeutig`, `${counts.ambiguous ?? 0} ambiguous`)}</span>
         <span className="chip na">{L(`${counts.unchanged ?? 0} gleich`, `${counts.unchanged ?? 0} equal`)}</span>
       </div>
@@ -173,14 +185,14 @@ export default function SyncDns({
               </table>
               <div className="faint" style={{ fontSize: 12, marginTop: 4 }} id="sync-dns-picked">
                 {ready
-                  ? L(`${picked.size} von ${confirm.total} bestätigt`, `${picked.size} of ${confirm.total} confirmed`)
-                  : L(`${confirmed.size} von ${confirm.total} bestätigt`, `${confirmed.size} of ${confirm.total} confirmed`)}
+                  ? L(`${picked.size} von ${confirm.rows.length} bestätigt`, `${picked.size} of ${confirm.rows.length} confirmed`)
+                  : L(`${done} von ${confirm.rows.length} bestätigt`, `${done} of ${confirm.rows.length} confirmed`)}
               </div>
               {confirm.total > confirm.rows.length && (
                 <Note warn>
                   {L(
-                    `Nur die ersten ${confirm.rows.length} von ${confirm.total} Abweichungen zur Auswahl – die übrigen nach dem Übernehmen mit einer neuen Vorschau.`,
-                    `Only the first ${confirm.rows.length} of ${confirm.total} differences to choose from – the rest after applying with a new preview.`,
+                    `Nur die ersten ${LIMIT} Änderungen geladen – weitere Abweichungen nach dem Übernehmen mit einer neuen Vorschau.`,
+                    `Only the first ${LIMIT} changes loaded – further differences after applying with a new preview.`,
                   )}
                 </Note>
               )}

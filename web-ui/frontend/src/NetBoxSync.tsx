@@ -20,6 +20,7 @@ import {
   SyncVerification,
 } from "./api";
 import type { View } from "./App";
+import { CableLabelConfirm } from "./modules/schreibpfad/CableLabelConfirm";
 import { L } from "./i18n";
 import { REF_ROLE_LABEL } from "./refs";
 import { Dash, Empty, ErrorBox, fmtTime, Icon, Loading, Modal, Note, PageHead } from "./ui";
@@ -45,6 +46,7 @@ const KIND_LABEL: Record<string, string> = {
   device: L("Gerät", "Device"),
   interface: "Port",
   cable: L("Kabel", "Cable"),
+  cable_label: L("Kabelnummer", "Cable number"), // 1.19.0: Label bestehender Kabel, je Kabel bestätigt
   virtual_machine: "VM",
   vm_interface: L("VM-Interface", "VM interface"),
   ip_address: L("IP-Adresse", "IP address"),
@@ -59,12 +61,10 @@ const ACTION: Record<string, [string, string]> = {
   conflict: ["warn", L("Konflikt (manuell)", "Conflict (manual)")],
   delete: ["crit", L("löschen", "delete")],
   obsolete: ["na", L("veraltet", "obsolete")],
-  // DNS-Namen aus dem AD (1.19.0)
-  confirm: ["warn", L("abweichend – bestätigen", "differs – confirm")],
-  ambiguous: ["na", L("mehrdeutig", "ambiguous")],
+  ambiguous: ["na", L("mehrdeutig", "ambiguous")], // DNS-Namen aus dem AD (1.19.0): kein Vorschlag
 };
-const COLUMNS = ["create", "update", "unchanged", "conflict", "delete", "obsolete", "confirm", "ambiguous"];
-const OPTIONAL = ["confirm", "ambiguous"]; // nur, wenn die Vorschau solche Einträge hat
+const COLUMNS = ["create", "update", "unchanged", "conflict", "delete", "obsolete", "ambiguous"];
+const OPTIONAL = ["ambiguous"]; // nur, wenn die Vorschau solche Einträge hat
 const STATUS: Record<string, [string, string]> = {
   planning: ["info", L("Vorschau läuft…", "Preview running…")],
   ready: ["ok", L("Vorschau bereit", "Preview ready")],
@@ -246,9 +246,18 @@ export default function NetBoxSync({
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState(false);
-  // bestätigte abweichende DNS-Namen (IPs) der angezeigten Vorschau (1.19.0)
+  const [labels, setLabels] = useState<string[]>([]); // bestätigte Kabelnummern (1.19.0)
+  // bestätigte abweichende DNS-Namen (IPs) und wie viele zur Bestätigung anstehen (1.19.0)
   const [picked, setPicked] = useState<Set<string>>(new Set());
-  useEffect(() => setPicked(new Set()), [plan?.id]);
+  const [dnsAsked, setDnsAsked] = useState(0);
+  const planId = plan?.id;
+  useEffect(() => {
+    setLabels([]);
+    setPicked(new Set());
+    setDnsAsked(0);
+  }, [planId]);
+  // ohne Bestätigung schreibt die Übernahme die Kabelnummern bzw. abweichenden DNS-Namen nicht
+  const unconfirmed = (plan?.summary?.cable_label?.update ?? 0) - labels.length + dnsAsked - picked.size;
 
   const loadPlans = useCallback(() => {
     if (tenantId === null) return;
@@ -336,7 +345,7 @@ export default function NetBoxSync({
     setConfirm(false);
     setError(null);
     try {
-      setPlan(await applySyncPlan(plan.id, [...picked]));
+      setPlan(await applySyncPlan(plan.id, [...labels, ...picked]));
     } catch (e) {
       setError(e);
     }
@@ -486,9 +495,14 @@ export default function NetBoxSync({
           plan={plan}
           picked={picked}
           onPick={setPicked}
+          onAsked={setDnsAsked}
+          unconfirmed={unconfirmed}
           onApply={() => setConfirm(true)}
           onCancel={() => cancelSyncPlan(plan.id).then((p) => (setPlan(p), loadPlans()), setError)}
         />
+      )}
+      {plan?.status === "ready" && (plan.summary?.cable_label?.update ?? 0) > 0 && (
+        <CableLabelConfirm plan={plan} value={labels} onChange={setLabels} />
       )}
 
       {plans.length > 0 && (
@@ -570,6 +584,18 @@ export default function NetBoxSync({
               </>,
             )}
           </p>
+          {(plan.summary?.cable_label?.update ?? 0) > 0 && (
+            <Note>
+              {L(
+                <>
+                  Kabelnummern: {labels.length} von {plan.summary?.cable_label?.update} bestätigt – nur diese werden geschrieben.
+                </>,
+                <>
+                  Cable numbers: {labels.length} of {plan.summary?.cable_label?.update} confirmed – only these are written.
+                </>,
+              )}
+            </Note>
+          )}
           {plan.totals.conflict > 0 && (
             <Note>
               {L(
@@ -578,17 +604,17 @@ export default function NetBoxSync({
               )}
             </Note>
           )}
-          {(plan.totals.confirm ?? 0) > 0 && (
+          {dnsAsked > 0 && (
             <Note>
               <span id="sync-confirm-dns">
                 {L(
                   <>
-                    <b>{picked.size}</b> von {plan.totals.confirm} abweichenden DNS-Namen bestätigt – sie werden
-                    überschrieben; die übrigen bleiben in NetBox, wie sie sind.
+                    <b>{picked.size}</b> von {dnsAsked} abweichenden DNS-Namen bestätigt – sie werden überschrieben; die
+                    übrigen bleiben in NetBox, wie sie sind.
                   </>,
                   <>
-                    <b>{picked.size}</b> of {plan.totals.confirm} differing DNS names confirmed – they are overwritten;
-                    the others stay in NetBox as they are.
+                    <b>{picked.size}</b> of {dnsAsked} differing DNS names confirmed – they are overwritten; the others stay
+                    in NetBox as they are.
                   </>,
                 )}
               </span>
@@ -616,12 +642,16 @@ function PlanView({
   plan,
   picked,
   onPick,
+  onAsked,
+  unconfirmed,
   onApply,
   onCancel,
 }: {
   plan: SyncPlan;
   picked: Set<string>;
   onPick: (keys: Set<string>) => void;
+  onAsked: (n: number) => void;
+  unconfirmed: number; // Kabelnummern bzw. DNS-Namen ohne Bestätigung (werden nicht geschrieben)
   onApply: () => void;
   onCancel: () => void;
 }) {
@@ -629,8 +659,8 @@ function PlanView({
   const kinds = Object.keys(KIND_LABEL).filter((k) => plan.summary?.[k]);
   const columns = COLUMNS.filter((c) => !OPTIONAL.includes(c) || plan.totals[c]);
   const writes = plan.totals.create + plan.totals.update + plan.totals.delete;
-  // DNS-Namen (1.19.0): ohne andere Änderungen nur mit mindestens einer bestätigten Abweichung
-  const canApply = plan.can_apply && (writes > 0 || picked.size > 0);
+  // 1.19.0: nur unbestätigte Kabelnummern bzw. DNS-Namen -> nichts zu übernehmen
+  const canApply = plan.can_apply && writes - unconfirmed > 0;
   const notes =
     running ||
     !!plan.message ||
@@ -741,7 +771,7 @@ function PlanView({
       )}
       {!running && plan.summary?.dns_name && (
         <Suspense fallback={<Loading />}>
-          <SyncDns plan={plan} picked={picked} onPick={onPick} />
+          <SyncDns plan={plan} picked={picked} onPick={onPick} onAsked={onAsked} />
         </Suspense>
       )}
       {!running && plan.summary && <Items plan={plan} kinds={kinds} />}

@@ -13,7 +13,7 @@ from sot_gateway.readonly import ReadOnlyViolation
 
 from collectors.cisco_switch import client as sc
 from collectors.cisco_switch import normalize as sn
-from collectors.cisco_switch import routing, tasks
+from collectors.cisco_switch import routing, tasks, transceiver
 from collectors.cisco_switch.normalize import (
     cli_error,
     mac_text,
@@ -589,7 +589,9 @@ def test_geraet_schliesst_nach_exec_uebrige_befehle_in_einer_sitzung():
     assert [x for x in log if x.startswith("exec ")] == ["exec show version"]
     sent = [x for x in log if x not in ("connect", "shell") and not x.startswith("exec ")]
     assert sent[0] == "terminal length 0"  # vor dem ersten Befehl, ohne „More“
-    assert sent[1:] == [*sc.COMMANDS["ios"][1:], routing.IOS_RIB, *routing.COMMANDS["ios"][1:]]
+    # 1.19.0: danach der Befehl fuer die Transceiver (`show inventory`), dann das Routing
+    assert sent[1:] == [*sc.COMMANDS["ios"][1:], *transceiver.COMMANDS["ios"], routing.IOS_RIB,
+                        *routing.COMMANDS["ios"][1:]]  # fmt: skip
     assert isinstance(sw["seconds"], float)
     # Ausgaben wie per Exec: ohne Echo und Prompt, ohne „More“ und Wagenruecklauf
     for cmd in sc.COMMANDS["ios"]:

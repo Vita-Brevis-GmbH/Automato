@@ -9,10 +9,11 @@ IP-Adressen in NetBox aus den A-/AAAA-Records der gelesenen AD-DNS-Zonen (`store
   gehoeren, bleiben unberuehrt (gezaehlt).
 - **Name je IP** (`ad_dns.Model.decide`): ein A-Record -> sein Name; mehrere -> der passende PTR
   entscheidet, sonst kein Vorschlag, nur „mehrdeutig“ (`ambiguous`) mit den Kandidaten.
-- **Aktion:** `dns_name` in NetBox leer -> `update` (wird uebernommen); abweichend -> `confirm`:
-  die Vorschau zeigt beide Werte, geschrieben wird nur, was der Betreiber je Eintrag bestaetigt
-  (`confirmed` beim Uebernehmen) - ohne Bestaetigung bleibt NetBox, wie es ist; gleich (ohne
-  Gross-/Kleinschreibung) -> `unchanged`.
+- **Aktion:** `dns_name` in NetBox leer -> `update` (wird uebernommen); abweichend -> `update`
+  mit `confirm` (wie die Kabelnummern, `cable_label_sync`): die Vorschau zeigt beide Werte,
+  geschrieben wird nur, was der Betreiber je Eintrag bestaetigt (`confirm` beim Uebernehmen) -
+  ohne Bestaetigung bleibt NetBox, wie es ist; gleich (ohne Gross-/Kleinschreibung) ->
+  `unchanged`.
 - **Nur das Feld `dns_name`** (PATCH, `patches`), auch an von Hand gepflegten IP-Adressen - kein
   Tag, kein anderes Feld. Fuer IPs mit A-Record entscheidet dieser Abschnitt allein: das
   `dns_name` der anderen Abschnitte (Netzinventar, Firewall-Objekte) faellt fuer sie weg; legt
@@ -170,28 +171,14 @@ def _item(ip: str, have: nb.Have, d: ad_dns.Decision, several: bool) -> dict:
                 "changes": [{"field": FIELD, "old": current, "new": None}]}  # fmt: skip
     if have_name == name.lower():
         return {**base, "action": "unchanged"}
-    action = "confirm" if current.strip() else "update"
-    return {**base, "action": action, "dns": {**info, "by": d.by},
+    ask = {"confirm": True} if current.strip() else {}  # abweichend: nur nach Bestaetigung
+    return {**base, "action": "update", **ask, "dns": {**info, "by": d.by},
             "changes": [{"field": FIELD, "old": current, "new": name}]}  # fmt: skip
-
-
-def confirmed(items: list[dict], keys) -> list[dict]:
-    """Bestaetigte Abweichungen (Auswahl je Eintrag in der Vorschau) werden zu `update`; nicht
-    bestaetigte bleiben `confirm` und werden nicht geschrieben."""
-    keys = set(keys or ())
-    if not keys:
-        return items
-    return [
-        {**i, "action": "update", "confirmed": True}
-        if i["kind"] == KIND and i["action"] == "confirm" and i["key"] in keys
-        else i
-        for i in items
-    ]
 
 
 def patches(items: list[dict]) -> list[dict]:
     """PATCH je IP nur mit `dns_name` - kein Tag, kein anderes Feld (auch an von Hand gepflegten
-    IP-Adressen)."""
+    IP-Adressen). Unbestaetigte Abweichungen sind schon weg (`netbox_sync.apply`)."""
     return [{"id": i["id"], FIELD: i["changes"][0]["new"]} for i in items if i.get("id")]
 
 

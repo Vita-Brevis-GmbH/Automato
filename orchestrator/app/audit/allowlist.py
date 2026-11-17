@@ -157,6 +157,9 @@ ALLOWLIST: dict[str, frozenset[str]] = {
         {"tenant_id", "source_system_id", "dn", "l3out", "origin", "firewalls"}
     ),
     "routing.l3out_firewall.removed": frozenset({"tenant_id", "source_system_id", "dn", "l3out"}),
+    # Kabelnummer in Automato (1.19.0): Enden, Nummer und die bisherige (Laufzeitdaten)
+    "cable_label.set": frozenset({"tenant_id", "label", "a", "b", "old"}),
+    "cable_label.deleted": frozenset({"tenant_id", "label", "a", "b"}),
     "reconcile.run": frozenset({"tenant_id", "findings"}),
     "reconcile.version": frozenset({"version", "findings"}),  # 0.133.0: nach einem Update
     # NetBox-Sync (ADR 0010): nur Anzahlen und die gewaehlten Abschnitte (ADR 0031), keine Inhalte
@@ -182,6 +185,7 @@ ALLOWLIST: dict[str, frozenset[str]] = {
             "create",
             "update",
             "delete",
+            "labels_confirmed",  # bestaetigte Kabelnummern (1.19.0)
             "dns_confirmed",  # bestaetigte abweichende DNS-Namen (1.19.0, Anzahl)
         }
     ),

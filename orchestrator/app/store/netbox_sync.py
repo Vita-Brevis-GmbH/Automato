@@ -16,7 +16,8 @@ Einziger Schreibweg der Plattform. Ablauf:
      `automato-app-` an den VMs und IP-Adressen ihrer Systeme;
    - DNS-Namen aus dem AD (Abschnitt `dns`, 1.19.0, ADR 0045 Nachtrag): `dns_name` bestehender
      IP-Adressen aus den A-Records der AD-DNS-Zonen - erst nach dem Lesen von NetBox
-     (`store/netbox_sync_dns.py`), Abweichungen nur nach Bestaetigung je Eintrag.
+     (`store/netbox_sync_dns.py`), Abweichungen nur nach Bestaetigung je Eintrag (`confirm`
+     wie bei den Kabelnummern).
    Die letzten nur, wenn ausdruecklich gewaehlt (`DEFAULT_SECTIONS`).
 2. **Ist** (`read_state`): NetBox lesen (nur GET); danach `resolve_after_read` (VLANs der
    Switch-Ports, Kabel und Tags nur an Objekten, die es in NetBox gibt bzw. die der Sync anlegt).
@@ -89,11 +90,8 @@ HOST_ROLE = "esxi"
 # Automato - nur solche Tags setzt bzw. entfernt der Sync, fremde Tags bleiben
 APP_TAG_PREFIX = "automato-app-"
 WRITE_ACTIONS = ("create", "update", "delete")
-# DNS-Namen (1.19.0): `confirm` abweichend (nur nach Bestaetigung), `ambiguous` mehrdeutig
-ACTIONS = ("create", "update", "unchanged", "conflict", "delete", "obsolete",
-           "confirm", "ambiguous")  # fmt: skip
-# im Fingerabdruck: was geschrieben wird bzw. nach Bestaetigung geschrieben werden kann
-FINGERPRINT_ACTIONS = (*WRITE_ACTIONS, "confirm")
+# DNS-Namen (1.19.0): `ambiguous` = mehrdeutig, kein Vorschlag (nie geschrieben)
+ACTIONS = ("create", "update", "unchanged", "conflict", "delete", "obsolete", "ambiguous")
 
 
 @dataclass(frozen=True)
@@ -177,6 +175,8 @@ KINDS = (
     ),
     # Kabel zwischen zwei Ports (Abschnitt Verkabelung, ADR 0031); Schluessel = beide Enden
     Kind("cable", "dcim/cables", "Kabel", ("status",), "tenant", owned=("tenant", "description")),
+    # Kabelnummer (1.19.0, `cable_label_sync`): Label eines bestehenden Kabels, nur bestaetigt
+    Kind("cable_label", "dcim/cables", "Kabelnummer", ("label",)),
     Kind(
         "virtual_machine",
         "virtualization/virtual-machines",
@@ -227,6 +227,7 @@ FW_KINDS = frozenset({"prefix", "ip_range", "ip_address"})  # Arten des Abschnit
 TERMINATIONS = ("a_terminations", "b_terminations")  # Enden eines Kabels (je ein Port)
 
 Ref = tuple[str, str]  # (Art, Schluessel)
+LABEL = "cable_label"  # Kabelnummer am Kabel (1.19.0, `cable_label_sync`)
 
 
 @dataclass
@@ -1351,6 +1352,13 @@ def _cabling_wants(
             if need is not None:
                 w.ports.append(need)
     _cable_wants(session, w, tenant, tenant_ref)
+    _label_sync().add_wants(session, w, tenant)  # Kabelnummern (1.19.0)
+
+
+def _label_sync():
+    from app.store import cable_label_sync  # spaet: das Modul nutzt dieses
+
+    return cable_label_sync
 
 
 def _cable_wants(session: Session, w: Wants, tenant: Tenant, tenant_ref: Ref) -> None:
@@ -1602,7 +1610,9 @@ def read_state(
                 state["ip_dup"][f"{key} #{obj['id']}"] = Have(obj["id"], key, obj, _tagged(obj))
 
     for k in KINDS:
-        if k.name in ("vlan", "interface", "vm_interface", "cable", "dns_name") or k.name in ASSIGN:
+        if k.name in ("vlan", "interface", "vm_interface", "cable", LABEL, "dns_name") or (
+            k.name in ASSIGN
+        ):
             continue
         # VMs auch fuer die Applikations-Tags - geloescht bzw. veraltet nur mit `virtualization`
         if k.name in VIRTUAL_KINDS and not virtual and not (apps and k.name == "virtual_machine"):
@@ -2170,8 +2180,8 @@ def diff(
     }
     items: list[dict] = []
     for want in wants.ordered():
-        if want.kind in ASSIGN:
-            continue  # Tags an VMs/IPs: `_assignments`
+        if want.kind in ASSIGN or want.kind == LABEL:
+            continue  # Tags an VMs/IPs: `_assignments`; Kabelnummern: `cable_label_sync`
         have = state[want.kind].get(want.key)
         if have is None:
             busy = _occupied(want, state, removed_cables) if want.kind == "cable" else []
@@ -2227,6 +2237,8 @@ def diff(
                     id=have.id,
                 )
             )
+    if "cabling" in chosen:  # Kabelnummern (1.19.0): aendern nur mit Bestaetigung
+        items += _label_sync().items(wants, state)
     if "applications" in chosen:
         gone = {(i["kind"], i["key"]) for i in items if i["action"] == "delete"}
         items += _assignments(wants, state, gone)
@@ -2321,7 +2333,7 @@ def fingerprint(items: list[dict]) -> str:
     relevant = [
         [i["kind"], i["key"], i["action"], i.get("fields"), i.get("changes")]
         for i in items
-        if i["action"] in FINGERPRINT_ACTIONS
+        if i["action"] in WRITE_ACTIONS
     ]
     raw = json.dumps(relevant, sort_keys=True, default=str, ensure_ascii=False)
     return hashlib.sha256(raw.encode()).hexdigest()
@@ -2374,19 +2386,22 @@ def compute(
 # -- Uebernehmen --------------------------------------------------------------------
 
 
-def apply(writer, plan: Plan, progress=None) -> dict[str, dict[str, int]]:
+def apply(writer, plan: Plan, progress=None,
+          confirm: frozenset[str] = frozenset()) -> dict[str, dict[str, int]]:  # fmt: skip
     """Schreib-Aktionen des (frisch berechneten) Plans ausfuehren; Rueckgabe: Anzahlen.
 
     Bricht beim ersten Fehler ab (Teilstand bleibt - der naechste Plan setzt dort an).
     `progress(kind)` vor jeder Objektart: Lebenszeichen; darf abbrechen (Exception).
+    `confirm` = Kabelnummern, die der Betreiber bestaetigt hat (1.19.0) - die uebrigen bleiben.
     """
     ids: dict[tuple[str, str], int] = {
         (kind, key): h.id for kind, haves in plan.state.items() for key, h in haves.items()
     }
     done: dict[str, dict[str, int]] = defaultdict(lambda: {"create": 0, "update": 0, "delete": 0})
     by_kind: dict[str, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
+    skip = _label_sync().unconfirmed(plan.items, set(confirm))
     for i in plan.items:
-        if i["action"] in WRITE_ACTIONS:
+        if i["action"] in WRITE_ACTIONS and (i["kind"], i["key"]) not in skip:
             by_kind[i["kind"]][i["action"]].append(i)
 
     def value(ref: Ref | list[Ref] | None) -> Any:
@@ -2590,6 +2605,7 @@ KIND_EN = {
     "prefix": "Network",
     "device": "Device",
     "cable": "Cable",
+    "cable_label": "Cable number",
     "vm_interface": "VM interface",
     "ip_address": "IP address",
     "app_tag_vm": "Application tag on VM",
@@ -2676,6 +2692,17 @@ WARNINGS_EN = (
         "Modell oder Abschnitt Netzinventar nicht gewählt), z. B. {examples}.",
         "Cabling: {n} cables not applied – port not in NetBox (device without site or model, or "
         "section network inventory not chosen), e.g. {examples}.",
+    ),
+    # Kabelnummern (1.19.0)
+    (
+        "Kabelnummern: {n} ohne Kabel in NetBox nicht übernommen (z. B. {examples}) – Kabel "
+        "entsteht nur aus beidseitig gemeldeten Verbindungen.",
+        "Cable numbers: {n} without a cable in NetBox not applied (e.g. {examples}) – a cable is "
+        "only created from links reported by both sides.",
+    ),
+    (
+        "Kabelnummern: {n} nur in NetBox – bleiben, wie sie sind.",
+        "Cable numbers: {n} only in NetBox – stay as they are.",
     ),
     (
         "Applikationen: {vms} VMs und {ips} IP-Adressen nicht in NetBox – ohne Applikations-Tag "

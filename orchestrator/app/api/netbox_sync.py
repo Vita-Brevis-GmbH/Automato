@@ -11,8 +11,9 @@
 - `POST /netbox-sync/plans/{id}/apply`  Uebernehmen, im Hintergrund; danach Nachkontrolle
                                         (0.115.0, ADR 0042: NetBox rein lesend neu lesen und
                                         je geschriebenem Objekt vergleichen) und Neu-Einlesen;
-                                        `confirm` = bestaetigte abweichende DNS-Namen (IPs,
-                                        1.19.0) - nur sie werden ueberschrieben
+                                        seit 1.19.0 mit `confirm` = bestaetigte Kabelnummern
+                                        (Label bestehender Kabel, ADR 0031 Nachtrag 1.19.0)
+                                        und abweichende DNS-Namen (IPs, ADR 0045 Nachtrag)
 - `POST /netbox-sync/plans/{id}/cancel` laufende Vorschau/Uebernahme beenden
 
 Vorschau und Uebernahme laufen als Hintergrundaufgabe im Orchestrator-Prozess. Startet er neu
@@ -48,7 +49,7 @@ from app.db import get_session, get_session_factory
 from app.i18n import german_only, lang
 from app.jobs import celery_app
 from app.models import CollectorRun, Platform, SourceSystem, SyncPlan, SyncStatus, Tenant
-from app.store import netbox_sync, netbox_sync_dns
+from app.store import cable_label_sync, netbox_sync, netbox_sync_dns
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/netbox-sync", tags=["netbox-sync"])
@@ -98,9 +99,11 @@ class PlanIn(BaseModel):
 
 
 class ApplyIn(BaseModel):
-    # DNS-Namen aus dem AD (1.19.0): bestaetigte Abweichungen (Schluessel = IP) - nur sie werden
-    # ueberschrieben, die uebrigen bleiben in NetBox, wie sie sind
-    confirm: list[str] = Field(default_factory=list)
+    """Uebernehmen (1.19.0): Kabelnummern bzw. abweichende DNS-Namen, die der Betreiber in der
+    Vorschau bestaetigt hat (Schluessel der Aktionen `cable_label` bzw. `dns_name` mit
+    `confirm`) - die uebrigen bleiben in NetBox, wie sie sind."""
+
+    confirm: list[str] = Field(default_factory=list, max_length=10000)
 
 
 class PlanOut(BaseModel):
@@ -141,7 +144,7 @@ def _can_apply(plan: SyncPlan) -> bool:
     return (
         plan.status == SyncStatus.READY.value
         and datetime.now(UTC) - _aware(plan.created_at) <= MAX_AGE
-        and any(totals[a] for a in (*netbox_sync.WRITE_ACTIONS, "confirm"))
+        and any(totals[a] for a in netbox_sync.WRITE_ACTIONS)
     )
 
 
@@ -470,15 +473,16 @@ def apply_plan(
         raise HTTPException(status_code=409, detail="sync for this netbox is already running")
     if not _can_apply(plan):
         raise HTTPException(status_code=409, detail="nothing to apply")
-    confirm = sorted(set(body.confirm if body else []))
-    open_ = {i["key"] for i in plan.items or []
-             if i["kind"] == netbox_sync_dns.KIND and i["action"] == "confirm"}  # fmt: skip
-    if set(confirm) - open_:
-        raise HTTPException(status_code=422, detail="confirm: only deviating DNS names of the plan")
-    totals = _totals(plan.summary)
-    if not confirm and not any(totals[a] for a in netbox_sync.WRITE_ACTIONS):
-        raise HTTPException(status_code=409, detail="nothing to apply")
-    plan.options = {**(plan.options or {}), "confirmed": confirm}
+    # Kabelnummern und abweichende DNS-Namen (1.19.0): nur bestaetigte (Aktionen mit `confirm`);
+    # nur Unbestaetigtes -> nichts zu uebernehmen
+    asked = set(cable_label_sync.needs_confirm(plan.items or []))
+    confirm = sorted(set(body.confirm if body else []) & asked)
+    skip = cable_label_sync.unconfirmed(plan.items or [], set(confirm))
+    if not any(i["action"] in netbox_sync.WRITE_ACTIONS and (i["kind"], i["key"]) not in skip
+               for i in plan.items or []):  # fmt: skip
+        detail = "nothing to apply (confirm cable numbers or DNS names)"
+        raise HTTPException(status_code=409, detail=detail)
+    plan.options = {**(plan.options or {}), "confirm": confirm}
     plan.status = SyncStatus.APPLYING.value
     plan.applied_by = principal.subject
     plan.started_at = plan.heartbeat_at = datetime.now(UTC)
@@ -605,16 +609,18 @@ def apply_job(factory: sessionmaker, plan_id: int) -> None:
             )
             if fresh.fingerprint != plan.fingerprint:
                 raise _Changed()
-            # DNS-Namen (1.19.0): nur bestaetigte Abweichungen werden geschrieben
-            fresh.items = netbox_sync_dns.confirmed(fresh.items, plan.options.get("confirmed"))
-            done = netbox_sync.apply(writer, fresh, progress=_progress(factory, plan_id))
+            # Kabelnummern und DNS-Namen (1.19.0): nur bestaetigte
+            confirm = frozenset(plan.options.get("confirm") or [])
+            done = netbox_sync.apply(writer, fresh, progress=_progress(factory, plan_id),
+                                     confirm=confirm)  # fmt: skip
         finally:
             writer.close()
         session.refresh(plan)
         if plan.status != SyncStatus.APPLYING.value:
             return  # inzwischen abgebrochen bzw. beendet - Meldung steht am Plan
         # geschrieben ist alles: ein Abbruch waehrend der Nachkontrolle aendert daran nichts
-        check = _verify(factory, session, plan, target, tenant, fresh.items)
+        written = cable_label_sync.written(fresh.items, set(confirm))  # ohne Unbestaetigtes
+        check = _verify(factory, session, plan, target, tenant, written)
         session.refresh(plan)
         plan.status = SyncStatus.APPLIED.value
         plan.result = done
@@ -751,8 +757,7 @@ def _audit_applied(session: Session, plan: SyncPlan, done: dict | None, status: 
     for counts in (done or {}).values():
         for k in totals:
             totals[k] += counts.get(k, 0)
-    confirmed = (plan.options or {}).get("confirmed")
-    dns = {"dns_confirmed": len(confirmed)} if confirmed else {}  # DNS-Namen bestaetigt (1.19.0)
+    confirmed = _confirmed(plan)
     audit.record(
         session,
         actor=f"user:{plan.applied_by}",
@@ -764,11 +769,21 @@ def _audit_applied(session: Session, plan: SyncPlan, done: dict | None, status: 
             "source_system_id": plan.source_system_id,
             "status": status,
             "sections": list((plan.options or {}).get("sections") or []),
+            **confirmed,  # bestaetigte Kabelnummern bzw. DNS-Namen (1.19.0)
             **totals,
-            **dns,
             **_verified(plan.verification),
         },
     )
+
+
+def _confirmed(plan: SyncPlan) -> dict:
+    """Anzahl der bestaetigten Kabelnummern bzw. DNS-Namen fuer das Audit (1.19.0)."""
+    keys = set((plan.options or {}).get("confirm") or [])
+    kinds = [i["kind"] for i in plan.items or [] if i.get("confirm") and i["key"] in keys]
+    out = {"labels_confirmed": kinds.count(cable_label_sync.KIND)}
+    if kinds.count(netbox_sync_dns.KIND):
+        out["dns_confirmed"] = kinds.count(netbox_sync_dns.KIND)
+    return out
 
 
 def _verified(check: dict | None) -> dict:
