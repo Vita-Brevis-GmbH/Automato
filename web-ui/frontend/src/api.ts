@@ -1093,7 +1093,14 @@ export interface IpamCompare extends Paged<IpamRow> {
 
 // NetBox-Sync (ADR 0010): Vorschau -> Übernahme per Klick (admin)
 // Abschnitte; Verkabelung und Applikationen (ADR 0031) nur ausdrücklich gewählt
-export type SyncSection = "inventory" | "mirror" | "virtualization" | "cabling" | "firewall_objects" | "applications";
+export type SyncSection =
+  | "inventory"
+  | "mirror"
+  | "virtualization"
+  | "cabling"
+  | "firewall_objects"
+  | "applications"
+  | "dns"; // DNS-Namen aus dem AD (1.19.0)
 export interface SyncTarget {
   id: number;
   name: string;
@@ -1111,11 +1118,20 @@ export interface SyncItem {
   kind: string;
   key: string;
   label: string;
-  action: string; // create | update | conflict | delete | obsolete
+  action: string; // create | update | conflict | delete | obsolete | confirm | ambiguous (DNS-Namen)
   id?: number | null; // null: Ziel wird im selben Sync angelegt (Applikations-Tags)
   manual?: boolean;
   changes?: SyncChange[];
   fields?: Record<string, unknown>;
+  dns?: SyncDns; // DNS-Namen aus dem AD (1.19.0)
+}
+// DNS-Name einer IP aus dem AD (1.19.0): A-Records, PTR, wer entschieden hat bzw. warum mehrdeutig
+export interface SyncDns {
+  names: string[];
+  ptr: string[];
+  by?: "a" | "ptr";
+  why?: "no_ptr" | "ptr_other" | "ptr_several" | "no_reverse" | "netbox_several" | "invalid";
+  vrf?: string;
 }
 // Nachkontrolle des NetBox-Syncs (0.115.0, ADR 0042): NetBox nach dem Schreiben rein lesend neu
 // gelesen, je geschriebenem Objekt verglichen
@@ -1144,7 +1160,7 @@ export interface SyncPlan {
   target: string;
   target_url: string;
   status: string; // planning | ready | applying | applied | failed | superseded
-  options: { sections?: SyncSection[]; allow_delete?: boolean };
+  options: { sections?: SyncSection[]; allow_delete?: boolean; confirmed?: string[] };
   summary: Record<string, Record<string, number>> | null;
   totals: Record<string, number>;
   warnings: string[];
@@ -2435,7 +2451,9 @@ export const fetchSyncItems = (
   id: number,
   params: { action?: string; kind?: string; q?: string; limit?: number; offset?: number } = {},
 ) => getJSON<Paged<SyncItem>>(`/api/netbox-sync/plans/${id}/items${qs({ ...params, q: params.q?.trim() })}`);
-export const applySyncPlan = (id: number) => sendJSON<SyncPlan>(`/api/netbox-sync/plans/${id}/apply`, "POST");
+// `confirm`: bestätigte abweichende DNS-Namen (IPs, 1.19.0) – nur sie werden überschrieben
+export const applySyncPlan = (id: number, confirm: string[] = []) =>
+  sendJSON<SyncPlan>(`/api/netbox-sync/plans/${id}/apply`, "POST", { confirm });
 // Laufende Vorschau/Übernahme beenden (hängt z. B. nach einem Neustart des Orchestrators)
 export const cancelSyncPlan = (id: number) => sendJSON<SyncPlan>(`/api/netbox-sync/plans/${id}/cancel`, "POST");
 

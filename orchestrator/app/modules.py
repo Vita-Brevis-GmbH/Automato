@@ -182,7 +182,7 @@ MODULES: tuple[Module, ...] = (
             "Referenzquellen lesen: IPAM/DNS (Infoblox, NetBox, AD-DNS) - nur lesend",
             "Reads reference sources: IPAM/DNS (Infoblox, NetBox, AD DNS) - read-only",
         ),
-        store=("references",),
+        store=("references", "ad_dns"),  # AD-DNS je IP: A, PTR, Zonen (1.19.0)
         packages=(
             "sot_gateway.adapters.dns_zone",
             "sot_gateway.adapters.infoblox",
@@ -217,6 +217,7 @@ MODULES: tuple[Module, ...] = (
             "boundary",
             "cabling",
             "data_quality",
+            "dns_checks",  # DNS aus dem AD: PTR, unbekannte IPs, nicht pruefbar (1.19.0)
             "exits",
             "l2",
             "l2_export",
@@ -331,7 +332,7 @@ MODULES: tuple[Module, ...] = (
         role=WRITE,
         depends=("gateway",),
         api=("netbox_sync",),
-        store=("netbox_sync",),
+        store=("netbox_sync", "netbox_sync_dns"),  # DNS-Namen aus dem AD (1.19.0)
         views=("netbox",),
         packages=("sot_gateway.adapters.netbox_writer",),
     ),  # fmt: skip

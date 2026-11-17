@@ -101,6 +101,10 @@ export const FINDING_LABEL: Record<string, string> = {
   stp_bpdu_guard: L("Spanning Tree: BPDU-Guard", "Spanning Tree: BPDU guard"),
   stp_mode_mixed: L("Spanning Tree: gemischte Modi", "Spanning Tree: mixed modes"),
   stp_topology_changes: L("Spanning Tree: viele Topologieänderungen", "Spanning Tree: many topology changes"),
+  // DNS aus dem AD (1.19.0)
+  dns_ptr_mismatch: L("DNS: PTR widerspricht A-Record", "DNS: PTR contradicts A record"),
+  dns_ip_unknown: L("DNS: IP nicht in NetBox", "DNS: IP not in NetBox"),
+  dns_unchecked: L("DNS: nicht geprüft", "DNS: not checked"),
   source_stale: L("Quellsystem: Stand veraltet", "Source system: data outdated"),
   source_partial: L("Quellsystem: nur teilweise gelesen", "Source system: only partially collected"),
   manual: L("Von Hand erfasst", "Captured manually"),
@@ -349,6 +353,18 @@ export const FINDING_HINT: Record<string, string> = {
     "mindestens die Schwelle an Topologieänderungen je 24 h (Vorgabe 10, unter Spanning Tree einstellbar)",
     "at least the limit of topology changes per 24 h (default 10, adjustable under Spanning Tree)",
   ),
+  dns_ptr_mismatch: L(
+    "der PTR einer IP nennt keinen ihrer A-Records (AD-DNS) – Warnung, wenn A-Records bzw. der Name auf eine andere IP zeigen",
+    "the PTR of an IP names none of its A records (AD DNS) – warning if A records or the name point to another IP",
+  ),
+  dns_ip_unknown: L(
+    "Hinweis je AD-DNS-Quelle: A-Records auf IPs, die NetBox nicht kennt – nur gezählt, der NetBox-Sync legt keine IP an",
+    "note per AD DNS source: A records pointing to IPs NetBox does not know – only counted, the NetBox sync does not create IPs",
+  ),
+  dns_unchecked: L(
+    "was die Prüfungen zu DNS nicht beurteilen können: Quelle bzw. Zonen nicht gelesen, Rückwärtszone fehlt, NetBox nicht gelesen",
+    "what the DNS checks cannot judge: source or zones not collected, reverse zone missing, NetBox not collected",
+  ),
   source_stale: L(
     "letzter erfolgreicher Lauf älter als die Grenze (AUTOMATO_STALE_DAYS, Zeitplan beachtet) – Doku und Weg-Suche zeigen einen alten Stand",
     "last successful run older than the limit (AUTOMATO_STALE_DAYS, schedule considered) – documentation and path search show outdated data",
@@ -377,6 +393,15 @@ export const FINDING_GROUPS: { key: string; label: string; help: string; types: 
       "ambiguous_ip",
       "vm_not_in_ipam",
     ],
+  },
+  {
+    key: "dns",
+    label: L("DNS aus dem AD", "DNS from the AD"),
+    help: L(
+      "AD-DNS-Zonen: PTR widerspricht A-Record, A-Records auf IPs, die NetBox nicht kennt, nicht prüfbar",
+      "AD DNS zones: PTR contradicts A record, A records pointing to IPs NetBox does not know, not checkable",
+    ),
+    types: ["dns_ptr_mismatch", "dns_ip_unknown", "dns_unchecked"],
   },
   {
     key: "naming",

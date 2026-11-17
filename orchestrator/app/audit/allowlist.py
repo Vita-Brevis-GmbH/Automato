@@ -182,6 +182,7 @@ ALLOWLIST: dict[str, frozenset[str]] = {
             "create",
             "update",
             "delete",
+            "dns_confirmed",  # bestaetigte abweichende DNS-Namen (1.19.0, Anzahl)
         }
     ),
     "netbox_sync.cancelled": frozenset({"plan_id", "tenant_id"}),

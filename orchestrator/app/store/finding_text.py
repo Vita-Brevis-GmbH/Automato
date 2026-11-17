@@ -1195,6 +1195,10 @@ def explain(ftype: str, subject: str, detail: dict | None) -> tuple[str, str]:
         from app.store import stp_findings
 
         return stp_findings.explain(ftype, subject, d)
+    if ftype.startswith("dns_"):  # DNS aus dem AD (1.19.0)
+        from app.store import dns_checks
+
+        return dns_checks.explain(ftype, subject, d)
     return subject, ""
 
 

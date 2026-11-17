@@ -13,8 +13,11 @@ Einziger Schreibweg der Plattform. Ablauf:
    - Verkabelung (Abschnitt `cabling`, ADR 0031): gelesene Switches/Router mit Ports und Kabel
      zwischen zwei Ports, die beide Seiten per CDP/LLDP melden;
    - Applikationen (Abschnitt `applications`, ADR 0031): je Applikation ein Tag mit Praefix
-     `automato-app-` an den VMs und IP-Adressen ihrer Systeme.
-   Die beiden letzten nur, wenn ausdruecklich gewaehlt (`DEFAULT_SECTIONS`).
+     `automato-app-` an den VMs und IP-Adressen ihrer Systeme;
+   - DNS-Namen aus dem AD (Abschnitt `dns`, 1.19.0, ADR 0045 Nachtrag): `dns_name` bestehender
+     IP-Adressen aus den A-Records der AD-DNS-Zonen - erst nach dem Lesen von NetBox
+     (`store/netbox_sync_dns.py`), Abweichungen nur nach Bestaetigung je Eintrag.
+   Die letzten nur, wenn ausdruecklich gewaehlt (`DEFAULT_SECTIONS`).
 2. **Ist** (`read_state`): NetBox lesen (nur GET); danach `resolve_after_read` (VLANs der
    Switch-Ports, Kabel und Tags nur an Objekten, die es in NetBox gibt bzw. die der Sync anlegt).
 3. **Vorschau** (`diff`): je Objekt anlegen | aendern | unveraendert | Konflikt | loeschen.
@@ -67,7 +70,8 @@ from app.store import virtual as virtual_store
 from app.store.epgs import inventory_label
 
 TAG = "automato"
-SECTIONS = ("inventory", "mirror", "virtualization", "cabling", "firewall_objects", "applications")
+SECTIONS = ("inventory", "mirror", "virtualization", "cabling", "firewall_objects", "applications",
+            "dns")  # fmt: skip
 # ohne Angabe die bisherigen Abschnitte; Verkabelung/Applikationen nur ausdruecklich (ADR 0031),
 # Firewall-Objekte (1.8.0) waehlt die Oberflaeche vor, wenn die Ziel-NetBox das IPAM ist
 DEFAULT_SECTIONS = ("inventory", "mirror", "virtualization")
@@ -85,7 +89,11 @@ HOST_ROLE = "esxi"
 # Automato - nur solche Tags setzt bzw. entfernt der Sync, fremde Tags bleiben
 APP_TAG_PREFIX = "automato-app-"
 WRITE_ACTIONS = ("create", "update", "delete")
-ACTIONS = ("create", "update", "unchanged", "conflict", "delete", "obsolete")
+# DNS-Namen (1.19.0): `confirm` abweichend (nur nach Bestaetigung), `ambiguous` mehrdeutig
+ACTIONS = ("create", "update", "unchanged", "conflict", "delete", "obsolete",
+           "confirm", "ambiguous")  # fmt: skip
+# im Fingerabdruck: was geschrieben wird bzw. nach Bestaetigung geschrieben werden kann
+FINGERPRINT_ACTIONS = (*WRITE_ACTIONS, "confirm")
 
 
 @dataclass(frozen=True)
@@ -196,6 +204,9 @@ KINDS = (
     # eigenes NetBox-Objekt, sondern die Tags des Ziels (PATCH) - zuletzt, wenn alles angelegt ist
     Kind("app_tag_vm", "virtualization/virtual-machines", "Applikations-Tag an VM", ("tags",)),
     Kind("app_tag_ip", "ipam/ip-addresses", "Applikations-Tag an IP-Adresse", ("tags",)),
+    # DNS-Name aus dem AD an einer bestehenden IP (1.19.0): nur das Feld (PATCH), Eintraege aus
+    # `netbox_sync_dns.section_items` - zuletzt
+    Kind("dns_name", "ipam/ip-addresses", "DNS-Name", ("dns_name",)),
 )
 KIND = {k.name: k for k in KINDS}
 # nur gelesen/geloescht, wenn der Abschnitt gewaehlt ist (sonst waeren alle VMs "veraltet")
@@ -715,7 +726,8 @@ def _inventory_wants(
                         {
                             "address": iface.with_prefixlen,
                             "status": "active",
-                            "dns_name": "",
+                            # kein dns_name: das Geraet kennt keinen - ein Name aus dem
+                            # DDI-Spiegel bzw. dem AD (1.19.0) bleibt stehen
                             "description": _cut(f"Interface {i.name} ({i.device})", 200),
                             "assigned_object_type": "dcim.interface",
                         },
@@ -1575,6 +1587,7 @@ def read_state(
     (Besitz der Applikations-Tags, `app_tag_owner`)."""
     state: State = {k.name: {} for k in KINDS}
     state["vlan_ref"] = {}  # Verkabelung: alle VLANs in NetBox (nur zum Referenzieren)
+    state["ip_dup"] = {}  # dieselbe Adresse mehrfach (VRFs): `<IP> #<ID>` (DNS-Namen, 1.19.0)
     chosen = set(SECTIONS if sections is None else sections)
     virtual = "virtualization" in chosen
     apps = "applications" in chosen
@@ -1585,9 +1598,11 @@ def read_state(
             key = _key_of(kind, obj)
             if key is not None and key not in state[kind]:
                 state[kind][key] = Have(obj["id"], key, obj, _tagged(obj))
+            elif key is not None and kind == "ip_address":
+                state["ip_dup"][f"{key} #{obj['id']}"] = Have(obj["id"], key, obj, _tagged(obj))
 
     for k in KINDS:
-        if k.name in ("vlan", "interface", "vm_interface", "cable") or k.name in ASSIGN:
+        if k.name in ("vlan", "interface", "vm_interface", "cable", "dns_name") or k.name in ASSIGN:
             continue
         # VMs auch fuer die Applikations-Tags - geloescht bzw. veraltet nur mit `virtualization`
         if k.name in VIRTUAL_KINDS and not virtual and not (apps and k.name == "virtual_machine"):
@@ -2306,7 +2321,7 @@ def fingerprint(items: list[dict]) -> str:
     relevant = [
         [i["kind"], i["key"], i["action"], i.get("fields"), i.get("changes")]
         for i in items
-        if i["action"] in WRITE_ACTIONS
+        if i["action"] in FINGERPRINT_ACTIONS
     ]
     raw = json.dumps(relevant, sort_keys=True, default=str, ensure_ascii=False)
     return hashlib.sha256(raw.encode()).hexdigest()
@@ -2337,6 +2352,11 @@ def compute(
     tenants = [tenant_slug(t) for t in session.scalars(select(Tenant))]
     state = read_state(writer, wants, tslug, gprefix, sections, tenants)
     resolve_after_read(wants, state)
+    dns: list[dict] = []
+    if "dns" in sections:  # DNS-Namen aus dem AD (1.19.0): braucht das Ist von NetBox
+        from app.store import netbox_sync_dns  # spaet: nutzt dieses Modul
+
+        dns = netbox_sync_dns.section_items(session, tenant, target, wants, state, tenants)
     unique_names(wants, state, tenant.name)
     platforms = dict(
         session.execute(
@@ -2346,6 +2366,8 @@ def compute(
         ).all()
     )
     items = diff(wants, state, tslug, gprefix, allow_delete, sections, platforms)
+    gone = {i["key"] for i in items if i["kind"] == "ip_address" and i["action"] == "delete"}
+    items += [i for i in dns if i["key"] not in gone]
     return Plan(wants, state, items, fingerprint(items))
 
 
@@ -2376,6 +2398,14 @@ def apply(writer, plan: Plan, progress=None) -> dict[str, dict[str, int]]:
         actions = by_kind.get(kind.name, {})
         if progress is not None and actions:
             progress(kind.name)
+        if kind.name == "dns_name":  # DNS-Namen (1.19.0): nur das Feld, nie Tags
+            from app.store import netbox_sync_dns
+
+            patches = netbox_sync_dns.patches(actions.get("update", []))
+            if patches:
+                writer.update(kind.endpoint, patches)
+                done[kind.name]["update"] += len(patches)
+            continue
         if kind.name in ASSIGN:  # Applikations-Tags: Tags des Ziels setzen (fremde bleiben)
             mine = _mine(plan.wants, plan.state)
             patches = [_tag_patch(plan, kind.name, i, ids, mine) for i in actions.get("update", [])]
@@ -2564,6 +2594,7 @@ KIND_EN = {
     "ip_address": "IP address",
     "app_tag_vm": "Application tag on VM",
     "app_tag_ip": "Application tag on IP address",
+    "dns_name": "DNS name",
 }
 _SITE_KIND_EN = {"virtuell": "virtual", "physisch": "physical"}
 
@@ -2706,4 +2737,6 @@ def shown(text: str | None, table, values=None) -> str | None:
 
 
 def show_warning(text: str) -> str:
-    return shown(text, WARNINGS_EN) or text
+    from app.store import netbox_sync_dns  # spaet: Abschnitt DNS-Namen (1.19.0)
+
+    return shown(text, WARNINGS_EN + netbox_sync_dns.WARNINGS_EN) or text
