@@ -1,0 +1,8 @@
+# Verwaltet von Ansible (deploy/keycloak/ansible/keycloak.yml) - Betrieb aus dem Cockpit
+# (deploy/keycloak/betrieb.sh, ADR 0062). Keine Geheimnisse: Orte und der oeffentliche
+# age-Empfaenger der Sicherung. Zeilen NAME=Wert (gelesen, nicht ausgefuehrt).
+KC_DIR={{ kc_base_dir }}
+AGE_RECIPIENT={{ kc_backup_age_recipient if kc_backup_age_recipient | length > 0 else _kc_age_empfaenger.stdout }}
+AGE_IDENTITY={{ kc_backup_age_identity }}
+BACKUP_DIR={{ kc_backup_dir }}
+BACKUP_KEEP_DAYS={{ kc_backup_keep_days }}
