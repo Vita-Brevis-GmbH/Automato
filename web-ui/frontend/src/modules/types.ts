@@ -12,6 +12,7 @@ export type View =
   | "objekte"
   | "nat"
   | "routing"
+  | "statisch"
   | "vpn"
   | "verkabelung"
   | "spanningtree"

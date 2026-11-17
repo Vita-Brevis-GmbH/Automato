@@ -194,8 +194,10 @@ MODULES: tuple[Module, ...] = (
         "analyse",
         ("Analyse", "Analysis"),
         (
-            "Routing, VPN-Tunnel, Verkabelung, Abgleich IPAM, Topologie, Datenqualität",
-            "Routing, VPN tunnels, cabling, IPAM reconciliation, topology, data quality",
+            "Routing, statische Routen, VPN-Tunnel, Verkabelung, Spanning Tree, Abgleich IPAM, "
+            "Topologie, Datenqualität",
+            "Routing, static routes, VPN tunnels, cabling, Spanning Tree, IPAM reconciliation, "
+            "topology, data quality",
         ),
         api=(
             "routing",
@@ -205,7 +207,8 @@ MODULES: tuple[Module, ...] = (
             "topology",
             "data_quality",
             "vpn",
-            "stp",
+            "static_routes",  # statische Routen (1.19.0)
+            "stp",  # Spanning Tree (1.19.0)
         ),
         store=(
             "bgp_cache",  # Routing-Filter vorab berechnet (0.131.0)
@@ -222,6 +225,7 @@ MODULES: tuple[Module, ...] = (
             "net_lists",  # Netzlisten der Anbindungen (0.111.0)
             "parallel_net",
             "reconcile",
+            "static_routes",  # statische Routen je Geraet und VRF (1.19.0)
             "stp",  # Spanning Tree (1.19.0)
             "stp_findings",
             "topo_changes",
@@ -229,7 +233,7 @@ MODULES: tuple[Module, ...] = (
             "version_refresh",  # Befunde nach einem Update neu (0.133.0)
             "vpn",  # IPsec-Tunnel (1.19.0, ADR 0063)
         ),
-        views=("routing", "verkabelung", "spanningtree", "abgleich", "vpn"),
+        views=("routing", "statisch", "verkabelung", "spanningtree", "abgleich", "vpn"),
     ),  # fmt: skip
     Module(
         "wege",

@@ -1,5 +1,5 @@
-// Modul Analyse (ADR 0036): Routing, VPN-Tunnel (1.19.0), Verkabelung, Spanning Tree (1.19.0), Abgleich mit dem IPAM und
-// Datenqualität.
+// Modul Analyse (ADR 0036): Routing, statische Routen und VPN-Tunnel (1.19.0), Verkabelung, Spanning Tree (1.19.0),
+// Abgleich mit dem IPAM und Datenqualität.
 import { lazy } from "react";
 import { L } from "../../i18n";
 import type { ViewEntry } from "../types";
@@ -7,6 +7,7 @@ import type { ViewEntry } from "../types";
 const Cabling = lazy(() => import("../../Cabling"));
 const Reconcile = lazy(() => import("../../Reconcile"));
 const Routing = lazy(() => import("../../Routing"));
+const StaticRoutes = lazy(() => import("./StaticRoutes"));
 const VpnTunnels = lazy(() => import("./VpnTunnels"));
 const SpanningTree = lazy(() => import("./SpanningTree")); // 1.19.0
 
@@ -27,6 +28,15 @@ export const VIEWS: ViewEntry[] = [
         params={p.params}
       />
     ),
+  },
+  {
+    key: "statisch",
+    module: "analyse",
+    label: L("Statische Routen", "Static routes"),
+    icon: "route",
+    section: "doc",
+    order: 61, // 1.19.0: statische Routen je Gerät und VRF (gehört später zu L3)
+    render: (p) => <StaticRoutes key={p.paramsKey} tenantId={p.tenantId} tenantLabel={p.tenantLabel} params={p.params} />,
   },
   {
     key: "vpn",

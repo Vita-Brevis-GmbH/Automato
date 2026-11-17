@@ -259,6 +259,10 @@ function viewLinks(f: Finding): { label: string; view: View; params: ViewParams 
   if (f.type === "parallel_policy_route_mismatch")
     return [{ label: String(d.label ?? L("Policy-Route", "Policy route")), view: "routing",
               params: { tab: "policy", q: `${String(d.source ?? "")} ${String(d.name ?? d.seq ?? "")}`.trim() } }];
+  // 1.19.0: statische Route in der Ansicht „Statische Routen“ (Gerät bzw. Kontext, Präfix)
+  if (f.type.startsWith("static_") && d.node)
+    return [{ label: L(`Statische Routen ${String(d.label ?? "")}`, `Static routes ${String(d.label ?? "")}`), view: "statisch",
+              params: { context: String(d.node), ...(d.prefix && f.type !== "static_unchecked" ? { q: String(d.prefix) } : {}) } }];
   // 0.140.0: unvollständig geprüfte Applikation öffnen
   if (f.type === "app_coverage" && d.application_id != null)
     return [{ label: L(`Applikation ${String(d.application ?? "")} öffnen`, `Open application ${String(d.application ?? "")}`),

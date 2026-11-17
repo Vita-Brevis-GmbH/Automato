@@ -55,6 +55,12 @@ export const FINDING_LABEL: Record<string, string> = {
   topo_mask_mismatch: L("Netzmaske abweichend", "Netmask differs"),
   topo_route_loop: L("Routing-Schleife", "Routing loop"),
   topo_static_unused: L("Statische Route ohne Wirkung", "Static route without effect"),
+  // 1.19.0: statische Routen (Ansicht „Statische Routen“)
+  static_nexthop_unreachable: L("Statische Route: Next-Hop nicht erreichbar", "Static route: next-hop unreachable"),
+  static_shadowed: L("Statische Route überdeckt", "Static route shadowed"),
+  static_duplicate: L("Statische Route doppelt", "Static route duplicated"),
+  static_blackhole: L("Blackhole-Route", "Blackhole route"),
+  static_unchecked: L("Statische Routen nicht geprüft", "Static routes not checked"),
   topo_bgp_down: L("BGP nicht aufgebaut", "BGP not established"),
   vpn_tunnel_down: L("VPN-Tunnel down", "VPN tunnel down"),
   vpn_selector_partial: L("VPN: Selektor deckt Route nicht", "VPN: selector does not cover route"),
@@ -181,6 +187,20 @@ export const FINDING_HINT: Record<string, string> = {
   topo_static_unused: L(
     "eingeschaltete statische Route, die nicht in der Routing-Tabelle steht",
     "enabled static route that is not in the routing table",
+  ),
+  static_nexthop_unreachable: L(
+    "nicht aktive statische Route (auch Backup), deren Next-Hop in keinem angeschlossenen Netz liegt und zu dem keine Route im selben VRF führt",
+    "inactive static route (also backup) whose next-hop is in no connected network and that no route in the same VRF leads to",
+  ),
+  static_shadowed: L(
+    "statische Route, die nie aktiv wird (bessere Route, spezifischere Routen) – bewusste Backup-Routen mit erhöhter Distanz zählen nicht",
+    "static route that never becomes active (better route, more specific routes) – deliberate backup routes with a raised distance do not count",
+  ),
+  static_duplicate: L("dieselbe statische Route mehrfach eingeschaltet", "the same static route enabled several times"),
+  static_blackhole: L("Hinweis: statische Route ins Leere – der Verkehr wird verworfen", "Note: static route into nothing – traffic is dropped"),
+  static_unchecked: L(
+    "statische Routen, die die Prüfungen nicht beurteilen konnten (Routing-Tabelle nicht lesbar, Adressobjekt, SD-WAN, dynamisch, Interface)",
+    "static routes the checks could not judge (routing table not readable, address object, SD-WAN, dynamic, interface)",
   ),
   topo_bgp_down: L("BGP-Sitzung eines gelesenen Knotens nicht aufgebaut", "BGP session of a read node not established"),
   vpn_tunnel_down: L("IPsec-Tunnel bzw. eine seiner Phase 2 ist down (nicht Dial-up)", "IPsec tunnel or one of its phase 2 is down (not dial-up)"),
@@ -406,6 +426,15 @@ export const FINDING_GROUPS: { key: string; label: string; help: string; types: 
       "Plausibility of networks and routing: duplicate IPs, masks, loops, routes without effect, BGP, networks of rules wider than the routes",
     ),
     types: ["topo_duplicate_ip", "topo_mask_mismatch", "topo_route_loop", "topo_static_unused", "topo_bgp_down", "net_wider_than_routes"],
+  },
+  {
+    key: "static_routes",
+    label: L("Statische Routen", "Static routes"),
+    help: L(
+      "Next-Hop nicht erreichbar, überdeckt (nie aktiv), doppelt, Blackhole, nicht geprüft",
+      "Next-hop unreachable, shadowed (never active), duplicated, blackhole, not checked",
+    ),
+    types: ["static_nexthop_unreachable", "static_shadowed", "static_duplicate", "static_blackhole", "static_unchecked"],
   },
   {
     key: "vpn",

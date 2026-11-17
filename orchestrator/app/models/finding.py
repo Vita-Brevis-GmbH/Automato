@@ -139,6 +139,14 @@ class FindingType(enum.StrEnum):
     VPN_TUNNEL_DOWN = "vpn_tunnel_down"
     VPN_SELECTOR_PARTIAL = "vpn_selector_partial"
     VPN_ROUTE_NO_SELECTOR = "vpn_route_no_selector"
+    # Statische Routen (1.19.0, `store/static_routes`): Next-Hop nicht erreichbar (kein
+    # angeschlossenes Netz, keine Route im VRF), ueberdeckt (nie aktiv - keine bewusste
+    # Backup-Route), doppelt, Blackhole (Hinweis), nicht pruefbar (Hinweis je Kontext)
+    STATIC_NEXTHOP_UNREACHABLE = "static_nexthop_unreachable"
+    STATIC_SHADOWED = "static_shadowed"
+    STATIC_DUPLICATE = "static_duplicate"
+    STATIC_BLACKHOLE = "static_blackhole"
+    STATIC_UNCHECKED = "static_unchecked"
     # Spanning Tree (1.19.0, `store/stp`): Root nicht am Soll bzw. ohne Soll nur gemeldet, Port
     # unerwartet blockiert, err-disabled durch BPDU-Guard, gemischte Modi im selben L2-Bereich,
     # viele Topologieaenderungen

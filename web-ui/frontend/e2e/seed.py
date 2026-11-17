@@ -26,6 +26,7 @@ import test_routing as rt  # noqa: E402
 import test_search_nat as sn  # noqa: E402
 import test_services as sv  # noqa: E402
 import test_sites as st  # noqa: E402
+import test_static_routes as sr  # noqa: E402
 import test_vdom as vd  # noqa: E402
 import test_virtual_server as vs  # noqa: E402
 
@@ -530,3 +531,32 @@ def run(app) -> None:
         r = ok(c.post(f"/internal/collector-runs/{run_id}/result", headers=TOKEN,
                       json={"status": "completed", **res}))  # fmt: skip
         assert r["status"] == "completed", r
+
+    # Statische Routen (1.19.0) in einer eigenen Umgebung „Umgebung Statisch“, damit die Zahlen
+    # der übrigen Tests bleiben: jeder Zustand und jeder Befund (Daten aus test_static_routes)
+    stid = ok(c.post("/tenants", json={"name": "Umgebung Statisch", "code": "US"}), 201)["id"]
+    # Regel fuer die Applikation „Statisch App“: ihr Weg nutzt die statische Route 10.60.0.0/24
+    lan_dmz = {"source_platform": "fortigate", "external_id": "41", "name": "lan-dmz",
+               "action": "allow", "sources": ["10.1.0.50"], "destinations": ["10.60.0.10"],
+               "services": ["tcp/443"], "src_zone": "lan", "dst_zone": "dmz", "vdom": "root",
+               "family": "v4",
+               "raw": {"policyid": 41, "srcintf": [{"name": "port1"}],
+                       "dstintf": [{"name": "port3"}], "status": "enable"}}  # fmt: skip
+    for name, platform, result, extra in (
+        ("fw-01", "fortigate", {**sr.FW1, "rules": [lan_dmz]},
+         {"base_url": "https://fw-01.example.ch"}),
+        ("fw-02", "fortigate", sr.FW2, {"base_url": "https://fw-02.example.ch"}),
+        ("rt-01", "cisco_switch", sr.ROUTER,
+         {"read_scope": "10.3.0.1", "username": "ro", "password": "x"}),
+        ("apic-01", "cisco_aci", sr.APIC, {"base_url": "https://apic-01.example.ch"}),
+    ):  # fmt: skip
+        sid = ok(c.post("/systems", json={"tenant_id": stid, "name": name, "platform": platform,
+                                          **extra}), 201)["id"]  # fmt: skip
+        body = {"platform": platform, "tenant_id": stid, "source_system_id": sid}
+        run_id = ok(c.post("/jobs/collect", json=body), 202)["run_id"]
+        res = {k: v for k, v in result.items() if k != "status"}
+        r = ok(c.post(f"/internal/collector-runs/{run_id}/result", headers=TOKEN,
+                      json={"status": "completed", **res}))  # fmt: skip
+        assert r["status"] == "completed", r
+    app = {"name": "Statisch App", "members": [{"kind": "host", "ref": "10.1.0.50"}]}
+    ok(c.post(f"/applications?tenant_id={stid}", json=app), 201)

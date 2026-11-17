@@ -248,6 +248,101 @@ def _static(subject: str, d: dict) -> tuple[str, str]:
     )
 
 
+def _static_at(d: dict) -> tuple[str, str, str]:
+    """Statische Route eines Befunds (1.19.0): Ziel, Weg und Ort (Geraet, VRF)."""
+    vrf = d.get("vrf")
+    where = str(d.get("label") or "?") + (f" · VRF {vrf}" if vrf not in (None, 0) else "")
+    return str(d.get("prefix") or "?"), str(d.get("via") or "?"), where
+
+
+def _static_nexthop(subject: str, d: dict) -> tuple[str, str]:
+    prefix, via, where = _static_at(d)
+    backup = d.get("state") == "backup"
+    return (
+        L(
+            f"Die statische Route {prefix} über {via} auf {where} erreicht ihren Next-Hop nicht: "
+            f"{d.get('nexthop') or '?'}."
+            + (" Sie ist eine Backup-Route – im Ernstfall greift sie nicht." if backup else ""),
+            f"The static route {prefix} via {via} on {where} does not reach its next-hop: "
+            f"{d.get('nexthop') or '?'}."
+            + (" It is a backup route – it will not take over when needed." if backup else ""),
+        ),
+        L(
+            "Next-Hop prüfen: liegt er in einem angeschlossenen Netz des Interfaces bzw. führt "
+            "eine Route im selben VRF dorthin? Sonst die Route korrigieren oder entfernen.",
+            "Check the next-hop: is it in a connected network of the interface, or does a route in "
+            "the same VRF lead there? Otherwise correct or remove the route.",
+        ),
+    )
+
+
+def _static_shadowed(subject: str, d: dict) -> tuple[str, str]:
+    prefix, via, where = _static_at(d)
+    return (
+        L(f"Die statische Route {prefix} über {via} auf {where} wird nie aktiv: "
+          f"{d.get('reason') or '?'}.",
+          f"The static route {prefix} via {via} on {where} never becomes active: "
+          f"{d.get('reason') or '?'}."),
+        L(
+            "Nicht gebrauchte Route entfernen – oder, wenn sie als Backup gedacht ist, ihre "
+            "Distanz bewusst über den Standard setzen (FortiGate 10, Junos 5, Cisco und ACI 1) "
+            "und einen anderen Weg als die wirksame Route nehmen.",
+            "Remove the unused route – or, if it is meant as a backup, set its distance "
+            "deliberately above the default (FortiGate 10, Junos 5, Cisco and ACI 1) and use "
+            "another path than the effective route.",
+        ),
+    )  # fmt: skip
+
+
+def _static_duplicate(subject: str, d: dict) -> tuple[str, str]:
+    prefix, via, where = _static_at(d)
+    seqs = [str(e.get("seq") or e.get("l3out")) for e in d.get("entries") or []
+            if e.get("seq") or e.get("l3out")]  # fmt: skip
+    which = f" ({_list(seqs)})" if seqs else ""
+    n = d.get("count") or len(d.get("entries") or []) or 2
+    return (
+        L(f"Die statische Route {prefix} über {via} steht {n}-mal eingeschaltet in der "
+          f"Konfiguration von {where}{which}.",
+          f"The static route {prefix} via {via} is enabled {n} times in the configuration of "
+          f"{where}{which}."),
+        L("Doppelte Einträge entfernen – nur einer wirkt, die anderen führen bei Änderungen in "
+          "die Irre.",
+          "Remove the duplicate entries – only one takes effect, the others mislead on changes."),
+    )  # fmt: skip
+
+
+def _static_blackhole(subject: str, d: dict) -> tuple[str, str]:
+    prefix, _via, where = _static_at(d)
+    dist = d.get("distance")
+    at = L(f" (Distanz {dist})", f" (distance {dist})") if dist is not None else ""
+    return (
+        L(f"Blackhole-Route {prefix} auf {where}{at}: Verkehr in dieses Netz wird verworfen.",
+          f"Blackhole route {prefix} on {where}{at}: traffic to this network is dropped."),
+        L("Hinweis – oft gewollt (z. B. gegen Schleifen bei VPN-Ausfall bzw. für "
+          "zusammengefasste Netze). Prüfen, ob das Netz bewusst verworfen wird.",
+          "Note – often intended (e.g. against loops when a VPN fails or for summarized "
+          "networks). Check that the network is dropped deliberately."),
+    )  # fmt: skip
+
+
+def _static_unchecked(subject: str, d: dict) -> tuple[str, str]:
+    from app.store.static_routes import unchecked_text  # spaet: nur fuer diesen Befund
+
+    counts = d.get("counts") or {}
+    why = "; ".join(f"{unchecked_text(k)} ({v})" for k, v in counts.items())
+    n = d.get("total") or sum(counts.values())
+    return (
+        L(f"{n} statische Routen auf {d.get('label') or subject} nicht (ganz) geprüft: {why}.",
+          f"{n} static routes on {d.get('label') or subject} not (fully) checked: {why}."),
+        L("Grenze der Prüfung, kein Fehler: Routing-Tabelle lesbar machen (Leserechte) bzw. Ziel "
+          "und Next-Hop dieser Routen von Hand prüfen (Adressobjekt, SD-WAN-Zone, dynamisches "
+          "Gateway, Interface).",
+          "Limit of the check, not an error: make the routing table readable (read permissions) "
+          "or check destination and next-hop of these routes manually (address object, SD-WAN "
+          "zone, dynamic gateway, interface)."),
+    )  # fmt: skip
+
+
 def _bgp(subject: str, d: dict) -> tuple[str, str]:
     name = f" ({_list(d.get('peer_names') or [], 1)})" if d.get("peer_names") else ""
     asn = f", AS {d['remote_as']}" if d.get("remote_as") else ""
@@ -1048,6 +1143,11 @@ _TOPO_TEXT = {
     "topo_mask_mismatch": _mask,
     "topo_route_loop": _loop,
     "topo_static_unused": _static,
+    "static_nexthop_unreachable": _static_nexthop,  # statische Routen (1.19.0)
+    "static_shadowed": _static_shadowed,
+    "static_duplicate": _static_duplicate,
+    "static_blackhole": _static_blackhole,
+    "static_unchecked": _static_unchecked,
     "topo_bgp_down": _bgp,
     "zone_policy_violation": _zone_violation,
     "zone_overlap": _zone_overlap,
