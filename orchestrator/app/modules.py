@@ -326,7 +326,7 @@ MODULES: tuple[Module, ...] = (
         role=WRITE,
         depends=("gateway",),
         api=("netbox_sync",),
-        store=("netbox_sync",),
+        store=("netbox_sync", "cable_label_sync"),  # Kabelnummern als Label (1.19.0)
         views=("netbox",),
         packages=("sot_gateway.adapters.netbox_writer",),
     ),  # fmt: skip

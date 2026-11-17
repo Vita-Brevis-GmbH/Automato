@@ -185,6 +185,7 @@ ALLOWLIST: dict[str, frozenset[str]] = {
             "create",
             "update",
             "delete",
+            "labels_confirmed",  # bestaetigte Kabelnummern (1.19.0)
         }
     ),
     "netbox_sync.cancelled": frozenset({"plan_id", "tenant_id"}),

@@ -232,3 +232,58 @@ oder für einen virtuellen Standort spezifisch“ und „Native VLAN von dem Int
   - Zugeordnet wird wie bei den Ports erst nach dem Lesen und nur eindeutig. Sonst bleibt das
     Netz ohne VLAN, und der Hinweis nennt es.
   - Dieselbe Angabe zeigt Automato bei den Subnetzen des Netzinventars als „(Switch)“.
+
+## Nachtrag 1.19.0 – Kabelnummer als Label des Kabels, Transceiver und Kabel aus NetBox
+
+Anwender 2026-11-17: „Verkabelung im Detail“ – „Kabelnummern können auch in Automato erfasst
+werden, beides möglich“.
+
+### Kabelnummer: aus NetBox gelesen und in Automato erfasst
+
+- **Aus NetBox gelesen:** Die Referenzquelle NetBox (nur lesend, Lese-Token) liest zusätzlich die
+  Kabel (`dcim/cables`) mit Label, Status, Typ, Farbe und Länge – nur Kabel mit genau einem Port
+  an beiden Enden (Eintrag `cable` mit den Enden in `attrs`). Andere Enden (Patchpanel, Circuit,
+  mehrere Ports) und ein fehlendes Leserecht stehen als Hinweis in der Meldung des Laufs; der Lauf
+  geht weiter. Die Kabel sind kein IPAM-Eintrag: Abgleich, Namen und Netze sehen sie nicht
+  (`references.load_index`), und im Datenstand (ADR 0049) sind sie ein eigener Teil ohne Wirkung
+  auf Doku und Wege (`reference.cables`).
+- **In Automato erfasst:** Laufzeitdaten je Mandant (`cable_label`, Migration `0092_kabel`), eine
+  Erfassung je Port-Paar. Das Paar ist ungerichtet und normalisiert wie die Verbindungen der
+  Verkabelung (Gerät ohne Domäne, Port in Kurzform), damit `GigabitEthernet1/0/47` und `Gi1/0/47`
+  dasselbe Paar sind. Erfassen und Ändern in der Oberfläche (Operator, Audit `cable_label.set`
+  bzw. `.deleted`), kein CSV.
+- Angezeigt wird die Nummer mit Herkunft: gleich, verschieden, nur Automato, nur NetBox.
+
+### Schreiben: der Abschnitt Verkabelung setzt das Label
+
+- **Neues Kabel** (legt der Sync aus einer beidseitig gemeldeten Verbindung an): die erfasste
+  Nummer geht als `label` mit dem Kabel.
+- **Bestehendes Kabel** mit anderer bzw. ohne Nummer: eigene Aktion *Kabelnummer*
+  (`cable_label`) „ändern“ mit beiden Werten (NetBox alt, Automato neu). Sie wird nur
+  übernommen, wenn der Betreiber sie in der Vorschau **je Kabel bestätigt** (`confirm` beim
+  Übernehmen, im Plan gespeichert, Audit `labels_confirmed`). Unbestätigte bleiben in NetBox,
+  wie sie sind, und zählen nicht in der Nachkontrolle (ADR 0042).
+- **Ausnahme zu ADR 0010:** Bestätigt der Betreiber die Nummer an einem von Hand gepflegten Kabel
+  (ohne Tag `automato`), schreibt der Sync dort nur das Feld `label` – Tags, Status, Beschreibung
+  und Enden bleiben. Ohne Bestätigung bleibt es wie bisher unangetastet. Das ist die einzige
+  Änderung an einem von Hand gepflegten Objekt; sie braucht den ausdrücklichen Klick je Kabel.
+- **Nur in NetBox** stehende Nummern werden nie gelöscht und nie überschrieben; die Vorschau zählt
+  sie. Eine Nummer ohne Kabel in NetBox (und ohne neues Kabel aus der Verkabelung) bleibt in
+  Automato; die Vorschau zählt sie als Hinweis.
+- Ohne den Abschnitt *Verkabelung* schreibt der Sync keine Nummern.
+
+### Transceiver und Befunde (nur lesend)
+
+- Die Switches liefern je Port den Transceiver (Typ, Hersteller, Teilenummer, Seriennummer),
+  nur mit `show`-Befehlen der Plattform: IOS/IOS-XE `show inventory`, NX-OS `show interface
+  transceiver`, Catalyst 1200/1300 `show inventory`, Junos `show chassis hardware`, Arista
+  `show inventory | json`, Aruba CX `show interface transceiver`. Über SNMPv3 (ADR 0033) nicht:
+  der Switch steht dann als „nicht unterstützt“ da. Je Switch ein Lesestatus (gelesen, nicht
+  lesbar, nicht unterstützt) – gezählt in der Meldung des Laufs und angezeigt in der Verkabelung.
+  Der Sync schreibt keine Transceiver (keine Module in NetBox).
+- Befunde (Prüfung „Kabel“, `app/checks/analyse/kabel.py`): LLDP/CDP-Nachbar passt nicht zum
+  Kabel in NetBox; Kabelnummer in NetBox und Automato verschieden; Duplex nicht voll – nur, wenn
+  beide Enden gelesen sind und ihr Duplex melden. Ohne Nachbar-Daten bzw. ohne Label kein Befund.
+
+Der Schreibweg bleibt derselbe: nur NetBox, Vorschau → Übernehmen (ADR 0010); der Sync-Benutzer
+hat die Rechte auf `dcim.cable` schon.
