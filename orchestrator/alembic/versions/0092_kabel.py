@@ -11,7 +11,7 @@ werden, beides möglich“.
   Erfassung je Paar); der NetBox-Sync schreibt sie als Label des Kabels.
 
 Revision ID: 0092_kabel
-Revises: 0089_vpn
+Revises: 0091_stp
 Create Date: 2026-11-17
 """
 
@@ -19,7 +19,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "0092_kabel"
-down_revision = "0089_vpn"
+down_revision = "0091_stp"
 branch_labels = None
 depends_on = None
 

@@ -42,8 +42,9 @@ test("VIP-Detail zeigt DNS-Namen beider Seiten und den Server", async ({ page })
 
 test("Findings: Übersicht, Satz mit Befund, Link auf die Regel", async ({ page }) => {
   await page.goto("/#findings");
-  // ADR 0029: dazu „Datenqualität“ (fw-05 nur teilweise gelesen); 0.113.0: „BGP-Filter“ (fw-05)
-  await expect(page.locator(".fgroup")).toHaveCount(11);
+  // ADR 0029: dazu „Datenqualität“ (fw-05 nur teilweise gelesen); 0.113.0: „BGP-Filter“ (fw-05);
+  // 1.19.0: „Spanning Tree“ (Root ohne Soll, unerwartet blockiert, BPDU-Guard)
+  await expect(page.locator(".fgroup")).toHaveCount(12);
   // seit 0.72.0: Policy-Route im Verbund „Süd“ je Firewall mit anderem Gateway
   await expect(page.locator(".fgroup", { hasText: "Parallele Firewalls" })).toContainText(
     "Parallele Policy-Route abweichend",
@@ -53,7 +54,9 @@ test("Findings: Übersicht, Satz mit Befund, Link auf die Regel", async ({ page 
   // seit 0.73.0: Wege uneinheitlich bei der Applikation Portal Süd (Verbund Süd: fw-09 erlaubt, fw-10 sperrt)
   await expect(page.locator(".fgroup", { hasText: "Applikationen" })).toContainText("Applikation: Wege uneinheitlich");
   // seit 0.50.0: Plausibilität der Topologie (statische Route ohne Wirkung in den Beispieldaten)
-  await expect(page.locator(".fgroup", { hasText: "Topologie" })).toContainText("Statische Route ohne Wirkung");
+  // (Kopf genau „Topologie“ – die Gruppe „Spanning Tree“ nennt Topologieänderungen, 1.19.0)
+  const topo = page.locator(".fgroup", { has: page.locator(".fgroup-head b", { hasText: /^Topologie$/ }) });
+  await expect(topo).toContainText("Statische Route ohne Wirkung");
   // seit 0.51.0: Regeln gegen die Absicht der Zonenmatrix (LAN -> DMZ gesperrt)
   await expect(page.locator(".fgroup", { hasText: "Zonen" })).toContainText("Zone: gegen die Absicht");
   await page.click(".fline:has-text('Nicht im IPAM')");

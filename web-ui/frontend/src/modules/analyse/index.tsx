@@ -1,4 +1,5 @@
-// Modul Analyse (ADR 0036): Routing, VPN-Tunnel (1.19.0), Verkabelung, Abgleich mit dem IPAM und Datenqualität.
+// Modul Analyse (ADR 0036): Routing, statische Routen und VPN-Tunnel (1.19.0), Verkabelung, Spanning Tree (1.19.0),
+// Abgleich mit dem IPAM und Datenqualität.
 import { lazy } from "react";
 import { L } from "../../i18n";
 import type { ViewEntry } from "../types";
@@ -6,7 +7,9 @@ import type { ViewEntry } from "../types";
 const Cabling = lazy(() => import("../../Cabling"));
 const Reconcile = lazy(() => import("../../Reconcile"));
 const Routing = lazy(() => import("../../Routing"));
+const StaticRoutes = lazy(() => import("./StaticRoutes"));
 const VpnTunnels = lazy(() => import("./VpnTunnels"));
+const SpanningTree = lazy(() => import("./SpanningTree")); // 1.19.0
 
 export const VIEWS: ViewEntry[] = [
   {
@@ -27,6 +30,15 @@ export const VIEWS: ViewEntry[] = [
     ),
   },
   {
+    key: "statisch",
+    module: "analyse",
+    label: L("Statische Routen", "Static routes"),
+    icon: "route",
+    section: "doc",
+    order: 61, // 1.19.0: statische Routen je Gerät und VRF (gehört später zu L3)
+    render: (p) => <StaticRoutes key={p.paramsKey} tenantId={p.tenantId} tenantLabel={p.tenantLabel} params={p.params} />,
+  },
+  {
     key: "vpn",
     module: "analyse",
     label: L("VPN-Tunnel", "VPN tunnels"),
@@ -43,6 +55,24 @@ export const VIEWS: ViewEntry[] = [
     section: "doc",
     order: 70,
     render: (p) => <Cabling tenantId={p.tenantId} tenantLabel={p.tenantLabel} />,
+  },
+  {
+    key: "spanningtree",
+    module: "analyse",
+    label: "Spanning Tree",
+    icon: "stp",
+    section: "doc",
+    order: 75,
+    render: (p) => (
+      <SpanningTree
+        key={p.paramsKey}
+        tenantId={p.tenantId}
+        tenantLabel={p.tenantLabel}
+        canEdit={p.me.isAdmin || p.me.isOperator}
+        params={p.params}
+        onOpenFindings={p.openFindings}
+      />
+    ),
   },
   {
     key: "abgleich",

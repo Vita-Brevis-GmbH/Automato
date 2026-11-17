@@ -17,13 +17,15 @@ Seit 0.94.0 IPv6-Nachbarn (NDP, `nd.py`) wie ARP und weitere Hersteller: Arista 
 
 Seit 0.65.0 Spanning Tree (je Port die VLANs, in denen er blockiert bzw. Root-Port ist, in
 `attrs.stp_blocked`/`stp_root`) und `show vpc` selbst ausgewertet: Domaene, Rolle, Peer- und
-Keepalive-Status am Peer-Link (`attrs.vpc_peer_link`), je vPC Status und Konsistenz.
+Keepalive-Status am Peer-Link (`attrs.vpc_peer_link`), je vPC Status und Konsistenz. Seit 1.19.0
+der Spanning Tree je VLAN bzw. MST-Instanz mit Root, Bridge, Ports und Topologieaenderungen
+(`stp.py`, `NetworkInventory.stp`/`stp_devices`).
 """
 
 import ipaddress
 import re
 
-from collectors.cisco_switch import nd
+from collectors.cisco_switch import nd, stp
 from collectors.common.dto import (
     NetworkInventory,
     NormalizedArp,
@@ -358,7 +360,7 @@ def switch_inventory(
     cmds = COMMANDS[platform]
     p: dict[str, list[dict]] = {}
     for c in cmds:
-        if c in nd.COMMANDS:  # IPv6-Nachbarn: eigene Auswertung unten (0.94.0)
+        if c in nd.COMMANDS or c in stp.OWN:  # IPv6 (0.94.0), Spanning Tree (1.19.0): selbst
             continue
         try:
             p[c] = parse(platform, c, outputs.get(c, ""))
@@ -522,7 +524,7 @@ def _interface(device: str, e: dict, nb: NormalizedNeighbor | None) -> Normalize
 
 def normalize(raw: dict) -> NetworkInventory:
     """Alle gelesenen Switches eines Quellsystems zusammen."""
-    inv = NetworkInventory()
+    inv = NetworkInventory(stp=[], stp_devices=[])
     seen_vlans: dict[int, NormalizedVlan] = {}
     for sw in raw.get("switches") or []:
         part = switch_inventory(sw["host"], sw["platform"], sw.get("outputs") or {},
@@ -544,6 +546,7 @@ def normalize(raw: dict) -> NetworkInventory:
         inv.subnets += part.subnets  # Junos: Netze der Interface-Adressen (0.68.0)
         for v in part.vlans:  # VLAN-ID je Quellsystem einmal (erster Name)
             seen_vlans.setdefault(v.vid, v)
+        stp.add(inv, part, sw)  # Spanning Tree (1.19.0): IOS/IOS-XE, NX-OS, sonst ausgewiesen
     inv.vlans = sorted(seen_vlans.values(), key=lambda v: v.vid)
     return inv
 

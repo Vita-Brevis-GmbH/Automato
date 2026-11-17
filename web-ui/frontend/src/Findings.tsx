@@ -259,6 +259,10 @@ function viewLinks(f: Finding): { label: string; view: View; params: ViewParams 
   if (f.type === "parallel_policy_route_mismatch")
     return [{ label: String(d.label ?? L("Policy-Route", "Policy route")), view: "routing",
               params: { tab: "policy", q: `${String(d.source ?? "")} ${String(d.name ?? d.seq ?? "")}`.trim() } }];
+  // 1.19.0: statische Route in der Ansicht „Statische Routen“ (Gerät bzw. Kontext, Präfix)
+  if (f.type.startsWith("static_") && d.node)
+    return [{ label: L(`Statische Routen ${String(d.label ?? "")}`, `Static routes ${String(d.label ?? "")}`), view: "statisch",
+              params: { context: String(d.node), ...(d.prefix && f.type !== "static_unchecked" ? { q: String(d.prefix) } : {}) } }];
   // 0.140.0: unvollständig geprüfte Applikation öffnen
   if (f.type === "app_coverage" && d.application_id != null)
     return [{ label: L(`Applikation ${String(d.application ?? "")} öffnen`, `Open application ${String(d.application ?? "")}`),
@@ -284,6 +288,14 @@ function viewLinks(f: Finding): { label: string; view: View; params: ViewParams 
   if (BGP_FINDING_TYPES.has(f.type) && d.l3out)
     return [{ label: L(`L3Out ${String(d.l3out)} öffnen`, `Open L3Out ${String(d.l3out)}`), view: "routing",
               params: { tab: "l3out", q: String(d.l3out) } }];
+  // Spanning Tree (1.19.0): Ansicht mit dem VLAN bzw. dem Switch öffnen
+  if (f.type.startsWith("stp_")) {
+    const vlan = String(d.vlans ?? d.instances ?? "").match(/\d+/)?.[0];
+    const q = String(d.device ?? "");
+    return [{ label: L("Spanning Tree öffnen", "Open Spanning Tree"), view: "spanningtree",
+              params: f.type === "stp_bpdu_guard" || f.type === "stp_topology_changes" ? { tab: "devices" }
+                : vlan ? { vlan } : q ? { q } : {} }];
+  }
   // Datenqualität (ADR 0029): Läufe des Quellsystems, nicht lesbarer Routing-Kontext
   if ((f.type === "source_stale" || f.type === "source_partial") && sid != null) {
     const out: { label: string; view: View; params: ViewParams }[] = [

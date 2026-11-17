@@ -1295,10 +1295,10 @@ async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
   return (response.status === 204 ? undefined : await response.json()) as T;
 }
 
-const getJSON = <T>(url: string) => request<T>(url);
+export const getJSON = <T>(url: string) => request<T>(url);
 
-// Schreib-Helfer (POST/PATCH/DELETE). 204 -> kein Body.
-const sendJSON = <T>(url: string, method: string, body?: unknown) =>
+// Schreib-Helfer (POST/PATCH/DELETE). 204 -> kein Body. Exportiert für die API-Dateien der Module (1.19.0)
+export const sendJSON = <T>(url: string, method: string, body?: unknown) =>
   request<T>(url, {
     method,
     headers: { "Content-Type": "application/json" },
@@ -1316,7 +1316,7 @@ function cq(params: Record<string, string | number | null | undefined>): string 
   return qs({ ...params, customer_id: customerFilter });
 }
 
-function qs(params: Record<string, string | number | null | undefined>): string {
+export function qs(params: Record<string, string | number | null | undefined>): string {
   const p = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
     if (v !== null && v !== undefined && v !== "") p.set(k, String(v));
@@ -2112,6 +2112,7 @@ export interface AppConnection {
   // Eingaben des Wegs für „Warum dieser Weg?“ (0.109.0)
   trace?: { src: string; dst: string; service: string | null; starts: string[] };
   assign?: NetAssignState | null; // Netz grösser als die Routen (0.111.0, ADR 0040)
+  statics?: string[]; // 1.19.0: Schlüssel der statischen Routen auf den Wegen (AppConnections.statics)
 }
 export interface AppConnZones {
   src: string[];
@@ -2210,6 +2211,7 @@ export interface AppConnections {
   snapshot?: DocSnapshot; // 0.108.0
   // 0.140.0: vollständig geprüft? sonst je Art, was eine Grenze ausgelassen hat (Befund app_coverage)
   coverage?: { complete: boolean; checked: number; total: number; cuts: Record<string, { rules: number; missing: number }> };
+  statics?: AppStaticRoute[]; // 1.19.0: statische Routen auf den Wegen
   // 0.132.1: Dauer je Teil (Sekunden) und die langsamsten Wege
   timing?: {
     doc: number;
@@ -3116,6 +3118,95 @@ export const fetchRoutes = (opts: {
   getPage<TopoRoute>(
     `/api/routing/routes${cq({ tenant_id: opts.tenantId, source_system_id: opts.sourceId, context: opts.context || undefined, table: opts.table || undefined, vrf: opts.vrf || undefined, ip: opts.ip?.trim() || undefined, q: opts.q?.trim() || undefined, limit: opts.limit, offset: opts.offset })}`,
   );
+// Statische Routen je Gerät und VRF (1.19.0): Zustand, Next-Hop, Befunde je Route und was nicht prüfbar war
+export type StaticState = "active" | "backup" | "shadowed" | "not_installed" | "disabled" | "unknown";
+export interface StaticRouteRow {
+  key: string;
+  source_system_id: number;
+  source: string;
+  node: string;
+  context: string;
+  node_key: string; // <Quellsystem>|<Kontext> wie die Knoten der Weg-Suche
+  display: ContextKind;
+  label: string;
+  vrf: number | string;
+  family: number;
+  prefix: string;
+  next_hop: string | null;
+  interface: string | null;
+  zone?: string | null;
+  resolved_next_hop?: Resolved;
+  distance: number | null;
+  priority: number | null;
+  enabled: boolean;
+  origin: "config" | "rib" | "l3out";
+  blackhole: boolean;
+  target: { kind: "object" | "sdwan" | "dynamic"; name?: string } | null;
+  seq: string | null;
+  comment: string | null;
+  l3out: string | null;
+  state: StaticState;
+  state_text: string;
+  reason: string | null;
+  winner: { prefix: string; protocol: string | null; distance: number | null; via: string } | null;
+  covered_by: string[];
+  covered_total: number;
+  nexthop: { state: "ok" | "unreachable" | "unchecked"; text: string; owner?: string; remote?: boolean } | null;
+  unchecked: { reason: string; text: string }[];
+  duplicate: number;
+  resolved: string[];
+  issues: string[];
+  shared?: boolean;
+}
+export interface StaticRoutes {
+  rows: StaticRouteRow[];
+  total: number;
+  summary: {
+    total: number;
+    states: Partial<Record<StaticState, number>>;
+    issues: Record<string, number>;
+    unchecked: { reason: string; text: string; count: number }[];
+    remote: number; // Next-Hop bei einem nicht gelesenen Gerät: nur bis ins angeschlossene Netz geprüft
+    rib_only: { node_key: string; label: string; reason: string; text: string }[];
+  };
+  contexts: { key: string; label: string }[];
+  vrfs: string[];
+}
+export const fetchStaticRoutes = (opts: {
+  tenantId: number;
+  q?: string;
+  ip?: string;
+  context?: string;
+  vrf?: string;
+  state?: string;
+  issues?: boolean;
+  limit?: number;
+  offset?: number;
+}) =>
+  getJSON<StaticRoutes>(
+    `/api/static-routes${cq({ tenant_id: opts.tenantId, q: opts.q?.trim() || undefined, ip: opts.ip?.trim() || undefined, context: opts.context || undefined, vrf: opts.vrf || undefined, state: opts.state || undefined, issues: opts.issues ? "true" : undefined, limit: opts.limit, offset: opts.offset })}`,
+  );
+// Doku der Applikation (1.19.0): statische Routen auf den Wegen
+export interface AppStaticRoute {
+  key: string;
+  source_system_id: number;
+  node_key: string;
+  label: string;
+  context: string;
+  vrf: number | string;
+  prefix: string;
+  next_hop: string | null;
+  interface: string | null;
+  distance: number | null;
+  priority?: number | null;
+  origin: "config" | "rib" | "l3out";
+  seq?: string | null;
+  comment?: string | null;
+  l3out?: string | null;
+  use: "active" | "backup";
+  connections: string[];
+  count: number;
+}
 export const lookupRoute = (tenantId: number, ip: string) =>
   getJSON<RouteLookup[]>(`/api/routing/lookup${cq({ tenant_id: tenantId, ip: ip.trim() })}`);
 // Weg Hop für Hop: ab der Quelle (dort angeschlossen) bzw. dem Startpunkt (RoutingNode.key)

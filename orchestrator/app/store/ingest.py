@@ -79,6 +79,7 @@ from app.store import (
     reconcile,
     rule_index,
     stable_ids,
+    stp,
     tenant_lock,
     topology,
     virtual,
@@ -170,6 +171,8 @@ def persist_result(session: Session, run, result: CollectorResult, sot) -> None:
         _replace_inventory(session, run, result.inventory)
         if result.inventory.macs or result.inventory.arps:  # Switches: gesammelt (0.63.0)
             l2.merge(session, run, result.inventory)
+        if result.inventory.stp_devices is not None:  # Spanning Tree (1.19.0)
+            stp.replace(session, run, result.inventory)
     if result.host_keys:  # Switches: SSH-Host-Schluessel beim ersten Kontakt festhalten
         _pin_host_keys(session, run, result.host_keys)
     if result.virtual is not None:  # vCenter: VMs und Portgruppen (ADR 0017)

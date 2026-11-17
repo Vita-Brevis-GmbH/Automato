@@ -55,6 +55,12 @@ export const FINDING_LABEL: Record<string, string> = {
   topo_mask_mismatch: L("Netzmaske abweichend", "Netmask differs"),
   topo_route_loop: L("Routing-Schleife", "Routing loop"),
   topo_static_unused: L("Statische Route ohne Wirkung", "Static route without effect"),
+  // 1.19.0: statische Routen (Ansicht „Statische Routen“)
+  static_nexthop_unreachable: L("Statische Route: Next-Hop nicht erreichbar", "Static route: next-hop unreachable"),
+  static_shadowed: L("Statische Route überdeckt", "Static route shadowed"),
+  static_duplicate: L("Statische Route doppelt", "Static route duplicated"),
+  static_blackhole: L("Blackhole-Route", "Blackhole route"),
+  static_unchecked: L("Statische Routen nicht geprüft", "Static routes not checked"),
   topo_bgp_down: L("BGP nicht aufgebaut", "BGP not established"),
   vpn_tunnel_down: L("VPN-Tunnel down", "VPN tunnel down"),
   vpn_selector_partial: L("VPN: Selektor deckt Route nicht", "VPN: selector does not cover route"),
@@ -88,6 +94,13 @@ export const FINDING_LABEL: Record<string, string> = {
   lag_degraded: L("Port-Channel unvollständig", "Port-Channel incomplete"),
   vlan_split: L("VLAN getrennt", "VLAN split"),
   vpc_mismatch: L("vPC-Paar uneinheitlich", "vPC pair inconsistent"),
+  // Spanning Tree (1.19.0)
+  stp_root_mismatch: L("Spanning Tree: Root nicht am Soll", "Spanning Tree: root not at target"),
+  stp_root_info: L("Spanning Tree: Root (ohne Soll)", "Spanning Tree: root (no target)"),
+  stp_port_blocked: L("Spanning Tree: unerwartet blockiert", "Spanning Tree: unexpectedly blocked"),
+  stp_bpdu_guard: L("Spanning Tree: BPDU-Guard", "Spanning Tree: BPDU guard"),
+  stp_mode_mixed: L("Spanning Tree: gemischte Modi", "Spanning Tree: mixed modes"),
+  stp_topology_changes: L("Spanning Tree: viele Topologieänderungen", "Spanning Tree: many topology changes"),
   source_stale: L("Quellsystem: Stand veraltet", "Source system: data outdated"),
   source_partial: L("Quellsystem: nur teilweise gelesen", "Source system: only partially collected"),
   manual: L("Von Hand erfasst", "Captured manually"),
@@ -174,6 +187,20 @@ export const FINDING_HINT: Record<string, string> = {
   topo_static_unused: L(
     "eingeschaltete statische Route, die nicht in der Routing-Tabelle steht",
     "enabled static route that is not in the routing table",
+  ),
+  static_nexthop_unreachable: L(
+    "nicht aktive statische Route (auch Backup), deren Next-Hop in keinem angeschlossenen Netz liegt und zu dem keine Route im selben VRF führt",
+    "inactive static route (also backup) whose next-hop is in no connected network and that no route in the same VRF leads to",
+  ),
+  static_shadowed: L(
+    "statische Route, die nie aktiv wird (bessere Route, spezifischere Routen) – bewusste Backup-Routen mit erhöhter Distanz zählen nicht",
+    "static route that never becomes active (better route, more specific routes) – deliberate backup routes with a raised distance do not count",
+  ),
+  static_duplicate: L("dieselbe statische Route mehrfach eingeschaltet", "the same static route enabled several times"),
+  static_blackhole: L("Hinweis: statische Route ins Leere – der Verkehr wird verworfen", "Note: static route into nothing – traffic is dropped"),
+  static_unchecked: L(
+    "statische Routen, die die Prüfungen nicht beurteilen konnten (Routing-Tabelle nicht lesbar, Adressobjekt, SD-WAN, dynamisch, Interface)",
+    "static routes the checks could not judge (routing table not readable, address object, SD-WAN, dynamic, interface)",
   ),
   topo_bgp_down: L("BGP-Sitzung eines gelesenen Knotens nicht aufgebaut", "BGP session of a read node not established"),
   vpn_tunnel_down: L("IPsec-Tunnel bzw. eine seiner Phase 2 ist down (nicht Dial-up)", "IPsec tunnel or one of its phase 2 is down (not dial-up)"),
@@ -298,6 +325,30 @@ export const FINDING_HINT: Record<string, string> = {
     "vPC nur auf einem Peer, down bzw. inkonsistent – oder der Peer des vPC-Paars ist nicht verbunden",
     "vPC only on one peer, down or inconsistent – or the peer of the vPC pair is not connected",
   ),
+  stp_root_mismatch: L(
+    "Root eines VLANs bzw. einer MST-Instanz ist nicht der Soll-Root (bzw. der Ersatz-Root ist Root)",
+    "root of a VLAN or MST instance is not the target root (or the backup root is root)",
+  ),
+  stp_root_info: L(
+    "kein Soll-Root festgelegt – gemeldet wird nur, wer Root ist",
+    "no target root defined – only the current root is reported",
+  ),
+  stp_port_blocked: L(
+    "blockierter Port, der nicht zu einer Reserve zwischen Switches passt: Schutzfunktion, Backup-Rolle, vPC-Peer-Link, Edge-Port bzw. Gegenstelle kein Switch",
+    "blocked port that does not fit a backup path between switches: protection feature, backup role, vPC peer link, edge port or peer not a switch",
+  ),
+  stp_bpdu_guard: L(
+    "Port durch BPDU-Guard gesperrt (err-disabled) – an einem Edge-Port kam ein BPDU an",
+    "port locked by BPDU guard (err-disabled) – a BPDU arrived on an edge port",
+  ),
+  stp_mode_mixed: L(
+    "verbundene Switches mit verschiedenen Modi (PVST+, Rapid-PVST+, MST, aus) bzw. Grenze zu einem anderen Protokoll",
+    "connected switches with different modes (PVST+, Rapid-PVST+, MST, off) or boundary to another protocol",
+  ),
+  stp_topology_changes: L(
+    "mindestens die Schwelle an Topologieänderungen je 24 h (Vorgabe 10, unter Spanning Tree einstellbar)",
+    "at least the limit of topology changes per 24 h (default 10, adjustable under Spanning Tree)",
+  ),
   source_stale: L(
     "letzter erfolgreicher Lauf älter als die Grenze (AUTOMATO_STALE_DAYS, Zeitplan beachtet) – Doku und Weg-Suche zeigen einen alten Stand",
     "last successful run older than the limit (AUTOMATO_STALE_DAYS, schedule considered) – documentation and path search show outdated data",
@@ -377,6 +428,15 @@ export const FINDING_GROUPS: { key: string; label: string; help: string; types: 
     types: ["topo_duplicate_ip", "topo_mask_mismatch", "topo_route_loop", "topo_static_unused", "topo_bgp_down", "net_wider_than_routes"],
   },
   {
+    key: "static_routes",
+    label: L("Statische Routen", "Static routes"),
+    help: L(
+      "Next-Hop nicht erreichbar, überdeckt (nie aktiv), doppelt, Blackhole, nicht geprüft",
+      "Next-hop unreachable, shadowed (never active), duplicated, blackhole, not checked",
+    ),
+    types: ["static_nexthop_unreachable", "static_shadowed", "static_duplicate", "static_blackhole", "static_unchecked"],
+  },
+  {
     key: "vpn",
     label: L("VPN-Tunnel", "VPN tunnels"),
     help: L(
@@ -419,6 +479,15 @@ export const FINDING_GROUPS: { key: string; label: string; help: string; types: 
       "Links between switches: speed, duplex, VLANs, Port-Channel, reported one-sided",
     ),
     types: ["link_speed_mismatch", "link_duplex_mismatch", "link_vlan_mismatch", "link_lag_mismatch", "link_one_sided", "uplink_vlan_missing", "l2_single_link", "l2_single_switch", "l2_single_point", "lag_degraded", "vlan_split", "vpc_mismatch"],
+  },
+  {
+    key: "stp",
+    label: "Spanning Tree",
+    help: L(
+      "Root gegen den Soll-Root, unerwartet blockierte Ports, BPDU-Guard, gemischte Modi, viele Topologieänderungen",
+      "Root against the target root, unexpectedly blocked ports, BPDU guard, mixed modes, many topology changes",
+    ),
+    types: ["stp_root_mismatch", "stp_root_info", "stp_port_blocked", "stp_bpdu_guard", "stp_mode_mixed", "stp_topology_changes"],
   },
   {
     key: "zones",

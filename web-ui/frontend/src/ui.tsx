@@ -131,6 +131,15 @@ const ICONS: Record<string, ReactNode> = {
       <path d="M6 9v3a3 3 0 0 0 3 3h6a3 3 0 0 1 3 3" />
     </>
   ),
+  // Spanning Tree (1.19.0): Root oben, zwei Zweige, einer blockiert
+  stp: (
+    <>
+      <rect x="9" y="2" width="6" height="5" rx="1" />
+      <rect x="2" y="17" width="6" height="5" rx="1" />
+      <rect x="16" y="17" width="6" height="5" rx="1" />
+      <path d="M12 7v7M5 17v-3h7M15 14h4v3" />
+    </>
+  ),
   path: (
     <>
       <circle cx="5" cy="19" r="2" />

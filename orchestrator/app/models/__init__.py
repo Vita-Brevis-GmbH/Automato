@@ -93,6 +93,7 @@ from app.models.service_object import Proto, ServiceObject
 from app.models.site import SITE_KINDS, Site, SiteLink
 from app.models.source_system import DNS_PLATFORMS, REFERENCE_PLATFORMS, Platform, SourceSystem
 from app.models.source_system import RefRole as ReferenceRole
+from app.models.stp import STP_MODELS, StpDevice, StpInstance, StpSetting, StpTarget
 from app.models.sync_plan import SyncPlan, SyncStatus
 from app.models.tenant import DnsType, IpamType, Tenant
 from app.models.tenant_check import TenantCheck
@@ -198,6 +199,11 @@ __all__ = [
     "Site",
     "SiteLink",
     "SourceOfRecord",
+    "STP_MODELS",
+    "StpDevice",
+    "StpInstance",
+    "StpSetting",
+    "StpTarget",
     "SourceSystem",
     "ParallelRejection",
     "PortalCustomer",

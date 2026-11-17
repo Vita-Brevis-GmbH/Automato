@@ -21,6 +21,7 @@ import {
   snatText,
 } from "./api";
 import { Fold, FoldTitle } from "./fold";
+import { UsedStatics } from "./modules/analyse/StaticRoutes";
 import { VpnChip } from "./modules/analyse/VpnChip";
 import { NetAssignChip, NetAssignDialog } from "./modules/wege/NetAssign";
 import PathExplainDrawer from "./PathExplain";
@@ -1338,6 +1339,7 @@ export default function ConnectionsCard({
       </div>
       )}
       {data?.without && data.without.length > 0 && <WithoutList items={data.without} onRule={onRule} />}
+      {data?.statics && data.statics.length > 0 && <UsedStatics items={data.statics} />}
       </>
       )}
       {explain && tenantId != null && (
