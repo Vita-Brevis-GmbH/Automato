@@ -18,6 +18,7 @@ if ! declare -p BUNDLE_GIT >/dev/null 2>&1; then BUNDLE_GIT=(git); fi
 BUNDLE_KOEPFE="" # git bundle list-heads: je Zeile "<commit> <name>"
 BUNDLE_FEHLER=""
 BUNDLE_SEK=${BUNDLE_SEK:-600} # Grenze für das Einlesen (lokale Datei, auch grosse Repos)
+[[ $BUNDLE_SEK =~ ^[0-9]{1,5}$ ]] || BUNDLE_SEK=600
 
 bundle_git() { "${BUNDLE_GIT[@]}" "$@" 8>&- 9>&-; } # Sperren (fd 8, 9) erbt git nicht
 
