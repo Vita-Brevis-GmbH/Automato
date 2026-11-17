@@ -17,6 +17,34 @@ das Manifest ohne `manifest.sig` (Warnung im Lauf) – auch das lehnen Hosts ab.
 
 Die Befehle unten lassen sich so kopieren; wo `read` steht, fragt die Shell nach einer Eingabe.
 
+## Kanäle
+
+| Kanal | Quelle | Version | Release |
+| --- | --- | --- | --- |
+| `stable` | `deploy/release/stable` (abgenommen) bzw. Tag `v<X.Y.Z>` | `X.Y.Z` | `kanal-stable` |
+| `latest` | jeder grüne Stand von `main` | `<VERSION>-latest.<n>.<sha7>` | `kanal-latest` (Vorabversion) |
+| `dev` | jeder grüne Stand des Entwicklungs-Branches | `<VERSION>-dev.<n>.<sha7>` | `kanal-dev` (Vorabversion) |
+
+- **stable ohne Tag** (1.18.1, ADR 0060 Nachtrag): Die Datei `deploy/release/stable` hier im Ordner
+  nennt in einer Zeile die abgenommene Version und den vollen Commit, auf dem `VERSION` genau diese
+  Version ist (Kommentarzeilen mit `#`):
+
+  ```text
+  1.17.0 315b05ff8e6ff73406f94c70c75af654e31671a5
+  ```
+
+  Bei jeder Abnahme auf die abgenommene Version setzen und pushen – mehr ist nicht zu tun. Der Job
+  `stable` in `ci.yml` baut nach dem Push genau diesen Commit und legt Images (`:X.Y.Z`,
+  `:stable`), `manifest.json` und `manifest.sig` in `kanal-stable` ab. Er tut das nur, wenn der
+  Commit ein Vorfahre des gepushten Stands ist, dort `VERSION` = X.Y.Z steht, ein CI-Lauf dieses
+  Commits erfolgreich war und `kanal-stable` noch keine gleiche oder neuere Version hat; ein
+  Manifest ohne Signatur (Secret kam später) wird neu signiert ersetzt. Ohne Tag und ohne Release
+  `v<X.Y.Z>`; ein Tag `v<X.Y.Z>` geht weiterhin und führt zum selben Kanal.
+- **n** = `git rev-list --count <commit>` – wächst mit jedem Commit; im selben Kanal ist die
+  Version mit dem grösseren n die neuere.
+- Prüfen von Hand (im Repo): `python3 scripts/release_manifest.py freigabe --datei
+  deploy/release/stable --repo . --stand HEAD`.
+
 ## 1. Schlüsselpaar erzeugen (einmal)
 
 Auf einem vertrauenswürdigen Rechner mit OpenSSL ab 3.0 (`openssl version`), nicht auf einem Host:

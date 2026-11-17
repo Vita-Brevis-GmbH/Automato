@@ -7,6 +7,33 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 1.18.1 – 2026-11-17
+
+Korrektur: Update aus dem Cockpit scheiterte mit „Kein Manifest unter …/kanal-stable/manifest.json
+(HTTP 404)“ – `stable` entstand nur aus Tags, und es gab keinen (Anwender 2026-11-17: „es muss
+einfach funktionieren, das ist der einzige Wunsch“). ADR 0060 Nachtrag „stable ohne Tag:
+Freigabe-Datei“.
+
+- **Kanal `stable` ohne Tag:** `deploy/release/stable` nennt die abgenommene Version und ihren
+  Commit (`1.17.0 315b05f…`). Nach jedem Push auf `main` bzw. den Entwicklungs-Branch prüft der
+  Job `stable-pruefen` in `ci.yml` (nach den übrigen Jobs, auch bei Pushes nur mit Doku), ob
+  `kanal-stable` diese Version hat; fehlt sie bzw. ist dort eine ältere, baut `images.yml` genau
+  diesen Commit und veröffentlicht Images `:X.Y.Z`/`:stable`, Manifest und Signatur – nur, wenn
+  der Commit ein Vorfahre des Stands ist, `VERSION` dort passt, sein CI-Lauf grün war und die
+  Version nie älter als die veröffentlichte ist. Ohne Tag; der Weg über Tags `v<X.Y.Z>` bleibt.
+  Prüfung in `scripts/release_manifest.py freigabe`.
+- **Monotone Versionen** in `dev` und `latest`: `<VERSION>-dev.<n>.<sha7>` bzw.
+  `-latest.<n>.<sha7>` (n = Anzahl Commits); `vergleichen` nimmt im selben Kanal n.
+- **Nie älter, auch bei gleichem Kern:** `betrieb.sh aktualisieren` prüft bei gleichem
+  Versionskern die git-Abstammung (Checkout bzw. Bundle, nie origin): Vorfahre des laufenden
+  Stands → Exit 3 („zurück nur über zurueck“), getrennte Linien → Exit 3, Commit nicht da → wie
+  bisher.
+- **`stand` meldet die Herkunft:** `stand.herkunft` mit `branch` (bzw. `null`), `losgeloest`,
+  `kanal` (`dev`/`latest`/`stable`/`unbekannt`) und `aus` (`manifest`/`version`/`branch`/`tag`) –
+  das Cockpit wählt damit den Kanal ohne Zutun; rückwärts verträglich.
+- Abnahme: bei jeder Abnahme `deploy/release/stable` auf die abgenommene Version setzen
+  (`CLAUDE.md`).
+
 ## 1.18.0 – 2026-11-17
 
 Alles privat (Anwender 2026-11-17: „alle auf Privat umstellen“; Cockpit ADR 0019): nur das

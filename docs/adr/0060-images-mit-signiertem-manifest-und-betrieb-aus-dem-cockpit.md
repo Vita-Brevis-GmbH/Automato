@@ -2,7 +2,8 @@
 
 ## Status
 
-**Angenommen** (2026-11-16), umgesetzt in 1.15.0 – zur Abnahme durch den Anwender.
+**Angenommen** (2026-11-16), umgesetzt in 1.15.0; Nachträge 1.18.0 (alles privat) und 1.18.1
+(stable ohne Tag).
 
 Anwender 2026-11-16: „Bitte weiter bis P5“ – Cockpit-Roadmap P3 „Aktualisieren“: Host-Agent mit
 Positivliste (Stand, Sicherung, Update auf eine Version, Rückfall, Neustart), Ablauf Sicherung →
@@ -173,3 +174,74 @@ Folgen:
   aus dem Cockpit (`docs/BETRIEB.md` 4b).
 - Offen: der Checkout auf der Keycloak-VM (`deploy/keycloak/betrieb.sh`, ADR 0062) aktualisiert
   sich nicht selbst – mit privatem Repo nur noch von Hand mit eigenem Lese-Zugang.
+
+## Nachtrag 1.18.1 (2026-11-17) – stable ohne Tag: Freigabe-Datei
+
+Anlass: Das Update aus dem Cockpit scheiterte mit „HTTP 502: Kein Manifest unter
+…/releases/download/kanal-stable/manifest.json (HTTP 404)“ – `stable` entstand nur aus Tags
+`v<X.Y.Z>`, und es gab keinen. Anwender 2026-11-17: „Ich weiss nicht, ob man taggen muss, es muss
+einfach funktionieren, das ist der einzige Wunsch.“ Ein Tag braucht einen eigenen Push (bzw.
+Rechte, die nicht jede Arbeitsumgebung hat) und wird leicht vergessen; die Abnahme dagegen wird
+ohnehin im Repo festgehalten (`ROADMAP.md`). Darum entsteht `stable` jetzt aus einer Datei im
+Repo, die mit der Abnahme nachgeführt wird.
+
+1. **Freigabe-Datei `deploy/release/stable`:** eine Zeile `X.Y.Z <commit>` (voller Commit, 40
+   Hex-Zeichen), Kommentarzeilen mit `#`. Sie nennt die abgenommene Version und den Commit, auf
+   dem `VERSION` genau diese Version ist. Bei jeder Abnahme setzt sie, wer die Abnahme nachführt,
+   auf die abgenommene Version (`CLAUDE.md`, Ablauf „Abnahme“). Start: `1.17.0` (Abnahme
+   2026-11-17).
+2. **Veröffentlichen ohne Tag:** In `ci.yml` prüft der Job `stable-pruefen` bei jedem Push auf
+   `main` bzw. den Entwicklungs-Branch nach den übrigen Jobs – auch bei Pushes nur mit Doku (die
+   Abnahme ist ein Doku-Commit) und unabhängig von deren Ergebnis, denn der freigegebene Commit hat
+   seinen eigenen Lauf – mit `gh`, welches Manifest im Release `kanal-stable` liegt. Fehlt es, ist
+   es älter oder fehlt die Signatur (Secret kam später), ruft der Job `stable` `images.yml` mit
+   `stable_freigabe: true` auf: gebaut wird **genau der Commit der Datei** (eigener Arbeitsbaum,
+   Werkzeuge aus dem gepushten Stand), Images `:X.Y.Z` und `:stable`, Manifest und Signatur in
+   `kanal-stable`. Bedingungen (`scripts/release_manifest.py freigabe`, in beiden Workflows
+   geprüft):
+   - der Commit ist im Repo und Vorfahre des gepushten Stands;
+   - `VERSION` am Commit ist X.Y.Z;
+   - es gibt einen erfolgreichen `ci.yml`-Lauf dieses Commits (wie beim Tag);
+   - nie älter als die schon veröffentlichte stable; dieselbe Version mit anderem Commit ersetzt
+     nichts (eine stable-Version gehört zu genau einem Commit).
+   Die Datei legt **keinen** Tag und kein Release `v<X.Y.Z>` an. Der Weg über Tags `v<X.Y.Z>`
+   bleibt daneben bestehen; von Hand (`workflow_dispatch`, Kanal `stable`) ohne Tag nimmt
+   `images.yml` die Datei.
+3. **Monotone Versionen in `dev` und `latest`:** `<VERSION>-dev.<n>.<sha7>` bzw.
+   `-latest.<n>.<sha7>`, n = `git rev-list --count <commit>`. `vergleichen` nimmt bei gleichem
+   Kern im selben Kanal n; ohne vergleichbares n (anderer Kanal, stable gegen dev, Versionen bis
+   1.18.0 ohne n) bleibt es bei „neuer“.
+4. **Nie älter, auch bei gleichem Kern** (löst die Folge oben „ein älteres, gültig signiertes
+   Manifest desselben Kerns würde angenommen“): `betrieb.sh aktualisieren` prüft bei gleichem
+   Kern die git-Abstammung (`lu_abstammung` in `deploy/lib-update.sh`), wenn beide Commits im
+   Checkout bzw. im Bundle vorhanden sind – vor der Sicherung, mit `--bundle` nach dem Einlesen
+   des Bundles, ohne origin:
+   - Ziel ist Vorfahre des laufenden Stands → älter, Exit 3 („zurück nur über die Aktion
+     zurueck“);
+   - laufender Stand ist Vorfahre des Ziels → neuer;
+   - getrennte Linien → Exit 3 („liegt auf einer anderen Linie …“);
+   - Commit fehlt (bzw. flacher Checkout) → wie bisher. Ohne Bundle holt `git fetch` den Commit
+     nach der Sicherung; dann wird die Abstammung vor dem Umstellen nachgeholt.
+5. **`stand` meldet die Herkunft** (rückwärts verträglich, neues Feld `stand.herkunft`):
+   `branch` (Name bzw. `null`), `losgeloest` (true/false), `kanal` (`dev` | `latest` | `stable` |
+   `unbekannt`) und `aus` (`manifest` | `version` | `branch` | `tag` | `null`). Kanal: Kanal des
+   Manifests der gepinnten Images, sonst Suffix der laufenden Version, sonst Branch (`main` =
+   latest, Entwicklungs-Branch = dev), sonst Tag `v<VERSION>` auf dem losgelösten Commit; sonst
+   `unbekannt`. Das Cockpit wählt damit den Kanal eines Hosts ohne Zutun. `stand.kanal` bleibt wie
+   bisher (nur mit gepinnten Images).
+
+Verworfen:
+
+- **Tags weiter als einziger Weg** bzw. Tags automatisch aus der CI anlegen: ein Schritt mehr,
+  der vergessen wird bzw. an Rechten scheitert; „es muss einfach funktionieren“.
+- **stable = jeder grüne Stand von `main`:** dann wäre stable nicht mehr „abgenommen“.
+- **Freigabe als Repository-Variable bzw. in der Oberfläche von GitHub:** nicht im Repo
+  nachvollziehbar, nicht mit der Abnahme zusammen geprüft.
+
+Folgen:
+
+- Eine Abnahme ohne Nachführen der Datei lässt `stable` auf der vorigen Version – kein Fehler,
+  aber kein Update.
+- Wer einen Host auf `stable` stellt, während er auf `dev` bzw. `latest` mit neuerem Commit
+  desselben Kerns läuft, bekommt Exit 3 (älter) – zurück nur über `zurueck` bzw. mit der nächsten
+  stable-Version.

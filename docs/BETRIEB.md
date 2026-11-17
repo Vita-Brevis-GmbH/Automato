@@ -2248,12 +2248,31 @@ Client-Zertifikat und die passenden Zeilen der `agent.env`.
   eine Zeile JSON (Fortschritt auf stderr), Exit 0 ok, 1 fehlgeschlagen und wieder auf dem alten
   Stand, 2 von Hand (die Meldung nennt den Schritt), 3 abgelehnt (nichts geändert), 4 belegt.
   - `aktualisieren` baut nicht, sondern nimmt die Images aus GHCR, die das **signierte Manifest**
-    des gewählten Kanals nennt (`stable` = Tag `v<X.Y.Z>`, `latest` = `main`, `dev` =
-    Entwicklungs-Branch), nur per Digest. Ablauf: Signatur prüfen (Schlüssel aus
+    des gewählten Kanals nennt, nur per Digest. Ablauf: Signatur prüfen (Schlüssel aus
     `/etc/automato/herausgeber.pub`, sonst `deploy/release/herausgeber.pub`; ohne Schlüssel,
     ohne gültige Signatur oder mit älterer Version abgelehnt) → Sicherung wie `update.sh` →
     Commit des Manifests (losgelöst) und Images holen → starten → `/health` bis 5 Minuten →
     sonst selbst zurück (Code, Images, Datenbank aus der eben gemachten Sicherung).
+  - **Kanäle** (Release `kanal-<kanal>` im Repo, ADR 0060 Nachtrag 1.18.1):
+    - `stable` = die **abgenommene** Version aus `deploy/release/stable` (eine Zeile
+      `X.Y.Z <commit>`), Version `X.Y.Z`. Bei jeder Abnahme wird die Datei auf die abgenommene
+      Version gesetzt; nach dem Push baut die CI (Job `stable` in `ci.yml`) genau diesen Commit
+      und veröffentlicht ihn – **ohne Tag**, nur wenn der Commit grün war, ein Vorfahre des Stands
+      ist, dort `VERSION` = X.Y.Z steht und die Version nie älter als die veröffentlichte ist.
+      Ein Tag `v<X.Y.Z>` geht weiterhin, ist aber nicht nötig.
+    - `latest` = jeder grüne Stand von `main`, Version `<VERSION>-latest.<n>.<sha7>`;
+    - `dev` = jeder grüne Stand des Entwicklungs-Branches, `<VERSION>-dev.<n>.<sha7>`.
+    - n = Anzahl Commits bis zu diesem Stand: wächst mit jedem Commit, ein späterer Stand hat
+      immer die grössere Zahl.
+  - **Nie älter:** eine ältere Version lehnt `aktualisieren` ab (Exit 3, „zurück nur über die
+    Aktion zurueck“) – auch bei gleichem Versionskern (z. B. `stable` 1.17.0 auf einem Host mit
+    `1.17.0-dev.…` eines späteren Commits): dann entscheidet die git-Abstammung im Checkout bzw.
+    im Bundle; eine andere Linie (weder Vorfahre noch Nachfolger) wird ebenfalls abgelehnt.
+  - **`stand`** meldet zusätzlich `stand.herkunft`: `branch` (bzw. `null`, wenn losgelöst),
+    `losgeloest`, `kanal` (`dev`, `latest`, `stable` bzw. `unbekannt`) und `aus` (`manifest`,
+    `version`, `branch`, `tag`). Nach einem Update aus dem Cockpit gilt der Kanal des Manifests,
+    aus git gebaut der Branch (`main` = latest, Entwicklungs-Branch = dev) – das Cockpit wählt
+    damit den Kanal ohne Zutun.
   - Die gepinnten Images stehen in `.automato-images.env` (nicht von Hand ändern); `docker compose
     up -d` von Hand nimmt dieselben. `deploy/update.sh` baut weiterhin aus git und entfernt sie
     (danach Quelle „git“). Nach einem Update aus dem Cockpit ist der Checkout losgelöst:
