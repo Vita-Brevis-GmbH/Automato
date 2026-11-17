@@ -270,7 +270,10 @@ jobs:
             if gh release view "$1" > /dev/null 2>&1; then
               gh release edit "$1" --title "$2" --notes "$notes" --prerelease="$3"
             else
-              gh release create "$1" --target "$COMMIT" --title "$2" --notes "$notes" \
+              # Die Release ist nur der Behälter für manifest.json/.sig (der veröffentlichte Commit
+              # steht im Manifest): angelegt am Stand dieses Laufs. Am freigegebenen älteren Commit
+              # verweigert GitHub dem GITHUB_TOKEN das Anlegen (HTTP 403, andere Workflow-Dateien).
+              gh release create "$1" --target "$GITHUB_SHA" --title "$2" --notes "$notes" \
                 --prerelease="$3" --latest="$4"
             fi
             gh release upload "$1" "${dateien[@]}" --clobber
