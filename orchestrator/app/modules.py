@@ -197,13 +197,23 @@ MODULES: tuple[Module, ...] = (
             "Routing, VPN-Tunnel, Verkabelung, Abgleich IPAM, Topologie, Datenqualität",
             "Routing, VPN tunnels, cabling, IPAM reconciliation, topology, data quality",
         ),
-        api=("routing", "bgp", "cabling", "reconcile", "topology", "data_quality", "vpn"),
+        api=(
+            "routing",
+            "bgp",
+            "cabling",
+            "reconcile",
+            "topology",
+            "data_quality",
+            "vpn",
+            "cable_labels",
+        ),  # Kabelnummern und Transceiver (1.19.0)
         store=(
             "bgp_cache",  # Routing-Filter vorab berechnet (0.131.0)
             "bgp_filters",  # BGP-Filter Soll/Ist (0.113.0, ADR 0041)
             "bgp_zones",  # Soll je Nachbar aus den Zonen dahinter (0.114.0, ADR 0041 Stufe 2)
             "boundary",
             "cabling",
+            "cable_labels",  # Kabelnummern, Kabel der NetBox, Transceiver (1.19.0)
             "data_quality",
             "exits",
             "l2",

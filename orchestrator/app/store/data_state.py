@@ -57,6 +57,11 @@ SCOPES: dict[str, frozenset[str]] = {
     # eine andere FortiGate sein, deren Tunnel erst den Weg weiterfuehrt
     "routing.vpn_state": frozenset({DEVICE}),
     "inventory.neighbors": NONE,
+    # Verkabelung im Detail (1.19.0): Transceiver und ihr Lesestatus, Kabel der NetBox (Label und
+    # Enden) - nur Verkabelung, Befunde und NetBox-Sync, nicht Doku und Wege
+    "inventory.transceivers": NONE,
+    "inventory.transceiver_reads": NONE,
+    "reference.cables": NONE,
     "inventory.macs": NONE,
     "inventory.arps": NONE,
     "virtual.hosts": NONE,  # ESXi-Hosts (1.8.0): nur Inventar/Verkabelung, nicht Doku und Wege
@@ -330,7 +335,8 @@ def record(session: Session, run, result, rules: list) -> DataChange | None:
 
 def record_reference(session: Session, run) -> DataChange | None:
     """Nach dem Abschluss eines Laufs einer Referenzquelle (IPAM/DNS): ihr Inhalt als ein Teil -
-    Namen und Netze wirken in jeder Applikation."""
+    Namen und Netze wirken in jeder Applikation. Die Kabel einer NetBox (1.19.0) sind ein eigener
+    Teil ohne Wirkung auf Doku und Wege (`reference.cables`)."""
     if run.source_system_id is None or run.tenant_id is None:
         return None
     skip = ("id", "tenant_id", "source_system_id", "collector_run_id")
@@ -338,9 +344,12 @@ def record_reference(session: Session, run) -> DataChange | None:
     rows = session.execute(
         select(*cols).where(ReferenceRecordRow.collector_run_id == run.id)
     ).all()  # fmt: skip
-    digest = _h(sorted(_h(list(r)) for r in rows))
+    kind = [c.name for c in cols].index("kind")
+    cables = [r for r in rows if r[kind] == "cable"]
+    digest = _h(sorted(_h(list(r)) for r in rows if r[kind] != "cable"))
+    parts = {"reference": digest, "reference.cables": _h(sorted(_h(list(r)) for r in cables))}
     state = session.get(DataState, run.source_system_id)
-    return _store(session, run, state, {"reference": digest}, {}, None)
+    return _store(session, run, state, parts, {}, None)
 
 
 def describe(change: DataChange) -> dict:
