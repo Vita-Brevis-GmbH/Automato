@@ -2282,6 +2282,19 @@ Client-Zertifikat und die passenden Zeilen der `agent.env`.
   - `sudo deploy/front/front.sh pruefen` zeigt je Kunde, ob seine Instanz im Netz läuft, und
     Instanzen ohne Kunden (Altlast, nur gemeldet). Voraussetzung: der Proxy der Hauptinstanz läuft
     mit ≥ 1.16.0 (`docker compose up -d proxy` legt das Netz an).
+- **NetBox-Host und Keycloak aus dem Cockpit** (1.17.0, ADR 0062): mit einem Host-Agenten auf
+  der jeweiligen VM erscheinen sie auf der Seite Plattform des Cockpits (Produkte `netbox-host` bzw.
+  `keycloak`). Der Agent ruft `deploy/netbox-host/betrieb.sh` im Checkout des NetBox-Hosts bzw.
+  `deploy/keycloak/betrieb.sh` in einem Automato-Checkout auf der Keycloak-VM auf – gleiche
+  Aktionen und Exit-Codes wie oben.
+  - NetBox-Host: `aktualisieren --ref <branch|tag|commit>` sichert alle Instanzen, stellt den
+    Checkout um, übernimmt mit `netbox-host.sh update` die NetBox-Version des Werkzeugs
+    (`netbox-version.conf`; steht sie in `host.conf`, bleibt sie fest) und fällt bei Fehler mit
+    den Datenbanken zurück. Einrichten: `docs/INSTALLATION-NETBOX-HOST.md` 4d.
+  - Keycloak: `aktualisieren --version <X.Y.Z>` holt und prüft das Image, sichert die Datenbank
+    verschlüsselt, setzt die Version in `docker-compose.override.yml` und fällt bei Fehler mit der
+    Datenbank zurück. Einrichten (Konfiguration `/etc/automato/keycloak-betrieb.conf`, Checkout,
+    age-Schlüssel): `deploy/keycloak/PROD-INSTALL.md` 14 bzw. das Ansible-Playbook.
 - **Aufbau prüfen** (0.40.0, nach dem Muster von Magisters `plattform-aufbau.sh`):
   - `deploy/aufbau.sh pruefen` – Werkzeuge (docker, compose, curl, git, python3), Docker-Dienst,
     Container (läuft, Health), `/health`, die Verbindungen aus dem Orchestrator-Container

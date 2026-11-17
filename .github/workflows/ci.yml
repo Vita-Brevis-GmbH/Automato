@@ -41,6 +41,8 @@ jobs:
               - 'deploy/collector-agent/**'
               - 'deploy/tls/**'
               - 'deploy/*.sh'
+              - 'deploy/netbox-host/**'
+              - 'deploy/keycloak/**'
               - 'docker-compose.yml'
               - 'web-ui/frontend/package*.json'
               - '.github/workflows/**'

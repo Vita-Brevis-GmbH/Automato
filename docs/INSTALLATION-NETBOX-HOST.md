@@ -139,7 +139,9 @@ In `host.conf`:
 - `ALLOW`: Adresse der Automato-VM (Front-Proxy) und das Management-Netz; alle anderen bekommen 403.
 - `FRONT`: Adresse der Automato-VM – nur ihrer Angabe `X-Forwarded-For` wird geglaubt (NetBox
   sieht die Adresse des Benutzers).
-- `NETBOX_DOCKER_TAG` / `NETBOX_VERSION`: Version aller Instanzen (Vorgabe NetBox 4.6).
+- `NETBOX_DOCKER_TAG` / `NETBOX_VERSION`: seit 1.17.0 (ADR 0062) nicht mehr setzen – die Version
+  aller Instanzen kommt mit dem Werkzeug (`deploy/netbox-host/netbox-version.conf`), ein Update aus
+  dem Cockpit übernimmt sie (4d). Nur setzen, um eine Version festzuhalten.
 - `PORT` (1.9.1): Port des Proxys auf dieser VM, Vorgabe 443. Nur wenn hier schon ein anderer
   Dienst Port 443 belegt (in Dev z. B. die Magister-VM), einen freien Port wie `8444` setzen. Dann:
   - auf dem Front-Proxy `AUTOMATO_FRONT_NETBOX=<ip dieser VM>:8444`;
@@ -278,6 +280,43 @@ bleibt mit ihren Daten. Der Agent
 `pruefen` zeigt im Abschnitt „Agent“, was auf Auftrag gelöscht wurde und was nicht. Wiederholen,
 Sicherung prüfen: `journalctl -u netbox-host-sync`, `ls BACKUP_DIR/<kunde>/`.
 
+### 4d. Betrieb aus dem Cockpit: Stand, Sichern, Aktualisieren, Zurück, Neu starten (1.17.0, ADR 0062)
+
+Auf der Seite **Plattform** des Cockpits erscheint der NetBox-Host als Produkt `netbox-host`, sobald
+auf dieser VM der **Host-Agent des Cockpits** läuft. Er ruft nur
+`deploy/netbox-host/betrieb.sh` in diesem Checkout auf (Vertrag `betrieb/v1`, eine Zeile JSON,
+Exit 0 ok · 1 gescheitert und wieder auf dem alten Stand · 2 von Hand · 3 abgelehnt · 4 belegt).
+
+Einmal einrichten:
+
+1. Checkout auf 1.17.0 oder neuer (`cd /opt/netbox-host/automato && sudo git pull && sudo
+   deploy/netbox-host/netbox-host.sh init`).
+2. In `/opt/netbox-host/host.conf` die Zeilen `NETBOX_DOCKER_TAG=` und `NETBOX_VERSION=`
+   entfernen (bis 1.16.0 aus der Vorlage kopiert) – sonst bleibt die NetBox bei jedem Update auf
+   dieser Version (`betrieb.sh stand` zeigt „fest in host.conf“).
+3. Die age-Identität bleibt auf der VM (`/root/netbox-host-backup.agekey` bzw. `AGE_IDENTITY` in
+   `host.conf`): ohne sie lehnt `aktualisieren` ein Update mit neuer NetBox ab – der Rückfall
+   bräuchte sie zum Einspielen der Datenbanken.
+4. Im Cockpit → Hosts → „Host-Agent einrichten“ das Produkt `netbox-host` mit dem Checkout
+   `/opt/netbox-host/automato` wählen und die angezeigte Befehlszeile auf dieser VM ausführen.
+5. Prüfen: `cd /opt/netbox-host/automato && sudo deploy/netbox-host/betrieb.sh stand`.
+
+| Aktion | Wirkung |
+|---|---|
+| `stand` | Version und Commit des Checkouts, NetBox-Version, Health (Proxy läuft, jede Instanz antwortet im Container), ob `zurueck` geht, Zeit, bis zu der jede Instanz gesichert ist – nur lesen |
+| `sichern` | `netbox-host.sh sichern alle` (Instanzen und Konfiguration, verschlüsselt) |
+| `aktualisieren --ref <branch\|tag\|commit>` | Abgleich des Agenten ruht → Sicherung aller Instanzen → Checkout auf die Ref (Branch angehängt, sonst losgelöst) → `init` → jede Instanz mit anderer NetBox: `update <kunde>` (mit eigener Sicherung davor) → Health bis 5 min → sonst selbst zurück: alter Checkout, betroffene Instanzen aus ihrer Sicherung (Exit 1) |
+| `zurueck` | einmal auf den Stand vor dem letzten erfolgreichen Update – Checkout und die Datenbanken der Instanzen, die damals eine neue NetBox bekamen (Daten seither gehen dort verloren) |
+| `neustart` | Proxy und alle Instanzen neu starten (ohne neue Images) + Health |
+
+Abgelehnt (nichts geändert) wird ein Update mit lokalen Änderungen im Checkout, einer älteren
+Ref (zurück nur mit `zurueck`), einem Ziel ohne `deploy/netbox-host/betrieb.sh`, einer NetBox, die
+**älter** wäre als die einer Instanz, ohne `AGE_RECIPIENT` bzw. – bei neuer NetBox – ohne passende
+Identität, und wenn Proxy oder eine Instanz schon vorher nicht gesund sind (erst richten). Der Zustand für `zurueck` liegt in `/opt/netbox-host/betrieb/zustand` (keine
+Geheimnisse). Scheitert auch der Rückfall (Exit 2): `sudo deploy/netbox-host/netbox-host.sh
+pruefen`, je Instanz `wiederherstellen <kunde> <sicherung>` mit der Datei aus
+`betrieb/zustand/instanzen/<kunde>`.
+
 ## 5. Betrieb
 
 | Befehl | Wirkung |
@@ -286,13 +325,14 @@ Sicherung prüfen: `journalctl -u netbox-host-sync`, `ls BACKUP_DIR/<kunde>/`.
 | `pruefen` | Proxy, Zertifikat (Warnung 30 Tage vor Ablauf), `ALLOW`/`FRONT`, je Kunde NetBox und Weg über den Proxy, Sicherungen jünger als 26 h (je Kunde und Konfiguration) |
 | `sichern <kunde\|alle\|konfig>` | je Kunde Datenbank (`pg_dump`) und Medien, verschlüsselt mit age, nach `BACKUP_DIR/<kunde>/`; `alle` (täglich 02:17 per cron) sichert dazu die **Konfiguration** (`host.conf`, Proxy mit Zertifikat, Secrets je Kunde) nach `BACKUP_DIR/_konfig/`; älter als `BACKUP_KEEP_DAYS` wird gelöscht |
 | `wiederherstellen <kunde> <datei.sql.gz.age>` | NetBox stoppen, Datenbank (und Medien derselben Sicherung) einspielen, starten – einmal pro Jahr testen |
-| `update <kunde\|alle>` | erst sichern, dann netbox-docker und NetBox in der Version aus `host.conf` holen, starten, prüfen. Neue Version zuerst bei einem Kunden |
+| `update <kunde\|alle>` | erst sichern, dann netbox-docker und NetBox in der Version des Werkzeugs (`netbox-version.conf`) bzw. aus `host.conf` holen, starten, prüfen. Neue Version zuerst bei einem Kunden; aus dem Cockpit 4d |
 | `loeschen <kunde> --ja` | letzte Sicherung, dann Container, Daten und Proxy-Eintrag entfernen; die Sicherungen bleiben. Ohne Rückfrage nur der Agent für Löschaufträge aus Automato (4c) |
 | `sso <kunde\|alle>` | Anmeldung über das Anmelde-Tor einrichten bzw. nachführen (1.4.0): Proxy-Vorlage übernehmen, NetBox-Einstellungen schreiben, NetBox neu starten, Gruppen und Rechte anlegen; mit `SSO=aus` entfernen. Seit 1.13.0 richtet der Agent fehlende Anmeldungen selbst ein |
 | `token <kunde>` | Notweg: Lese- und Sync-Benutzer mit neuen Tokens, angezeigt zum Eintragen in Automato (seit 1.13.0 übergibt der Agent den Zugang selbst, 4b) |
 
 Alle Befehle mit `sudo deploy/netbox-host/netbox-host.sh …` im Ordner `/opt/netbox-host/automato`.
-Das Werkzeug selbst aktualisieren: `sudo git pull`, danach `init` (übernimmt die Proxy-Vorlage).
+Das Werkzeug selbst aktualisieren: aus dem Cockpit (4d), von Hand `sudo git pull`, danach `init`
+(übernimmt die Proxy-Vorlage) und – bei neuer NetBox-Version – `update alle`.
 
 - **Sicherung ausser Haus:** `BACKUP_DIR` liegt auf der VM – regelmässig auf das Sicherungssystem
   kopieren (die Dateien sind verschlüsselt). Konfiguration zurückholen:
@@ -311,6 +351,6 @@ Das Werkzeug selbst aktualisieren: `sudo git pull`, danach `init` (übernimmt di
   (`deploy/front/front.sh`, `docs/INSTALLATION-FRONT.md`); ohne ihn erreicht man die NetBox nur
   aus dem Management-Netz.
 - Ein Update ändert das Schema der Datenbank – zurück geht es nur über `wiederherstellen` mit der
-  Sicherung, die `update` vorher anlegt.
+  Sicherung, die `update` vorher anlegt (aus dem Cockpit: `zurueck`, 4d).
 - `token` und der Agent legen klassische Tokens an (NetBox 4.6); für spätere Versionen die
   Tokens in NetBox erzeugen und in Automato eintragen.
