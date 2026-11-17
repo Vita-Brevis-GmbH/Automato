@@ -2235,8 +2235,11 @@ Client-Zertifikat und die passenden Zeilen der `agent.env`.
   Fusszeile der Web-UI), Collector-Agent, SoT-Gateway, Web-UI. Neue Version:
   `python3 scripts/version.py set X.Y.Z`, Änderungen in `CHANGELOG.md`.
 - **Orchestrator aktualisieren:** `deploy/update.sh` (bzw. `deploy/update.sh <tag>`):
-  verschlüsselte Sicherung → Code holen → (Docker aktualisieren) → Images holen und bauen →
-  starten → `/health`. Migrationen
+  Code holen (`git fetch`) → verschlüsselte Sicherung → umstellen → (Docker aktualisieren) →
+  Images holen und bauen → starten → `/health`. Braucht einen Lese-Zugang zu origin; ist das Repo
+  privat und der Host ohne eigenen Zugang (bzw. ohne origin, Checkout aus dem Cockpit), bricht es
+  vor jeder Änderung mit klarer Meldung ab (Exit 2) – dann **nur noch das Update aus dem Cockpit**
+  (unten). Migrationen
   laufen beim Start (`alembic upgrade head`). Schlägt etwas fehl: `deploy/update.sh --rollback`
   setzt Code **und** Datenbank auf den Stand vor dem Update zurück (ADR 0013). Am Ende prüft
   `deploy/aufbau.sh pruefen` den Aufbau (nur Hinweis, kein Abbruch).
@@ -2260,6 +2263,15 @@ Client-Zertifikat und die passenden Zeilen der `agent.env`.
     `zurueck` nur einmal. Beide nehmen dieselbe Sperre (`.betrieb.lock`).
   - Von Hand z. B. `sudo deploy/betrieb.sh stand`. Einrichten (Schlüssel, Secret, GHCR
     öffentlich): `deploy/release/README.md`.
+  - **Repo privat** (1.18.0, ADR 0060 Nachtrag): nur das Cockpit hat einen GitHub-Zugang. Es gibt
+    den Code als git-Bundle mit (`aktualisieren … --bundle <datei>`: Commit aus dem Manifest, aus
+    dem Bundle statt von origin – origin wird nie kontaktiert; Bundle defekt bzw. ohne den Commit →
+    abgelehnt, nichts geändert) und für private Images einen Pull-Zugang nur für diesen Host (der
+    Agent setzt `DOCKER_CONFIG`). Reihenfolge: zuerst jeden Host auf ≥ 1.18.0 und den Host-Agenten
+    neu einrichten, erst dann die Repos und Pakete auf privat stellen. Danach geht `update.sh` nur
+    noch mit einem eigenen Lese-Zugang des Hosts (Deploy-Key mit Leserecht); ohne ihn nur noch aus
+    dem Cockpit. Gleiches gilt für den NetBox-Host (`aktualisieren --ref … --bundle … --commit …`,
+    ADR 0062 Nachtrag) und Magister.
 - **Eigene Automato-Instanz je Kunde** (1.16.0, ADR 0061): wählt der Betreiber im Cockpit beim
   Kunden „eigene Automato-Instanz“, legt der Host-Agent auf der VM des Front-Proxys einen eigenen
   Stack an – `git clone` nach `<basisordner>/<instanz>` (z. B. `/opt/automato/instanzen/kunde-a`),

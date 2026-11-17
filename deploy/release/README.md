@@ -81,7 +81,11 @@ Tag) – danach geht jedes Update aus dem Cockpit.
 Der erste Lauf legt die Pakete `automato-migrate`, `automato-orchestrator`, `automato-collector`
 und `automato-web-ui` beim Owner des Repos an – **privat**. Entweder:
 
-- **öffentlich stellen** (empfohlen, die Images enthalten nur, was im öffentlichen Repo steht):
+- **privat lassen** (1.18.0, ADR 0060 Nachtrag „Alles privat“): das Cockpit hat den GitHub-Zugang
+  und gibt mit jedem Auftrag einen Pull-Zugang mit, versiegelt nur für diesen Host; der Agent
+  legt ihn in ein temporäres `DOCKER_CONFIG` und löscht ihn danach. Auf dem Host nichts zu tun;
+  oder
+- **öffentlich stellen** (nur, solange auch das Repo öffentlich ist):
   GitHub → Owner → Packages → `automato-<dienst>` → Package settings → Change visibility →
   Public, je Paket einmal; oder
 - auf **jedem Host** einmal mit einem Token nur mit `read:packages` anmelden (Docker legt es
@@ -92,7 +96,8 @@ und `automato-web-ui` beim Owner des Repos an – **privat**. Entweder:
   sudo docker login ghcr.io -u "$GH_USER"   # fragt nach dem Token
   ```
 
-Zugangsdaten zu GHCR kommen nie aus einem Auftrag des Cockpits.
+Zugangsdaten zu GHCR kommen aus einem Auftrag des Cockpits nur versiegelt für diesen Host und nur
+für die Dauer des Auftrags (`betrieb.sh` setzt und nennt `DOCKER_CONFIG` nie).
 
 ## 5. Prüfen
 

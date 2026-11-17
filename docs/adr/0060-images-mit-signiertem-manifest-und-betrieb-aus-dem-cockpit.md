@@ -124,3 +124,52 @@ Verworfen:
   gültig signiertes Manifest desselben Kerns (z. B. ein früherer `dev`-Stand) würde angenommen.
 - **Nur-Lese-Regel unberührt:** `betrieb.sh` ändert nur den eigenen Host (git, Docker,
   Sicherung), nichts an Geräten oder Quellsystemen. R29.
+
+## Nachtrag 1.18.0 (2026-11-17) – Alles privat: Code als git-Bundle aus dem Cockpit
+
+Anwender 2026-11-17: „Ich würde eigentlich gerne alle auf Privat umstellen, damit nicht alle mein
+Wissen nehmen kann.“ Repos und GHCR-Pakete werden privat; **nur das Cockpit** hat einen
+GitHub-Zugang (Cockpit ADR 0019). Hosts sprechen nie mit GitHub – sie bekommen Code und
+Image-Zugang über den Host-Kanal, geprüft über den signierten Auftrag.
+
+1. **`deploy/betrieb.sh aktualisieren --version … --manifest … --signatur … [--bundle <datei>]`**
+   (Erweiterung von `betrieb/v1`, rückwärts verträglich): der Commit kommt weiterhin aus dem
+   signierten Manifest. Mit `--bundle` holt `betrieb.sh` ihn aus dem git-Bundle des Cockpits statt
+   von origin – `git bundle verify` (Datei und Voraussetzungen), `git fetch <bundle> <commit>`, der
+   Commit muss ein Kopf des Bundles sein bzw. von einem Kopf erreichbar. Das geschieht **vor** der
+   Sicherung; Bundle fehlt, defekt, passt nicht zum Checkout bzw. ohne den Commit → Exit 3, nichts
+   geändert. origin wird mit `--bundle` nie kontaktiert. Ohne `--bundle` wie bisher (Hosts mit
+   eigenem Zugang). Gemeinsam mit dem NetBox-Host: `deploy/lib-bundle.sh`.
+2. **Images:** Den Pull-Zugang (für diesen Host versiegelt) legt der Agent in ein temporäres
+   `DOCKER_CONFIG` (0700) und ruft `betrieb.sh` damit auf; docker erbt die Variable, `betrieb.sh`
+   setzt und nennt sie nie. Die Meldung „Images nicht geholt“ nennt den Pull-Zugang.
+3. **`installieren`** braucht nichts Eigenes: der Agent klont aus dem Bundle
+   (`git clone <bundle>`, `git checkout --detach <commit>`, origin danach weg bzw. ohne
+   Zugangsdaten). `stand`, `sichern`, `aktualisieren --bundle`, `zurueck` und `neustart` brauchen
+   kein origin (geprüft in einem Checkout ohne Remote).
+4. **`deploy/update.sh`** (Bau aus git von Hand) holt den Code jetzt **vor** der Sicherung. Ohne
+   origin (Checkout aus dem Cockpit), ohne Zugang (Repo privat) bzw. nicht erreichbar: klare Meldung
+   mit dem Weg – Update aus dem Cockpit bzw. ein eigener Lese-Zugang des Hosts (Deploy-Key mit
+   Leserecht) –, Exit 2, nichts geändert (keine Sicherung, kein Umschalten). Zugangsdaten in der
+   Adresse von origin erscheinen nie in der Meldung.
+
+Verworfen:
+
+- **Archiv (tar) statt Bundle:** der git-Stand (Commit, `git status`, `zurueck` per Checkout)
+  ginge verloren.
+- **Das Token des Cockpits auf den Host geben** (Credential-Helper, Deploy-Key je Host aus dem
+  Cockpit): widerspricht „nur das Cockpit hat einen GitHub-Zugang“; ein übernommener Host läse alle
+  Repos.
+- **Je Update ein frischer Klon aus dem Bundle:** Zustand und Einstellungen (`.env`,
+  `.automato-update`, gepinnte Images) liegen im Checkout.
+
+Folgen:
+
+- **Reihenfolge:** zuerst jeden Host auf ≥ 1.18.0 bringen (noch mit Zugang) und den Host-Agenten
+  neu einrichten, erst danach Repos und Pakete auf privat stellen (Vertrag „Alles privat“).
+- Bundles für `installieren` müssen vollständig sein (ohne Voraussetzungen); für Updates dürfen sie
+  dünn sein (Voraussetzung ist ein Stand, den der Host schon hat – sonst Exit 3).
+- `update.sh` geht nach der Umstellung nur noch mit eigenem Lese-Zugang; sonst nur noch das Update
+  aus dem Cockpit (`docs/BETRIEB.md` 4b).
+- Offen: der Checkout auf der Keycloak-VM (`deploy/keycloak/betrieb.sh`, ADR 0062) aktualisiert
+  sich nicht selbst – mit privatem Repo nur noch von Hand mit eigenem Lese-Zugang.

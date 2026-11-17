@@ -121,3 +121,23 @@ Verworfen:
   das Zeitlimit des Agenten (30 Minuten) knapp werden; dann bleibt der Zustand für `zurueck`.
 - **Nur-Lese-Regel unberührt:** die Einstiegspunkte ändern nur den eigenen Host (git, Docker,
   Sicherungen), nichts an Geräten oder Quellsystemen. R31.
+
+## Nachtrag 1.18.0 (2026-11-17) – NetBox-Host: Stand aus dem Bundle des Cockpits
+
+Mit den privaten Repos (ADR 0060 Nachtrag 1.18.0, Cockpit ADR 0019) gibt das Cockpit den Code als
+git-Bundle mit:
+
+- **`deploy/netbox-host/betrieb.sh aktualisieren --ref <ref> --bundle <datei> --commit <40 hex>`**
+  (Erweiterung von `betrieb/v1`): `--bundle` und `--commit` nur zusammen, jede Angabe einmal. Der
+  Stand kommt aus dem Bundle (`deploy/lib-bundle.sh`: `git bundle verify`, `git fetch <bundle>
+  <commit>`, der Commit gehört zum Stand des Bundles), origin wird nie kontaktiert; Bundle defekt
+  bzw. ohne den Commit → Exit 3, nichts geändert. Alles Weitere (nie älter, Sicherung, Health,
+  Rückfall, `zurueck`) wie oben.
+- **Branch oder losgelöst:** Commit (Hex-Präfix des Commits) und Tag (im Bundle bzw. schon lokal)
+  → losgelöst; ein Branch, den das Bundle (`refs/heads/<ref>`) bzw. der Checkout kennt → lokaler
+  Branch `git checkout -B <ref> <commit>` **ohne Upstream** (ein früherer wird entfernt; origin
+  wird ja nicht mehr gelesen); unbekannt → losgelöst. Hat der lokale Branch Commits, die der Stand
+  aus dem Cockpit nicht hat → Exit 3.
+- Ohne `--bundle` wie bisher von origin; scheitert `git fetch`, nennt die Meldung den Weg über das
+  Bundle (Host-Agent aktualisieren).
+- Keycloak bleibt unverändert (Images, kein git).

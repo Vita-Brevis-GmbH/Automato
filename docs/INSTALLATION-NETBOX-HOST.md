@@ -314,6 +314,11 @@ Einmal einrichten:
 | `zurueck` | einmal auf den Stand vor dem letzten erfolgreichen Update – Checkout und die Datenbanken der Instanzen, die damals eine neue NetBox bekamen (Daten seither gehen dort verloren) |
 | `neustart` | Proxy und alle Instanzen neu starten (ohne neue Images) + Health |
 
+Repo privat (1.18.0, ADR 0062 Nachtrag): das Cockpit gibt den Stand als git-Bundle mit
+(`aktualisieren --ref <ref> --bundle <datei> --commit <sha>`); origin wird dann nie kontaktiert,
+ein Branch wird lokal ohne Upstream angehängt. Von Hand (`git pull`) geht es danach nur noch mit
+einem eigenen Lese-Zugang der VM.
+
 Abgelehnt (nichts geändert) wird ein Update mit lokalen Änderungen im Checkout, einer älteren
 Ref (zurück nur mit `zurueck`), einem Ziel ohne `deploy/netbox-host/betrieb.sh`, einer NetBox, die
 **älter** wäre als die einer Instanz, ohne `AGE_RECIPIENT` bzw. – bei neuer NetBox – ohne passende
