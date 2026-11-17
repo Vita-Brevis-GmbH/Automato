@@ -83,8 +83,13 @@ lade_conf() {
   # shellcheck disable=SC1091
   . "$NBH_DIR/host.conf"
   : "${DOMAIN:?DOMAIN in host.conf setzen}"
-  NETBOX_DOCKER_TAG=${NETBOX_DOCKER_TAG:-5.0.2}
-  NETBOX_VERSION=${NETBOX_VERSION:-v4.6.10-5.0.2}
+  # Version der Instanzen (1.17.0, ADR 0062): Vorgabe dieses Stands aus netbox-version.conf; ein
+  # Wert in host.conf hält sie fest (dann übernimmt ein Update aus dem Cockpit keine neue)
+  NETBOX_DOCKER_TAG=${NETBOX_DOCKER_TAG:-$(sed -n 's/^NETBOX_DOCKER_TAG=//p' "$SCRIPT_DIR/netbox-version.conf" 2>/dev/null || true)}
+  NETBOX_VERSION=${NETBOX_VERSION:-$(sed -n 's/^NETBOX_VERSION=//p' "$SCRIPT_DIR/netbox-version.conf" 2>/dev/null || true)}
+  if [ -z "$NETBOX_DOCKER_TAG" ] || [ -z "$NETBOX_VERSION" ]; then
+    abbruch "NetBox-Version fehlt: $SCRIPT_DIR/netbox-version.conf bzw. NETBOX_DOCKER_TAG/NETBOX_VERSION in host.conf"
+  fi
   ALLOW=${ALLOW:-}
   FRONT=${FRONT:-}
   TIME_ZONE=${TIME_ZONE:-Europe/Zurich}

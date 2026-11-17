@@ -31,9 +31,12 @@ SSO=an
 # AUTOMATO_URL=
 # AUTOMATO_CA=
 
-# Version: netbox-docker-Tag und passendes Image (gleich wie source-of-truth/netbox/setup.sh)
-NETBOX_DOCKER_TAG=5.0.2
-NETBOX_VERSION=v4.6.10-5.0.2
+# Version aller Instanzen: netbox-docker-Tag und passendes Image. Die Vorgabe kommt mit dem
+# Werkzeug (deploy/netbox-host/netbox-version.conf); ein Update aus dem Cockpit
+# (deploy/netbox-host/betrieb.sh aktualisieren, ADR 0062) übernimmt sie in alle Instanzen. Nur
+# setzen, um eine Version festzuhalten – dann bleibt die NetBox bei einem Update aus dem Cockpit.
+# NETBOX_DOCKER_TAG=<tag von netbox-docker>
+# NETBOX_VERSION=v<netbox>-<tag von netbox-docker>
 
 TIME_ZONE=Europe/Zurich
 
