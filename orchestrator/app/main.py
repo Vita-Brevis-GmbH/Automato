@@ -43,6 +43,7 @@ from app.api import kopplung as kopplung_api
 from app.api import modules as module_api
 from app.api import netbox_host as netbox_host_api
 from app.api import portal as portal_api
+from app.api import stp as stp_api
 from app.config import Settings, check_security_config, get_settings
 from app.db import get_sessionmaker
 from app.i18n import middleware as i18n_middleware
@@ -160,6 +161,7 @@ def create_app() -> FastAPI:
     app.include_router(zones.router, dependencies=[Depends(modules.guard("design"))])
     app.include_router(cabling.router, dependencies=[Depends(modules.guard("analyse"))])
     app.include_router(data_quality.router, dependencies=[Depends(modules.guard("analyse"))])
+    app.include_router(stp_api.router, dependencies=[Depends(modules.guard("analyse"))])  # 1.19.0
     app.include_router(module_api.router)
     return app
 

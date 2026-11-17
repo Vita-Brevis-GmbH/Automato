@@ -307,3 +307,26 @@ Secrets, Open Source bevorzugt.
   Ausgabe eines anderen Befehls liest.
 - **Prüfen** läuft wie der Lauf mit bis zu 8 Geräten gleichzeitig. Der erste Exec-Versuch wartet
   nur noch 7 s auf erste Daten, statt bis zu 2 × 20 s.
+
+## Nachtrag 1.19.0 – Spanning Tree
+
+- Anlass (Anwender 2026-11-17, Priorität 5 „Spanningtree“): je VLAN bzw. MST-Instanz Root,
+  Rollen und Zustände der Ports, Modus und Topologieänderungen; Soll-Root je VLAN bzw. Standort.
+- **Lesen** nur auf Cisco IOS/IOS-XE und NX-OS, nur `show`-Befehle, die es auf beiden gibt:
+  `show spanning-tree` (seit 0.65.0, jetzt selbst ausgewertet), `show spanning-tree detail`
+  (Topologieänderungen), `show spanning-tree mst configuration` (Region, VLANs je Instanz) und
+  `show interface(s) status err-disabled` (Grund). Andere Plattformen und SNMPv3 liefern den Teil
+  mit Status „nicht unterstützt“ – gezählt und in der Ansicht genannt, nie still weggelassen.
+- **Ablage** in eigenen Tabellen (`stp_device`, `stp_instance`), je Lauf ersetzt; die blockierten
+  VLANs am Port (0.65.0) bleiben für die L2-Wege in den Interfaces. Der Teil wirkt nicht auf Doku
+  und Wege (Datenstand `inventory.stp`, ADR 0049).
+- **Soll-Root** ist Laufzeitdaten je Mandant (`stp_target`): Standort (des Quellsystems) und/oder
+  VLAN-Bereich, Root und Ersatz-Root; es gilt der genaueste Eintrag. Ohne Soll meldet die Prüfung
+  nur „Root ist <Gerät>“ als Info.
+- **Unerwartet blockiert** ist ein blockierter Port nur, wenn er nicht zu einer Reserve zwischen
+  Switches passt: Schutzfunktion (`*_Inc`), Backup-Rolle, vPC-Peer-Link, Edge-Port oder eine
+  Gegenstelle, die laut Verkabelung kein Switch ist (Firewall, ESXi-Host, Router, Telefon). Ohne
+  bekannte Gegenstelle beurteilt Automato nicht (in der Ansicht „Nachbar unbekannt“).
+- **Viele Topologieänderungen**: aus dem Verlauf der Zähler je Lauf (8 Tage) die Änderungen der
+  letzten 24 h; liegen Läufe weiter auseinander, umgerechnet auf 24 h, kürzer nicht hochgerechnet.
+  Schwelle 10 je 24 h als Vorgabe im Code, je Mandant in der App einstellbar (`stp_setting`).

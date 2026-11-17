@@ -25,7 +25,9 @@ Wirkung je Teil (`SCOPES`) - im Zweifel `all`:
   -Filter, Portgruppen, Referenzquellen (IPAM/DNS): `all`;
 - MAC-/ARP-Tabellen und Nachbarn (CDP/LLDP) der Switches: keine (Doku und Wege nutzen sie nicht);
   ebenso die ESXi-Hosts eines vCenters mit vmnics und Nachbarn (1.8.0, `virtual.hosts`) - sie
-  dienen nur Netzinventar, Verkabelung und NetBox-Sync, die jeweils beim Abruf rechnen.
+  dienen nur Netzinventar, Verkabelung und NetBox-Sync, die jeweils beim Abruf rechnen; ebenso der
+  Spanning Tree der Switches (1.19.0, `inventory.stp`/`stp_devices`) - die blockierten VLANs am
+  Port fuer die L2-Wege stehen weiter in den Interfaces (`inventory.interfaces`).
 """
 
 import hashlib
@@ -56,6 +58,9 @@ SCOPES: dict[str, frozenset[str]] = {
     "inventory.macs": NONE,
     "inventory.arps": NONE,
     "virtual.hosts": NONE,  # ESXi-Hosts (1.8.0): nur Inventar/Verkabelung, nicht Doku und Wege
+    # Spanning Tree (1.19.0): nur Ansicht und Befunde des Spanning Tree, nicht Doku und Wege
+    "inventory.stp": NONE,
+    "inventory.stp_devices": NONE,
 }
 # Teile, die Routing bzw. Inventar sind (Routing-Filter, `bgp_cache`)
 _NET_PREFIXES = ("routing.", "inventory.")

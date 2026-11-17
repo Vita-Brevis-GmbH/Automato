@@ -217,6 +217,52 @@ class NormalizedSubnet(BaseModel):
     vdom: str | None = None  # FortiGate: VDOM des Interfaces
 
 
+class NormalizedStpPort(BaseModel):
+    """Port einer Spanning-Tree-Instanz (1.19.0): Rolle, Zustand, Kosten, Typ wie gemeldet."""
+
+    port: str  # Kurzform (Gi1/0/1, Eth1/3, Po10)
+    role: str | None = None  # root | designated | alternate | backup | master | disabled
+    state: str | None = None  # forwarding | blocking | learning | listening | disabled | broken
+    cost: int | None = None
+    priority: str | None = None  # Prio.Nbr, z. B. 128.48
+    type: str | None = None  # P2p, Shr, Edge, Bound(PVST), Peer(STP), (vPC peer-link) …
+    inconsistent: str | None = None  # ROOT_Inc, LOOP_Inc, BA_Inc, PVST_Inc, TYPE_Inc …
+
+
+class NormalizedStp(BaseModel):
+    """Spanning Tree eines Switches je VLAN bzw. MST-Instanz (1.19.0, nur lesend)."""
+
+    device: str
+    instance: str  # VLAN0010 | MST1
+    vlan: int | None = None  # PVST/Rapid-PVST
+    mst: int | None = None  # MST-Instanz
+    vlans: str | None = None  # MST: VLANs der Instanz als Bereiche
+    protocol: str | None = None  # ieee | rstp | mstp (wie gemeldet)
+    root_priority: int | None = None
+    root_mac: str | None = None
+    root_cost: int | None = None
+    root_port: str | None = None
+    is_root: bool = False
+    bridge_priority: int | None = None
+    bridge_mac: str | None = None
+    tc_count: int | None = None  # Topologieaenderungen seit dem Start der Instanz
+    tc_ago: int | None = None  # Sekunden seit der letzten Aenderung (beim Lesen)
+    tc_from: str | None = None  # Port, ueber den die letzte Aenderung kam
+    ports: list[NormalizedStpPort] = Field(default_factory=list)
+
+
+class NormalizedStpDevice(BaseModel):
+    """Spanning Tree je Switch (1.19.0): Modus, Lesestatus und err-disabled Ports."""
+
+    device: str
+    status: str = "read"  # read | off | unsupported | unreadable
+    mode: str | None = None  # pvst | rapid-pvst | mst
+    region: str | None = None  # MST-Region (Name)
+    revision: int | None = None
+    errdisabled: list[dict] = Field(default_factory=list)  # {port, reason, vlans}
+    note: str | None = None
+
+
 class NetworkInventory(BaseModel):
     devices: list[NormalizedDevice] = Field(default_factory=list)
     interfaces: list[NormalizedInterface] = Field(default_factory=list)
@@ -228,6 +274,10 @@ class NetworkInventory(BaseModel):
     neighbors: list[NormalizedNeighbor] = Field(default_factory=list)  # CDP/LLDP (0.62.0)
     macs: list[NormalizedMac] = Field(default_factory=list)  # MAC-Tabelle (0.63.0)
     arps: list[NormalizedArp] = Field(default_factory=list)  # ARP (0.63.0)
+    # Spanning Tree der Switches (1.19.0); None = nicht geliefert (andere Quellen, aeltere
+    # Agenten) - der gespeicherte Stand bleibt (`store/stp.replace`)
+    stp: list[NormalizedStp] | None = None
+    stp_devices: list[NormalizedStpDevice] | None = None
 
 
 class ReferenceBatch(BaseModel):

@@ -197,7 +197,7 @@ MODULES: tuple[Module, ...] = (
             "Routing, Verkabelung, Abgleich IPAM, Topologie, Datenqualität",
             "Routing, cabling, IPAM reconciliation, topology, data quality",
         ),
-        api=("routing", "bgp", "cabling", "reconcile", "topology", "data_quality"),
+        api=("routing", "bgp", "cabling", "reconcile", "topology", "data_quality", "stp"),
         store=(
             "bgp_cache",  # Routing-Filter vorab berechnet (0.131.0)
             "bgp_filters",  # BGP-Filter Soll/Ist (0.113.0, ADR 0041)
@@ -213,11 +213,13 @@ MODULES: tuple[Module, ...] = (
             "net_lists",  # Netzlisten der Anbindungen (0.111.0)
             "parallel_net",
             "reconcile",
+            "stp",  # Spanning Tree (1.19.0)
+            "stp_findings",
             "topo_changes",
             "topo_model",
             "version_refresh",  # Befunde nach einem Update neu (0.133.0)
         ),
-        views=("routing", "verkabelung", "abgleich"),
+        views=("routing", "verkabelung", "spanningtree", "abgleich"),
     ),  # fmt: skip
     Module(
         "wege",

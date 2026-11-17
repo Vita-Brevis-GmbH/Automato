@@ -133,6 +133,15 @@ class FindingType(enum.StrEnum):
     # Nachkontrolle des NetBox-Syncs (0.115.0, ADR 0042): nach dem Uebernehmen steht ein
     # geschriebenes Objekt nicht so in NetBox (fehlt, Felder anders, nicht geloescht)
     NETBOX_SYNC_MISMATCH = "netbox_sync_mismatch"
+    # Spanning Tree (1.19.0, `store/stp`): Root nicht am Soll bzw. ohne Soll nur gemeldet, Port
+    # unerwartet blockiert, err-disabled durch BPDU-Guard, gemischte Modi im selben L2-Bereich,
+    # viele Topologieaenderungen
+    STP_ROOT_MISMATCH = "stp_root_mismatch"
+    STP_ROOT_INFO = "stp_root_info"
+    STP_PORT_BLOCKED = "stp_port_blocked"
+    STP_BPDU_GUARD = "stp_bpdu_guard"
+    STP_MODE_MIXED = "stp_mode_mixed"
+    STP_TOPOLOGY_CHANGES = "stp_topology_changes"
 
 
 class Severity(enum.StrEnum):
