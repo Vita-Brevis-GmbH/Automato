@@ -224,8 +224,8 @@ def test_soll_root_api_und_befunde(client, session_factory):
                         headers=ADMIN).status_code == 200  # fmt: skip
     trees = client.get("/stp/trees", params={"tenant_id": tid}).json()
     # Standort vor VLAN-Bereich: Soll sw-acc-01 ohne Ersatz
-    assert {t["number"]: t["target_state"] for t in trees} == {10: "mismatch", 20: "mismatch",
-                                                               30: "mismatch", 40: "ok"}  # fmt: skip
+    states = {t["number"]: t["target_state"] for t in trees}
+    assert states == {10: "mismatch", 20: "mismatch", 30: "mismatch", 40: "ok"}
     assert trees[0]["sites"] == ["chzrh1 · Zürich"] and trees[0]["target"]["site_id"] == zrh["id"]
     assert client.get("/stp/trees", params={"tenant_id": tid, "site_id": bsl["id"]}).json() == []
     # ungueltig: VLANs, Standort eines anderen Mandanten, Ersatz = Root
@@ -264,8 +264,11 @@ def test_viele_topologieaenderungen_und_schwelle(client, session_factory):
     tid, sw = _setup(client, tc_count=5)
     # zweiter Lauf drei Stunden spaeter mit 35 Aenderungen mehr
     s = session_factory()
-    row = s.scalars(select(StpInstance).where(StpInstance.instance == "VLAN0030",
-                                              StpInstance.device == "sw-acc-01")).one()
+    row = s.scalars(
+        select(StpInstance).where(
+            StpInstance.instance == "VLAN0030", StpInstance.device == "sw-acc-01"
+        )
+    ).one()
     earlier = (datetime.now(UTC) - timedelta(hours=3)).isoformat()
     row.tc_history = [[earlier, 5]]
     s.commit()

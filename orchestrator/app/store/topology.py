@@ -22,6 +22,7 @@ from app.models import (
     TopoPeer,
     TopoPolicyRoute,
     TopoRoute,
+    TopoVpnTunnel,
 )
 from app.schemas.collector import RoutingInventory
 
@@ -208,6 +209,8 @@ def _rows(run, inv: RoutingInventory) -> dict:
         for o in inv.l3outs
     ]
     bgp = [{**base, **b.model_dump(exclude={"data"}), "data": b.data or None} for b in inv.bgp]
+    from app.store import vpn  # IPsec-Tunnel (1.19.0, ADR 0063)
+
     return {
         TopoContext: contexts,
         TopoRoute: routes,
@@ -216,6 +219,7 @@ def _rows(run, inv: RoutingInventory) -> dict:
         TopoPolicyRoute: policy,
         TopoL3Out: l3outs,
         TopoBgpObject: bgp,
+        TopoVpnTunnel: vpn.rows(base, inv.vpn),
     }
 
 

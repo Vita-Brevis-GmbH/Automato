@@ -477,6 +477,42 @@ class NormalizedBgpObject(BaseModel):
     data: dict[str, Any] = Field(default_factory=dict)
 
 
+class NormalizedVpnPhase2(BaseModel):
+    """Phase 2 eines IPsec-Tunnels (ADR 0063): Selektoren lokal (`src`) und der Gegenstelle
+    (`dst`) als CIDR bzw. Bereich `a-b` - Adress- bzw. Gruppen-Namen aufgeloest (`*_names`);
+    nicht aufloesbare Werte (FQDN, unbekannte Namen) in `unresolved`."""
+
+    name: str
+    src: list[str] = Field(default_factory=list)
+    dst: list[str] = Field(default_factory=list)
+    src_names: list[str] = Field(default_factory=list)
+    dst_names: list[str] = Field(default_factory=list)
+    unresolved: list[str] = Field(default_factory=list)
+    status: str | None = None  # up | down (Monitor); None = unbekannt
+    attrs: dict[str, Any] = Field(default_factory=dict)  # Proposal, PFS, ... (Positivliste)
+
+
+class NormalizedVpnTunnel(BaseModel):
+    """IPsec-Tunnel im Interface-Modus einer FortiGate je VDOM (1.19.0, ADR 0063), nur lesend:
+    Phase 1 (Gegenstelle, Interface, Art, IKE-Version, Proposals nur als Text), Phase 2 und der
+    Zustand aus dem Monitor. Dial-up-Tunnel (`kind` dialup) mit den verbundenen Gegenstellen
+    (`instances`: Name der Instanz, Gegenstelle, Zustand, Netze dahinter). Nie Pre-Shared-Keys
+    bzw. Schluessel (Positivliste)."""
+
+    node: str
+    context: str  # VDOM
+    name: str  # Phase-1-Interface = Tunnel-Interface
+    kind: Literal["static", "dialup", "ddns"] = "static"
+    interface: str | None = None  # gebundenes Interface (Underlay, z. B. wan1)
+    remote_gw: str | None = None  # Gegenstelle (IP; ddns: Name)
+    local_gw: str | None = None  # eigene Adresse, falls fest eingestellt
+    ike_version: int | None = None
+    status: str | None = None  # up | partial | down | idle (Dial-up ohne Gegenstelle); None
+    phase2: list[NormalizedVpnPhase2] = Field(default_factory=list)
+    instances: list[dict[str, Any]] = Field(default_factory=list)
+    attrs: dict[str, Any] = Field(default_factory=dict)
+
+
 class RoutingInventory(BaseModel):
     """Routing, BGP, HA und L3Out eines Laufs (ADR 0019 Stufe 2) - je Quellsystem ersetzt."""
 
@@ -487,6 +523,7 @@ class RoutingInventory(BaseModel):
     policy_routes: list[NormalizedPolicyRoute] = Field(default_factory=list)
     l3outs: list[NormalizedL3Out] = Field(default_factory=list)
     bgp: list[NormalizedBgpObject] = Field(default_factory=list)  # BGP-Filter (0.113.0)
+    vpn: list[NormalizedVpnTunnel] = Field(default_factory=list)  # IPsec (1.19.0, ADR 0063)
 
 
 class CollectorResult(BaseModel):

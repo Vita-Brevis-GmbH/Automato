@@ -116,6 +116,14 @@ const ICONS: Record<string, ReactNode> = {
     </>
   ),
   upload: <path d="M12 16V4m0 0-4 4m4-4 4 4M5 20h14" />,
+  // VPN-Tunnel (1.19.0): Schloss zwischen zwei Enden
+  vpn: (
+    <>
+      <path d="M2 12h5M17 12h5" />
+      <rect x="8" y="10" width="8" height="7" rx="1" />
+      <path d="M10 10V8a2 2 0 0 1 4 0v2" />
+    </>
+  ),
   cable: (
     <>
       <rect x="3" y="4" width="6" height="5" rx="1" />

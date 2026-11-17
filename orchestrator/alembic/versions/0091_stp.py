@@ -7,7 +7,7 @@ je VLAN-Bereich bzw. Standort (`stp_target`) und die Schwelle der Topologieaende
 (`stp_setting`) als Laufzeitdaten je Mandant.
 
 Revision ID: 0091_stp
-Revises: 0088_automato_instanz
+Revises: 0089_vpn
 Create Date: 2026-11-17
 """
 
@@ -15,7 +15,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "0091_stp"
-down_revision = "0088_automato_instanz"
+down_revision = "0089_vpn"
 branch_labels = None
 depends_on = None
 
