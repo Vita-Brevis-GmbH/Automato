@@ -1295,10 +1295,10 @@ async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
   return (response.status === 204 ? undefined : await response.json()) as T;
 }
 
-const getJSON = <T>(url: string) => request<T>(url);
+export const getJSON = <T>(url: string) => request<T>(url);
 
-// Schreib-Helfer (POST/PATCH/DELETE). 204 -> kein Body.
-const sendJSON = <T>(url: string, method: string, body?: unknown) =>
+// Schreib-Helfer (POST/PATCH/DELETE). 204 -> kein Body. Exportiert für die API-Dateien der Module (1.19.0)
+export const sendJSON = <T>(url: string, method: string, body?: unknown) =>
   request<T>(url, {
     method,
     headers: { "Content-Type": "application/json" },
@@ -1316,7 +1316,7 @@ function cq(params: Record<string, string | number | null | undefined>): string 
   return qs({ ...params, customer_id: customerFilter });
 }
 
-function qs(params: Record<string, string | number | null | undefined>): string {
+export function qs(params: Record<string, string | number | null | undefined>): string {
   const p = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
     if (v !== null && v !== undefined && v !== "") p.set(k, String(v));

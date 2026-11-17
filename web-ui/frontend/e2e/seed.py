@@ -69,6 +69,52 @@ def _route_control(routing: dict) -> dict:
     return out
 
 
+def _stp() -> dict:
+    """Spanning Tree der zwei Switches (1.19.0): sw-acc-01 ist Root fuer VLAN 10 und 30, sw-core-01
+    fuer VLAN 20; sw-core-01 blockiert VLAN 10 zum ESXi-Host (unerwartet) und VLAN 30 zum Leaf
+    (Reserve, wie `stp_blocked` am Port), sw-acc-01 hat einen Port durch BPDU-Guard gesperrt."""
+    acc_mac, core_mac = "7c:21:0e:00:00:01", "52:54:00:aa:00:99"
+
+    def port(name, role, state, cost=4, ptype="P2p"):
+        return {"port": name, "role": role, "state": state, "cost": cost, "priority": "128.1",
+                "type": ptype}  # fmt: skip
+
+    def inst(device, vlan, ports, root_mac, tc=None, tc_from=None):
+        own = acc_mac if device == "sw-acc-01" else core_mac
+        root = own == root_mac
+        prio = (24576 if root_mac == acc_mac else 28672) + vlan
+        return {"device": device, "instance": f"VLAN{vlan:04d}", "vlan": vlan, "protocol": "rstp",
+                "root_priority": prio, "root_mac": root_mac, "is_root": root,
+                "root_cost": 0 if root else 3,
+                "root_port": None if root else ("Po1" if device == "sw-acc-01" else "Po10"),
+                "bridge_priority": prio if root else 32768 + vlan, "bridge_mac": own,
+                "tc_count": tc, "tc_ago": 252 if tc is not None else None, "tc_from": tc_from,
+                "ports": ports}  # fmt: skip
+
+    desg, fwd = "designated", "forwarding"
+    return {
+        "stp_devices": [
+            {"device": "sw-acc-01", "status": "read", "mode": "rapid-pvst",
+             "errdisabled": [{"port": "Gi1/0/12", "reason": "bpduguard"}]},
+            {"device": "sw-core-01", "status": "read", "mode": "rapid-pvst"},
+        ],
+        "stp": [
+            inst("sw-acc-01", 10, [port("Po1", desg, fwd, 3), port("Gi1/0/5", desg, fwd)], acc_mac),
+            inst("sw-acc-01", 20, [port("Po1", "root", fwd, 3), port("Gi1/0/2", desg, fwd)],
+                 core_mac),
+            inst("sw-acc-01", 30, [port("Po1", desg, fwd, 3), port("Te1/1/1", desg, fwd, 2),
+                                   port("Gi1/0/9", desg, fwd, ptype="P2p Edge")], acc_mac,
+                 tc=57, tc_from="Te1/1/1"),
+            inst("sw-core-01", 10, [port("Po10", "root", fwd, 3),
+                                    port("Eth1/3", "alternate", "blocking", 2)], acc_mac),
+            inst("sw-core-01", 20, [port("Po10", desg, fwd, 3), port("Eth1/5", desg, fwd)],
+                 core_mac),
+            inst("sw-core-01", 30, [port("Po10", "root", fwd, 3),
+                                    port("Eth1/48", "alternate", "blocking", 2)], acc_mac),
+        ],
+    }  # fmt: skip
+
+
 def run(app) -> None:
     c = TestClient(app)
 
@@ -427,6 +473,7 @@ def run(app) -> None:
                  {"device": "sw-core-01", "ip": "fe80::a2b1:c2ff:fed3:e4f5",
                   "mac": "a0:b1:c2:d3:e4:f5", "interface": "Vl20"}],
     }  # fmt: skip
+    switches.update(_stp())
     run_result(sw, "cisco_switch", inventory=switches, message="Switches: 2 gelesen")
 
     # Applikation (0.14.0): AP TE/AP mit der EPG EG_db und der VM dahinter

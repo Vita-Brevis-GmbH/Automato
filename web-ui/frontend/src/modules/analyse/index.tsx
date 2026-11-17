@@ -1,4 +1,4 @@
-// Modul Analyse (ADR 0036): Routing, Verkabelung, Abgleich mit dem IPAM und Datenqualität.
+// Modul Analyse (ADR 0036): Routing, Verkabelung, Spanning Tree (1.19.0), Abgleich mit dem IPAM und Datenqualität.
 import { lazy } from "react";
 import { L } from "../../i18n";
 import type { ViewEntry } from "../types";
@@ -6,6 +6,7 @@ import type { ViewEntry } from "../types";
 const Cabling = lazy(() => import("../../Cabling"));
 const Reconcile = lazy(() => import("../../Reconcile"));
 const Routing = lazy(() => import("../../Routing"));
+const SpanningTree = lazy(() => import("./SpanningTree")); // 1.19.0
 
 export const VIEWS: ViewEntry[] = [
   {
@@ -33,6 +34,24 @@ export const VIEWS: ViewEntry[] = [
     section: "doc",
     order: 70,
     render: (p) => <Cabling tenantId={p.tenantId} tenantLabel={p.tenantLabel} />,
+  },
+  {
+    key: "spanningtree",
+    module: "analyse",
+    label: "Spanning Tree",
+    icon: "stp",
+    section: "doc",
+    order: 75,
+    render: (p) => (
+      <SpanningTree
+        key={p.paramsKey}
+        tenantId={p.tenantId}
+        tenantLabel={p.tenantLabel}
+        canEdit={p.me.isAdmin || p.me.isOperator}
+        params={p.params}
+        onOpenFindings={p.openFindings}
+      />
+    ),
   },
   {
     key: "abgleich",

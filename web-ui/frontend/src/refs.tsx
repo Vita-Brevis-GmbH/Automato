@@ -85,6 +85,13 @@ export const FINDING_LABEL: Record<string, string> = {
   lag_degraded: L("Port-Channel unvollständig", "Port-Channel incomplete"),
   vlan_split: L("VLAN getrennt", "VLAN split"),
   vpc_mismatch: L("vPC-Paar uneinheitlich", "vPC pair inconsistent"),
+  // Spanning Tree (1.19.0)
+  stp_root_mismatch: L("Spanning Tree: Root nicht am Soll", "Spanning Tree: root not at target"),
+  stp_root_info: L("Spanning Tree: Root (ohne Soll)", "Spanning Tree: root (no target)"),
+  stp_port_blocked: L("Spanning Tree: unerwartet blockiert", "Spanning Tree: unexpectedly blocked"),
+  stp_bpdu_guard: L("Spanning Tree: BPDU-Guard", "Spanning Tree: BPDU guard"),
+  stp_mode_mixed: L("Spanning Tree: gemischte Modi", "Spanning Tree: mixed modes"),
+  stp_topology_changes: L("Spanning Tree: viele Topologieänderungen", "Spanning Tree: many topology changes"),
   source_stale: L("Quellsystem: Stand veraltet", "Source system: data outdated"),
   source_partial: L("Quellsystem: nur teilweise gelesen", "Source system: only partially collected"),
   manual: L("Von Hand erfasst", "Captured manually"),
@@ -286,6 +293,30 @@ export const FINDING_HINT: Record<string, string> = {
     "vPC nur auf einem Peer, down bzw. inkonsistent – oder der Peer des vPC-Paars ist nicht verbunden",
     "vPC only on one peer, down or inconsistent – or the peer of the vPC pair is not connected",
   ),
+  stp_root_mismatch: L(
+    "Root eines VLANs bzw. einer MST-Instanz ist nicht der Soll-Root (bzw. der Ersatz-Root ist Root)",
+    "root of a VLAN or MST instance is not the target root (or the backup root is root)",
+  ),
+  stp_root_info: L(
+    "kein Soll-Root festgelegt – gemeldet wird nur, wer Root ist",
+    "no target root defined – only the current root is reported",
+  ),
+  stp_port_blocked: L(
+    "blockierter Port, der nicht zu einer Reserve zwischen Switches passt: Schutzfunktion, Backup-Rolle, vPC-Peer-Link, Edge-Port bzw. Gegenstelle kein Switch",
+    "blocked port that does not fit a backup path between switches: protection feature, backup role, vPC peer link, edge port or peer not a switch",
+  ),
+  stp_bpdu_guard: L(
+    "Port durch BPDU-Guard gesperrt (err-disabled) – an einem Edge-Port kam ein BPDU an",
+    "port locked by BPDU guard (err-disabled) – a BPDU arrived on an edge port",
+  ),
+  stp_mode_mixed: L(
+    "verbundene Switches mit verschiedenen Modi (PVST+, Rapid-PVST+, MST, aus) bzw. Grenze zu einem anderen Protokoll",
+    "connected switches with different modes (PVST+, Rapid-PVST+, MST, off) or boundary to another protocol",
+  ),
+  stp_topology_changes: L(
+    "mindestens die Schwelle an Topologieänderungen je 24 h (Vorgabe 10, unter Spanning Tree einstellbar)",
+    "at least the limit of topology changes per 24 h (default 10, adjustable under Spanning Tree)",
+  ),
   source_stale: L(
     "letzter erfolgreicher Lauf älter als die Grenze (AUTOMATO_STALE_DAYS, Zeitplan beachtet) – Doku und Weg-Suche zeigen einen alten Stand",
     "last successful run older than the limit (AUTOMATO_STALE_DAYS, schedule considered) – documentation and path search show outdated data",
@@ -398,6 +429,15 @@ export const FINDING_GROUPS: { key: string; label: string; help: string; types: 
       "Links between switches: speed, duplex, VLANs, Port-Channel, reported one-sided",
     ),
     types: ["link_speed_mismatch", "link_duplex_mismatch", "link_vlan_mismatch", "link_lag_mismatch", "link_one_sided", "uplink_vlan_missing", "l2_single_link", "l2_single_switch", "l2_single_point", "lag_degraded", "vlan_split", "vpc_mismatch"],
+  },
+  {
+    key: "stp",
+    label: "Spanning Tree",
+    help: L(
+      "Root gegen den Soll-Root, unerwartet blockierte Ports, BPDU-Guard, gemischte Modi, viele Topologieänderungen",
+      "Root against the target root, unexpectedly blocked ports, BPDU guard, mixed modes, many topology changes",
+    ),
+    types: ["stp_root_mismatch", "stp_root_info", "stp_port_blocked", "stp_bpdu_guard", "stp_mode_mixed", "stp_topology_changes"],
   },
   {
     key: "zones",

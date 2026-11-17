@@ -13,6 +13,7 @@ export type View =
   | "nat"
   | "routing"
   | "verkabelung"
+  | "spanningtree"
   | "wege"
   | "apps"
   | "findings"
