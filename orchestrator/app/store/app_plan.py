@@ -56,12 +56,12 @@ NO_EPG = "ohne EPG"
 KIND = {"system": "System der Applikation", "firewall": "Firewall", "vdom": "VDOM",
         "vrf": "ACI-VRF", "l3out": "L3Out", "object": "Gegenstelle", "epg": "EPG",
         "external": "externe EPG", "lb": "Load Balancer", "l3": "Router",
-        "any": "Gegenstelle any"}  # fmt: skip
+        "any": "Gegenstelle any", "vpn": "VPN-Tunnel"}  # fmt: skip
 VERDICT = {"allow": "erlaubt", "deny": "gesperrt", "depends": "abhängig", "unknown": "unbekannt",
            "blocked": "vorher gesperrt"}  # fmt: skip
 # Anzeige auf Englisch (0.87.0, ADR 0028); die Schluessel bleiben
 _KIND_EN = {"system": "Application system", "vrf": "ACI VRF", "object": "Peer",
-            "external": "external EPG", "any": "Peer any"}  # fmt: skip
+            "external": "external EPG", "any": "Peer any", "vpn": "VPN tunnel"}  # fmt: skip
 _VERDICT_EN = {"allow": "allowed", "deny": "blocked", "depends": "depends", "unknown": "unknown",
                "blocked": "blocked earlier"}  # fmt: skip
 IMPLICIT = "implizit gesperrt"  # Anzeige ohne entscheidende Regel (Merkmal `implicit`)
@@ -152,10 +152,13 @@ def _chain(c: dict, place: _Place | None = None) -> list[dict]:
     chain = [{"id": oid, "role": "own", "side": own, "epg": epg, "left": [], "right": []}]
     steps = _steps(c["hops"])  # in Verkehrsrichtung, mit den Load Balancern (0.85.0)
     steps = steps if out else list(reversed(steps))
-    last = max((i for i, s in enumerate(steps) if "lb" not in s), default=-1)
+    last = max((i for i, s in enumerate(steps) if "hop" in s), default=-1)
     for i, s in enumerate(steps):
         if "lb" in s:
             chain.append(_lb_step(s))
+            continue
+        if "vpn" in s:  # IPsec-Tunnel (1.19.0, ADR 0063): eigener Knoten zwischen den Hops
+            chain.append(_vpn_step(s))
             continue
         h = s["hop"]
         left, right = _facing(h, c["direction"])
@@ -205,6 +208,8 @@ def _steps(hops: list[dict]) -> list[dict]:
     while i < len(hops):
         h = hops[i]
         out.append({"hop": h})
+        if h.get("vpn"):  # Tunnel am Ausgang dieses Hops (1.19.0)
+            out.append({"vpn": h["vpn"], "at": h})
         if h.get("lb"):
             nxt = hops[i + 1] if i + 1 < len(hops) else None
             same = nxt is not None and nxt["key"] == h["key"]
@@ -220,6 +225,15 @@ def _lb_step(s: dict) -> dict:
     where = lb.get("epg") or lb.get("ext") or lb["name"]
     then = s["then"] or {"verdict": None, "checks": [], "label": s["at"]["label"]}
     return {"id": f"lb:{where}", "role": "hop", "kind": "lb", "lb": lb, "hop": then,
+            "at": s["at"], "left": [], "right": []}  # fmt: skip
+
+
+def _vpn_step(s: dict) -> dict:
+    """Knoten des IPsec-Tunnels (1.19.0, ADR 0063): beide Enden ein Knoten (Kennung des Paars),
+    ohne Regeln - entschieden wird an den Firewalls davor und danach."""
+    v = s["vpn"]
+    hop = {"verdict": None, "checks": [], "label": s["at"]["label"]}
+    return {"id": f"vpn:{v['id']}", "role": "hop", "kind": "vpn", "vpn": v, "hop": hop,
             "at": s["at"], "left": [], "right": []}  # fmt: skip
 
 
@@ -364,6 +378,13 @@ def _node(x: dict, place: _Place) -> dict:
             return base | {"kind": "lb", "label": label, "short": label.split("/")[-1],
                            "vips": [], "where": lb.get("interface"),
                            "via": x["at"]["label"]}  # fmt: skip
+        if x.get("kind") == "vpn":
+            v = x["vpn"]
+            peer = (v.get("peer") or {}).get("label")
+            ends = f"{x['at']['label']} ↔ {peer}" if peer else x["at"]["label"]
+            lines = [f"→ {v['remote_gw']}" if v.get("remote_gw") else L("Dial-up", "Dial-up")]
+            return base | {"kind": "vpn", "label": f"VPN {v['name']}", "via": ends,
+                           "status": v.get("status"), "lines": lines}  # fmt: skip
         if x.get("l3out"):
             return base | {"kind": "l3out", "label": x["l3out"], "via": h["label"]}
         return base | {"kind": h["kind"], "label": h["label"]}
@@ -475,6 +496,8 @@ def _edge_out(e: dict) -> dict:
 
 
 def _sub(n: dict) -> str:
+    if n["kind"] == "vpn":  # IPsec-Tunnel: Zustand statt Urteil (1.19.0)
+        return f"VPN · {n.get('status') or '?'}"
     if n["kind"] == "lb":
         vips = n.get("vips") or []
         text = "Load Balancer" + (f" · VIP {vips[0]}" if vips else "")
@@ -527,7 +550,7 @@ def _layout(nodes: list[dict], edges: list[dict]) -> dict:
     for n in nodes:
         if n["role"] == "hop":  # ohne erreichende Verbindung: vorher gesperrt
             n["verdict"] = _verdict(n["hops"]) if n["hops"] else "blocked"
-            if n["kind"] == "lb" and set(n["hops"]) <= {None}:
+            if n["kind"] in ("lb", "vpn") and set(n["hops"]) <= {None}:
                 n["verdict"] = "unknown" if n["hops"] else "blocked"  # ohne Regel danach
         else:
             n["verdict"] = None

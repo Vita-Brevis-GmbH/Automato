@@ -36,6 +36,7 @@ config system accprofile
         set fwgrp read
         set netgrp read
         set sysgrp read
+        set vpngrp read
     next
 end
 config system api-user

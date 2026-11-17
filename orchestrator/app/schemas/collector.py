@@ -427,6 +427,36 @@ class NormalizedBgpObject(BaseModel):
     data: dict[str, Any] = Field(default_factory=dict)
 
 
+class NormalizedVpnPhase2(BaseModel):
+    """Phase 2 eines IPsec-Tunnels (ADR 0063): Selektoren lokal bzw. der Gegenstelle."""
+
+    name: str
+    src: list[str] = Field(default_factory=list)
+    dst: list[str] = Field(default_factory=list)
+    src_names: list[str] = Field(default_factory=list)
+    dst_names: list[str] = Field(default_factory=list)
+    unresolved: list[str] = Field(default_factory=list)
+    status: str | None = None
+    attrs: dict[str, Any] = Field(default_factory=dict)
+
+
+class NormalizedVpnTunnel(BaseModel):
+    """IPsec-Tunnel (Interface-Modus) einer FortiGate je VDOM (1.19.0, ADR 0063), nur lesend."""
+
+    node: str
+    context: str
+    name: str
+    kind: Literal["static", "dialup", "ddns"] = "static"
+    interface: str | None = None
+    remote_gw: str | None = None
+    local_gw: str | None = None
+    ike_version: int | None = None
+    status: str | None = None  # up | partial | down | idle; None = unbekannt
+    phase2: list[NormalizedVpnPhase2] = Field(default_factory=list)
+    instances: list[dict[str, Any]] = Field(default_factory=list)  # Dial-up: Gegenstellen
+    attrs: dict[str, Any] = Field(default_factory=dict)
+
+
 class RoutingInventory(BaseModel):
     """Routing, BGP, HA und L3Out eines Laufs (ADR 0019 Stufe 2) - je Quellsystem ersetzt."""
 
@@ -437,6 +467,7 @@ class RoutingInventory(BaseModel):
     policy_routes: list[NormalizedPolicyRoute] = Field(default_factory=list)
     l3outs: list[NormalizedL3Out] = Field(default_factory=list)
     bgp: list[NormalizedBgpObject] = Field(default_factory=list)  # BGP-Filter (0.113.0)
+    vpn: list[NormalizedVpnTunnel] = Field(default_factory=list)  # IPsec (1.19.0, ADR 0063)
 
 
 class CollectorResult(BaseModel):

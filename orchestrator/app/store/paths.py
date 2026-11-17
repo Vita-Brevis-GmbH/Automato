@@ -77,6 +77,7 @@ from app.models import (
 )
 from app.store import nat as nat_store
 from app.store import path_service, references
+from app.store import vpn as vpn_store
 from app.store.topology import (
     MGMT,
     Table,
@@ -95,7 +96,9 @@ MAX_HOPS = 12
 MAX_PATHS = 16  # aktive Wege
 MAX_BACKUP = 16  # Backup-Wege (vor dem Filter nach Laenge)
 INNER = 5  # genauere Routen innerhalb eines Netzes je Hop (Anzeige)
-REACHED = ("connected", "fabric", "exit", "external")  # Ende = Ziel erreicht bzw. nach aussen
+# Ende = Ziel erreicht bzw. nach aussen; `vpn` = an der Gegenstelle eines IPsec-Tunnels ohne
+# gelesenes Geraet (1.19.0, ADR 0063 - in den Verbindungen gezaehlt)
+REACHED = ("connected", "fabric", "exit", "external", "vpn")
 MAX_SERVERS = 20  # Ziel-Server einer VIP bzw. eines Pools im Hop (0.114.1)
 _CONNECTED = ("connected", "local")
 _OBJECT_ROUTE = ("dstaddr",)  # FortiGate: statische Route auf ein Adressobjekt (0.112.0)
@@ -286,6 +289,7 @@ class Graph:
         self._ribs: dict[Key | None, _Rib] = {}  # beste RIB-Routen je Kontext (0.74.1)
         self._boundary = None  # boundary.Boundary, erst bei Bedarf (ADR 0032)
         self._bgp = None  # bgp_filters.Filters, erst bei einem BGP-Backup (0.114.0)
+        self._vpn = None  # vpn.Index, IPsec-Tunnel (1.19.0, ADR 0063), erst bei Bedarf
         self._own_ips: dict[Key, set[str]] = {}
         self._rib_asked: Counter = Counter()  # Abfragen je Kontext bis zum Index
         self._loaded: dict[int, TopoRoute] = {}  # Routen aus dem Index, je Kennung
@@ -417,6 +421,21 @@ class Graph:
             iface = next((h.get("interface") for h in hops or [] if h.get("interface")), None)
             out.append((key, str(prefix).split("/")[0], iface, bool((attrs or {}).get("virtual"))))
         return out
+
+    def vpn(self):
+        """IPsec-Tunnel des Mandanten (1.19.0, ADR 0063, `store/vpn.py`) - einmal je Graph."""
+        if self._vpn is None:
+            from app.store import vpn  # spaet: nur mit Firewalls auf dem Weg
+
+            self._vpn = vpn.Index(self.session, self.tenant_id)
+        return self._vpn
+
+    def tunnel(self, key: Key, interface: str | None):
+        """IPsec-Tunnel hinter einem Interface einer FortiGate: (Tunnel, Dial-up-Instanz)."""
+        node = self.nodes.get(key)
+        if not interface or node is None or node.kind not in ("firewall", "vdom"):
+            return None
+        return self.vpn().find(key, interface)
 
     def boundary(self):
         """Firmengrenze (ADR 0032, `store/boundary.py`) - einmal je Graph geladen."""
@@ -1199,6 +1218,10 @@ def _trace(
                 not h.get("ip") and g.vdom_peer(key, h.get("interface")) for h in route["next_hops"]
             )
         )
+        # Route ueber einen IPsec-Tunnel (1.19.0, ADR 0063): der Tunnel ist ein Schritt mit
+        # Gegenstelle, das Ziel nicht am Tunnel-Interface angeschlossen
+        tunneled = route is not None and route["protocol"] not in _CONNECTED and any(
+            g.tunnel(key, h.get("interface")) for h in route["next_hops"])  # fmt: skip
         if follow is not None:
             hop["policy"] = follow
             devices = follow["output_device"] or [None]
@@ -1223,14 +1246,14 @@ def _trace(
             text = L("keine Route zum Ziel", "no route to the destination") + (
                 f" (VRF {table})" if table != 0 else ""
             )
-            if node.missing:
+            if [m for m in node.missing if not vpn_store.is_vpn_missing(m)]:
                 text = L(
                     "keine Route bekannt – Routing-Tabelle nicht (ganz) lesbar",
                     "no route known – routing table not (fully) readable",
                 )
             _record(out, hops, hop, "no_route", text, dev)
             continue
-        elif not on_link and (
+        elif not (on_link or tunneled) and (
             route["protocol"] in _CONNECTED or not any(h.get("ip") for h in route["next_hops"])
         ):
             iface = next((h.get("interface") for h in route["next_hops"]), None)
@@ -1271,6 +1294,11 @@ def _trace(
             if peer is not None:  # Inter-VDOM-Link ohne (gelesene) Next-Hop-IP
                 link = f"{nh.get('interface')} ↔ {peer[1]}"
                 nxt = [(peer[0], peer[1], L(f"VDOM-Link {link}", f"VDOM link {link}"))]
+            tun = g.tunnel(key, nh.get("interface"))  # IPsec-Tunnel (1.19.0, ADR 0063)
+            if tun is not None:
+                nxt = vpn_store.hop(g, key, tun, cur, egress, nxt)
+                if (text := vpn_store.note(egress["vpn"], node.label)) and text not in notes:
+                    notes.append(text)
             for nkey, niface, how in nxt:
                 queue.append(
                     ([*hops, branch], nkey, niface, how, g.table(nkey, niface), deviation, cur)
@@ -1293,6 +1321,11 @@ def _trace(
             # VIP eines Load Balancers hinter einem Router ohne gelesenes Geraet (0.79.0): weiter
             # vom Load Balancer zum Server, am selben Knoten
             if behind(hops, branch, key, nh.get("interface"), table, deviation, cur):
+                continue
+            if tun is not None:  # Gegenstelle ohne gelesenes Geraet: sichtbar, gezaehlt (ADR 0048)
+                gw = egress["vpn"].get("remote_gw")
+                text = vpn_store.end_text(egress["vpn"], g.names(gw) if gw else None)
+                _record(target, hops, branch, "vpn", text, deviation)
                 continue
             known = g.names(ip) or ([egress["network"]] if egress.get("network") else [])
             name = f" ({', '.join(known)})" if known else ""

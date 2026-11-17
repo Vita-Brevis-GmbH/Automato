@@ -19,10 +19,10 @@ Wirkung je Teil (`SCOPES`) - im Zweifel `all`:
 
 - Regeln: einzeln (`store/footprint.py` prueft je Applikation);
 - Objekte, VMs, EPGs: ueber ihre Adressen (alte und neue), EPGs auch ueber die DN;
-- NAT, Routen, Policy-Routen: das Geraet (Applikationen, deren Wege bzw. Regeln es nutzen), NAT
-  zusaetzlich ueber die Adressen;
+- NAT, Routen, Policy-Routen, Zustand der IPsec-Tunnel (1.19.0): das Geraet (Applikationen, deren
+  Wege bzw. Regeln es nutzen), NAT zusaetzlich ueber die Adressen;
 - angeschlossene Netze, Interfaces, Subnetze, VRFs, Kontexte, HA, L3Outs, BGP-Nachbarn und
-  -Filter, Portgruppen, Referenzquellen (IPAM/DNS): `all`;
+  -Filter, Konfiguration der IPsec-Tunnel, Portgruppen, Referenzquellen (IPAM/DNS): `all`;
 - MAC-/ARP-Tabellen und Nachbarn (CDP/LLDP) der Switches: keine (Doku und Wege nutzen sie nicht);
   ebenso die ESXi-Hosts eines vCenters mit vmnics und Nachbarn (1.8.0, `virtual.hosts`) - sie
   dienen nur Netzinventar, Verkabelung und NetBox-Sync, die jeweils beim Abruf rechnen.
@@ -52,6 +52,10 @@ SCOPES: dict[str, frozenset[str]] = {
     "virtual.vms": frozenset({IPS}),
     "routing.routes": frozenset({DEVICE}),
     "routing.policy_routes": frozenset({DEVICE}),
+    # IPsec-Tunnel (1.19.0, ADR 0063): der Zustand (up/down, verbundene Dial-up-Gegenstellen)
+    # wirkt ueber das Geraet; die Konfiguration (`routing.vpn`) ueberall - die Gegenstelle kann
+    # eine andere FortiGate sein, deren Tunnel erst den Weg weiterfuehrt
+    "routing.vpn_state": frozenset({DEVICE}),
     "inventory.neighbors": NONE,
     "inventory.macs": NONE,
     "inventory.arps": NONE,
@@ -135,6 +139,19 @@ def _epg_ips(e) -> list[str]:
     return ranges([*e.subnets, *e.bd_subnets, *(p.ip for p in e.endpoints)])
 
 
+def _vpn_config(t) -> dict:
+    """IPsec-Tunnel ohne Zustand (Konfiguration: Phase 1 und 2)."""
+    out = t.model_dump(mode="json", exclude={"status", "instances"})
+    for p in out.get("phase2") or []:
+        p.pop("status", None)
+    return out
+
+
+def _vpn_state(t) -> list:
+    """Zustand eines IPsec-Tunnels: up/down je Phase 2, verbundene Dial-up-Gegenstellen."""
+    return [t.context, t.name, t.status, [[p.name, p.status] for p in t.phase2], t.instances]
+
+
 def _payload(result, platform: str) -> tuple[dict[str, str], dict[str, dict[str, list]]]:
     """Abdruecke der Teile, die der Lauf geliefert hat, und die Eintraege mit Adressen."""
     parts: dict[str, str] = {}
@@ -171,6 +188,9 @@ def _payload(result, platform: str) -> tuple[dict[str, str], dict[str, dict[str,
                 far = [r for r in entries if (r.protocol or "") not in ("connected", "local")]
                 parts["routing.connected"] = _list_digest(near)
                 parts["routing.routes"] = _list_digest(far)
+            elif field == "vpn":  # IPsec (1.19.0): Zustand getrennt von der Konfiguration
+                parts["routing.vpn"] = _list_digest([_vpn_config(t) for t in entries])
+                parts["routing.vpn_state"] = _list_digest([_vpn_state(t) for t in entries])
             else:
                 parts[f"routing.{field}"] = _list_digest(entries)
     return parts, items
