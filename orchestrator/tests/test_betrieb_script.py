@@ -21,6 +21,7 @@ DATEIEN = (
     "deploy/betrieb.sh",
     "deploy/lib-update.sh",
     "deploy/lib-instanz.sh",
+    "deploy/lib-bundle.sh",
     "deploy/env.sh",
     "deploy/update.sh",
     "scripts/release_manifest.py",

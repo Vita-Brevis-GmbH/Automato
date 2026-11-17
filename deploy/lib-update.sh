@@ -144,7 +144,7 @@ lu_images_holen() { # $1 Datei mit Images - fehlende holen, nur per Digest (nie 
     docker image inspect "$ref" >/dev/null 2>&1 && continue
     echo "    hole ${variable#AUTOMATO_IMAGE_}: $ref"
     docker pull --quiet "$ref" >/dev/null || {
-      echo "FEHLER: Image nicht geholt: $ref (GHCR oeffentlich? sonst docker login ghcr.io)" >&2
+      echo "FEHLER: Image nicht geholt: $ref (privat: Pull-Zugang aus dem Cockpit bzw. docker login ghcr.io)" >&2
       return 1
     }
   done < <(lu_images_refs "$1")

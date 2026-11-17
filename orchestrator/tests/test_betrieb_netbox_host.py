@@ -19,6 +19,7 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 DATEIEN = (
     "deploy/lib-betrieb.sh",
+    "deploy/lib-bundle.sh",
     "deploy/netbox-host/betrieb.sh",
     "deploy/netbox-host/netbox-host.sh",
     "deploy/netbox-host/host.conf.example",

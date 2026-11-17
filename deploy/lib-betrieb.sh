@@ -120,10 +120,15 @@ ref_aufloesen() { # $1 Ref: Branch auf origin, dann Tag, dann Commit -> ZIEL_COM
   return 1
 }
 
-umschalten() { # $1 Commit, $2 Branch (leer = losgelöst) -> 0, wenn HEAD dort steht
+umschalten() { # $1 Commit, $2 Branch (leer = losgelöst), $3 `ohne-upstream` (Stand aus dem
+  # Bundle des Cockpits, 1.18.0) -> 0, wenn HEAD dort steht
   if [ -n "${2-}" ]; then
     git_c checkout -q -B "$2" "$1" || return 1
-    git_c branch -q --set-upstream-to="origin/$2" "$2" >/dev/null 2>&1 || true
+    if [ "${3-}" = ohne-upstream ]; then
+      git_c branch -q --unset-upstream "$2" >/dev/null 2>&1 || true
+    else
+      git_c branch -q --set-upstream-to="origin/$2" "$2" >/dev/null 2>&1 || true
+    fi
   else
     git_c -c advice.detachedHead=false checkout -q --detach "$1" || return 1
   fi

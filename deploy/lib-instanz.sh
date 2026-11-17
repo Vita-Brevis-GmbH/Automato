@@ -257,7 +257,7 @@ installieren() {
     "AUTOMATO_MANIFEST_COMMIT=$M_COMMIT" "${M_IMAGES[@]}" >"$MANIFEST_IMAGES" ||
     instanz_gescheitert "$projekt" "Images nicht vorgemerkt"
   lu_images_holen "$MANIFEST_IMAGES" ||
-    instanz_gescheitert "$projekt" "Images nicht geholt (GHCR öffentlich bzw. docker login ghcr.io?)"
+    instanz_gescheitert "$projekt" "Images nicht geholt (Pull-Zugang aus dem Cockpit, GHCR öffentlich bzw. docker login ghcr.io?)"
   lu_images_schreiben <"$MANIFEST_IMAGES" || instanz_gescheitert "$projekt" "Images nicht vorgemerkt"
   rm -f "$MANIFEST_IMAGES"
   lu_images_lokal_markieren

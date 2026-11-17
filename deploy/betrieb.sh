@@ -5,10 +5,14 @@
 #   deploy/betrieb.sh stand            Version, Commit, Quelle (images|git), Health, ob zurueck geht
 #   deploy/betrieb.sh sichern          verschluesselte Sicherung wie vor einem Update
 #   deploy/betrieb.sh aktualisieren --version <v> --manifest <manifest.json> --signatur <manifest.sig>
+#                                   [--bundle <datei>]
 #                                      Manifest und Signatur pruefen -> Sicherung -> Commit des
 #                                      Manifests (losgeloest) -> Images nur per Digest -> starten
 #                                      (ohne Bau) -> Health bis 5 min -> sonst selbst zurueck
 #                                      (Code, Images und Datenbank aus der eben gemachten Sicherung)
+#                                      Mit --bundle (1.18.0, Repo privat): den Commit aus dem
+#                                      git-Bundle des Cockpits statt von origin - origin wird nie
+#                                      kontaktiert; Bundle defekt bzw. ohne den Commit -> Exit 3
 #   deploy/betrieb.sh zurueck          auf den Stand vor dem letzten Update (einmal)
 #   deploy/betrieb.sh neustart         Container neu starten (ohne Bau, ohne neue Images) + Health
 #
@@ -34,6 +38,8 @@
 # ohne Schluessel lehnt aktualisieren ab. Einrichten: deploy/release/README.md.
 # Einstellungen (Sicherung, Profile, TLS intern) wie deploy/update.sh aus .env (deploy/env.sh);
 # Sperre, Stand des letzten Updates und Rueckfall teilt es mit update.sh (deploy/lib-update.sh).
+# Pull-Zugang fuer private Images: der Agent gibt ihn als DOCKER_CONFIG mit - docker erbt die
+# Variable; dieses Skript setzt und nennt sie nie. stand, zurueck und neustart brauchen kein origin.
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 2
 # Der Agent gibt nur PATH, LANG und BETRIEB_AUFTRAG mit - git und docker (Anmeldung an GHCR unter
@@ -59,6 +65,9 @@ PROFILES=(--profile core)
 . deploy/lib-update.sh
 # shellcheck source=deploy/lib-instanz.sh
 . deploy/lib-instanz.sh
+BUNDLE_GIT=(git)
+# shellcheck source=deploy/lib-bundle.sh
+. deploy/lib-bundle.sh
 
 AKTION="?"
 S_GESUND="" # true | false | leer = nicht geprueft
@@ -167,23 +176,27 @@ dienst_variable() { # web-ui -> AUTOMATO_IMAGE_WEB_UI
 }
 
 aktualisieren() {
-  local version="" manifest="" signatur=""
+  local version="" manifest="" signatur="" bundle="" mit_bundle=0
   while [ $# -gt 0 ]; do
     case $1 in
-      --version | --manifest | --signatur) [ $# -ge 2 ] || ende 3 "Angabe ohne Wert" ;;
+      --version | --manifest | --signatur | --bundle) [ $# -ge 2 ] || ende 3 "Angabe ohne Wert" ;;
       --ref) ende 3 "Automato nimmt --version, --manifest und --signatur (kein --ref)" ;;
-      *) ende 3 "Unbekannte Angabe – erwartet --version, --manifest und --signatur" ;;
+      *) ende 3 "Unbekannte Angabe – erwartet --version, --manifest, --signatur und ggf. --bundle" ;;
     esac
     case $1 in
       --version) version=$2 ;;
       --manifest) manifest=$2 ;;
       --signatur) signatur=$2 ;;
+      --bundle) bundle=$2 mit_bundle=1 ;;
     esac
     shift 2
   done
   [[ $version =~ $VERSION_RE ]] || ende 3 "--version fehlt bzw. ist ungültig"
   datei_ok "$manifest" || ende 3 "Manifest fehlt, ist leer oder grösser als 64 KiB – nichts geändert"
   datei_ok "$signatur" || ende 3 "Signatur fehlt bzw. ist ungültig – nichts geändert"
+  if [ "$mit_bundle" = 1 ]; then
+    bundle=$(bundle_datei "$bundle") || ende 3 "Bundle fehlt bzw. ist leer – nichts geändert"
+  fi
   command -v python3 >/dev/null 2>&1 || ende 3 "python3 fehlt – nichts geändert"
 
   # 1. Manifest pruefen - mit dem Schluessel und dem Skript des bisherigen Checkouts
@@ -231,6 +244,12 @@ aktualisieren() {
     *) ende 3 "Versionen nicht vergleichbar – nichts geändert" ;;
   esac
   lokal_geaendert && ende 3 "Lokale Änderungen im Checkout – erst sichern bzw. verwerfen (git status)"
+  if [ "$mit_bundle" = 1 ]; then
+    # Repo privat: Code nur aus dem Bundle des Cockpits, nie von origin - geprueft vor der
+    # Sicherung (nur Objekte im Repo, nichts umgestellt)
+    echo "Code aus dem Bundle des Cockpits pruefen ($m_commit, ohne origin)"
+    bundle_holen "$bundle" "$m_commit" </dev/null || ende 3 "$BUNDLE_FEHLER – nichts geändert"
+  fi
   lu_compose_pruefen || ende 3 "docker compose kann das Projekt nicht lesen – deploy/aufbau.sh pruefen"
   lu_sicherung_moeglich ||
     ende 3 "Keine verschlüsselte Sicherung möglich (age-Schlüssel fehlt) – deploy/aufbau.sh backup-schluessel"
@@ -239,11 +258,15 @@ aktualisieren() {
   echo "1/5 Sicherung"
   lu_sicherung || ende 1 "Sicherung fehlgeschlagen – nichts umgestellt, läuft auf $laufend"
   echo "2/5 Code holen ($m_commit)"
-  git fetch --quiet --tags origin || ende 1 "Code nicht geholt (git fetch) – nichts umgestellt, läuft auf $laufend"
-  if ! git cat-file -e "$m_commit^{commit}" 2>/dev/null; then
-    git fetch --quiet origin "$m_commit" 2>/dev/null || true
-    git cat-file -e "$m_commit^{commit}" 2>/dev/null ||
-      ende 1 "Commit des Manifests nicht im Repo – nichts umgestellt, läuft auf $laufend"
+  if [ "$mit_bundle" = 1 ]; then
+    echo "    aus dem Bundle (geprueft)"
+  else
+    git fetch --quiet --tags origin || ende 1 "Code nicht geholt (git fetch) – nichts umgestellt, läuft auf $laufend"
+    if ! git cat-file -e "$m_commit^{commit}" 2>/dev/null; then
+      git fetch --quiet origin "$m_commit" 2>/dev/null || true
+      git cat-file -e "$m_commit^{commit}" 2>/dev/null ||
+        ende 1 "Commit des Manifests nicht im Repo – nichts umgestellt, läuft auf $laufend"
+    fi
   fi
   echo "3/5 Images holen (nur per Digest, kein Bau)"
   printf '%s\n' "AUTOMATO_MANIFEST_VERSION=$version" "AUTOMATO_MANIFEST_KANAL=$m_kanal" \
@@ -251,7 +274,7 @@ aktualisieren() {
     ende 1 "Images nicht vorgemerkt – nichts umgestellt, läuft auf $laufend"
   if ! lu_images_holen "$MANIFEST_IMAGES"; then
     rm -f "$MANIFEST_IMAGES"
-    ende 1 "Images nicht geholt (GHCR öffentlich bzw. docker login ghcr.io?) – nichts umgestellt, läuft auf $laufend"
+    ende 1 "Images nicht geholt (Pull-Zugang aus dem Cockpit, GHCR öffentlich bzw. docker login ghcr.io?) – nichts umgestellt, läuft auf $laufend"
   fi
 
   # 3. Umstellen: Stand fuer zurueck festhalten, Commit und Images, starten

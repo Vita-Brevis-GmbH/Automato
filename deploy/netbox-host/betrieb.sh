@@ -7,13 +7,17 @@
 #   betrieb.sh stand                    Version des Checkouts, NetBox-Version, Instanzen gesund,
 #                                       ob zurueck geht (nur lesen)
 #   betrieb.sh sichern                  alle Instanzen und die Konfiguration (netbox-host.sh sichern alle)
-#   betrieb.sh aktualisieren --ref <git-ref>
+#   betrieb.sh aktualisieren --ref <git-ref> [--bundle <datei> --commit <sha>]
 #                                       Sperre → Sicherung aller Instanzen → Checkout auf die Ref
 #                                       (Branch wieder angehängt, sonst losgelöst) → init → neue
 #                                       NetBox-Version je Instanz (netbox-host.sh update, mit
 #                                       eigener Sicherung davor) → Health aller Instanzen bis 5 min
 #                                       → sonst selbst zurück: alter Checkout und die Instanzen
 #                                       mit neuer NetBox aus ihrer Sicherung, Exit 1
+#                                       Mit --bundle/--commit (1.18.0, Repo privat): der Stand
+#                                       kommt aus dem git-Bundle des Cockpits, origin wird nie
+#                                       kontaktiert (deploy/lib-bundle.sh); Bundle defekt bzw.
+#                                       ohne den Commit → Exit 3; Branch ohne Upstream
 #   betrieb.sh zurueck                  auf den Stand vor dem letzten erfolgreichen aktualisieren
 #                                       (Checkout und Instanzen aus der Sicherung jenes Updates) – einmal
 #   betrieb.sh neustart                 Proxy und Instanzen neu starten (ohne neue Images) + Health
@@ -55,6 +59,9 @@ NICHT_EINGERICHTET="NetBox-Host nicht eingerichtet ($NBH_DIR/host.conf fehlt) �
 
 # shellcheck source=deploy/lib-betrieb.sh
 . "$CHECKOUT/deploy/lib-betrieb.sh" || exit 2
+BUNDLE_GIT=(git -c safe.directory="$CHECKOUT" -C "$CHECKOUT")
+# shellcheck source=deploy/lib-bundle.sh
+. "$CHECKOUT/deploy/lib-bundle.sh" || exit 2
 
 S_GESUND=""  # true | false | leer = nicht geprüft
 GESUND_GRUND=""
@@ -412,12 +419,35 @@ sichern() {
 }
 
 aktualisieren() {
-  if [ $# -ne 2 ] || [ "$1" != --ref ]; then
-    ende 3 "Der NetBox-Host wird aus git aktualisiert – aktualisieren --ref <git-ref>; nichts geändert"
-  fi
-  local ref=$2
+  local ref="" bundle="" commit="" angaben=" " aufruf
+  aufruf="Der NetBox-Host wird aus git aktualisiert – aktualisieren --ref <git-ref> [--bundle <datei> --commit <sha>]; nichts geändert"
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --ref | --bundle | --commit)
+        [ $# -ge 2 ] || ende 3 "$aufruf"
+        case $angaben in *" $1 "*) ende 3 "$aufruf" ;; esac
+        angaben="$angaben$1 "
+        ;;
+      *) ende 3 "$aufruf" ;;
+    esac
+    case $1 in
+      --ref) ref=$2 ;;
+      --bundle) bundle=$2 ;;
+      --commit) commit=$2 ;;
+    esac
+    shift 2
+  done
+  case $angaben in *" --ref "*) ;; *) ende 3 "$aufruf" ;; esac
   if ! ref_gueltig "$ref" || [ "$ref" = HEAD ]; then
     ende 3 "Ungültige Ref – erlaubt sind Branch, Tag oder Commit (Buchstaben, Ziffern, . _ / -, ohne ..); nichts geändert"
+  fi
+  local mit_bundle=0 mit_commit=0
+  case $angaben in *" --bundle "*) mit_bundle=1 ;; esac
+  case $angaben in *" --commit "*) mit_commit=1 ;; esac
+  [ "$mit_bundle" = "$mit_commit" ] || ende 3 "--bundle und --commit nur zusammen – nichts geändert"
+  if [ "$mit_bundle" = 1 ]; then
+    [[ $commit =~ $BETRIEB_COMMIT_RE ]] || ende 3 "--commit ist kein Commit (40 Zeichen 0-9, a-f) – nichts geändert"
+    bundle=$(bundle_datei "$bundle") || ende 3 "Bundle fehlt bzw. ist leer – nichts geändert"
   fi
   conf_da || ende 3 "$NICHT_EINGERICHTET"
   local alt_commit alt_branch alt_version neu_version alt_nb ziel_conf ziel_nb ziel_tag k v grund=""
@@ -430,11 +460,22 @@ aktualisieren() {
     ende 3 "AGE_RECIPIENT fehlt in host.conf – ohne Sicherung kein Update; nichts geändert"
   alt_nb=$(netbox_jetzt) || ende 3 "NetBox-Version des Checkouts unbekannt (netbox-version.conf) – nichts geändert"
 
-  echo "Neuen Stand holen (git fetch origin)"
-  timeout 180 git -c safe.directory="$CHECKOUT" -C "$CHECKOUT" fetch --quiet --prune --tags --force origin \
-    </dev/null 8>&- 9>&- ||
-    ende 3 "git fetch von origin gescheitert (Netz bzw. Deploy-Key des Hosts) – nichts geändert"
-  ref_aufloesen "$ref" || ende 3 "$ref ist weder Branch auf origin noch Tag noch Commit – nichts geändert"
+  local herkunft upstream=""
+  if [ "$mit_bundle" = 1 ]; then
+    # Repo privat: der Stand kommt aus dem Bundle des Cockpits, nie von origin (nur Objekte im Repo)
+    echo "Neuen Stand aus dem Bundle des Cockpits holen (${commit:0:12}, ohne origin)"
+    bundle_holen "$bundle" "$commit" </dev/null || ende 3 "$BUNDLE_FEHLER – nichts geändert"
+    ZIEL_COMMIT=$commit
+    ZIEL_BRANCH=$(bundle_branch "$ref" "$commit" </dev/null)
+    herkunft="der Stand aus dem Cockpit" upstream=ohne-upstream
+  else
+    echo "Neuen Stand holen (git fetch origin)"
+    timeout 180 git -c safe.directory="$CHECKOUT" -C "$CHECKOUT" fetch --quiet --prune --tags --force origin \
+      </dev/null 8>&- 9>&- ||
+      ende 3 "git fetch von origin gescheitert (Netz bzw. Deploy-Key des Hosts; Repo privat: Code als Bundle aus dem Cockpit, Host-Agent aktualisieren) – nichts geändert"
+    ref_aufloesen "$ref" || ende 3 "$ref ist weder Branch auf origin noch Tag noch Commit – nichts geändert"
+    herkunft="origin/$ZIEL_BRANCH"
+  fi
   neu_version=$(checkout_version "$ZIEL_COMMIT") ||
     ende 3 "$ref hat keine gültige VERSION – nichts geändert"
   if [ "$ZIEL_COMMIT" = "$alt_commit" ]; then
@@ -448,7 +489,7 @@ aktualisieren() {
   fi
   if [ -n "$ZIEL_BRANCH" ] && git_c rev-parse -q --verify "refs/heads/$ZIEL_BRANCH" >/dev/null 2>&1 &&
     ! git_c merge-base --is-ancestor "refs/heads/$ZIEL_BRANCH" "$ZIEL_COMMIT" 2>/dev/null; then
-    ende 3 "Der lokale Branch $ZIEL_BRANCH hat Commits, die origin/$ZIEL_BRANCH nicht hat – nichts geändert"
+    ende 3 "Der lokale Branch $ZIEL_BRANCH hat Commits, die $herkunft nicht hat – nichts geändert"
   fi
   git_c cat-file -e "$ZIEL_COMMIT:deploy/netbox-host/betrieb.sh" 2>/dev/null ||
     ende 3 "$ref hat keinen Einstiegspunkt für das Cockpit (deploy/netbox-host/betrieb.sh) – nichts geändert"
@@ -500,7 +541,7 @@ aktualisieren() {
 
   # 3. Umschalten, init, neue NetBox je Instanz, Health
   echo "2/4 Umschalten: $alt_version → $neu_version (${ZIEL_BRANCH:-losgelöst})"
-  if ! umschalten "$ZIEL_COMMIT" "$ZIEL_BRANCH"; then
+  if ! umschalten "$ZIEL_COMMIT" "$ZIEL_BRANCH" "$upstream"; then
     if [ "$(git_c rev-parse HEAD 2>/dev/null)" = "$alt_commit" ]; then
       zustand_zuruecklegen
       ende 1 "Checkout von $ref gescheitert – nichts umgestellt, läuft auf $alt_version"
