@@ -59,6 +59,10 @@ COMMANDS: dict[str, tuple[str, ...]] = {
         "show ip arp",
         "show spanning-tree",  # 0.65.0: blockierte Ports je VLAN
         "show ipv6 neighbors",  # 0.94.0: IPv6-Nachbarn (NDP) wie ARP
+        # 1.19.0: Spanning Tree (`stp.py`) - Topologieaenderungen, MST-Regionen, err-disabled
+        "show spanning-tree detail",
+        "show spanning-tree mst configuration",
+        "show interfaces status err-disabled",
     ),
     "nxos": (
         "show version",
@@ -74,6 +78,9 @@ COMMANDS: dict[str, tuple[str, ...]] = {
         "show ip arp detail vrf all",
         "show spanning-tree",  # 0.65.0
         "show ipv6 neighbor vrf all",  # 0.94.0 (ohne ntc-Vorlage, eigene Auswertung)
+        "show spanning-tree detail",  # 1.19.0 (`stp.py`)
+        "show spanning-tree mst configuration",
+        "show interface status err-disabled",
     ),
     # 0.68.0: Cisco Business-CLI (Catalyst 1200/1300, CBS): Tabellen, eigene Auswertung
     "cbs": (
