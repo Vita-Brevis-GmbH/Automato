@@ -211,6 +211,8 @@ def test_update_sh_ohne_zugang_klare_meldung_nichts_geaendert(host, vorbereiten,
     assert text in out.stderr
     assert "Nichts geaendert" in out.stderr and "Update aus dem Cockpit" in out.stderr
     assert "Lese-Zugang" in out.stderr
+    if vorbereiten == "falle":
+        assert "git meldet: ERROR: Repository not found." in out.stderr
     # nichts geändert: weder Sicherung noch Stand für den Rückfall noch Umschalten
     assert host.head() == host.commits["1.15.0"]
     assert _git(host.checkout, "symbolic-ref", "--short", "HEAD") == "main"

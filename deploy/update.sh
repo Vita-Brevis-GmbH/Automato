@@ -72,7 +72,7 @@ code_erreichbar() { # vor jeder Aenderung: origin vorhanden und lesbar? Holt dab
   echo "        Weiter: Update aus dem Cockpit (Plattform -> Automato -> Aktualisieren; der Host" >&2
   echo "        bekommt den Code als git-Bundle, ADR 0060 Nachtrag) bzw. einen eigenen Lese-Zugang" >&2
   echo "        einrichten (Deploy-Key mit Leserecht; docs/BETRIEB.md 4b)." >&2
-  echo "        git meldet: $(printf '%s' "$ausgabe" | ohne_zugangsdaten | tail -n 1)" >&2
+  echo "        git meldet: $(printf '%s\n' "$ausgabe" | ohne_zugangsdaten | grep -m1 -v '^[[:space:]]*$')" >&2
   exit 2
 }
 
