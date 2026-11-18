@@ -7,6 +7,20 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 1.21.0 – 2026-11-18
+
+Rückmeldung des Anwenders (2026-11-18): „Ich habe eine Funktion bei Automato v1.0.1 einbauen lassen, kannst du mir diese hier auch einbringen und mergen lassen? Weiter wäre es noch super, wenn ich eine Auswahl treffen könnte, welche Applikationen ich herunterladen möchte. Zudem geht es sehr lange, bis der Export steht, könnte man dies als Hintergrunddienst laufen lassen?“ Migration `0096_export_auftrag`, ADR 0069.
+
+- **Exporte aus 1.0.1 übernommen** (Merge des Branches `claude/gifted-planck-at3ufl`, dort als 1.0.1 bzw. 1.10.0 – hier Teil von 1.21.0):
+  - **Applikationen – Doku als ZIP je Applikation mit Export-Passwort:** je Applikation ein ZIP mit Word und Netzwerkplan (draw.io) wie „Für Confluence“, jedes mit dem Export-Passwort AES-256-verschlüsselt (öffnen mit 7-Zip/WinRAR); eine fehlgeschlagene Applikation steht in `FEHLER.txt`, die übrigen kommen trotzdem (`store/secure_zip.py`).
+  - **Findings – Excel-Export:** alle Findings der sichtbaren Mandanten, alle Status, nach Modul → Prüfung → Typ (Blatt „Übersicht“ mit Zählern, je Modul ein Blatt mit Autofilter), Details als Kommentar an der Meldung, Werte aus Geräten nie als Formel (`store/findings_export.py`). Neu: ohne Mandanten mit ausgeschaltetem Modul Findings; schneller ohne Stil je Zelle (5000 Findings 2,4 → 1,7 s); bleibt ein direkter Download.
+  - Neue Abhängigkeiten (Open Source, MIT): `pyzipper`, `openpyxl`.
+- **Auswahl der Applikationen:** im Export-Dialog die Applikationen des Mandanten bzw. Kunden mit Suche und „alle“/„keine“; exportiert werden nur die gewählten. Jede gewählte Applikation muss sichtbar sein – sonst Fehler mit den Ids, nie still ausgelassen.
+- **Export im Hintergrund:** der Export läuft als Auftrag im Orchestrator; „Meine Exporte“ (im Dialog und über der Liste der Applikationen) zeigt Fortschritt (n von m, aktuelle Applikation), Fehler je Applikation, Herunterladen, Abbrechen und Entfernen – auch nach dem Neuladen. Nur der Auftraggeber sieht und lädt seinen Export; abrufbar 24 h (`AUTOMATO_EXPORT_HOURS`), höchstens 2048 MB je Export (`AUTOMATO_EXPORT_MAX_MB`), zwei gleichzeitig (`AUTOMATO_EXPORT_PARALLEL`), einer je Benutzer. Das Export-Passwort lebt nur im Speicher des Auftrags – nie in Datenbank, Protokoll, Audit oder Datei; ein Neustart des Orchestrators bricht laufende Exporte sichtbar ab. Ablage im Volume `orchestrator-data` (`/var/lib/automato/exports`).
+- **Schneller:** die Abhängigkeiten rechnet der Export je Applikation einmal statt je Paar, Gemeinsames je Mandant einmal (51 Applikationen mit vorgerechneten Ständen: 68 s → 7 s; ohne Stände 212 s → 160 s).
+- **Rechte:** Betreuer ab Viewer und Mandanten-Benutzer im eigenen Mandanten (ADR 0068); nicht für Kunden-Benutzer in gemeinsamen Mandanten (sie exportieren ihre Applikationen einzeln). API: `POST /applications/export` (202, `ids`), `GET /applications/exports`, `GET …/exports/{id}`, `POST …/{id}/cancel`, `DELETE …/{id}`, `GET …/{id}/download`; `GET /findings/export`.
+- Tests: `orchestrator/tests/test_export_all.py`, UI `e2e/release_1210.spec.ts`, `e2e/release_101.spec.ts`.
+
 ## 1.20.0 – 2026-11-18
 
 Rückmeldung des Anwenders 2026-11-18 zum Test von 1.19.2: Abmelden und Rechte im Menü. Neue
