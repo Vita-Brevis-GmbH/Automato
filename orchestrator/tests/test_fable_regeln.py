@@ -1,10 +1,9 @@
 # ruff: noqa: S104 - 0.0.0.0/0 sind Routen, keine Bind-Adressen
 """Prüfung B „Regeln“ (Fable, Phase 1): Abweichungen der Regel-Zuordnung vom echten Gerät.
 
-Jeder Test verlangt das Verhalten des echten Geräts (Herstellerdoku im Grund) und schlägt mit
-dem heutigen Code fehl - `xfail(strict=True)`, damit die Suite grün bleibt und der Test meldet,
-sobald Phase 2 die Abweichung behebt. Beispiele anonymisiert (RFC 1918, Dokumentationsnetze,
-`example.ch`).
+Jeder Test verlangt das Verhalten des echten Geräts. In Phase 1 als `xfail(strict=True)`
+angelegt; seit Phase 2 (ADR 0071, Regel-Zuordnung nach echtem Treffer) grün. Beispiele
+anonymisiert (RFC 1918, Dokumentationsnetze, `example.ch`).
 
 Eine Firewall `fw-r` mit LAN (10.10.0.0/24), DMZ (10.30.0.0/24) und Internet (203.0.113.0/24).
 """
@@ -72,13 +71,6 @@ def _shown(doc: dict) -> set[str]:
 # -- FortiGate: Policy-Abgleich je Hop (`policy_check`) -----------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Fable B-1: internet-service-negate wird nicht gelesen – die Policy gilt für "
-        "private Adressen als nicht passend (policy_check.py:187-191, 772-778)"
-    ),
-)
 def test_b1_internet_service_negiert_trifft_private_adressen(client):
     """`internet-service-negate enable`: die Policy trifft alles, was NICHT im Internet Service
     liegt - also auch jede private Adresse."""
@@ -104,14 +96,6 @@ def _vip_policy(pid, name, src_if="internet"):
                       ["tcp/443"]) | {"destination_refs": ["VIP_app"]}  # fmt: skip
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Fable B-2: Policy mit VIP als Ziel trifft auch Verkehr direkt zur internen "
-        "Adresse (rule_index.py:240-241 legt die interne IP als Zielbereich an, "
-        "policy_check._address nutzt ihn)"
-    ),
-)
 def test_b2_policy_mit_vip_trifft_keinen_verkehr_direkt_zur_internen_adresse(client):
     """Eine Policy mit der VIP als Ziel trifft nur Verkehr, den die VIP umgeschrieben hat.
     Verkehr aus dem LAN direkt zur internen Adresse des Servers trifft sie nicht."""
@@ -120,13 +104,6 @@ def test_b2_policy_mit_vip_trifft_keinen_verkehr_direkt_zur_internen_adresse(cli
     assert rules["verdict"] == "implicit_deny", rules
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Fable B-3: am VIP-Hop wird das Ziel vor dem DNAT (externe IP) mit Adressobjekten"
-        " verglichen statt das Ziel nach dem DNAT (policy_check.py:524-527, 867)"
-    ),
-)
 def test_b3_adresse_der_externen_ip_trifft_verkehr_zur_vip_nicht(client):
     """DNAT vor dem Policy-Abgleich: verglichen wird das Ziel nach dem DNAT. Eine erlaubende
     Policy mit einem Adressobjekt der externen IP trifft den Verkehr zur VIP nicht - es
@@ -141,13 +118,6 @@ def test_b3_adresse_der_externen_ip_trifft_verkehr_zur_vip_nicht(client):
 # -- Applikations-Doku: welche Regeln einer Applikation zugeordnet werden ------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Fable B-4: negierte Quelle (srcaddr-negate) wird in der Doku wie eine genannte "
-        "Quelle zugeordnet (rule_index.covers kennt keine Negation)"
-    ),
-)
 def test_b4_negierte_quelle_ist_kein_zugriff_des_systems(client):
     """`srcaddr-negate enable` mit dem Server als Quelle: die Policy trifft alles ausser dem
     Server - sie ist kein Zugriff des Servers."""
@@ -161,13 +131,6 @@ def test_b4_negierte_quelle_ist_kein_zugriff_des_systems(client):
     assert "nicht-web-to-lan" not in shown
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Fable B-5: Policy mit negiertem Ziel, die das System real trifft, fehlt in der "
-        "Doku (rule_index.covers kennt keine Negation)"
-    ),
-)
 def test_b5_negiertes_ziel_das_das_system_trifft_fehlt_nicht(client):
     """`dstaddr-negate enable` mit einem fremden Netz als Ziel: die Policy trifft den Server
     (er liegt nicht im genannten Netz) - sie gehört in seine Doku wie eine offene Regel."""
@@ -182,14 +145,6 @@ def test_b5_negiertes_ziel_das_das_system_trifft_fehlt_nicht(client):
     assert "lan-to-nicht-mgmt" in known
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Fable B-6: vollständig überdeckte Regel (erste passende gewinnt) steht ohne "
-        "Kennzeichen als Zugriff in den Kategorien (appdoc._covered_rows ohne "
-        "Reihenfolge)"
-    ),
-)
 def test_b6_ueberdeckte_regel_ist_als_ueberdeckt_ausgewiesen(client):
     """Erste passende Policy gewinnt: Policy 2 nennt den Server, wird aber von der Sperre 1
     davor (gleiche Interfaces, Quelle und Ziel umfassend, alle Dienste) vollständig überdeckt -
@@ -212,13 +167,6 @@ def test_b6_ueberdeckte_regel_ist_als_ueberdeckt_ausgewiesen(client):
     assert marks and all(m.get("_shadowed") for m in marks), marks
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Fable B-7: FQDN-Objekte werden bei der Zuordnung Regel-Applikation nicht "
-        "aufgelöst (rule_index.value_range -> None)"
-    ),
-)
 def test_b7_fqdn_objekt_mit_der_adresse_des_systems_gehoert_in_die_doku(client):
     """Ein FQDN-Adressobjekt trifft die Adressen, auf die der Name auflöst. Löst
     `web01.example.ch` (IPAM) auf den Server auf, ist die Policy ein Zugriff auf den Server."""
@@ -240,13 +188,6 @@ def test_b7_fqdn_objekt_mit_der_adresse_des_systems_gehoert_in_die_doku(client):
 # -- Cisco ACI: Vorrang der Contracts (`aci_check`) -----------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Fable B-8: ACI-Vorrang ist „deny zuerst“ statt Priorität der Zoning-Rules "
-        "(aci_check.py:196)"
-    ),
-)
 def test_b8_aci_vorrang_epg_contract_vor_sperre_ueber_vzany(client):
     """Vorrang nach Priorität der Zoning-Rules, nicht „deny zuerst“: ein Contract zwischen zwei
     EPGs (Priorität 7) gewinnt gegen eine Sperre vzAny -> vzAny (Priorität 17, Vorgabe)."""
@@ -312,14 +253,6 @@ def _seed_verbund(client) -> tuple[int, dict[str, int]]:
     return tid, ids
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Fable B-12: Zuordnung nach Adressüberdeckung über alle Firewalls des Mandanten; eine "
-        "Regel, die das System nennt, bleibt auch von einer Firewall ausserhalb des Wegs "
-        "(Regelwerk 1: off_path_specific aus, appdoc.py:1487)"
-    ),
-)
 def test_b12_firewall_ausserhalb_des_wegs_traegt_keine_regel_bei(client):
     """LAN -> Server in der DMZ geht nur über den Verbund fw-a (beide Netze direkt
     angeschlossen). `fw-vpn` hängt am Transfernetz, kennt Routen in beide Netze und trägt

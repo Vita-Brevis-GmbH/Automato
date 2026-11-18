@@ -25,9 +25,19 @@ Ergebnis wie bei den FortiGate-Hops (`policy_check`): `verdict` allow | deny | i
 depends | unknown, `text`, `rules` (die Contracts mit `decides`/`unsure`), dazu die Zuordnung
 (`src_epg`, `dst_epg`). Shared Services bzw. Route-Leaking (0.44.0): liegt das Ziel in einer
 anderen VRF, in diese geleakt (`hop.leak`, `aci_shared`), gilt dort seine EPG; der Contract
-braucht einen Scope ueber die VRF hinaus (global bzw. tenant). Nur lesend; nicht
-beruecksichtigt: VRF im Modus „unenforced“, Intra-EPG-Isolation, ESG-IP-Selektoren, Service
-Graphs.
+braucht einen Scope ueber die VRF hinaus (global bzw. tenant).
+
+Seit ADR 0071 (Regel-Zuordnung nach echtem Treffer):
+- **Vorrang wie die Zoning-Rules** (`_priority`, kleinere Zahl gewinnt, bei gleicher Zahl die
+  Sperre): Taboo 5, EPG-EPG 7 (9 mit Filter `ip/any`), EPG-vzAny 13 (15), vzAny-EPG 14 (16),
+  vzAny-vzAny 17 (21), Preferred Group 20 - nicht mehr „Sperre zuerst“. Sperrende Filter
+  (`action=deny`) mit `priorityOverride` level1/level2/level3 = 17/13 bzw. 14/7.
+- **VRF „unenforced“** (`epg.vrf_unenforced`): das Fabric wendet keine Contracts an - erlaubt.
+- **Intra-EPG-Isolation** (`epg.isolated`): gleiche EPG nur mit Contract der EPG mit sich selbst.
+  Nicht gelesen (NULL, Lauf eines aelteren Collectors): Urteil wie bisher, im Ergebnis
+  ausgewiesen (`unchecked`).
+
+Nur lesend; nicht beruecksichtigt: ESG-IP-Selektoren, Service Graphs.
 """
 
 import ipaddress
@@ -191,7 +201,8 @@ class AciChecker:
                 if c.allow and c.kind == "contract":
                     c.reverse = aci_direction.reverse_of(c.raw, c.services)
                     c.replies_only = aci_direction.replies_only(c.raw, c.services)
-        # Taboos zuerst (sperren vor allen anderen), dann nach Name
+        # nach Name; der Vorrang je Paar von EPGs kommt aus `_priority` (ADR 0071) - bis 1.21
+        # „Sperre zuerst“, was nur fuer Taboos stimmt
         self._contracts[sid] = sorted(out.values(), key=lambda c: (c.allow, c.name.lower()))
         return self._contracts[sid]
 
@@ -505,18 +516,34 @@ class AciChecker:
 
     def _pair(self, sid: int, vrf: str, s: Member, d: Member, service,
               dst_vrf: str | None = None) -> dict:  # fmt: skip
-        if s.epg.id == d.epg.id:
+        if s.epg.vrf_unenforced and d.epg.vrf_unenforced:
+            # VRF im Modus „unenforced“ (ADR 0071): das Fabric wendet keine Contracts an
+            text = L(f"VRF {vrf} im Modus „unenforced“ – Contracts werden nicht angewendet, erlaubt",
+                     f"VRF {vrf} in mode “unenforced” – contracts are not applied, allowed")  # fmt: skip
+            return {"verdict": "allow", "rules": [], "text": text}
+        same = s.epg.id == d.epg.id
+        if same and not s.epg.isolated:
             text = L(f"gleiche EPG ({s.text}) – ohne Contract erlaubt",
                      f"same EPG ({s.text}) – allowed without contract")  # fmt: skip
-            return {"verdict": "allow", "rules": [], "text": text}
+            out = {"verdict": "allow", "rules": [], "text": text}
+            if s.epg.isolated is None and s.epg.kind == "epg":  # nicht gelesen: ausgewiesen
+                out["unchecked"] = L("Intra-EPG-Isolation nicht gelesen",
+                                     "intra-EPG isolation not read")  # fmt: skip
+            return out
         ps, pd = self.proxies(s.epg, vrf), self.proxies(d.epg, dst_vrf or vrf)
+        if same:  # Intra-EPG-Isolation: nur ein Contract der EPG mit sich selbst oeffnet
+            ps = pd = {s.epg.id: ps.get(s.epg.id, s.text)}
         shown: list[dict] = []
         closed_entries: list[dict] = []
         decisive = None
+        matched = []
         for c in self.contracts(sid):
             hit = self._match(c, ps, pd, s, d, service)
-            if hit is None:
-                continue
+            if hit is not None:
+                matched.append((self._priority(c, hit[2], hit[3], hit[1]), c.allow, len(matched),
+                                c, hit))  # fmt: skip
+        # Vorrang der Zoning-Rules (ADR 0071): kleinere Zahl zuerst, bei gleicher die Sperre
+        for _prio, _allow, _n, c, hit in sorted(matched, key=lambda m: m[:3]):
             ok, back, consumer, provider, note, closed = hit
             if back:  # Rueckrichtung: die Quelle ist Provider, das Ziel Consumer
                 via_src, via_dst = ps[min(provider)], pd[min(consumer)]
@@ -553,9 +580,48 @@ class AciChecker:
                     shown.append(entry)
                 continue
             shown.append(entry)
-            decisive = entry  # Taboos stehen vorn: sie sperren vor allen Contracts
+            decisive = entry  # hoechster Vorrang, der sicher passt
             break
+        if same and (decisive is None or decisive["action"] != "allow"):
+            text = L(f"gleiche EPG ({s.text}) mit Intra-EPG-Isolation – ohne Contract der EPG "
+                     "mit sich selbst gesperrt",
+                     f"same EPG ({s.text}) with intra-EPG isolation – blocked without a contract "
+                     "of the EPG with itself")  # fmt: skip
+            return {"verdict": "implicit_deny" if decisive is None else "deny", "rules": shown,
+                    "text": text}  # fmt: skip
         return _verdict(decisive, shown, s, d, service, closed_entries)
+
+    def _priority(self, c: _Contract, consumer, provider, back: bool) -> int:
+        """Vorrang der Zoning-Rule eines Contracts fuer dieses Paar (ADR 0071, Cisco ACI Contract
+        Guide „Zoning-rule priorities“): kleinere Zahl gewinnt. Je genauer Quelle und Ziel,
+        desto hoeher der Vorrang; ein Filter ohne Einschraenkung (`ip/any`) eine Stufe tiefer."""
+        if c.kind == "taboo":
+            return 5
+        if c.kind == "preferred_group":
+            return 20
+
+        def is_any(ids) -> bool:
+            kinds = [self.epgs[i].kind for i in ids if i in self.epgs]
+            return bool(kinds) and all(k == "vzany" for k in kinds)
+
+        src_any = is_any(provider if back else consumer) or (c.any_consumer and not consumer)
+        dst_any = is_any(consumer if back else provider)
+        if not c.allow:
+            level = str(c.raw.get("priority_override") or "default").lower()
+            if level == "level3":
+                return 7
+            if level == "level2":
+                return 14 if src_any and not dst_any else 13
+            if level == "level1":
+                return 17
+        open_ = any(service_ok([x], None) is True for x in c.services)
+        if src_any and dst_any:
+            return 21 if open_ else 17
+        if src_any:
+            return 16 if open_ else 14
+        if dst_any:
+            return 15 if open_ else 13
+        return 9 if open_ else 7
 
     def _match(self, c: _Contract, ps: dict, pd: dict, s: Member, d: Member, service):
         """(Urteil Dienst, Rueckrichtung, Consumer, Provider) bzw. None: Consumer -> Provider
