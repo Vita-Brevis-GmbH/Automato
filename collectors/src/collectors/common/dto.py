@@ -65,6 +65,10 @@ class NormalizedEpg(BaseModel):
     endpoints: list[NormalizedEpgEndpoint] = Field(default_factory=list)  # fvCEp/fvIp
     selectors: list[str] = Field(default_factory=list)  # ESG: Selektoren (EPG, Tag, IP)
     pref_group: bool = False  # Mitglied der Preferred Group seiner VRF
+    # ADR 0071: Intra-EPG-Isolation (`pcEnfPref=enforced` an der EPG) und VRF ohne Contracts
+    # (`pcEnfPref=unenforced` an der VRF); None = nicht gelesen (aeltere Collectors)
+    isolated: bool | None = None
+    vrf_unenforced: bool | None = None
 
 
 class NormalizedNat(BaseModel):

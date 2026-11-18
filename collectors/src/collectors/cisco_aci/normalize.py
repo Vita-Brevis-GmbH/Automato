@@ -56,12 +56,16 @@ def normalize_contract(contract: dict[str, Any]) -> list[NormalizedRule]:
         raw = contract
         if "reverse" in subject:  # ACI ist zustandslos (0.69.1): Dienste Provider -> Consumer
             raw = {**contract, "subject": subject["name"], "reverse": list(subject["reverse"])}
+        deny = subject.get("action") == "deny"  # Filter mit action=deny (Fable B-10, ADR 0071)
+        if deny:
+            raw = {**contract, "subject": subject["name"], "filter_action": "deny",
+                   "priority_override": subject.get("priority") or "default"}  # fmt: skip
         rules.append(
             NormalizedRule(
                 source_platform="cisco_aci",
                 external_id=f"{contract['dn']}/{subject['name']}",
                 name=name,
-                action="deny" if kind == "taboo" else "allow",
+                action="deny" if kind == "taboo" or deny else "allow",
                 sources=sources,
                 destinations=destinations,
                 services=_subject_services(subject),

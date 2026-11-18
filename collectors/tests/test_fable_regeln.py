@@ -1,7 +1,8 @@
 """Prüfung B „Regeln“ (Fable, Phase 1): Abweichungen der Normalisierung vom echten Gerät.
 
-Wie `orchestrator/tests/test_fable_regeln.py`: jeder Test verlangt das echte Verhalten und
-schlägt heute fehl (`xfail(strict=True)`). Beispiele anonymisiert.
+Wie `orchestrator/tests/test_fable_regeln.py`: jeder Test verlangt das echte Verhalten. Seit
+Phase 2 (ADR 0071) grün; B-13 (Umleitung am Load Balancer) gehört zur Weg-Suche (ADR 0070) und
+bleibt bis zum Zusammenführen `xfail`. Beispiele anonymisiert.
 """
 
 import pytest
@@ -12,10 +13,6 @@ from collectors.cisco_aci.normalize import normalize_contract
 from collectors.fortigate import normalize as norm
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Fable B-9: action ipsec wird als deny normalisiert (fortigate/normalize.py:337)",
-)
 def test_b9_policy_mit_action_ipsec_erlaubt():
     """`set action ipsec` (Policy-basiertes IPsec-VPN): die Policy lässt den Verkehr in den
     Tunnel - sie sperrt nicht."""
@@ -27,13 +24,6 @@ def test_b9_policy_mit_action_ipsec_erlaubt():
     assert rule.action == "allow"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Fable B-10: action deny am Filter eines Subjects wird nicht gelesen – der "
-        "Contract gilt als erlaubend (cisco_aci/mo.py:303, normalize.py:64)"
-    ),
-)
 def test_b10_aci_filter_mit_action_deny_ist_eine_sperre():
     """Filter eines Subjects mit `action="deny"` (vzRsSubjFiltAtt): der Contract sperrt den
     Dienst - er erlaubt ihn nicht."""
@@ -48,13 +38,6 @@ def test_b10_aci_filter_mit_action_deny_ist_eine_sperre():
     assert [(r.name, r.action) for r in rules] == [("CT_block:SJ_1", "deny")]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Fable B-11: Adressgruppen werden nur drei Stufen tief aufgelöst "
-        "(fortigate/normalize.py:104)"
-    ),
-)
 def test_b11_adressgruppen_tiefer_als_drei_stufen():
     """Verschachtelte Adressgruppen löst die FortiGate ganz auf - auch in der vierten Stufe."""
     amap = {

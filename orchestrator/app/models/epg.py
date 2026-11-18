@@ -45,6 +45,10 @@ class Epg(Base):
     pref_group: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=false()
     )
+    # ADR 0071 (Migration 0098): Intra-EPG-Isolation der EPG bzw. ihre VRF ohne Contracts
+    # („unenforced“); None = nicht gelesen (Lauf eines aelteren Collectors)
+    isolated: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    vrf_unenforced: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     # Zugehoeriger Server (Host-Objekt), sofern aufloesbar ("ein Server = eine EPG")
     network_object_id: Mapped[int | None] = mapped_column(
         ForeignKey("network_object.id"), nullable=True, index=True
