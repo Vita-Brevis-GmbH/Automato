@@ -476,7 +476,7 @@ VB = [f"https://vb{w}.mgmt.example.ch/" for w in ("", "-nb", "-doc", "-um")]
     ],
 )
 def test_ein_klick_meldet_auf_allen_adressen_ab(tor, klick):
-    """1.19.3 (Anwender 2026-11-18: „Das Logout bei den Kundenportalen geht noch nicht, ich komme
+    """1.20.0 (Anwender 2026-11-18: „Das Logout bei den Kundenportalen geht noch nicht, ich komme
     immer wieder rein, auch, wenn ich nicht neu einlogge“): das Cookie des Tors gilt je Adresse.
     Bis 1.19.2 löschte „Abmelden“ nur das der Adresse, auf der geklickt wurde; NetBox, Automato und
     Magister liessen bis zur nächsten Erneuerung (5 min) ohne Anmeldung herein. Jetzt: ein Klick,

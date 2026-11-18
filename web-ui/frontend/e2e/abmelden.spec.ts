@@ -1,4 +1,4 @@
-// Abmelden mit einem Klick (1.19.3, Befund des Anwenders 2026-11-18: „Auch aus dem Automato heraus
+// Abmelden mit einem Klick (1.20.0, Befund des Anwenders 2026-11-18: „Auch aus dem Automato heraus
 // abmelden muss ich mehrfach auf Abmelden klicken, damit ich zum Keycloak zurückkehre“).
 // - hinter dem Anmelde-Tor (ADR 0051): über dessen Abmelden (/oauth2/abmelden des Front-Proxys) –
 //   das beendet die Sitzung in Keycloak und löscht die Cookies des Tors auf allen Adressen des
@@ -91,7 +91,7 @@ async function clickSignOut(page: Page): Promise<void> {
 
 const storedUser = (page: Page) => page.evaluate((key) => localStorage.getItem(key), `oidc.user:${ISSUER}:${CLIENT}`);
 
-test("hinter dem Anmelde-Tor: ein Klick meldet über das Tor ab (1.19.3)", async ({ page }) => {
+test("hinter dem Anmelde-Tor: ein Klick meldet über das Tor ab (1.20.0)", async ({ page }) => {
   const kc = await keycloak(page);
   await signedIn(page);
   const gate: string[] = [];
@@ -114,7 +114,7 @@ test("hinter dem Anmelde-Tor: ein Klick meldet über das Tor ab (1.19.3)", async
   expect(kc.authorize).toHaveLength(0); // nicht still wieder angemeldet
 });
 
-test("ohne Tor: ein Klick über Keycloak bis zum Formular, auch gleich nach der Anmeldung (1.19.3)", async ({
+test("ohne Tor: ein Klick über Keycloak bis zum Formular, auch gleich nach der Anmeldung (1.20.0)", async ({
   page,
 }) => {
   const kc = await keycloak(page);
@@ -131,7 +131,7 @@ test("ohne Tor: ein Klick über Keycloak bis zum Formular, auch gleich nach der 
   expect(kc.authorize).toHaveLength(1);
 });
 
-test("Anfrage während des Abmeldens meldet nicht still neu an (1.19.3)", async ({ page }) => {
+test("Anfrage während des Abmeldens meldet nicht still neu an (1.20.0)", async ({ page }) => {
   // Keycloak antwortet langsam: in der Zeit lädt die Oberfläche eine Ansicht (Anfragen an den
   // Orchestrator) - bis 1.19.2 löste das eine Anmeldung aus, die das Abmelden überholte
   const kc = await keycloak(page, 1500);

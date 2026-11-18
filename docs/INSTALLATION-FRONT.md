@@ -142,6 +142,10 @@ Danach übernimmt der Agent jede Änderung aus der Oberfläche innert Sekunden (
 Protokoll: `journalctl -u automato-front-sync`); das Kunden-Portal zeigt, ob der Front-Proxy aktuell
 ist bzw. was der Agent meldet. Kunden aus der Oberfläche ändert der Befehl nicht; von Hand angelegte
 bleiben unberührt. Je Kunde zeigt „Einrichtung“ die Befehle für die NetBox-Instanz und den Realm.
+Nach einem Update von Automato erzeugt der Agent die Konfiguration selbst neu (seit 1.20.0:
+`status.json` hält die Fassung von `front.sh` fest, `erzeugt_mit`; weicht sie ab, erzeugt der Timer
+neu, spätestens nach 10 Minuten; sofort: `sudo deploy/front/front.sh sync`). `front.sh erzeugen`
+von Hand ist dafür nicht mehr nötig.
 
 **Von Hand** (wie bis 1.2.x, z. B. ohne Oberfläche):
 
@@ -271,10 +275,10 @@ zweite Maske an: Automato selbst, NetBox über den Benutzer vom Tor
   vom Absender werden sie immer entfernt. Magister vertraut ihnen nur von dieser VM.
 - **Abmelden:** „Abmelden“ auf der Startseite, im Portal, in NetBox bzw. in Automato beendet auch
   die Keycloak-Sitzung (das Tor meldet sich dort ab) und zeigt die Seite „Abgemeldet“
-  (`/abgemeldet`, vor dem Tor) mit „Wieder anmelden“ (1.12.2). Seit 1.19.3 mit einem Klick auf
+  (`/abgemeldet`, vor dem Tor) mit „Wieder anmelden“ (1.12.2). Seit 1.20.0 mit einem Klick auf
   allen Adressen des Kunden: der Browser geht über `/oauth2/abmelden` der Reihe nach über das
   Abmelden des Tors jeder Adresse (Startseite, `-nb`, `-doc`, `-um`, `-cmdb`), danach verlangt jede
-  wieder die Anmeldung (ADR 0051 Nachtrag 1.19.3).
+  wieder die Anmeldung (ADR 0051 Nachtrag 1.20.0).
 - **Sitzung:** 12 h, alle 5 min bei Keycloak erneuert.
 - **Keycloak erreichbar:** die Anmeldeseite für alle Benutzer (Kunden über die WAF); dieser Proxy
   braucht Keycloak für Token und Schlüssel (`AUTOMATO_FRONT_KEYCLOAK_INTERN`).

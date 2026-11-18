@@ -8,7 +8,7 @@ Test … bei jeder Änderung“). Hier erlebt ein Browser die Kette wie in Betri
 Formular von Keycloak → zurück auf die Adresse samt Abfrage; Realm-Rollen aus dem echten Token
 (Portal nur admin/operator); kein Anmelden über Realms hinweg; „Abmelden“ der Startseite und
 NetBox `/logout/` beenden die Sitzung in Keycloak über `--backend-logout-url` - danach zeigt
-Keycloak wieder sein Formular, und er kennt keine Sitzung des Benutzers mehr; seit 1.19.3 mit einem
+Keycloak wieder sein Formular, und er kennt keine Sitzung des Benutzers mehr; seit 1.20.0 mit einem
 Klick auf allen Adressen des Kunden (auch aus der Oberfläche).
 
 Braucht Docker, Port 443, die Images wie test_front_tor_e2e.py und einen Keycloak (nur Test, mit
@@ -396,7 +396,7 @@ def test_netbox_abmelden(kette):
         assert r.status_code == 200 and f"user=tester@{kette.vb} " in r.text
         sid = sitzung(weg)
         assert sid in kette.admin.sitzungen(kette.vb, "tester")
-        r = b.get(f"https://vb-nb.{DOMAIN}/logout/")  # 1.19.3: über alle Adressen von vb
+        r = b.get(f"https://vb-nb.{DOMAIN}/logout/")  # 1.20.0: über alle Adressen von vb
         assert r.status_code == 302
         assert r.headers["location"].startswith(f"https://vb.{DOMAIN}/oauth2/sign_out?rd=")
         r, weg = b.folgen(f"https://vb-nb.{DOMAIN}/logout/")
@@ -413,7 +413,7 @@ def test_netbox_abmelden(kette):
      f"https://vb-doc.{DOMAIN}/oauth2/abmelden"],  # Automato (Oberfläche, auth.ts)
 )  # fmt: skip
 def test_ein_klick_meldet_bei_allen_adressen_ab(kette, klick):
-    """1.19.3 (Anwender 2026-11-18: „Das Logout bei den Kundenportalen geht noch nicht, ich komme
+    """1.20.0 (Anwender 2026-11-18: „Das Logout bei den Kundenportalen geht noch nicht, ich komme
     immer wieder rein, auch, wenn ich nicht neu einlogge“): angemeldet auf Startseite, NetBox,
     Automato und Magister (je Adresse ein Cookie des Tors, eine Sitzung in Keycloak). Ein Klick auf
     „Abmelden“, gleich wo: die Sitzung in Keycloak ist weg, und jede Adresse verlangt wieder das

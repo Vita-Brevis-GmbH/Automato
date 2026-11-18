@@ -95,7 +95,7 @@ Aufbau nach dem UI-Mockup: Sidebar links (Dokumentation / Administration, Zähle
 Regeln, NAT und offene Findings), Topbar mit **Mandanten-Schalter**, HTTPS-Anzeige,
 Hell/Dunkel und Benutzermenü (Rolle, Mandanten, Mein Konto, Abmelden). Im OIDC-Modus
 wird das Token still erneuert; läuft die Keycloak-Sitzung ab, folgt die Anmeldung erneut.
-„Abmelden“ genügt einmal (1.19.3): hinter dem Anmelde-Tor des Front-Proxys über das Tor – alle
+„Abmelden“ genügt einmal (1.20.0): hinter dem Anmelde-Tor des Front-Proxys über das Tor – alle
 Adressen des Kunden und Keycloak abgemeldet, danach die Seite „Abgemeldet“; sonst über Keycloak
 zurück zu dessen Anmeldeformular.
 Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigung“).

@@ -425,6 +425,49 @@ def test_sync_uebernimmt_kunden_aus_der_oberflaeche(front):
     assert (front.gen / "sites" / "kunde-c.caddy").exists()
 
 
+def _fassung() -> str:
+    """Fassung der Werkzeuge wie front.sh (front_fassung): front.sh, instanzen.sh, env.sh."""
+    teile = [SCRIPT, SCRIPT.with_name("instanzen.sh"), SCRIPT.parents[1] / "env.sh"]
+    return hashlib.sha256(b"".join(p.read_bytes() for p in teile)).hexdigest()
+
+
+def test_sync_erzeugt_nach_update_neu(front):
+    """1.20.0: ein Update ändert front.sh, der Soll-Stand bleibt gleich. Bis 1.19.x blieb dann die
+    alte Konfiguration stehen, bis jemand `front.sh erzeugen` aufrief (so wäre die Korrektur des
+    Abmeldens nie angekommen). Jetzt hält status.json die Fassung fest (erzeugt_mit), und sync
+    (Timer) erzeugt neu, wenn sie abweicht – einmal, danach wieder „unverändert“."""
+    _soll(front, [{"kurzname": "vb", "name": "Vita", "doc": True, "links": []}])
+    assert front("sync").returncode == 0
+    status_datei = front.gen.parent / "state" / "status.json"
+    assert _status(front)["erzeugt_mit"] == _fassung()
+    assert "unverändert" in front("sync").stdout
+
+    site = front.gen / "sites" / "vb.caddy"
+    for alt in ("0" * 64, None):  # mit einer früheren Fassung bzw. vor 1.20.0 (ohne Angabe) erzeugt
+        stand = _status(front)
+        if alt is None:
+            del stand["erzeugt_mit"]
+        else:
+            stand["erzeugt_mit"] = alt
+        status_datei.write_text(json.dumps(stand), encoding="utf-8")
+        site.write_text("# alte Konfiguration\n")
+        out = front("sync")
+        assert out.returncode == 0, out.stdout + out.stderr
+        assert "front.sh geändert (Update)" in out.stdout
+        assert "vb-doc.mgmt.example.ch {" in site.read_text()  # neu erzeugt
+        assert "Proxy neu geladen" in out.stdout or "Proxy läuft nicht" in out.stdout
+        assert _status(front)["erzeugt_mit"] == _fassung() and _status(front)["ok"]
+        assert "unverändert" in front("sync").stdout  # danach nichts mehr zu tun
+
+    # erzeugen von Hand hält die Fassung ebenfalls fest (der nächste sync erzeugt nicht doppelt)
+    stand = _status(front)
+    stand["erzeugt_mit"] = "1" * 64
+    status_datei.write_text(json.dumps(stand), encoding="utf-8")
+    assert front("erzeugen").returncode == 0
+    assert _status(front)["erzeugt_mit"] == _fassung()
+    assert "unverändert" in front("sync").stdout
+
+
 @pytest.mark.parametrize(
     ("kunde", "meldung"),
     [
@@ -503,7 +546,7 @@ def test_tor_schuetzt_jede_adresse_und_sperrt_ohne_realm(front):
     assert "Abmelden" in (front.gen / "www" / "vb" / "index.html").read_text()
     # 1.12.2: Abmelden beendet die Keycloak-Sitzung über das Tor (Backend-Logout) und zeigt die
     # Seite „Abgemeldet“ ausserhalb des Tors (Fund aus dem Dev-Test: der Browser blieb sonst auf
-    # der Startseite stehen). 1.19.3: über alle Adressen des Kunden (das Cookie des Tors gilt je
+    # der Startseite stehen). 1.20.0: über alle Adressen des Kunden (das Cookie des Tors gilt je
     # Adresse) – Einstieg /oauth2/abmelden auf jeder Adresse, je Adresse ein Schritt zur nächsten
     assert 'href="/oauth2/abmelden"' in (front.gen / "www" / "vb" / "index.html").read_text()
     start = site.split("vb.mgmt.example.ch {")[1].split("\n}\n")[0]

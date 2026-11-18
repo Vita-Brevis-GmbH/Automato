@@ -54,7 +54,7 @@ ADR 0044 Nachtrag (Front-Proxy).
    1.13.0 (ADR 0055):* im Klartext nur auf der VM; aus dem Cockpit nur versiegelt mit dem
    Empfangsschlüssel der VM, entschlüsselt nur von `front.sh sync`.
 8. **Abmelden** (`/oauth2/sign_out`, Startseite und NetBox) beendet auch die Keycloak-Sitzung.
-   *Ergänzt mit 1.19.3 (Nachtrag unten):* über alle Adressen des Kunden, auch aus der Oberfläche.
+   *Ergänzt mit 1.20.0 (Nachtrag unten):* über alle Adressen des Kunden, auch aus der Oberfläche.
 
 ## Folgen
 
@@ -64,7 +64,7 @@ ADR 0044 Nachtrag (Front-Proxy).
 - Je Realm ein kleiner Container (oauth2-proxy, gehärtet: nur lesend, ohne Capabilities); Image
   `quay.io/oauth2-proxy/oauth2-proxy` mit fester Version (`AUTOMATO_FRONT_TOR_IMAGE`).
 - Sitzungen: 12 h, alle 5 min erneuert; endet die Keycloak-Sitzung, gilt das Tor spätestens nach
-  5 min nicht mehr (nach „Abmelden“ seit 1.19.3 sofort auf allen Adressen des Kunden, Nachtrag).
+  5 min nicht mehr (nach „Abmelden“ seit 1.20.0 sofort auf allen Adressen des Kunden, Nachtrag).
 - Ein Ende-zu-Ende-Test (CI-Job docker) prüft die erzeugte Konfiguration mit echtem Caddy und
   oauth2-proxy gegen einen Test-Keycloak.
 - Offen: Mitarbeitende auf Kunden-Adressen ohne Konto im Kunden-Realm – über einen Identity
@@ -93,7 +93,7 @@ versiegelt mit dem Empfangsschlüssel der VM (`front.sh tor-empfang`); Datenbank
 halten nur das Chiffrat, im Klartext steht es nur in `deploy/front/tor/<realm>.env`. Der Weg von
 Hand (`front.sh tor <realm>`) bleibt und gilt, bis das Cockpit ein anderes Chiffrat schickt.
 
-## Nachtrag 1.19.3 (2026-11-18): Abmelden mit einem Klick auf allen Adressen des Kunden
+## Nachtrag 1.20.0 (2026-11-18): Abmelden mit einem Klick auf allen Adressen des Kunden
 
 Anwender 2026-11-18: „Das Logout bei den Kundenportalen geht noch nicht, ich komme immer wieder
 rein, auch, wenn ich nicht neu einlogge.“ und „Auch aus dem Automato heraus abmelden muss ich
@@ -126,14 +126,20 @@ Entscheid:
   von `/oauth2/abmelden`, löscht ihr Token und geht dorthin; ohne Tor wie bisher über Keycloak
   (mit `id_token_hint`, ohne Rückfrage). Ab dem Klick keine stille Neuanmeldung mehr, und der
   Schleifenschutz gilt nicht für die Anmeldung nach dem Abmelden.
-- Kopfzeilen der Anmeldung setzt weiter nur das Tor; keine neuen Geheimnisse, keine Änderung an
-  Keycloak oder am Cockpit nötig.
+- Kopfzeilen der Anmeldung setzt weiter nur das Tor; keine neuen Geheimnisse; für die Kette keine
+  Änderung an Keycloak nötig.
+- **Ohne Handgriff nach dem Update:** `status.json` hält die Fassung von `front.sh` fest
+  (`erzeugt_mit`); weicht sie ab, erzeugt `front.sh sync` (Timer) die Konfiguration neu. Der
+  Orchestrator ändert weiter nichts auf dem Host.
 
 Grenzen (bleiben, bewusst): Kunden, die denselben Realm teilen, und das Portal `start.<intern>`
 (eigener Container, nur intern) haben je eine eigene Kette – deren Adressen gelten nach dem
 Abmelden bei einem anderen Kunden des Realms noch bis zur Erneuerung (höchstens 5 min). Eine eigene
-Sitzung von Magister (eigenes OIDC) beendet das Tor nicht. Wer sich über einen Identity Provider
-angemeldet hat (z. B. „Anmelden als Betreiber“, Cockpit ADR 0017), bleibt dort angemeldet; Keycloak
-fragt im Kunden-Realm wieder, der Knopf des Identity Providers meldet aber ohne Passwort an (je
-nach Ablauf mit dem zweiten Faktor) – das zu ändern hiesse, mit dem Kunden-Realm auch die Anmeldung
-der Betreiber zu beenden (und damit die Konsole des Cockpits); offen, Entscheid des Anwenders.
+Sitzung von Magister (eigenes OIDC) beendet das Tor nicht.
+
+Betreiber („Anmelden als Betreiber“, Cockpit ADR 0017): Anwender 2026-11-18 „Ja, ganz abmelden“ –
+das Cockpit stellt den Identity Provider `betrieb` in jedem Kunden-Realm auf Abmelden über den
+Rückkanal (`logoutUrl`, `backchannelSupported`; Cockpit ADR 0017 Nachtrag 2026-11-18). Beendet das
+Tor die Sitzung im Kunden-Realm (ohne Browser), meldet Keycloak den Betreiber auch im Realm der
+Betreiber ab: der Knopf fragt wieder nach dem Passwort, die Konsole des Cockpits endet innert etwa
+einer Minute. Offene Sitzungen in Realms anderer Kunden bleiben (eigene Sitzung je Realm).

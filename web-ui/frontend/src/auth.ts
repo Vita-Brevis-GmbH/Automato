@@ -104,7 +104,7 @@ export async function handleRedirectCallback(): Promise<boolean> {
   const params = new URLSearchParams(window.location.search);
   if (params.has("error") && params.has("state")) return handleErrorCallback(params);
   if (params.has("state") && !params.has("code")) {
-    // zurück vom Abmelden über Keycloak (nur ?state=…, 1.19.3): Zustand aufräumen, Adresse bereinigen;
+    // zurück vom Abmelden über Keycloak (nur ?state=…, 1.20.0): Zustand aufräumen, Adresse bereinigen;
     // danach meldet ensureSession neu an (Formular von Keycloak)
     await manager.signoutRedirectCallback().catch(() => undefined);
     window.history.replaceState({}, document.title, window.location.pathname + window.location.hash);
@@ -257,7 +257,7 @@ async function redirect(): Promise<void> {
   }
 }
 
-// Abmelden (1.19.3, Befund des Anwenders 2026-11-18: „aus dem Automato heraus abmelden muss ich
+// Abmelden (1.20.0, Befund des Anwenders 2026-11-18: „aus dem Automato heraus abmelden muss ich
 // mehrfach auf Abmelden klicken“). Bis 1.19.2 ging es nur über Keycloak (end_session) zurück auf die
 // Oberfläche: das Cookie des Anmelde-Tors blieb gültig, eine Anfrage während des Abmeldens konnte
 // still neu anmelden (die Weiterleitung zur Anmeldung gewann), und kam der Browser binnen einer

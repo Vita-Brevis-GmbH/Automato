@@ -354,7 +354,7 @@ html() {  # Text für HTML maskieren
 # 1.12.1 schickte den Browser noch über die Abmeldeseite von Keycloak zurück auf die Startseite –
 # im Dev-Test blieb er dort stehen, ohne dass sichtbar war, dass er abgemeldet ist.
 #
-# Über alle Adressen (1.19.3, ADR 0051 Nachtrag): das Cookie des Tors gilt je Adresse (Host). Bis
+# Über alle Adressen (1.20.0, ADR 0051 Nachtrag): das Cookie des Tors gilt je Adresse (Host). Bis
 # 1.19.2 löschte „Abmelden“ nur das der Adresse, auf der geklickt wurde – NetBox, Automato und
 # Magister liessen den Benutzer bis zur nächsten Erneuerung (5 min) ohne Anmeldung wieder herein
 # (Anwender 2026-11-18). Jetzt geht der Browser der Reihe nach über /oauth2/sign_out jeder Adresse
@@ -626,7 +626,7 @@ tor_fuer_kunde() {  # setzt TOR_DIENST (Container des Tors; leer = ohne Tor bzw.
 
 route_kunde() {  # route einer Kunden-Adresse: $1 Ziel, $2 vor dem Tor (immer), $3 vor dem Tor (nur mit Tor),
   # $4 noch vor der Sperre nach Absender (Automato selbst an seine NetBox, 1.10.0), $5 die Adresse
-  # selbst (Abmelden über alle Adressen des Kunden, 1.19.3). Kunde gesperrt (SPERRE=ja, ADR 0059):
+  # selbst (Abmelden über alle Adressen des Kunden, 1.20.0). Kunde gesperrt (SPERRE=ja, ADR 0059):
   # nach der Sperre nach Absender und dem Zugriff nur „Zugang gesperrt“ – auch für die NetBox-API
   # mit Token und Automato selbst
   printf '\troute {\n'
@@ -1823,11 +1823,11 @@ status_schreiben() {  # $1 = ok|fehler|behalten (nur den Stand des Tors erneuern
   if ! python3 -I - "$1" "${2:-}" "${3:-}" "$(kunden | tr '\n' ' ')" "$TOR" "$TOR_BEREIT" "$TOR_FEHLT" \
     "$TOR_GESPERRT" "${HAUPT_REALM:-}" "$TOR_COCKPIT" "${TOR_VERWORFEN:-}" "$ziel" \
     "$IST_GESPERRT" "$IST_DATEIEN" "$IST_DIENSTE" "$IST_FREMD" "$IST_VERWAIST" "${TOR_ABBAU:-}" \
-    "$IST_INSTANZEN" >"$tmp" <<'PY'
+    "$IST_INSTANZEN" "$(front_fassung)" >"$tmp" <<'PY'
 import json, sys
 from datetime import datetime, timezone
 art, summe, meldung, kunden, tor, bereit, fehlt, gesperrt, haupt, cockpit, verworfen_datei, ziel = sys.argv[1:13]
-ist_gesperrt, dateien, dienste, fremd, verwaist, abbau_datei, instanzen = sys.argv[13:20]
+ist_gesperrt, dateien, dienste, fremd, verwaist, abbau_datei, instanzen, fassung = sys.argv[13:21]
 abbau = None  # ADR 0059: was dieser sync auf Auftrag entfernt bzw. abgelehnt hat
 if abbau_datei:
     try:
@@ -1892,9 +1892,10 @@ if art == "behalten":  # nach erzeugen bzw. tor-empfang: das Ergebnis des letzte
             ist[feld] = liste if isinstance(liste, list) else []
     alt["tor"] = stand_tor
     alt["ist"] = ist
+    alt["erzeugt_mit"] = fassung  # 1.20.0: eben erzeugt (front.sh erzeugen)
     print(json.dumps(alt, ensure_ascii=False))
     sys.exit(0)
-print(json.dumps({
+stand = {
     "ok": art == "ok",
     "zeit": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     "soll_sha256": summe,
@@ -1902,7 +1903,10 @@ print(json.dumps({
     "kunden": kunden.split(),
     "tor": stand_tor,
     "ist": ist,
-}, ensure_ascii=False))
+}
+if art == "ok":  # 1.20.0: Fassung von front.sh, mit der erzeugt wurde (sync erzeugt neu, wenn sie abweicht)
+    stand["erzeugt_mit"] = fassung
+print(json.dumps(stand, ensure_ascii=False))
 PY
   then
     rm -f "$tmp"
@@ -1996,6 +2000,26 @@ PY
   return 0
 }
 
+# Fassung der Werkzeuge, mit der erzeugt wurde (1.20.0): ein Update ändert front.sh, der Soll-Stand
+# bleibt gleich – bis 1.19.x blieb dann die alte Konfiguration stehen, bis jemand `front.sh erzeugen`
+# aufrief. Jetzt merkt sich status.json die Fassung (erzeugt_mit), und der nächste sync (Timer,
+# spätestens nach 10 min) erzeugt neu, wenn sie abweicht. Nur Prüfsummen, keine Inhalte.
+front_fassung() {
+  cat "$SCRIPT_DIR/front.sh" "$SCRIPT_DIR/instanzen.sh" "$REPO_DIR/deploy/env.sh" 2>/dev/null \
+    | sha256sum | cut -d' ' -f1
+}
+
+fassung_geaendert() {  # 0 = zuletzt mit einer anderen Fassung erzeugt (bzw. vor 1.20.0, ohne Angabe)
+  local vorher
+  vorher=$(python3 -I -c 'import json, sys
+try:
+    d = json.load(open(sys.argv[1], encoding="utf-8"))
+except (OSError, ValueError):
+    d = {}
+print((d.get("erzeugt_mit") or "") if isinstance(d, dict) else "")' "$FRONT_STATE/status.json" 2>/dev/null || true)
+  [ "$vorher" != "$(front_fassung)" ]
+}
+
 cmd_sync() {
   root_noetig
   local soll="$FRONT_STATE/soll.json" summe alt fehlertext rc=0
@@ -2008,11 +2032,14 @@ cmd_sync() {
 d = json.load(open(sys.argv[1], encoding="utf-8"))
 print(d.get("soll_sha256", "") if d.get("ok") else "")' "$FRONT_STATE/status.json" 2>/dev/null || true)
   if [ "$summe" = "$alt" ] && [ "${1:-}" != "--immer" ]; then
-    if ! instanzen_geaendert; then
+    if instanzen_geaendert; then
+      info "Eigene Automato-Instanz gestartet bzw. weg (ADR 0061) – Front-Proxy neu erzeugen"
+    elif fassung_geaendert; then
+      info "front.sh geändert (Update) – Front-Proxy mit der neuen Fassung erzeugen"
+    else
       info "Soll-Stand unverändert – nichts zu tun"
       return 0
     fi
-    info "Eigene Automato-Instanz gestartet bzw. weg (ADR 0061) – Front-Proxy neu erzeugen"
   fi
   fehlertext=$(mktemp)
   TOR_VERWORFEN=$(mktemp)  # Geheimnisse aus dem Cockpit, die sync verwirft (Realm und Grund, 1.13.0)
