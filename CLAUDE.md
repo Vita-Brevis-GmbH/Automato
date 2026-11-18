@@ -48,7 +48,7 @@ und wird erweitert. Details: `README.md`, `ARCHITECTURE.md`, `docs/adr/`.
   abgenommen, sobald seine nächste Rückmeldung keinen Einwand dazu enthält – in `ROADMAP.md`
   („Abgenommen“) nachführen und `deploy/release/stable` auf die abgenommene Version setzen
   (`X.Y.Z <voller Commit mit VERSION = X.Y.Z>`, ADR 0060 Nachtrag 1.18.1) – daraus veröffentlicht die
-  CI den Kanal `stable`, ohne Tag. Abgenommen bis **1.17.0** (2026-11-17; 1.18.0 erst nach dem Umstellen auf privat).
+  CI den Kanal `stable`, ohne Tag. Abgenommen bis **1.20.0** (2026-11-18).
 - **Klärung vor dem Bauen:** ändert sich Bedienung oder Bedeutung und ist der Wunsch mehrdeutig,
   zuerst 3–5 Zeilen Vorschlag mit einer Rückfrage, dann bauen.
 - **Sammeln:** Anpassungen einer Rückmeldungsrunde in **einer** Version (Patch = Korrektur,

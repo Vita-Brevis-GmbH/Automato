@@ -3,4 +3,4 @@
 # Bei jeder Abnahme nachführen (CLAUDE.md „Abnahme“); nach dem Push veröffentlicht die CI
 # (ci.yml, Job stable) diesen Commit als Kanal stable – nie eine ältere Version als die schon
 # veröffentlichte. Kommentarzeilen beginnen mit #.
-1.17.0 315b05ff8e6ff73406f94c70c75af654e31671a5
+1.20.0 283842c55b81076da775e937dc262a5b882288c8
