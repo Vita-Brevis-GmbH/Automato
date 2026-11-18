@@ -5,11 +5,12 @@ Unabhängig von Phase 1 und 2 geprüft: tut der Code, was die ADRs behaupten, un
 echten Gerät (Herstellerdoku; Belege im Bericht der Prüfung, hier je Test die Kurzfassung)?
 
 - **Stichproben S1–S3** des Anwenders als Muster (anonymisiert): bestanden = wie echt.
-- **Abweichungen P-1 … P-10** als `xfail(strict=True)`: jeder Test verlangt das Verhalten des
+- **Abweichungen P-1 … P-13** als `xfail(strict=True)`: jeder Test verlangt das Verhalten des
   echten Geräts; wird eine Abweichung korrigiert, schlägt der Test als „unerwartet bestanden“ an
   und die Markierung kann weg. Zu P-6, P-7 und P-10 liest der Collector die Einstellung noch
   nicht bzw. wertet der Orchestrator sie nicht aus - die Tests nennen den vorgeschlagenen
-  Schlüssel in `topo_context.settings` (wie `strict_src_check` für `strict-src-check`).
+  Schlüssel in `topo_context.settings` (wie `strict_src_check` für `strict-src-check`). P-11
+  (Collector) steht in `collectors/tests/test_fable_pruefung.py`.
 
 Beispiele anonymisiert: RFC 1918, Dokumentationsnetze (192.0.2.0/24, 198.51.100.0/24,
 203.0.113.0/24, 2001:db8::/32), „Kunde A“.
@@ -452,6 +453,28 @@ def test_p5_s3_fehlender_contract_zum_zweiten_server_ist_nicht_erlaubt(client):
     assert any(p["policy"]["verdict"] != "allow" for p in _active(out))
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="P-5: auch an der FortiGate - zwei Server des Pools im selben Netz, aber mit "
+    "verschiedenen Urteilen der Policies (andere Adressklasse): der Weg zum zweiten Server "
+    "fällt still weg, sein „implizit gesperrt“ erscheint nie",
+)
+def test_p5_server_im_selben_netz_mit_anderem_urteil_faellt_nicht_weg(client):
+    """Pool mit 10.10.0.20 und 10.10.0.21 hinter demselben Interface; die Policy vom Load
+    Balancer zum Server erlaubt nur .20. Echt: die Hälfte der Sitzungen (.21) wird gesperrt."""
+    tid = _tenant(client)
+    rules = [*fw.LB_RULES, fw._policy(2, "dmz", "srv1", "all", "10.10.0.20", "tcp/8080")]
+    sid = _firewall(client, tid, "fw-01", fw.LB_IFS, fw.LB_ROUTES, nat_rules=[fw.LB_FW_VIP],
+                    rules=rules)  # fmt: skip
+    avi = fw._system(client, tid, "alb-01", "avi", username="ro", password="x")
+    services = [fw._vs("vs-shop", ["10.10.0.20", "10.10.0.21"])]
+    fw._deliver(client, tid, avi, "avi", {"status": "completed", "nat_rules": services})
+    out = _trace(client, tid, dst="203.0.113.10", start=f"{sid}|root", service="tcp/443")
+    servers = {t for p in _active(out) for h in p["hops"]
+               for t in (h.get("lb") or {}).get("targets", [])}  # fmt: skip
+    assert servers == {"10.10.0.20", "10.10.0.21"}, servers
+
+
 # -- P-1: Reverse Path - Route gleicher Distanz mit höherer Priorität --------------------------
 
 
@@ -737,3 +760,58 @@ def test_p10_reverse_path_ipv6_nach_asymroute6(client):
     (path,) = _active(_trace(client, tid, src="2001:db8:1::5", dst="2001:db8:20::5"))
     assert _labels(path) == ["rt-01", "fw-01"]
     assert path["end"]["kind"] == "dropped", path["end"]
+
+
+# -- P-12: Route nur mit Interface auf Ethernet (/30) ------------------------------------------
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="P-12: Route nur mit Interface auf einem Ethernet-/30 gilt als Leitung zur gelesenen "
+    "Gegenseite und der Weg als erreicht - das Gerät fragt aber per ARP nach dem Ziel, an kommt "
+    "es nur mit Proxy-ARP der Gegenseite (FortiGate: nicht Vorgabe); nicht gezählt",
+)
+def test_p12_route_nur_mit_interface_auf_ethernet_ist_nicht_sicher_erreicht(client):
+    """`ip route 10.50.0.0 255.255.255.0 GigabitEthernet0/2` auf einem Ethernet-Transfernetz: der
+    Router behandelt das Ziel als angeschlossen und sucht es per ARP - das ist nicht dasselbe wie
+    ein Next-Hop. Erwartet wie bei jedem Netz mit ARP: „nicht geprüft“, gezählt (`onlink`)."""
+    tid = _tenant(client)
+    _routers(client, tid, ["rt-01"], [
+        _l3("rt-01", "10.1.0.0/24", [{"interface": "Gi0/1"}], "connected", distance=0),
+        _local("rt-01", "10.1.0.1", "Gi0/1"),
+        _l3("rt-01", "10.0.12.0/30", [{"interface": "Gi0/2"}], "connected", distance=0),
+        _local("rt-01", "10.0.12.1", "Gi0/2"),
+        _l3("rt-01", "10.50.0.0/24", [{"interface": "Gi0/2"}], distance=1),
+    ])  # fmt: skip
+    _firewall(client, tid, "fw-01", [
+        _if("fw-01", "port2", "10.0.12.2/30", "transit"),
+        _if("fw-01", "srv", "10.50.0.1/24", "server"),
+    ], [
+        _r("fw-01", "root", "10.0.12.0/30", [{"interface": "port2"}], "connected"),
+        _r("fw-01", "root", "10.50.0.0/24", [{"interface": "srv"}], "connected"),
+        _r("fw-01", "root", "10.1.0.0/24", [{"ip": "10.0.12.1", "interface": "port2"}]),
+    ], contexts=_ctx("fw-01", **READ))  # fmt: skip
+    out = _trace(client, tid, src="10.1.0.5", dst="10.50.0.5")
+    assert out.get("uncertain", {}).get("onlink"), [p["end"] for p in _active(out)]
+
+
+# -- P-13: Quelle als Netz, grösser als das angeschlossene Netz --------------------------------
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="P-13: eine Quelle als Netz, das grösser ist als das angeschlossene (10.10.0.0/16 "
+    "statt /24 - üblich in breiten Policies), hat keinen Start: kein Weg, in der Doku „Weg nicht "
+    "geprüft“ an jeder solchen Regel; seit 1df5bb8 ist dadurch "
+    "`test_rule_match.py::test_kennzeichen_an_den_regeln_der_verbindungen` rot",
+)
+def test_p13_quelle_groesser_als_das_angeschlossene_netz_hat_einen_start(client):
+    """Der Verkehr aus dem angeschlossenen Teil des Netzes kommt an der Firewall an - der Weg
+    beginnt dort (für den übrigen Teil höchstens „nicht geprüft“, gezählt)."""
+    tid = fr._seed(client, [
+        pc._policy(1, "lan-dmz", "lan", "dmz", ["10.10.0.0/16"], ["10.30.0.0/24"], ["all"]),
+    ])  # fmt: skip
+    part = _trace(client, tid, src="10.10.0.0/24", dst="10.30.0.10")
+    assert [_labels(p) for p in _active(part)] == [["fw-r"]]  # das angeschlossene Netz: richtig
+    out = _trace(client, tid, src="10.10.0.0/16", dst="10.30.0.10")
+    assert [_labels(p) for p in _active(out)] == [["fw-r"]], out["notes"]
