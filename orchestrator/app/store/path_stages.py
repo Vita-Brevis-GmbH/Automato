@@ -248,6 +248,30 @@ def used_vips(g, key) -> set[tuple[str, str | None]] | None:
     return cache[key]
 
 
+def _vips_at(g, key, ip) -> list[NatRule]:
+    """VIPs des Knotens, deren externe Adresse bzw. Bereich die IP enthaelt - ueber einen Index
+    je Knoten (einzelne Adressen direkt, Bereiche der Reihe nach) statt je Hop alle VIPs."""
+    cache = g.__dict__.setdefault("_vip_index", {})
+    if key not in cache:
+        single: dict[tuple[int, int], list[tuple[int, NatRule]]] = {}
+        ranges: list[tuple[int, int, int, int, NatRule]] = []
+        for i, n in enumerate(g.vips(key)):
+            ext = bounds(n.ext_ip)
+            if ext is None:
+                continue
+            lo, hi = ext
+            if lo == hi:
+                single.setdefault((lo.version, int(lo)), []).append((i, n))
+            else:
+                ranges.append((lo.version, int(lo), int(hi), i, n))
+        cache[key] = (single, ranges)
+    single, ranges = cache[key]
+    value = int(ip)
+    found = list(single.get((ip.version, value), []))
+    found += [(i, n) for v, lo, hi, i, n in ranges if v == ip.version and lo <= value <= hi]
+    return [n for _i, n in sorted(found, key=lambda x: x[0])]
+
+
 def _vip_fits_service(n: NatRule, service) -> bool | None:
     """Passt der Dienst zur VIP? Ohne Port-Weiterleitung immer; mit: Protokoll und Port der
     VIP. None = ohne Dienst bzw. Port nicht entscheidbar."""
@@ -272,6 +296,9 @@ def dnat(g, key, ip, ingress: dict, service) -> tuple[NatRule | None, list[str],
     -> (VIP, interne Ziele, Hinweis zur Unsicherheit). Ein Netz als Ziel geht ohne DNAT weiter."""
     if is_net(ip):
         return None, [], None
+    found = _vips_at(g, key, ip)
+    if not found:
+        return None, [], None
     ports = {v for v in (ingress.get("interface"), ingress.get("zone")) if v}
     conf = settings(g, key)
     central = conf.get("central_nat")
@@ -279,7 +306,7 @@ def dnat(g, key, ip, ingress: dict, service) -> tuple[NatRule | None, list[str],
     sure: list[tuple[NatRule, list[str]]] = []
     maybe: list[tuple[NatRule, list[str]]] = []
     unused: list[NatRule] = []
-    for n in g.vips(key):
+    for n in found:
         to = vip_target(n, ip)
         if not to:
             continue
@@ -457,6 +484,25 @@ def policy_rows(g, key) -> list[TopoPolicyRoute]:
     return cache[key]
 
 
+def source_rules(g, key) -> bool:
+    """Hat der Knoten Policy-Routen bzw. SD-WAN-Regeln, die an der Quelle haengen?"""
+    cache = g.__dict__.setdefault("_source_rules", {})
+    if key not in cache:
+        found = False
+        for p in policy_rows(g, key):
+            m = p.match or {}
+            names = [
+                *(m.get("srcaddr") or []),
+                *((m.get("src") or []) if p.kind == "sdwan" else []),
+            ]
+            nets = [] if p.kind == "sdwan" else m.get("src") or []
+            if nets or any(str(n).lower() not in _ALL for n in names):
+                found = True
+                break
+        cache[key] = found
+    return cache[key]
+
+
 def policy_routes(g, key, src, dst, ingress: str | None, service=None,
                   table=0) -> tuple[list[dict], dict | None, str | None]:  # fmt: skip
     """Policy-Routen und SD-WAN-Regeln fuer den Verkehr, in der Reihenfolge des Geraets:
@@ -464,11 +510,14 @@ def policy_routes(g, key, src, dst, ingress: str | None, service=None,
     Unsicherheit). Die erste sicher passende entscheidet: `deny` = Policy-Routing beendet
     (Routing-Tabelle), sonst ihr Gateway bzw. Ausgang. Passt davor eine nur moeglich, ist die
     Entscheidung nicht sicher - der Hinweis nennt sie (am Weg gezaehlt)."""
+    rows = policy_rows(g, key)
+    if not rows:
+        return [], None, None
     shown: list[dict] = []
     follow: dict | None = None
     decided = False
     possible: list[dict] = []
-    for p in policy_rows(g, key):
+    for p in rows:
         m = p.match or {}
         devices = m.get("input_device") or []
         checks = [

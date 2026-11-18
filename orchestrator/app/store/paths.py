@@ -478,12 +478,7 @@ class Graph:
         Datenbankabfrage je Aufruf - die Kunden-Ableitung, die Relevanz und die Wege fragen das
         Routing tausendfach (Anwender: Speichern und Doku brauchten Minuten)."""
         if key is not None or connected:
-            rib = self._ribs.get(key)
-            if rib is None:
-                # erst ab einigen Abfragen lohnt das Laden des Index eines Kontexts
-                self._rib_asked[key] += 1
-                if self._rib_asked[key] > _RIB_AFTER:
-                    rib = self._ribs[key] = _Rib(self._rib_rows(key))
+            rib = self._index(key)
             if rib is not None:
                 return self._route_rows(rib.containing(ip, connected))
         lo, hi = (ip_hex(v) for v in span(ip))
@@ -500,6 +495,16 @@ class Graph:
         if connected:
             stmt = stmt.where(TopoRoute.protocol.in_(_CONNECTED))
         return list(self.session.scalars(stmt))
+
+    def _index(self, key: Key | None) -> "_Rib | None":
+        """Index der RIB eines Kontexts (bzw. der angeschlossenen Netze aller Kontexte) - erst ab
+        einigen Abfragen lohnt das Laden; davor None (Abfrage der Datenbank)."""
+        rib = self._ribs.get(key)
+        if rib is None:
+            self._rib_asked[key] += 1
+            if self._rib_asked[key] > _RIB_AFTER:
+                rib = self._ribs[key] = _Rib(self._rib_rows(key))
+        return rib
 
     def _rib_rows(self, key: Key | None):
         """Kennung, Familie, Praefix und Protokoll der besten RIB-Routen eines Kontexts bzw. ohne
@@ -951,12 +956,16 @@ class Graph:
                     .order_by(NatRule.name, NatRule.id)
                 ).tuples()
             )
+            # Index je VIP-Adresse (ADR 0070): nicht je Aufruf alle Virtual Services pruefen
+            index: dict[str, list] = defaultdict(list)
+            for n, source in self._lbs:
+                ext = _bounds(n.ext_ip)
+                if ext is not None and ext[0] == ext[1]:
+                    index[str(ext[0])].append((n, source))
+            self.__dict__["_lb_index"] = index
         port = service[1] if service else None
         rows = []
-        for n, source in self._lbs:
-            ext = _bounds(n.ext_ip)
-            if ext is None or ext[0] != ext[1] or ext[0] != ip:
-                continue
+        for n, source in self.__dict__["_lb_index"].get(str(ip), []):
             ports = _port_span(n.ext_port)
             if port is not None and ports is not None and not ports[0] <= port <= ports[1]:
                 continue
@@ -1350,7 +1359,8 @@ def _trace(
         if begun is not None:
             cur = ipaddress.ip_address(hop["nat"]["targets"][0])
         hop["_cur"] = str(cur)
-        svc = path_service.at_end([*hops, hop], service)
+        if hop.get("nat"):  # nach der Port-Weiterleitung dieser VIP
+            svc = path_service.at_end([*hops, hop], service)
         # Stufe Policy-Routen und SD-WAN (Reihenfolge der Liste, Protokoll und Port, deny)
         shown, follow, why = path_stages.policy_routes(g, key, src, cur, ingress, svc, table)
         unsure("policy_route", why)
@@ -1592,8 +1602,9 @@ def _trace(
                            "not certain (object or service cannot be checked)"),
                     ))  # fmt: skip
     # Reverse Path und IPsec-Selektoren mit der Quelle nach SNAT (ADR 0070)
-    _enforce(g, primary + found_backups, src, unsure, with_rules)
-    primary, found_backups = _unique(primary), _unique(found_backups)
+    if _enforce(g, primary + found_backups, src, unsure, with_rules):
+        # gekuerzte Wege koennen jetzt gleich sein (ECMP hinter der Stelle)
+        primary, found_backups = _unique(primary), _unique(found_backups)
     shown, hidden = _backups(primary, found_backups, slack)
     if hidden:
         notes.append(
@@ -1672,14 +1683,15 @@ def _unchecked_default(label: str, dst, ip: str | None, where: str) -> str:
     )
 
 
-def _enforce(g: Graph, found: list[dict], src, unsure, with_rules: bool) -> None:
+def _enforce(g: Graph, found: list[dict], src, unsure, with_rules: bool) -> bool:
     """Stufen, die von der Quelle abhaengen, mit der Quelle, wie sie am Geraet ankommt (nach
     dem SNAT der Hops davor, `hop.snat` aus `policy_check`): Reverse Path am Eingang jeder
     FortiGate und die Phase-2-Selektoren am Ausgang in einen IPsec-Tunnel. Verwirft das Geraet,
     endet der Weg dort (`dropped`); fehlen die Einstellungen, endet er als `unchecked` - beides
-    sichtbar, nie still (ADR 0070, ADR 0063 Nachtrag)."""
+    sichtbar, nie still (ADR 0070, ADR 0063 Nachtrag). -> ob ein Weg gekuerzt wurde."""
     from app.store import policy_check  # spaet wie in `_trace`
 
+    changed = False
     for p in found:
         cur_src = src
         lb = None
@@ -1691,6 +1703,15 @@ def _enforce(g: Graph, found: list[dict], src, unsure, with_rules: bool) -> None
                 continue
             key = (hop["source_system_id"], hop["context"])
             ingress = (hop.get("ingress") or {}).get("interface")
+            if src is not None and cur_src != src and path_stages.source_rules(g, key):
+                # die Policy-Routen dieses Hops sind mit der urspruenglichen Quelle verglichen -
+                # nach einem SNAT davor gilt die neue Quelle: nicht geprueft, gezaehlt
+                unsure("policy_route", L(
+                    f"{hop['label']}: Policy-Routen mit der ursprünglichen Quelle {src} "
+                    "verglichen – nach dem SNAT davor nicht geprüft",
+                    f"{hop['label']}: policy routes compared with the original source {src} – "
+                    "not checked after the SNAT before it",
+                ))  # fmt: skip
             if i > 0 and cur_src is not None and ingress:
                 res = path_stages.reverse_path(g, key, hop.get("vrf", 0), cur_src, ingress)
                 if res is not None and res["state"] == "note":
@@ -1724,7 +1745,8 @@ def _enforce(g: Graph, found: list[dict], src, unsure, with_rules: bool) -> None
             verdicts = [(h["label"], h["rules"]["verdict"], h["kind"], h["rules"].get("text"))
                         for h in p["hops"] if h.get("rules")]  # fmt: skip
             p["policy"] = policy_check._overall(verdicts)
-        p.pop("_cut", None)
+        changed = changed or bool(p.pop("_cut", None))
+    return changed
 
 
 def _cut_path(p: dict, i: int, res: dict, before: bool) -> None:

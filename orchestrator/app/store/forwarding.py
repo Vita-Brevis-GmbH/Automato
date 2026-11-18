@@ -72,19 +72,49 @@ def winners(rows: list, table: Table) -> list:
     return [r for r in rows if _priority(r) == priority]
 
 
+_NONE = object()
+
+
 def decide(g, key, ip, table: Table = 0) -> dict | None:
     """Entscheidung des Knotens fuer das Ziel in der VRF `table` - das Format von
     `Graph.route` (Praefix, Protokoll, Distanz, Next-Hops, Mitglieder) plus `action` und
-    `branches` (aufgeloeste Next-Hops). None = keine Route."""
-    rows = winners(g._routes(ip, key), table)
-    if not rows:
-        return None
+    `branches` (aufgeloeste Next-Hops). None = keine Route.
+
+    Mit dem Index der RIB im Speicher: vom laengsten Praefix abwaerts, je Praefix und VRF
+    einmal je Datenstand gerechnet - alle Ziele derselben Route (Aequivalenzklasse) teilen die
+    Entscheidung, ohne die Routen je Ziel neu zu laden und zu vergleichen."""
     memo = g._decisions
-    ident = (key, table, tuple(sorted(r.id for r in rows)))
-    found = memo.get(ident)
-    if found is None:
-        found = memo[ident] = _compile(g, key, table, rows)
-    return dict(found)
+    rib = g._index(key)
+    if rib is None:  # Index (noch) nicht geladen: aus der Datenbank
+        rows = winners(g._routes(ip, key), table)
+        if not rows:
+            return None
+        ident = (key, table, tuple(sorted(r.id for r in rows)))
+        found = memo.get(ident)
+        if found is None:
+            found = memo[ident] = _compile(g, key, table, rows)
+        return dict(found)
+    version = ip.version
+    bits = 32 if version == 4 else 128
+    if is_net(ip):
+        start, longest = int(ip.network_address), ip.prefixlen
+    else:
+        start, longest = int(ip), bits
+    for length in reversed(rib.lengths.get(version, ())):
+        if length > longest:
+            continue
+        masked = start & (((1 << length) - 1) << (bits - length)) if length else 0
+        slot = rib.by[(version, length)].get(masked)
+        if not slot:
+            continue
+        ident = (key, table, version, length, masked)
+        found = memo.get(ident, _NONE)
+        if found is _NONE:
+            rows = winners(g._route_rows([rid for rid, _proto in slot]), table)
+            found = memo[ident] = _compile(g, key, table, rows) if rows else None
+        if found is not None:
+            return dict(found)
+    return None
 
 
 def _compile(g, key, table: Table, rows: list) -> dict:
@@ -173,6 +203,20 @@ def reverse_path(g, key, table: Table, src, ingress: str | None) -> tuple[str, b
     Eingang (bzw. gar keine); `unknown`: nicht entscheidbar (Routen ohne Interface)."""
     if src is None or not ingress:
         return "unknown", False
+    memo = g._decisions
+    ident = ("rpf", key, table, ingress, str(src))
+    if ident not in memo:  # dieselbe Quelle kommt in vielen Wegen vor: einmal je Datenstand
+        memo[ident] = _reverse_path(g, key, table, src, ingress)
+    return memo[ident]
+
+
+def _reverse_path(g, key, table: Table, src, ingress: str) -> tuple[str, bool]:
+    # der uebliche Fall zuerst, aus der gemerkten Entscheidung: die beste Route zur Quelle geht
+    # ueber den Eingang (auch `strict-src-check` besteht) - ohne die uebrigen Routen zu laden
+    best_route = decide(g, key, src, table)
+    if best_route is not None and best_route["action"] != "drop":
+        if any(_via(h, ingress) for h in best_route["next_hops"]):
+            return "feasible", True
     rows = [r for r in g._routes(src, key) if table_of(r) == table and not is_null(r)]
     best = winners(rows, table)
     strict = any(_via(h, ingress) for r in best for h in r.next_hops or [])

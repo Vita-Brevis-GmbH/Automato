@@ -133,7 +133,18 @@ Belege (Herstellerdoku; in der Prüfung nur über Suchtreffer erreichbar, nicht 
 - **Leserechte:** FortiGate zusätzlich `system/settings` und `firewall/central-snat-map` (nur
   lesend; ohne Recht „VDOM-Einstellungen“ bzw. „Central SNAT“ als nicht lesbar im Lauf); Switches
   zusätzlich `show standby brief`, `show vrrp brief` (Positivliste).
-- **Laufzeit:** je Weg nicht langsamer (Messung in `docs/TESTS.md`, `scripts/bench_fable_wege.py`).
+- **Laufzeit** (`scripts/bench_fable_wege.py`, SQLite, 4 Kerne: 12 Firewalls und 2 Core-Router
+  mit je 6000 Routen, 1000 Policies je Firewall, 1000 verschiedene Wege mit 3 Hops und ECMP; alt
+  und neu abwechselnd auf denselben Daten, je drei Läufe, Streuung rund ±10 %): je Weg mit Regeln
+  2,4 ms neu gegen 2,6 ms alt (jeweils mit dem Laden von Index und Policies), nur Routing 1,2 ms
+  gegen 1,1 ms, eingeschwungen (Index und Policies geladen) 0,31 ms gegen 0,31 ms, aus dem
+  Wege-Speicher 0,02 ms. Die Weg-Suche ist damit **nicht langsamer, aber auch nicht schneller** –
+  sie war schon vorher kein Engpass (59 % der Zeit je Weg sind die Regeln, ADR 0071). Neu dazu
+  kommt je Firewall und Quelle eine Abfrage der Route zur Quelle (Reverse Path, je Datenstand
+  gemerkt). Hochgerechnet für 800 Applikationen mit je 50 bis 200 verschiedenen Verbindungen:
+  1,6 bis 6,4 Minuten in einem Prozess (eingeschwungen 0,2 bis 0,9 Minuten), ohne Rückweg, Zonen
+  und Aufbau der Doku; mit Rückweg und Start-Suche zwei- bis dreimal so viele Wege. Nicht
+  gemessen: Postgres, ACI-Contracts, Tabellen mit 20 000 Routen je Gerät.
 - **Nicht gelesen bzw. nicht entscheidbar (bleibt gezählt bzw. offen):** Zustand der SD-WAN-Links
   (welches Mitglied), Policy-Routen nach TOS, Adressobjekte ohne Bereich (FQDN, Geo, ISDB) in
   Policy-Routen und Central SNAT, Pools des Load Balancers nur über HTTP-Policy-Sets bzw.

@@ -39,8 +39,12 @@ H = {"X-Dev-Roles": "admin"}
 rnd = random.Random(7)  # noqa: S311 - reproduzierbare Testdaten, keine Kryptografie
 
 engine = get_engine()
-Base.metadata.drop_all(engine)
-Base.metadata.create_all(engine)
+# BENCH_REUSE=1: den Bestand eines früheren Laufs weiterverwenden (Anlegen dauert Minuten) - so
+# lassen sich zwei Stände des Codes auf denselben Daten vergleichen
+REUSE = os.environ.get("BENCH_REUSE") == "1"
+if not REUSE:
+    Base.metadata.drop_all(engine)
+    Base.metadata.create_all(engine)
 jobs.celery_app.dispatch_collect = lambda platform, run_id: None
 c = TestClient(create_app())
 
@@ -269,7 +273,14 @@ def main() -> None:
         f"Standorte {SITES}, Routen je Gerät {ROUTES}, Policies je Firewall {RULES}, "
         f"Wege {TRACES}"
     )
-    tid, _ = timed("Bestand anlegen (einlesen)", seed)
+    if REUSE:
+        from app.models import Tenant
+
+        with get_session_factory()() as found:
+            tid = found.query(Tenant.id).order_by(Tenant.id).first()[0]
+        print("Bestand weiterverwendet (BENCH_REUSE=1)")
+    else:
+        tid, _ = timed("Bestand anlegen (einlesen)", seed)
     session = get_session_factory()()
     todo = pairs(TRACES)
     _, first = timed(

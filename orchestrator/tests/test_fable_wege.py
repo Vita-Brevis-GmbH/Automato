@@ -882,3 +882,22 @@ def test_mehr_als_16_wege_gekuerzt_und_gezaehlt(client):
     # dazu der Rückweg: nur für die ersten 8 Wege geprüft - ebenfalls gezählt
     assert len(_active(out)) == 16 and out["uncertain"] == {"truncated": 4, "return": 8}
     assert "mehr als 16 Wege – gekürzt" in out["notes"]
+
+
+def test_a14_start_unbekannt_macht_die_applikation_unvollstaendig_geprueft(client):
+    """In den Verbindungen einer Applikation: ohne Start kein geratener Weg - die Verbindung ist
+    „Start unbekannt“, die Applikation unvollständig geprüft (Befund `app_coverage`)."""
+    tid = _tenant(client)
+    _firewall(client, tid, "fw-01", FW_IFS, FW_ROUTES,
+              rules=[_policy(7, "wan1", "lan", "10.77.0.5", "10.20.0.5")])  # fmt: skip
+    body = {"name": "Web", "members": [{"kind": "host", "ref": "10.20.0.5"}]}
+    app = client.post(f"/applications?tenant_id={tid}", json=body,
+                      headers={"X-Dev-Roles": "operator"})  # fmt: skip
+    assert app.status_code == 201, app.text
+    out = client.get(f"/applications/{app.json()['id']}/connections").json()
+    (conn,) = out["connections"]
+    assert conn["hops"] == [] and conn["uncertain"] == {"start": 1}
+    assert "Start unbekannt" in conn["text"]
+    assert out["coverage"]["complete"] is False
+    assert out["coverage"]["cuts"]["start"] == {"rules": 1, "missing": 1}
+    assert any("ohne bekannten Start" in n for n in out["notes"])

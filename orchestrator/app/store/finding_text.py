@@ -509,6 +509,22 @@ def _app_coverage(subject: str, d: dict) -> tuple[str, str]:
             "continues) or capture the tunnel as an exit (deliberate boundary).",
         )
         hint = vpn if set(cuts) == {"vpn"} else f"{hint} {vpn}"
+    # ADR 0070: Stellen der Wege, die nicht sicher entschieden sind (gezaehlt statt still)
+    ways = set(cuts) & {"start", "rpf", "nat", "default", "onlink", "policy_route", "sdwan",
+                        "truncated", "return"}  # fmt: skip
+    if ways:
+        way = L(
+            "Nicht geprüfte Stellen der Wege (Start unbekannt, Default-Route, Reverse Path, NAT, "
+            "Policy-Route …): das Gerät dahinter einlesen bzw. als Anbindung mit seinen Netzen "
+            "erfassen, Firewalls neu einlesen (Einstellungen des VDOMs); Einzelheiten je "
+            "Verbindung unter „Verbindungen“.",
+            "Places of the paths that are not checked (start unknown, default route, reverse "
+            "path, NAT, policy route …): collect the device behind them or capture it as an exit "
+            "with its networks, collect firewalls again (settings of the VDOM); details per "
+            "connection under “Connections”.",
+        )
+        only = set(cuts) <= ways | {"vpn"}
+        hint = (f"{vpn} {way}" if "vpn" in cuts else way) if only else f"{hint} {way}"
     return (
         L(f"Applikation {app} nicht vollständig geprüft: {parts}.",
           f"Application {app} not completely checked: {parts}."),
