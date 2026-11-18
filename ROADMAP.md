@@ -474,6 +474,7 @@ die Abnahme gegen die echte DDI (Agent) und die Dev-NetBox (Checkliste
 | **0.141.1** | Rückmeldung 2026-11-06 („zeigt mir nicht den Rückweg an, welcher falsch sein soll“, „Parallelen Wege (ACI mehrere Leafs, Firewall Verbunde mit Sessionsync)“): Rückweg je Abschnitt Hop für Hop in Weg-Suche und Verbindungen (andere Firewall markiert), Session-Sync-Partner zählen wie der Verbund als dieselbe Firewall |
 | **0.141.2** | Befund 2026-11-06 (Klick auf die Regel in den Findings: „/api/rules/… 404“): Befunde der Applikationen folgen der Regel schon beim Einlesen (neue Kennung bzw. Befund weg), umbenannte Regeln und Regeln mit gleichem Schlüssel behalten ihre Kennung, Meldung „Regel gibt es nicht mehr“ statt Fehler |
 | **1.0.0** | **Version 1 abgeschlossen** (Anwender 2026-11-07: „Es funktioniert bisher alles wie gewünscht … Bitte den Stand fertigstellen“): Oberfläche als Produktions-Build (statische Dateien hinter Caddy, `/api` an den Orchestrator, TLS intern), eigene Dienste gehärtet (`cap_drop: ALL`, `no-new-privileges`, nur lesend), Roadmap Version 1 geschlossen, bekannte Einschränkungen und Übertrag nach Version 2, Risiko-Review |
+| **1.0.1** | Nachtrag für die Produktion (Anwender 2026-11-18): Doku aller Applikationen als ZIP je Applikation mit Export-Passwort (AES-256), globaler Excel-Export aller Findings nach Modul → Prüfung → Typ mit Details als Kommentar |
 
 ### Nächste Arbeiten (Stand 1.0.0)
 

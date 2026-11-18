@@ -10,6 +10,7 @@ mit Regeln ihres Ausschnitts. Anlegen, Loeschen, Import, Vorschlaege und die Mit
 und Server bleiben den Betreuern.
 """
 
+import logging
 import re
 from datetime import UTC, datetime
 from typing import Annotated, Literal
@@ -42,6 +43,7 @@ from app.store import (
     customer_alias,
     doc_snapshots,
     peer_names,
+    secure_zip,
     sites,
     word_export,
 )
@@ -49,6 +51,7 @@ from app.store import applications as store
 from app.store import epgs as epg_store
 from app.store import naming_profiles as profile_store
 
+log = logging.getLogger(__name__)
 router = APIRouter(prefix="/applications", tags=["applications"])
 PLAN_KEYS_MAX = 5000  # Verbindungen im Filter des Exports (0.130.0, bis dahin 120)
 
@@ -1078,6 +1081,94 @@ def _plan_export(background, application_id, format, key, rules, principal, sess
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})  # fmt: skip
 
 
+class ExportAllIn(BaseModel):
+    """Gesamt-Export (1.0.1): Passwort nur in der Anfrage (nie gespeichert, nicht im Audit)."""
+
+    tenant_id: int | None = None
+    customer_id: int | None = None
+    password: str = Field(min_length=secure_zip.MIN_PASSWORD, max_length=200)
+    sections: str | None = Field(default=None, max_length=200)
+    ids: list[int] | None = Field(default=None, max_length=5000)  # Auswahl (leer = alle)
+
+
+@router.post("/export")
+def export_all_applications(
+    body: ExportAllIn,
+    background: BackgroundTasks,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+    factory: sessionmaker = Depends(get_session_factory),
+) -> Response:
+    """Doku aller Applikationen (1.0.1, Anwender: „Export aller Dokumentationen der
+    Applikationen als mehrere Zips, welche mit einem Export Passwort verschlüsselt sind“): ein
+    Download (ZIP) mit je Applikation einem ZIP (Word und Netzwerkplan als draw.io wie der
+    Einzel-Export), jedes mit dem Export-Passwort AES-256-verschlüsselt (`store/secure_zip`).
+    Applikationen wie in der Liste (Mandant, Kunde, Ausschnitt der Kunden-Benutzer); schlägt
+    eine fehl, steht sie in `FEHLER.txt` und die übrigen kommen trotzdem."""
+    if not body.password.strip():
+        raise HTTPException(status_code=422, detail=L("Passwort fehlt", "password missing"))
+    want = _sections(body.sections)
+    tenant_id = tenant_scope(principal, body.tenant_id)
+    view = customer_view(session, principal, tenant_id, body.customer_id)
+    mine = view.applications(session) if view else None
+    chosen = set(body.ids) if body.ids else None
+    apps = [a for a in store.list_applications(session, tenant_id)
+            if (mine is None or mine(a)) and (chosen is None or a.id in chosen)]  # fmt: skip
+    if not apps:
+        raise HTTPException(status_code=404, detail=L("keine Applikationen", "no applications"))
+    for tid in {a.tenant_id for a in apps}:
+        tenant_scope(principal, tid)
+    tenants = {t.id: t.name for t in session.scalars(
+        select(Tenant).where(Tenant.id.in_({a.tenant_id for a in apps})))}  # fmt: skip
+    several = len(tenants) > 1 and not principal.is_customer
+    when = datetime.now(UTC)
+    files: list[tuple[str, bytes]] = []
+    failed: list[str] = []
+    used: set[str] = set()
+    for app in sorted(apps, key=lambda a: (tenants.get(a.tenant_id, ""), a.name.lower(), a.id)):
+        try:
+            with session.begin_nested():
+                name, media, data = _export_one(session, factory, background, principal, app,
+                                                want, "zip")  # fmt: skip
+        except HTTPException:
+            raise
+        except Exception:  # noqa: BLE001 - eine Applikation haelt den Export nicht auf
+            log.exception("Gesamt-Export: Applikation %s fehlgeschlagen", app.id)
+            failed.append(f"{app.name} (ID {app.id})")
+            continue
+        inner = secure_zip.unpack(data) if media == "application/zip" else [(name, data)]
+        slug = word_export.slug(app.name, "applikation")
+        if several:
+            slug = f"{word_export.slug(tenants.get(app.tenant_id, ''), 'mandant')}-{slug}"
+        zip_name, n = f"{slug}.zip", 2
+        while zip_name.lower() in used:
+            zip_name, n = f"{slug}-{n}.zip", n + 1
+        used.add(zip_name.lower())
+        files.append((zip_name, secure_zip.encrypted(inner, body.password)))
+    if failed:
+        files.append(("FEHLER.txt", L(
+            "Diese Applikationen konnten nicht exportiert werden (Protokoll des Orchestrators):\n",
+            "These applications could not be exported (see the orchestrator log):\n",
+        ) + "\n".join(failed) + "\n"))  # fmt: skip
+    audit.record(
+        session,
+        actor=_actor(principal),
+        action="application.exported",
+        subject="applications",
+        detail={
+            "tenant_ids": sorted(tenants),
+            "count": len(apps) - len(failed),
+            "failed": len(failed),
+            "encrypted": True,
+            **actor(principal),
+        },  # fmt: skip
+    )
+    out = word_export.bundle(files)
+    fname = f"{L('applikationen', 'applications')}-{when:%Y-%m-%d}.zip"
+    return Response(content=out, media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="{fname}"'})  # fmt: skip
+
+
 @router.get("/{application_id}/export")
 def export_application(
     background: BackgroundTasks,
@@ -1094,14 +1185,27 @@ def export_application(
     alle) wie im Export-Dialog; den Plan legt das ZIP nur mit `plan` bei. Seit 0.104.0 auch
     Markdown (`md`) aus demselben Aufbau (bisher in der Oberflaeche gebaut). Kunden-Benutzer
     ohne Verbindungen (sie zeigen die Infrastruktur)."""
-    want = None
-    if sections:
-        want = {s.strip() for s in sections.split(",") if s.strip()}
-        if not want or not want <= set(word_export.SECTIONS):
-            raise HTTPException(
-                status_code=422, detail=L("unbekannter Abschnitt", "unknown section")
-            )
+    want = _sections(sections)
     app = _load(session, principal, application_id)
+    name, media, body = _export_one(session, factory, background, principal, app, want, format)
+    return Response(content=body, media_type=media,
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})  # fmt: skip
+
+
+def _sections(sections: str | None) -> set[str] | None:
+    if not sections:
+        return None
+    want = {s.strip() for s in sections.split(",") if s.strip()}
+    if not want or not want <= set(word_export.SECTIONS):
+        raise HTTPException(status_code=422, detail=L("unbekannter Abschnitt", "unknown section"))
+    return want
+
+
+def _export_one(session: Session, factory: sessionmaker, background: BackgroundTasks,
+                principal: Principal, app: Application, want: set[str] | None,
+                format: str) -> tuple[str, str, bytes]:  # noqa: A002  # fmt: skip
+    """Eine Applikation exportieren (Name, Medientyp, Inhalt) - einzeln und im Gesamt-Export
+    (1.0.1)."""
     view = _visible(session, principal, app)  # Kunden-Benutzer: ihr Ausschnitt (ADR 0018)
     if principal.is_customer:  # ohne Infrastruktur: keine Verbindungen, kein Plan
         want = (set(word_export.SECTIONS) if want is None else want) - {"connections", "plan"}
@@ -1151,8 +1255,7 @@ def export_application(
             files.append((plan_file, plan))
         body = word_export.bundle(files)
         media, name = "application/zip", f"{base}.zip"
-    return Response(content=body, media_type=media,
-                    headers={"Content-Disposition": f'attachment; filename="{name}"'})  # fmt: skip
+    return name, media, body
 
 
 _DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
