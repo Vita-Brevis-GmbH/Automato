@@ -51,6 +51,8 @@ import { ObjectDrawer, useDebounced } from "./Objects";
 import RuleDetailDrawer from "./RuleDetail";
 import { Capture, CAPTURE_KEY, Hops, matchText, Missing, Names, policyText, VrfChip } from "./Routing";
 import { Dash, Drawer, Empty, ErrorBox, Icon, Loading, Note, PageHead } from "./ui";
+import { useModule } from "./moduleState";
+import { hashOf as placeHash } from "./places";
 import { FoldTitle, useFolds } from "./fold";
 import { L } from "./i18n";
 import { VpnChip } from "./modules/analyse/VpnChip";
@@ -66,10 +68,8 @@ type DetailRef =
   | { kind: "node"; hop: TraceHop };
 const DetailCtx = createContext<(d: DetailRef) => void>(() => undefined);
 
-const hashOf = (view: string, params: Record<string, string> = {}) => {
-  const q = new URLSearchParams(params).toString();
-  return `#${view}${q ? `?${q}` : ""}`;
-};
+// Adressen nach Netzwerkschichten (1.19.0, ADR 0067): `#l4-7/regeln?…` statt `#regeln?…`
+const hashOf = (view: string, params: Record<string, string> = {}) => placeHash(view as View, params);
 const ruleHref = (id: number) => hashOf("regeln", { rule: String(id) });
 const natHref = (name: string) => hashOf("nat", { q: name });
 const objectHref = (name: string) => hashOf("objekte", { q: name });
@@ -2386,6 +2386,7 @@ function PathSearch({
   const [detail, setDetail] = useState<DetailRef | null>(null);
   // „Warum dieser Weg?“ (0.109.0): dieselben Eingaben wie die letzte Suche, gezeigter Weg
   const [asks, setAsks] = useState<ExplainQuery | null>(null);
+  const compareOn = useModule("vergleich"); // Wege vergleichen (1.19.0, ADR 0067)
   const [explain, setExplain] = useState<number | null>(null);
   const systemName = (id: number) => nodes.find((n) => n.source_system_id === id)?.source ?? `#${id}`;
   const srcNow = src;
@@ -2706,6 +2707,23 @@ function PathSearch({
                 {trace.target && <TargetCard target={trace.target} />}
                 <ZoneIntentCard trace={trace} />
                 <L2Ends trace={trace} />
+                {compareOn && asks?.src && asks.dst && shown.length > 0 && (
+                  <p className="no-print" style={{ margin: "4px 0 10px" }}>
+                    <a
+                      className="btn btn-ghost btn-sm"
+                      id="trace-compare"
+                      href={hashOf("vergleich", { src: asks.src, dst: asks.dst, ...(asks.service ? { service: asks.service } : {}) })}
+                      target="_blank"
+                      rel="noopener"
+                      title={L(
+                        "Je Abschnitt zwischen zwei Hops: VLAN auf allen Trunks erlaubt, Kabel und Nachbarn, Spanning Tree",
+                        "Per section between two hops: VLAN allowed on all trunks, cables and neighbors, Spanning Tree",
+                      )}
+                    >
+                      <Icon name="compare" size={14} /> {L("Weg gegen L1/L2 vergleichen", "Compare path against L1/L2")} ↗
+                    </a>
+                  </p>
+                )}
                 {shown.length > 1 && <PathOverview trace={{ ...trace, paths: shown }} />}
                 {shown.map((p, i) => (
                   <TraceCard

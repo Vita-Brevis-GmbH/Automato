@@ -21,7 +21,7 @@ test("Datenqualität: Kachel, Bereiche, Ursache und Link ins Routing", async ({ 
   await page.check(".dq-toggle input");
   await expect(sources.locator("tr.dq-ok").first()).toBeVisible();
   await partial.locator("button.dq-link").click();
-  await expect(page).toHaveURL(/#routing\?tab=routes&context=\d+%7Ckunde-a/);
+  await expect(page).toHaveURL(/#l3\/routing\?tab=routes&context=\d+%7Ckunde-a/);
 });
 
 test("Datenqualität: Reiter im Abgleich und Befund in den Findings", async ({ page }) => {

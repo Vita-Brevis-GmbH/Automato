@@ -89,7 +89,7 @@ test("Statische Routen: Befund öffnet die Route (1.19.0)", async ({ page, probl
   await expect(group).toContainText("Blackhole-Route");
   await page.locator("tbody tr.clickable", { hasText: "10.70.0.0/24" }).first().click();
   await page.locator("tbody tr.subrow button", { hasText: "Statische Routen fw-01" }).click();
-  await expect(page).toHaveURL(/#statisch/);
+  await expect(page).toHaveURL(/#l3\/statisch/);
   const table = page.locator("#static-routes tbody tr");
   await expect(table).toHaveCount(2);
   await expect(table.first()).toContainText("Statische Route doppelt ×2");
@@ -121,7 +121,7 @@ test("Applikation: statische Routen auf den Wegen (1.19.0)", async ({ page, prob
   await expect(row.locator(".chip")).toHaveText("aktiv");
   // Link öffnet die Route in „Statische Routen“
   await row.locator("a", { hasText: "10.60.0.0/24" }).click();
-  await expect(page).toHaveURL(/#statisch/);
+  await expect(page).toHaveURL(/#l3\/statisch/);
   await expect(page.locator("#static-routes tbody tr")).toHaveCount(1);
   await expect(page.locator("#static-routes tbody tr")).toHaveAttribute("data-seq", "4");
   expect(problems).toEqual([]);

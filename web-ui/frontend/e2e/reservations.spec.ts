@@ -42,7 +42,7 @@ test("Reservierungen: VLAN reservieren, Konflikt, ändern, Befund und freigeben"
   await expect(row).toContainText("war schon beim Reservieren in Gebrauch");
   await row.click();
   await page.click("button.linkchip:has-text('Reservierung VLAN 20 öffnen')");
-  await expect(page).toHaveURL(/#reservierungen\?tab=vlan&id=\d+/);
+  await expect(page).toHaveURL(/#l2\/vlan-reservierungen\?id=\d+/);
   await expect(page.locator("#reservations tbody tr.selected")).toContainText("E2E Konflikt");
 
   // freigeben: beide weg, der Befund auch

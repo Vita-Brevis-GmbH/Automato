@@ -52,7 +52,7 @@ test("Applikation: Doku mit Übersicht, VMs und EPGs mit ganzem ACI-Pfad", async
   await expect(page.locator(".drawer h2")).toHaveText("H_web01");
   await expect(page).toHaveURL(/#apps\?app=\d+/);
   await page.locator("#app-object-open").click();
-  await expect(page).toHaveURL(/#objekte\?object_id=\d+/);
+  await expect(page).toHaveURL(/#l4-7\/objekte\?object_id=\d+/);
   await expect(page.locator(".drawer h2")).toHaveText("H_web01");
 });
 
@@ -77,7 +77,7 @@ test("Applikation: Klick auf eine EPG öffnet ihr Detail statt zu den Regeln zu 
   await page.locator("#app-system-detail .app-system-epg", { hasText: "TE/AP/EG_db" }).click();
   await expect(page.locator(".drawer h2")).toHaveText("TE/AP/EG_db");
   await page.locator("#app-epg-objects").click();
-  await expect(page).toHaveURL(/#objekte\?/);
+  await expect(page).toHaveURL(/#l4-7\/objekte\?/);
   await expect(page.locator(".tabbar button.on")).toHaveText("Portgruppen");
   await expect(rows(page).filter({ hasText: "TE|AP|EG_db" })).toHaveCount(1);
 });
@@ -302,7 +302,7 @@ test("Applikation: Regeln filtern (System, Richtung, Bezug) und Erklärung im De
   await expect(drawer).toContainText("gehört zur Applikation über AP TE/AP");
   await expect(drawer).toContainText("Provider");
   await drawer.locator("button:has-text('In Regeln & Contracts')").click();
-  await expect(page).toHaveURL(/#regeln\?rule=\d+/);
+  await expect(page).toHaveURL(/#l4-7\/regeln\?rule=\d+/);
 });
 
 test("Applikation: Stammdaten bearbeiten (Zweck, Namen)", async ({ page }) => {

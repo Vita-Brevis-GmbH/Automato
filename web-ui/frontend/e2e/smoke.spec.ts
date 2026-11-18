@@ -13,6 +13,11 @@ const VIEWS: [string, string][] = [
   ["asn", "AS-Nummern"], // 1.19.0, ADR 0066
   ["reservierungen", "Reservierungen"],
   ["verkabelung", "Verkabelung"],
+  // 1.19.0 (ADR 0067): je Schicht und „Wege vergleichen“ – alte Adressen leiten auf die neue Stelle um
+  ["l2/vlans", "VLANs"],
+  ["l2/spanningtree", "Spanning Tree"],
+  ["l4-7/vpn", "VPN-Tunnel"],
+  ["vergleich", "Wege vergleichen"],
   ["apps", "Applikationen"],
   ["findings", "Findings"],
   ["abgleich", "Abgleich"],
@@ -50,5 +55,17 @@ test("Objekte: alle Reiter laden", async ({ page, problems }) => {
     await page.click(`.tabbar button:has-text('${tab}')`);
     await page.waitForLoadState("networkidle");
   }
+  expect(problems).toEqual([]);
+});
+
+test("Verkabelung: alle Reiter laden (1.19.0: Transceiver, VLANs als eigene Ansicht)", async ({ page, problems }) => {
+  await page.goto("/#l1/verkabelung");
+  for (const tab of ["Verbindungen", "Plan", "Geräte", "Ports", "Endpunkte", "Transceiver", "Kabelnummern"]) {
+    await page.click(`.tabbar button:has-text('${tab}')`);
+    await page.waitForLoadState("networkidle");
+  }
+  await expect(page.locator(".tabbar button", { hasText: "VLANs" })).toHaveCount(0);
+  await page.click(".tabbar button:has-text('Transceiver')");
+  await expect(page.locator("#transceiver-devices")).toContainText("sw-acc-01");
   expect(problems).toEqual([]);
 });

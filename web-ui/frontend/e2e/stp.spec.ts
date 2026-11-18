@@ -71,7 +71,7 @@ test("Spanning Tree: Befund mit Link in die Ansicht, Switches mit BPDU-Guard", a
   await expect(row).toContainText("sw-core-01 Eth1/3 blockiert in VLAN 10: Gegenstelle ist kein Switch");
   await row.click();
   await page.click("button.linkchip:has-text('Spanning Tree öffnen')");
-  await expect(page).toHaveURL(/#spanningtree\?vlan=10/);
+  await expect(page).toHaveURL(/#l2\/spanningtree\?vlan=10/);
   await expect(page.locator("#stp-filter-vlan")).toHaveValue("10");
   await expect(page.locator("#stp-trees tbody tr")).toHaveCount(1);
 

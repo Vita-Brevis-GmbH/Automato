@@ -679,7 +679,7 @@ export default function NatTable({
             onChange={(e) => setQ(e.target.value)}
           />
         </div>
-        <select className="sel" value={type} onChange={(e) => setType(e.target.value)}>
+        <select className="sel" id="nat-type" aria-label={L("Typ", "Type")} value={type} onChange={(e) => setType(e.target.value)}>
           <option value="">{L("Typ: alle", "Type: all")}</option>
           <option value="dnat_vip">{L("VIP / DNAT (inkl. Virtual Server)", "VIP / DNAT (incl. Virtual Server)")}</option>
           <option value="snat_pool">{L("SNAT-Pool", "SNAT pool")}</option>

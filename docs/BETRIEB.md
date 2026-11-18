@@ -97,6 +97,31 @@ Hell/Dunkel und Benutzermenü (Rolle, Mandanten, Mein Konto, Abmelden). Im OIDC-
 wird das Token still erneuert; läuft die Keycloak-Sitzung ab, folgt die Anmeldung erneut.
 Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigung“).
 
+**Navigation nach Netzwerkschichten** (seit 1.19.0, ADR 0067): unter *Dokumentation* das
+Übergreifende (Übersicht, Applikationen, Weg-Suche, **Wege vergleichen**, Findings, Abgleich,
+Netzwerkdesign), darunter je Schicht ihre Stellen – **L1 · Physik** (Verkabelung, Ports,
+Transceiver, Kabelnummern), **L2 · Switching** (VLANs, Spanning Tree, VLAN-Reservierungen),
+**L3 · Routing** (Netze, VRF, Routing, Statische Routen, BGP, AS-Nummern, AS-Reservierungen),
+**L4–7 · Firewall & Dienste** (Regeln & Contracts, Objekte & Inventar, NAT / VIPs, Load Balancer,
+VPN-Tunnel) – und die *Administration*. Eine Stelle ist eine Ansicht bzw. ein Reiter davon (z. B.
+BGP = Routing, Reiter BGP-Nachbarn); die Adresse lautet `#<schicht>/<stelle>` (`#l3/bgp`,
+`#l4-7/regeln?rule=…`). **Alte Adressen** (`#regeln?…`, `#routing?tab=peers`,
+`#verkabelung?tab=vlans`) leiten auf die neue Stelle um – Lesezeichen und Links in der Doku
+gelten weiter. Module je Mandant schalten wie bisher (Analyse aus blendet L1, L2 und die Stellen
+der Analyse in L3/L4–7 aus); die API-Pfade sind unverändert.
+
+**Wege vergleichen** (seit 1.19.0, ADR 0067, Modul „Wege vergleichen“, braucht Analyse und
+Wegsucher): ein L3-Weg gegen L1/L2 – je Abschnitt vom Ausgang eines Hops bis zum Eingang des
+nächsten (bzw. bis zum Anschluss von Quelle und Ziel) **VLAN erlaubt** (Access-VLAN, erlaubte VLANs
+der Trunks), **Kabel und Nachbarn** (CDP/LLDP gegen das Kabel in NetBox, Befunde der Verkabelung)
+und **Spanning Tree** (blockiert bzw. err-disabled im VLAN). Reiter *Weg* (wie die Weg-Suche; die
+Weg-Suche verlinkt „Weg gegen L1/L2 vergleichen“), *Applikation* (je Verbindung bzw. „Alle
+vergleichen“, gezählt; die Verbindungen verlinken „Gegen L1/L2 vergleichen“) und *Alle Abschnitte*
+(was der Abgleich prüft). Was nicht prüfbar ist (kein Kabel bzw. Switch dazwischen nicht gelesen,
+VLAN unbekannt, Kabel nicht in NetBox, Switch ohne Spanning Tree), steht mit Grund da und als
+Hinweis `path_l2_unchecked` je Grund; Abweichungen als Befunde `path_vlan_missing`,
+`path_cable_mismatch`, `path_stp_blocked`. Ohne gelesene Verkabelung keine Befunde.
+
 **Sprache** (seit 0.86.0): Benutzermenü → **Sprache** *Deutsch* | *English*. Die Wahl gilt je
 Browser (`localStorage automato_lang`), das Umschalten lädt die Seite neu; Standard ist Deutsch.
 Umgestellt sind alle Texte der Oberfläche und seit 0.87.0 auch die **Texte vom Orchestrator**:

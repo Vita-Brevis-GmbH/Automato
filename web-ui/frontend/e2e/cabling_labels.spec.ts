@@ -23,7 +23,7 @@ test("Kabelnummer: erfassen, ändern und löschen an einer Verbindung (1.19.0)",
   await expect(row.locator(".cable-label")).toContainText("K-E2E-1");
   await expect(row.locator(".cable-label .chip.info")).toHaveText("Automato");
   // Reiter „Kabelnummern“: dieselbe Nummer, Gegenstelle per CDP
-  await page.getByRole("button", { name: "Kabelnummern", exact: true }).click();
+  await page.locator(".tabbar").getByRole("button", { name: "Kabelnummern", exact: true }).click();
   const listed = page.locator(`#cabling-labels tr[data-pair='${UPLINK}']`);
   await expect(listed).toContainText("K-E2E-1");
   await expect(page.locator("#cabling-labels-summary")).toContainText("1 in Automato");
@@ -58,7 +58,7 @@ const PORT = {
 test("Ports: Transceiver, Speed/Duplex und Kabelnummer mit Herkunft (1.19.0)", async ({ page }) => {
   await page.route(/\/api\/cabling\/ports(\?|$)/, (route) => route.fulfill({ json: { total: 1, items: [PORT] } }));
   await page.goto("/#verkabelung");
-  await page.getByRole("button", { name: "Ports", exact: true }).click();
+  await page.locator(".tabbar").getByRole("button", { name: "Ports", exact: true }).click();
   const row = page.locator("#cabling-ports tr[data-port='Te1/1/1']");
   await expect(row.locator(".port-speed")).toHaveText("10G/half");
   await expect(row.locator(".transceiver")).toHaveText("SFP-10GBase-SR · SFP-10G-SR · S/N AVD2345A1B2");

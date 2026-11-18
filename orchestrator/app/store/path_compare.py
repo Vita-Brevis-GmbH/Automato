@@ -70,7 +70,8 @@ def reason_text(key: str) -> str:
         "vlan_unknown": L("VLAN des Abschnitts unbekannt", "VLAN of the section unknown"),
         "vlan_ports": L("Kabel ohne bekannte VLAN-Konfiguration", "cables without known VLAN "
                         "configuration"),
-        "no_netbox": L("Kabel ohne Kabel in NetBox", "cables without a cable in NetBox"),
+        "no_netbox": L("Kabel nicht in NetBox – kein Abgleich mit CDP/LLDP",
+                       "cable not in NetBox – no comparison with CDP/LLDP"),
         "stp_unread": L("Switch ohne gelesenen Spanning Tree", "switch without read Spanning Tree"),
     }.get(key, key)  # fmt: skip
 

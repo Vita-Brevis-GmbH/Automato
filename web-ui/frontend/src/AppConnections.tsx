@@ -29,6 +29,8 @@ import { ReturnLegs, Verdict, VERDICT } from "./Paths";
 import { Dash, download, Empty, ErrorBox, ExportLangSelect, Icon, Loading, Note } from "./ui";
 import { L } from "./i18n";
 import { SnapshotBar } from "./SnapshotBar";
+import { useModule } from "./moduleState";
+import { hashOf as placeHash } from "./places";
 
 type Go = (v: View, p?: ViewParams) => void;
 
@@ -376,6 +378,7 @@ function HopChain({ hops }: { hops: AppConnHop[] }) {
 
 function ConnDetail({ c, onRule, onExplain }: { c: AppConnection; onRule: (id: number) => void; onExplain?: () => void }) {
   const params = { src: c.src.ip, dst: c.dst.ip, ...(c.service ? { service: c.service } : {}) };
+  const compareOn = useModule("vergleich");
   return (
     <div className="conn-detail">
       {c.mismatch.map((m) => (
@@ -571,6 +574,24 @@ function ConnDetail({ c, onRule, onExplain }: { c: AppConnection; onRule: (id: n
         >
           <Icon name="route" size={14} /> {L("In der Weg-Suche öffnen", "Open in path search")} ↗
         </a>
+        {/* 1.19.0 (ADR 0067): den Weg dieser Verbindung gegen L1/L2 prüfen (VLAN, Kabel, Spanning Tree) */}
+        {compareOn && (
+          <a
+            className="btn btn-ghost btn-sm conn-compare"
+            href={placeHash("vergleich", {
+              src: c.trace?.src ?? c.src.ip,
+              dst: c.trace?.dst ?? c.dst.ip,
+              ...((c.trace?.service ?? c.service) ? { service: (c.trace?.service ?? c.service) as string } : {}),
+              connection: "1",
+              ...(c.trace?.starts?.length ? { starts: c.trace.starts.join(",") } : {}),
+            })}
+            target="_blank"
+            rel="noopener"
+            title={L("Wege vergleichen in einem neuen Tab", "Compare paths in a new tab")}
+          >
+            <Icon name="compare" size={14} /> {L("Gegen L1/L2 vergleichen", "Compare against L1/L2")} ↗
+          </a>
+        )}
       </div>
     </div>
   );
