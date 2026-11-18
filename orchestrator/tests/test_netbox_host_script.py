@@ -535,6 +535,29 @@ def test_sync_legt_fehlende_netbox_an_und_entfernt_nie(host):
     assert "ohne Freigabe in Automato: kunde-x (bleiben" in out.stdout
 
 
+def test_sync_fuehrt_rechte_des_sync_benutzers_nach_ohne_neuen_token(host):
+    """1.19.1: neue Objekttypen des Syncs (ASN, ADR 0066) kommen beim Abgleich in bestehende
+    Instanzen - nur die Rechte, der Schreib-Token bleibt; danach nur bei geänderter Liste."""
+    assert host("neu", "kunde-a").returncode == 0
+    host("agent", "https://automato.int.example.ch", NBH_TOKEN=TOKEN)
+    _antwort(host, [{"kurzname": "kunde-a", "name": "Kunde A", "zugang": "vorhanden"}])
+    sync_log = Path(f"{host.log}.sync")
+    vorher = sync_log.read_text() if sync_log.exists() else ""
+    out = host("sync")
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert "kunde-a: Rechte des Sync-Benutzers nachgeführt (Token unverändert)" in out.stdout
+    log = host.log.read_text()
+    assert "-e NUR_RECHTE" in log and "manage.py shell" in log
+    # kein neuer Token: sync-user.sh hat keinen SYNC_TOKEN an docker gegeben
+    assert (sync_log.read_text() if sync_log.exists() else "") == vorher
+    assert (host.dir / "kunden" / "kunde-a" / ".sync-rechte").is_file()
+    host.log.write_text("")
+    out = host("sync")
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert "Rechte des Sync-Benutzers nachgeführt" not in out.stdout
+    assert "NUR_RECHTE" not in host.log.read_text()
+
+
 def test_sync_meldet_fehler_und_andere_domain(host):
     host("agent", "https://automato.int.example.ch", NBH_TOKEN=TOKEN)
     _antwort(host, [], domain="andere.example.ch")
@@ -695,8 +718,11 @@ def test_sync_richtet_sso_ein_wo_es_fehlt(host):
     def neustarts() -> int:
         return host.log.read_text().count("restart netbox netbox-worker")
 
-    def shells() -> int:
-        return host.log.read_text().count("manage.py shell")
+    def shells() -> int:  # die der Anmeldung (ohne Nachführen der Sync-Rechte, 1.19.1)
+        return sum(
+            1 for z in host.log.read_text().splitlines()
+            if "manage.py shell" in z and "NUR_RECHTE" not in z
+        )  # fmt: skip
 
     # Instanz ohne Anmeldung über das Tor (vor 1.4.0 angelegt): einrichten und neu starten
     datei.unlink()

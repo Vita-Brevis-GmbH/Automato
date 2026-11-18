@@ -2309,7 +2309,10 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   Weicht ein schon angelegtes reserviertes VLAN bzw. eine ASN ab (neuer Zweck bzw. in NetBox von
   Hand geändert), steht es in der Karte **Geänderte Reservierungen bestätigen** mit beiden Werten –
   geschrieben wird nur Angekreuztes (wie Kabelnummern und DNS-Namen). Für
-  ASN braucht der Sync-Benutzer `ipam.asn` – `sync-user.sh` erneut ausführen. **Vorschau
+  ASN braucht der Sync-Benutzer `ipam.asn`: bei NetBox je Kunde führt der Agent des NetBox-Hosts
+  die Rechte seit 1.19.1 selbst nach (Token bleibt); bei einer von Hand angebundenen NetBox auf
+  ihrem Host `NUR_RECHTE=1 ./sync-user.sh` (ohne `NUR_RECHTE` entsteht ein **neuer** Token, der
+  dann in Automato einzutragen ist). **Vorschau
   erstellen** liest NetBox nur und zeigt je Art: anlegen / ändern / unverändert / Konflikt
   (von Hand gepflegtes Objekt weicht ab – bleibt unverändert) / löschen / veraltet, mit
   Aktionsliste. **Übernehmen** (Bestätigung) berechnet neu, schreibt nur bei unveränderter

@@ -7,6 +7,18 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 1.19.1 – 2026-11-18
+
+Korrektur (Anwender 2026-11-18: „sync-user.sh in welchem Pfad muss ich es ausführen?“): Das
+Skript erzeugte bei jedem Aufruf einen **neuen** Schreib-Token – danach schlug der NetBox-Sync
+fehl, bis der Token in Automato nachgetragen war.
+
+- **Rechte ohne neuen Token:** `source-of-truth/netbox/sync-user.sh` kennt `NUR_RECHTE=1` – nur
+  die Objekttypen des Syncs nachführen (z. B. ASN für die Reservierungen, ADR 0066), Token bleibt.
+- **NetBox je Kunde ohne Handgriff:** der Agent des NetBox-Hosts (`netbox-host.sh sync`) führt bei
+  jeder Instanz, deren Zugang Automato schon hat, die Rechte selbst nach – nur, wenn sich die
+  Liste geändert hat (Marke `.sync-rechte` je Kunde). Nichts von Hand auszuführen.
+
 ## 1.19.0 – 2026-11-18
 
 Prioritäten des Anwenders 2026-11-17 („Folgende Prio umsetzen im Automato: 1. VPN integrieren

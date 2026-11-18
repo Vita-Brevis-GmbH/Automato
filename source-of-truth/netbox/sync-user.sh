@@ -14,6 +14,7 @@
 # Verwendung (auf dem NetBox-Host, NetBox laeuft bereits):
 #   ./sync-user.sh                      # neuer Zufalls-Token
 #   SYNC_TOKEN=<40 Zeichen> ./sync-user.sh   # festen Token setzen
+#   NUR_RECHTE=1 ./sync-user.sh         # nur die Rechte nachführen, Token bleibt (1.19.1)
 set -euo pipefail
 
 NETBOX_DIR="${NETBOX_DIR:-netbox-docker}"
@@ -24,7 +25,11 @@ cd "$(dirname "$0")/$NETBOX_DIR" 2>/dev/null || cd "$NETBOX_DIR" || {
   echo "FEHLER: $NETBOX_DIR nicht gefunden - erst ./setup.sh ausfuehren"; exit 1
 }
 
-SYNC_TOKEN="$SYNC_TOKEN" docker compose exec -T -e SYNC_TOKEN \
+NUR_RECHTE="${NUR_RECHTE:-0}"
+# NUR_RECHTE=1: neue Objekttypen (z. B. ASN in 1.19.0) ohne neuen Token - Automato behält seinen
+# Schreib-Token (Agent des NetBox-Hosts, `netbox-host.sh sync`)
+[ "$NUR_RECHTE" = 1 ] && SYNC_TOKEN=""
+SYNC_TOKEN="$SYNC_TOKEN" NUR_RECHTE="$NUR_RECHTE" docker compose exec -T -e SYNC_TOKEN -e NUR_RECHTE \
   netbox /opt/netbox/netbox/manage.py shell <<'PY'
 import os
 from django.contrib.auth import get_user_model
@@ -85,11 +90,19 @@ permission(
 write_ids = [ContentType.objects.get(app_label=a, model=m).pk for a, m in WRITABLE]
 permission("automato-sync-write", ["view", "add", "change", "delete"], write_ids)
 
-# Legacy-v1-Token (Header "Token <wert>"), mit Schreibrecht; alte Tokens des Users ersetzen
-Token.objects.filter(user=user).delete()
-Token(user=user, version=1, token=os.environ["SYNC_TOKEN"], write_enabled=True).save()
-print("SYNC_USER_OK")
+if os.environ.get("NUR_RECHTE") == "1":
+    print("SYNC_RECHTE_OK")
+else:
+    # Legacy-v1-Token (Header "Token <wert>"), mit Schreibrecht; alte Tokens des Users ersetzen
+    Token.objects.filter(user=user).delete()
+    Token(user=user, version=1, token=os.environ["SYNC_TOKEN"], write_enabled=True).save()
+    print("SYNC_USER_OK")
 PY
+
+if [ "$NUR_RECHTE" = 1 ]; then
+  echo "Rechte des NetBox-Sync-Benutzers nachgeführt (automato-sync, Token unverändert)"
+  exit 0
+fi
 
 cat <<EOF
 

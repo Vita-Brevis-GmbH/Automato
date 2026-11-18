@@ -644,6 +644,24 @@ Token(user=u, version=1, token=os.environ["NBH_LESE_TOKEN"], write_enabled=False
 PY
   NETBOX_DIR="$(nbdir "$k")" SYNC_TOKEN=$3 DOCKER="$DOCKER" \
     bash "$REPO_DIR/source-of-truth/netbox/sync-user.sh" </dev/null >/dev/null || return 2
+  # die Rechte sind jetzt die der aktuellen Liste (sync_rechte_nachfuehren nicht nötig)
+  sha256sum <"$REPO_DIR/source-of-truth/netbox/sync-user.sh" | cut -d' ' -f1 >"$(kdir "$k")/.sync-rechte" || true
+}
+
+sync_rechte_nachfuehren() {  # <kunde>: neue Objekttypen des Syncs (1.19.1), Token bleibt
+  # nur wenn sich die Liste in sync-user.sh geändert hat (Marke je Kunde): sonst bei jedem vollen
+  # Abgleich ein `manage.py shell` je Instanz
+  local k=$1 skript="$REPO_DIR/source-of-truth/netbox/sync-user.sh" marke soll
+  [ -f "$skript" ] || return 0
+  marke="$(kdir "$k")/.sync-rechte"
+  soll=$(sha256sum <"$skript" | cut -d' ' -f1)
+  [ "$(cat "$marke" 2>/dev/null)" != "$soll" ] || return 0
+  if NETBOX_DIR="$(nbdir "$k")" NUR_RECHTE=1 DOCKER="$DOCKER" bash "$skript" </dev/null >/dev/null 2>&1; then
+    printf '%s\n' "$soll" >"$marke"
+    ok "$k: Rechte des Sync-Benutzers nachgeführt (Token unverändert)"
+  else
+    warn "$k: Rechte des Sync-Benutzers nicht nachgeführt – der nächste Abgleich versucht es wieder"
+  fi
 }
 
 cmd_token() {  # Notweg (seit 1.13.0 übergibt der Agent den Zugang selbst, ADR 0056)
@@ -921,7 +939,10 @@ zugang_abgleichen() {  # <kunde> <stand aus GET /api/netbox-host>
   local k=$1 stand=$2
   case "$stand" in
     fehlt) zugang_liefern "$k" || true ;;
-    vorhanden) ok "$k: Zugang für Automato vorhanden" ;;
+    vorhanden)
+      ok "$k: Zugang für Automato vorhanden"
+      sync_rechte_nachfuehren "$k" || true  # 1.19.1: neue Objekttypen, Token bleibt
+      ;;
     kein_mandant | andere_adresse | keine_adresse) zugang_meldung "$k" "$stand" ;;
     *) info "$k: Automato meldet den Zugang nicht (älter als 1.13.0) – Tokens von Hand: netbox-host.sh token $k" ;;
   esac
