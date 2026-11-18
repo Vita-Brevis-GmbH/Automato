@@ -1,6 +1,6 @@
 [project]
 name = "automato"
-version = "1.18.2"
+version = "1.19.0"
 description = "Automatisierungsplattform - Monorepo-Workspace (siehe README.md)"
 requires-python = ">=3.11"
 

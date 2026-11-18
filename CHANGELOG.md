@@ -7,6 +7,77 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 1.19.0 – 2026-11-18
+
+Prioritäten des Anwenders 2026-11-17 („Folgende Prio umsetzen im Automato: 1. VPN integrieren
+2. statisches Routing 3. Modul nach Netzwerkschichten 4. Verkabelung im Detail 5. Spanningtree
+6. Reservierungen 7. DNS aus AD“; „Nur am Ende eine Meldung alles zusammen in der Version“).
+Neue Migrationen `0089_vpn`, `0091_stp`, `0092_kabel`, `0093_reservierungen`; ADR 0063 (VPN), 0066
+(Reservierungen), 0067 (Schichten), Nachträge zu ADR 0025 (Spanning Tree), 0031 (Kabel-Label), 0045
+(DNS-Namen). Das REST-API-Profil der FortiGate braucht `vpngrp read`; der NetBox-Sync-Benutzer das
+Recht `ipam.asn` (`sync-user.sh` erneut ausführen).
+
+#### VPN (ADR 0063)
+
+- VPN (IPsec) integriert (ADR 0063): Die FortiGate liest Phase 1 (Interface-Modus), Phase 2 mit aufgelösten Selektoren und den Zustand je Tunnel bzw. Phase 2 – nur lesend, ohne Pre-Shared-Keys; Dial-up-Tunnel mit ihren verbundenen Gegenstellen. SSL-VPN wird nicht gelesen.
+- Weg-Suche: Der Tunnel ist ein Schritt mit Gegenstelle. Gehört die Gegenstelle einer gelesenen FortiGate, geht der Weg dort weiter (Eingang ist ihr Tunnel). Sonst endet er sichtbar an der Gegenstelle und wird in den Verbindungen gezählt („unvollständig geprüft“).
+- Neue Ansicht „VPN-Tunnel“ (Analyse): Zustand, Gegenstelle, Phase 2, Routen über den Tunnel mit „gedeckt / teilweise / kein Selektor“, Netze dahinter.
+- Verbindungen, Netzwerkplan (Tunnel-Knoten), Word-Export und „Warum dieser Weg?“ zeigen den Tunnel; „Als Anbindung erfassen“ geht auch am Tunnel.
+- Neue Befunde: VPN-Tunnel down, Selektor deckt Route nicht, Route ohne Selektor.
+- Das REST-API-Profil braucht `vpngrp read` (Migration `0089_vpn`).
+
+#### Statisches Routing
+
+- **Statische Routen** je Gerät und VRF (Ansicht „Statische Routen“, `GET /static-routes`): FortiGate und Junos aus der Konfiguration (auch deaktivierte und schwebende), Cisco und Arista aus der Routing-Tabelle, ACI aus den L3Outs. Je Route der Zustand gegen die Routing-Tabelle – aktiv, Backup, überdeckt, nicht installiert, deaktiviert – mit Begründung und Next-Hop.
+- **Backup oder überdeckt:** eine bewusste Backup-Route hat eine Distanz über dem Standard des Geräts (FortiGate 10, Junos 5, Cisco/ACI 1) oder eine höhere FortiGate-Priorität. Überdeckt ist eine Route, die nie aktiv wird.
+- **Befunde:** Next-Hop nicht erreichbar (auch für Backup-Routen), überdeckt, doppelt, Blackhole (Hinweis), nicht geprüft je Gerät (keine stillen Grenzen).
+- **Doku der Applikation:** die statischen Routen auf den Wegen ihrer Verbindungen (aktiv bzw. Backup-Weg) mit Seq, Kommentar und Anzahl der Verbindungen, auch im Word-/Markdown-Export.
+
+#### Spanning Tree (ADR 0025 Nachtrag)
+
+- **Spanning Tree** (Modul Analyse, `#spanningtree`): Die Switches (Cisco IOS/IOS-XE, NX-OS) liefern je VLAN bzw. MST-Instanz Root, eigene Bridge, Root-Port, Ports mit Rolle und Zustand, Modus, Topologieänderungen und err-disabled Ports. Andere Plattformen werden gezählt.
+- Ansicht je VLAN bzw. Standort: Root, Soll und ein einfacher Baum mit hervorgehobenen blockierten Ports (Reserve bzw. unerwartet), dazu Reiter Soll-Root und Switches.
+- **Soll-Root** je VLAN-Bereich und/oder Standort wird in der App gepflegt (operator, Audit), ebenso die Schwelle der Topologieänderungen (Vorgabe 10 je 24 h).
+- Neue Befunde: Root nicht am Soll bzw. ohne Soll nur gemeldet, unerwartet blockierter Port (Schutzfunktion, Backup-Rolle, vPC-Peer-Link, Edge-Port, Gegenstelle kein Switch), BPDU-Guard, gemischte Modi im L2-Bereich, viele Topologieänderungen.
+- Migration `0091_stp`; die Spanning-Tree-Daten wirken nicht auf Doku und Wege.
+
+#### Verkabelung im Detail (ADR 0031 Nachtrag 1.19.0)
+
+- Verkabelung im Detail: Die Switches liefern je Port den Transceiver (Typ, Teilenummer, Hersteller, Seriennummer), nur mit `show`-Befehlen der Plattform; je Switch ein Lesestatus (gelesen, nicht lesbar, nicht unterstützt bei SNMPv3).
+- Die Kabelnummer kommt aus NetBox (Label der Kabel, über die Referenzquelle) und lässt sich in Automato je Port-Paar erfassen; die Ansicht zeigt sie mit Herkunft (Reiter „Kabelnummern“ mit Dialog).
+- Der NetBox-Sync (Abschnitt Verkabelung) schreibt die erfasste Nummer als Label: neue Kabel gleich mit, bestehende nur nach Bestätigung je Kabel; was nur in NetBox steht, bleibt (Migration `0092_kabel`).
+- Neue Befunde: LLDP/CDP-Nachbar passt nicht zum Kabel in NetBox, Kabelnummer in NetBox und Automato verschieden, Duplex nicht voll (beide Enden gelesen).
+
+#### DNS aus dem AD (ADR 0045 Nachtrag 1.19.0)
+
+- **DNS aus dem AD nach NetBox**: Neuer Abschnitt *DNS-Namen aus dem AD* im NetBox-Sync. Er setzt `dns_name` bestehender IP-Adressen aus den A-Records der AD-DNS-Zonen, nur dieses Feld und keine neuen IPs. Mehrere A-Records: der PTR entscheidet, sonst „mehrdeutig“ ohne Vorschlag. Leere Namen werden gesetzt; abweichende zeigt die Vorschau mit beiden Werten, übernommen nur nach Bestätigung je Eintrag (wie die Kabelnummern). Nur, wenn NetBox das führende IPAM ist.
+- Befunde *DNS: PTR widerspricht A-Record*, *DNS: IP nicht in NetBox* (nur gezählt) und *DNS: nicht geprüft* (Zonen, Rückwärtszone, NetBox nicht gelesen).
+- Das Netzinventar löscht DNS-Namen an Interface-IPs nicht mehr.
+
+#### Reservierungen (ADR 0066)
+
+- Reservierungen: VLAN- und AS-Nummern in Automato reservieren, ändern und freigeben – VLANs je Standort bzw. für alle Standorte, mit Zweck und wer/wann.
+- Befunde: Hinweis „jetzt belegt“ (beim Reservieren frei, jetzt gelesen in Gebrauch), Konflikt (schon beim Reservieren belegt) und „doppelt reserviert“.
+- Ansicht „AS-Nummern“: je AS die Firewalls und Router sowie die BGP-Nachbarn mit Zustand, eBGP/iBGP und IPAM-Namen, eigen/fremd und privat.
+- NetBox-Sync, Abschnitt „Reservierungen“: VLANs mit Status `reserved` in der passenden VLAN-Gruppe, AS-Nummern als ASN-Objekte mit der RIR aus NetBox. Was in NetBox schon steht, wird nur angezeigt; Änderungen nur nach Bestätigung (Recht `ipam.asn`: `sync-user.sh` erneut ausführen). Migration `0093_reservierungen`.
+
+#### Module nach Netzwerkschichten und „Wege vergleichen“ (ADR 0067)
+
+- Oberfläche nach Netzwerkschichten: Navigation mit **L1 · Physik** (Verkabelung, Ports, Transceiver, Kabelnummern), **L2 · Switching** (VLANs, Spanning Tree, VLAN-Reservierungen), **L3 · Routing** (Netze, VRF, Routing, statische Routen, BGP, AS-Nummern, AS-Reservierungen) und **L4–7 · Firewall & Dienste** (Regeln, Objekte, NAT/VIPs, Load Balancer, VPN-Tunnel); Übergreifendes bleibt.
+- Neue Adressen `#<schicht>/<stelle>`, alte Adressen und Links leiten um; Module, Schalter je Mandant, Prüfungen, Rechte und API unverändert.
+- VLANs als eigene Ansicht in L2, Reiter „Transceiver“ in der Verkabelung, NAT/VIPs mit Filter „Load Balancer“.
+- Neues Modul **„Wege vergleichen“**: ein L3-Weg (Weg-Suche bzw. Verbindungen einer Applikation) gegen L1/L2 – VLAN auf allen Trunks erlaubt, Kabel und Nachbarn (NetBox, Verkabelung), Spanning Tree; je Abschnitt mit Ports und Geräten.
+- Befunde `path_vlan_missing`, `path_cable_mismatch`, `path_stp_blocked` über alle L3-Abschnitte; Nicht-Prüfbares je Grund als Hinweis `path_l2_unchecked` (keine stillen Grenzen).
+
+#### Nicht am echten Gerät geprüft bzw. offen
+
+- Feldnamen des Monitors am echten Gerät bestätigen; Policy-basierte Tunnel nicht gelesen; fremde Gegenstellen machen Applikationen „unvollständig geprüft“ (bis erfasst).
+- Kontexte nur mit Routing-Tabelle (IOS/NX-OS/Arista) – überdeckt/doppelt dort nicht prüfbar, ausgewiesen ohne Befund.
+- am echten Gerät prüfen (`show spanning-tree detail` kann gross sein; NX-OS err-disabled-Befehl aus der Doku).
+- Parser am echten Gerät prüfen (Aruba CX, Catalyst 1300 angenommen); Transceiver nicht nach NetBox.
+- nicht gegen echtes AD/NetBox geprüft.
+- lokales AS des ACI-Fabrics nicht gelesen; VLANs der vCenter-Portgruppen zählen nicht als belegt.
+
 ## 1.18.2 – 2026-11-17
 
 Korrektur: Das Cockpit bot einem Host auf einem Entwicklungs-Branch `main` (eine andere Linie)
