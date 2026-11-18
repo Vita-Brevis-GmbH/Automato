@@ -153,3 +153,50 @@ Belege (Herstellerdoku; in der Prüfung nur über Suchtreffer erreichbar, nicht 
   Felder einer Blackhole-Route in der Monitor-API der FortiGate (nicht belegt – erkannt wird sie
   am Interface `Null`/`blackhole`, am Protokoll bzw. über die statische Konfiguration
   `blackhole enable` mit gleichem Präfix und gleicher Distanz).
+
+## Nachtrag 2026-11-18: Gegenprüfung
+
+Eine unabhängige Gegenprüfung gegen die Herstellerdoku (Belege nur über Suchtreffer, wie oben) und
+die Zusammenführung mit ADR 0071 fanden Abweichungen; die der Weg-Suche sind korrigiert (Tests
+`orchestrator/tests/test_fable_pruefung.py`, je Nummer mit Gegenprobe):
+
+- **P-1 Reverse Path:** „feasible“ zählt jede aktive Route zur Quelle über den Eingang – auch die
+  Routen gleicher Distanz mit höherer Priorität, über die die FortiGate nicht weiterleitet (in der
+  RIB `best=False`, übliches Dual-WAN). `strict-src-check` verlangt weiter die beste Route.
+- **P-2 VIP mit Filter:** `src-filter` und `srcintf-filter` der VIP entscheiden mit (Entscheid 3):
+  passt die Quelle bzw. der Eingang nicht, kein DNAT. Nicht entscheidbar (keine Quelle, Netz nur
+  zum Teil im Filter, Dienst-Filter `service`, Quelle nach einem SNAT davor): DNAT „möglich“,
+  gezählt (`nat`).
+- **P-5 Server hinter VIP bzw. Load Balancer:** zwei Wege sind nur noch derselbe, wenn auch ihre
+  Server (`targets`) und ihr Ende gleich sind. Server derselben Klasse bleiben **ein** Weg
+  (Entscheid 11); Server mit eigenen Regeln (andere EPG, anderes Urteil der Policies) fielen bisher
+  still weg – jetzt je ein Weg mit eigenem Urteil.
+- **P-8 Pool Group (NSX ALB):** aktiv sind nur die Server des Pools mit der höchsten Priorität (der
+  höchsten mit einem eingeschalteten Server – gelesen ist nur `enabled`, nicht der Health-Zustand);
+  Pools tieferer Priorität sind Backup-Wege mit Grund (`lb.backup_to`).
+- **P-9 abgeschalteter Virtual Service:** `enabled` bzw. `traffic_enabled` aus = Ende `dropped` am
+  Load Balancer (`hop.dropped.stage = "lb"`), nicht erreicht. `OPER_DOWN` (Laufzeit) bleibt Anzeige.
+- **P-10 IPv6:** für IPv6 gilt `asymroute6`; ist der Wert nicht gelesen (älterer Lauf), gilt für
+  IPv6 „nicht geprüft“ – nie der Wert für IPv4.
+- **P-12 Route nur mit Interface:** eine Leitung zur Gegenseite ist nur ein Punkt-zu-Punkt-Interface
+  (Tunnel, seriell – nach dem Namen, mit Ziffer hinter dem Kürzel). Ein /30 bzw. /31 macht ein
+  Ethernet-Interface nicht zur Leitung: das Gerät sucht das Ziel per ARP, an kommt es nur mit
+  Proxy-ARP der Gegenseite (nicht gelesen) – Ende `unchecked`, gezählt (`onlink`), mit dem Namen
+  der gelesenen Gegenseite im Text. Ändert Entscheid 2 („/30 bzw. /31“ entfällt).
+- **P-13 Quelle als Netz, grösser als das angeschlossene** (breite Regeln, z. B. /16 statt /24):
+  der Weg beginnt an den Knoten, an denen Teile der Quelle angeschlossen sind (je Knoten und
+  Eingang ein Start; ACI: EPG-/BD-Subnetze im Netz); decken die Teile die Quelle nicht ganz, ist
+  der Rest gezählt (neue Art `start_part`). Nicht für `any` (0.0.0.0/0) – dort gilt der Eingang von
+  aussen (Entscheid 7 b–c).
+- **M-1 Eingang von aussen (Entscheid 7 c):** ein Eingang am Rand zählt nicht, wenn der Weg am
+  selben Knoten wieder dorthin hinausgeht, woher er kam – über den Eingang **oder über einen der
+  Wege, auf denen der Knoten die Quelle erreicht** (zwei Provider: von `any` an wan1 herein, über
+  die Default-Route an wan2 hinaus). Verkehr von aussen zu einer öffentlichen Adresse kommt dort
+  an, wo sie liegt: nach Rückweg und Rand beginnt der Weg an der Firewall, der das Ziel als VIP
+  gehört (Eingang `extintf`). Ist deren Routing nicht gelesen, bleibt „Start unbekannt“, gezählt
+  (`start`) – nie ein Weg über eine andere Firewall und nie „führt nicht über die Firewall der
+  Regel“. Ein Eingang, von dem nur ein Backup-Weg übrig bleibt, zählt ebenfalls nicht.
+
+Weiter nicht entscheidbar (gezählt bzw. offen): Health-Zustand der Pools und Server (NSX ALB),
+Proxy-ARP der Gegenseite, Punkt-zu-Punkt-Interfaces mit freiem Namen (FortiGate GRE mit eigenem
+Namen: als Netz mit ARP behandelt, „nicht geprüft“), der Dienst-Filter einer VIP.

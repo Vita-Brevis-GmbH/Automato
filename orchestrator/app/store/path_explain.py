@@ -590,6 +590,14 @@ class Explainer:
                     "source via this incoming interface is missing, the traffic really arrives "
                     "elsewhere – or the route is missing (asymmetric routing).",
                 ),
+                "lb": L(
+                    "Ein abgeschalteter Virtual Service nimmt keinen Verkehr an: die Service "
+                    "Engine antwortet für die VIP nicht. Im Load Balancer einschalten (enabled "
+                    "und traffic_enabled) und neu einlesen.",
+                    "A disabled virtual service accepts no traffic: the service engine does not "
+                    "answer for the VIP. Enable it on the load balancer (enabled and "
+                    "traffic_enabled) and collect again.",
+                ),
                 "ipsec": L(
                     "Ein IPsec-Tunnel trägt nur Verkehr, den eine Phase 2 mit Quelle und Ziel "
                     "in ihren Selektoren abdeckt, und nur, solange er up ist – sonst verwirft "

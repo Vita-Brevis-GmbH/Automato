@@ -496,6 +496,27 @@ class Graph:
             stmt = stmt.where(TopoRoute.protocol.in_(_CONNECTED))
         return list(self.session.scalars(stmt))
 
+    def standby_routes(self, ip, key: Key) -> list[TopoRoute]:
+        """Routen der RIB, die die IP enthalten und **nicht** weiterleiten (`best=False`):
+        FortiOS haelt Routen gleicher Distanz mit hoeherer Prioritaet in der Routing-Tabelle -
+        gewaehlt wird ueber sie nicht, aktiv sind sie aber (Reverse Path „feasible“,
+        Gegenpruefung P-1). Nur fuer den Reverse Path gefragt, dort je Quelle gemerkt."""
+        lo, hi = (ip_hex(v) for v in span(ip))
+        return list(
+            self.session.scalars(
+                select(TopoRoute).where(
+                    TopoRoute.tenant_id == self.tenant_id,
+                    TopoRoute.source_system_id == key[0],
+                    TopoRoute.context == key[1],
+                    TopoRoute.family == ip.version,
+                    TopoRoute.table == "rib",
+                    TopoRoute.best.is_(False),
+                    TopoRoute.lo <= lo,
+                    TopoRoute.hi >= hi,
+                )
+            )
+        )
+
     def _index(self, key: Key | None) -> "_Rib | None":
         """Index der RIB eines Kontexts (bzw. der angeschlossenen Netze aller Kontexte) - erst ab
         einigen Abfragen lohnt das Laden; davor None (Abfrage der Datenbank)."""
@@ -624,6 +645,56 @@ class Graph:
             ifaces = [h.get("interface") for h in r.next_hops or [] if h.get("interface")]
             out.append((key, ifaces[0] if ifaces else None, table_of(r)))
         return out
+
+    def connected_parts(self, net) -> tuple[list[tuple[Key, str | None, str]], bool]:
+        """Knoten, an denen **Teile** des Netzes angeschlossen sind (Gegenpruefung P-13: die
+        Quelle einer breiten Regel, z. B. 10.10.0.0/16, ist groesser als das angeschlossene
+        /24): je Knoten und Interface ein Eintrag (Knoten, Interface, Praefixe als Text) - der
+        Eingang entscheidet ueber die Policies. Dazu die ACI-VRFs mit EPG-/BD-Subnetzen im Netz.
+        -> (Eintraege, ob die Teile das ganze Netz decken)."""
+        cache = self.__dict__.setdefault("_parts", {})
+        if net in cache:
+            return cache[net]
+        lo, hi = (ip_hex(v) for v in span(net))
+        found: dict[tuple[Key, str | None], list] = {}
+        rows = self.session.execute(
+            select(TopoRoute.source_system_id, TopoRoute.context, TopoRoute.prefix,
+                   TopoRoute.next_hops)
+            .where(
+                TopoRoute.tenant_id == self.tenant_id,
+                TopoRoute.family == net.version,
+                TopoRoute.table == "rib",
+                TopoRoute.best.is_(True),
+                TopoRoute.protocol == "connected",
+                TopoRoute.lo >= lo,
+                TopoRoute.hi <= hi,
+            )
+            .order_by(TopoRoute.source_system_id, TopoRoute.context, TopoRoute.lo, TopoRoute.id)
+        )  # fmt: skip
+        for sid, context, prefix, hops in rows:
+            key = (sid, context)
+            if key not in self.nodes:
+                continue
+            iface = next((h.get("interface") for h in hops or [] if h.get("interface")), None)
+            if self.table(key, iface) == MGMT:
+                continue  # Management-Netz: kein Verkehr der Quelle
+            found.setdefault((key, iface), []).append(prefix)
+        self.fabric(net)  # laedt die Subnetze des Fabrics
+        for sub, nkey, _text in self._fabric_rows or []:
+            if sub.version == net.version and within(sub, net):
+                found.setdefault((nkey, None), []).append(str(sub))
+        nets = []
+        for prefixes in found.values():
+            for prefix in prefixes:
+                try:
+                    nets.append(ipaddress.ip_network(prefix, strict=False))
+                except ValueError:
+                    continue
+        covered = sum(n.num_addresses for n in ipaddress.collapse_addresses(nets))
+        out = [(key, iface, ", ".join(dict.fromkeys(prefixes)))
+               for (key, iface), prefixes in found.items()]  # fmt: skip
+        cache[net] = (out, covered >= net.num_addresses)
+        return cache[net]
 
     def backups(self, key: Key, ip, table: Table, route: dict) -> list[dict]:
         """Backup-Next-Hops fuer das Praefix der aktiven Route: BGP-Pfade und eingeschaltete
@@ -849,12 +920,12 @@ class Graph:
             )
         return self._vips[key]
 
-    def dnat(self, key: Key, ip, ingress: dict, service=None) -> dict | None:
+    def dnat(self, key: Key, ip, ingress: dict, service=None, src=None) -> dict | None:
         """VIP der FortiGate (DNAT) fuer das Ziel an diesem Knoten (`path_stages.dnat`, ADR
         0070): externe IP bzw. Bereich, `extintf` und - bei Port-Weiterleitung - Protokoll und
         Port passen; ohne Central NAT nur VIPs in einer eingeschalteten Policy -> interne IP(s),
         beim Virtual Server alle Real Server. Ein Netz als Ziel (0.39.0) geht ohne DNAT weiter."""
-        n, to, _why = path_stages.dnat(self, key, ip, ingress, service)
+        n, to, _why = path_stages.dnat(self, key, ip, ingress, service, src)
         return self.nat_out(key, n, to) if n is not None else None
 
     def nat_out(self, key: Key, n: NatRule, to: list[str]) -> dict:
@@ -975,17 +1046,26 @@ class Graph:
         if port is None:  # ohne Dienst: die Virtual Services des ersten Ports
             rows = [x for x in rows if x[0].ext_port == rows[0][0].ext_port]
         servers: list[dict] = []
+        spare: list[dict] = []  # Pool Group: Server der Pools tieferer Prioritaet (P-8)
         for n, _source in rows:
+            later = _lower_priority(n.targets or [])
             for t in n.targets or []:
                 if t.get("ip") and not any(
                     (t["ip"], t.get("port")) == (x["ip"], x.get("port")) for x in servers
                 ):
                     servers.append(t)
+                    if id(t) in later:
+                        spare.append(t)
         # der Virtual Service, der im Hop steht: der erste mit Servern, sonst der erste
         n, source = next((x for x in rows if any(t.get("ip") for t in x[0].targets or [])),
                          rows[0])  # fmt: skip
         attrs = n.attrs or {}
-        ready = [t for t in servers if t.get("status", "active") == "active"] or servers
+        first = [t for t in servers if t not in spare]
+        ready = [t for t in first if t.get("status", "active") == "active"] or first
+        waiting = [t for t in spare if t.get("status", "active") == "active"]
+        # abgeschaltet (`enabled` bzw. `traffic_enabled` false, P-9): die VIP antwortet nicht
+        off = all((x.attrs or {}).get("enabled") is False
+                  or (x.attrs or {}).get("traffic_enabled") is False for x, _s in rows)  # fmt: skip
         redirect = next(((x.attrs or {}).get("redirect") for x, _s in rows
                          if (x.attrs or {}).get("redirect")), None)  # fmt: skip
         down = all((x.attrs or {}).get("oper_status") == "OPER_DOWN"
@@ -998,6 +1078,10 @@ class Graph:
             "ext": n.ext_ip,
             "port": n.ext_port,
             "to": [t["ip"] for t in ready],
+            # Pool Group (Avi): die Pools tieferer Prioritaet bekommen erst Verkehr, wenn im
+            # Pool mit der hoechsten kein Server mehr erreichbar ist - Backup-Wege
+            "backup_to": [t["ip"] for t in waiting if t["ip"] not in {x["ip"] for x in ready}]
+            or None,
             "server_port": ready[0].get("port") if ready else None,
             "servers": len(servers),
             # alle Server der Pools mit Namen und Zustand (0.114.1)
@@ -1010,6 +1094,7 @@ class Graph:
                         "weight": t.get("ratio") or t.get("weight"),
                         "hostname": t.get("hostname"),
                         "pool": t.get("pool"),
+                        "priority": t.get("priority"),
                     }
                     for t in servers[:MAX_SERVERS]
                 ]
@@ -1024,6 +1109,7 @@ class Graph:
             # Quelle danach: Service Engine (SNAT) bzw. der Client (preserve_client_ip)
             "snat": attrs.get("snat") or "service_engine",
             "down": down,
+            "off": off,
             # der Port leitet nur um (HTTP → HTTPS): der Fluss endet am Load Balancer
             "redirect": redirect if not servers else None,
         }
@@ -1068,6 +1154,28 @@ class Graph:
                         found[((sid, context), h["interface"])].add(prefix)
             self.__dict__["_p2p_nets"] = found
         return found
+
+
+def _lower_priority(targets: list[dict]) -> set[int]:
+    """Server einer Pool Group (NSX ALB), die **nicht** im Pool mit der hoechsten Prioritaet
+    liegen (`id` der Eintraege): Avi waehlt einen Pool tieferer Prioritaet erst, wenn in keinem
+    der hoechsten ein Server gefunden wird (Gegenpruefung P-8). Gelesen ist nur, ob ein Server
+    eingeschaltet ist - die hoechste Prioritaet mit einem eingeschalteten Server gilt; ohne
+    Prioritaet (ein einzelner Pool) sind alle gleich."""
+
+    def rank(t: dict) -> int | None:
+        try:
+            return int(t["priority"])
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    ranked = [(rank(t), t) for t in targets if t.get("ip")]
+    levels = {r for r, _t in ranked if r is not None}
+    if len(levels) < 2:
+        return set()
+    usable = {r for r, t in ranked if r is not None and t.get("status", "active") == "active"}
+    top = max(usable or levels)
+    return {id(t) for r, t in ranked if r is not None and r != top}
 
 
 def parse_key(value: str | None) -> Key | None:
@@ -1201,6 +1309,23 @@ def _trace(
         if not starts:
             starts = [(k, None, L(f"Quelle im Fabric: {text}", f"Source in fabric: {text}"))
                       for k, text in g.fabric(src)]  # fmt: skip
+        if not starts and is_net(src) and src.prefixlen:
+            # ein Netz, groesser als die angeschlossenen (Gegenpruefung P-13, ueblich bei breiten
+            # Regeln): der Verkehr aus den angeschlossenen Teilen kommt dort an - je Knoten und
+            # Eingang ein Start; fuer den uebrigen Teil ist der Start unbekannt, gezaehlt
+            parts, whole = g.connected_parts(src)
+            for k, iface, prefixes in parts:
+                how = L(f"Teil der Quelle angeschlossen ({prefixes})",
+                        f"part of the source connected ({prefixes})")  # fmt: skip
+                starts.append((k, iface, how))
+            if starts and not whole:
+                unsure("start_part", L(
+                    f"Von der Quelle {src} sind nur Teile an gelesenen Geräten angeschlossen – "
+                    "der Weg beginnt dort; für den übrigen Teil ist der Start unbekannt "
+                    "(nicht geprüft)",
+                    f"Only parts of the source {src} are connected to devices read – the path "
+                    "starts there; for the remaining part the start is unknown (not checked)",
+                ))  # fmt: skip
         if not starts:
             whole = L(" (das ganze Netz)", " (the whole network)") if is_net(src) else ""
             notes.append(
@@ -1288,6 +1413,18 @@ def _trace(
             return False
         hop["lb"] = lb
         out = paths if dev is None else backups_found
+        if lb.get("off"):
+            # abgeschalteter Virtual Service (Gegenpruefung P-9): die Service Engine antwortet
+            # fuer die VIP nicht (kein ARP) - nicht erreicht
+            text = L(
+                f"verworfen am Load Balancer {lb['name']}: der Virtual Service ist abgeschaltet "
+                "(enabled bzw. traffic_enabled aus) – die VIP antwortet nicht",
+                f"dropped at load balancer {lb['name']}: the virtual service is disabled "
+                "(enabled or traffic_enabled off) – the VIP does not answer",
+            )
+            hop["dropped"] = {"stage": "lb", "text": text}
+            _record(out, hops, hop, "dropped", text, dev)
+            return True
         if lb.get("redirect"):
             text = L(
                 f"Load Balancer {lb['name']} leitet um (HTTP → HTTPS) – der Fluss endet am "
@@ -1307,6 +1444,15 @@ def _trace(
         name = f"Load Balancer {lb['name']} ({lb.get('source', 'NSX ALB')})"
         via = L(f"über {name}", f"via {name}")
         fan_out(hops, hop, key, iface, via, table, dev, "lb", lb["to"], False)
+        if backups and dev is None and lb.get("backup_to"):
+            # Pool Group (P-8): Pools tieferer Prioritaet sind Backup-Wege, nie aktive
+            deviation = {"hop": len(hops), "label": name, "reason": L(
+                "Pool tieferer Priorität der Pool Group – nur, wenn im Pool mit der höchsten "
+                "Priorität kein Server erreichbar ist",
+                "pool of lower priority in the pool group – only if no server of the pool "
+                "with the highest priority is reachable",
+            )}  # fmt: skip
+            fan_out(hops, hop, key, iface, via, table, deviation, "lb", lb["backup_to"], False)
         return True
 
     # (Hops, Knoten, Eingang, wie erreicht, VRF, Abweichung, Ziel nach NAT, begonnener Hop) -
@@ -1348,8 +1494,10 @@ def _trace(
             # Dienst an diesem Hop: nach der Port-Weiterleitung und den Load Balancern davor
             svc = path_service.at_end([*hops, hop], service)
             if firewall:  # Stufe DNAT: VIP nach Adresse, Eingang und Dienst (ADR 0070)
-                vip, to, why = path_stages.dnat(g, key, cur, hop["ingress"], svc)
+                vip, to, why = path_stages.dnat(g, key, cur, hop["ingress"], svc, src)
                 unsure("nat", why)
+                if src is not None and (names := path_stages.source_filtered(g, key, cur)):
+                    hop["_src_filter"] = names
                 if vip is not None:
                     hop["nat"] = g.nat_out(key, vip, to)
                     if len(to) > 1:  # Virtual Server: zu jedem Real Server
@@ -1466,8 +1614,10 @@ def _trace(
             tun = g.tunnel(key, nh.get("interface"))  # IPsec-Tunnel (1.19.0, ADR 0063)
             if tun is not None:
                 nxt = vpn_store.hop(g, key, tun, cur, egress, nxt)
-            elif not nxt and not ip:
-                # Route nur mit Interface (ADR 0070): an die Gegenseite der Leitung
+            elif not nxt and not ip and _is_line(nh.get("interface")):
+                # Route nur mit Interface (ADR 0070): an die Gegenseite der Leitung - nur auf
+                # einer echten Punkt-zu-Punkt-Leitung (Tunnel, seriell); auf Ethernet fragt das
+                # Geraet auch im /30 per ARP nach dem Ziel (Gegenpruefung P-12, unten)
                 line = L(f"Leitung {nh.get('interface')}", f"link {nh.get('interface')}")
                 nxt = [(k, i, line) for k, i in g.link_peer(key, nh.get("interface"), table)]
             for nkey, niface, how in nxt:
@@ -1519,7 +1669,7 @@ def _trace(
                 continue
             known = g.names(ip) or ([egress["network"]] if egress.get("network") else [])
             name = f" ({', '.join(known)})" if known else ""
-            if not ip and _is_line(g, key, nh.get("interface")):
+            if not ip and _is_line(nh.get("interface")):
                 iface = nh.get("interface") or "?"
                 kind, text = "unknown", L(
                     f"weiter über {iface} ohne Next-Hop – die Gegenseite der Leitung ist nicht "
@@ -1531,13 +1681,20 @@ def _trace(
                 # das Geraet fragt direkt nach dem Ziel (ARP) - es ist dort nur, wenn es wirklich
                 # am Interface haengt bzw. jemand per Proxy-ARP antwortet; nicht belegt
                 iface = nh.get("interface") or "?"
+                # im Transfernetz (/30, /31) liegt ein gelesenes Geraet: an kommt es dort nur,
+                # wenn dieses per Proxy-ARP antwortet - nicht gelesen (P-12)
+                far = ", ".join(g.nodes[k].label for k, _i in g.link_peer(key, iface, table))
+                peer_de = (f"; die Gegenseite {far} nimmt den Verkehr nur mit Proxy-ARP an "
+                           "(nicht gelesen)") if far else ""  # fmt: skip
+                peer_en = (f"; the far end {far} accepts the traffic with proxy ARP only "
+                           "(not read)") if far else ""  # fmt: skip
                 kind, text = "unchecked", L(
                     f"nicht geprüft: Route nur mit Interface {iface} an {node.label} – das "
                     "Gerät sucht das Ziel direkt am Interface (ARP); ob es dort ist, ist nicht "
-                    "belegt",
+                    f"belegt{peer_de}",
                     f"not checked: route with interface {iface} only at {node.label} – the "
                     "device looks for the destination directly on the interface (ARP); whether "
-                    "it is there is not proven")  # fmt: skip
+                    f"it is there is not proven{peer_en}")  # fmt: skip
                 uncertain["onlink"] += 1
             elif default and is_private(cur):
                 # privates Ziel ueber die Default-Route an ein nicht gelesenes Geraet (ADR 0070):
@@ -1625,6 +1782,7 @@ def _trace(
     for p in primary + found_backups:
         for h in p["hops"]:
             h.pop("_cur", None)
+            h.pop("_src_filter", None)
     out = {
         "start": [g.nodes[k].out() | {"via": via} for k, _, via in starts],
         # Session-Sync-Paar bzw. Verbund als ein Hop (0.29.0)
@@ -1653,16 +1811,25 @@ def _fan_signature(full: list[dict], kind: str, text: str, deviation) -> tuple:
     return (hops, kind, text, dev.get("hop"), dev.get("reason"))
 
 
-_LINE = re.compile(r"^(tu|tunnel|se|serial|di|dialer|gre|vti|ppp|st\d|gr-|ip-|lt-|vi|virtual-)",
-                   re.I)  # fmt: skip
+# Punkt-zu-Punkt nach dem Namen des Interfaces: Cisco `Tunnel0`/`Tu0`, `Serial0/0`/`Se0/0`,
+# `Dialer1`/`Di1`, `Virtual-Access1`/`Vi1`, `Virtual-Template1`/`Vt1`, `Multilink1`, Junos `st0`
+# (mit Ziffer hinter dem Kuerzel - „server“ bzw. „vip-net“ einer FortiGate sind keine Leitung);
+# `gre…`, `vti…`, `ppp…`, Junos `gr-`, `ip-`, `lt-`.
+_LINE = re.compile(
+    r"^(?:(?:tu|tunnel|se|serial|di|dialer|vi|vt|virtual-access|virtual-template|mu|multilink"
+    r"|st)\s*\d|gre|vti|ppp|gr-|ip-|lt-)",
+    re.I,
+)
 
 
-def _is_line(g: Graph, key: Key, interface: str | None) -> bool:
-    """Interface einer Punkt-zu-Punkt-Leitung (Tunnel, seriell, /30 bzw. /31) - eine Route nur
-    mit diesem Interface geht an die Gegenseite, nicht per ARP ans Ziel."""
+def _is_line(interface: str | None) -> bool:
+    """Interface einer Punkt-zu-Punkt-Leitung (Tunnel, seriell) - eine Route nur mit diesem
+    Interface geht an die Gegenseite, nicht per ARP ans Ziel. Ein /30 bzw. /31 allein macht ein
+    Ethernet-Interface nicht zur Leitung (Gegenpruefung P-12): der Router behandelt das Ziel als
+    angeschlossen und sucht es per ARP - an kommt es nur mit Proxy-ARP der Gegenseite."""
     if not interface:
         return True
-    return bool(_LINE.match(interface)) or bool(g._p2p().get((key, interface)))
+    return bool(_LINE.match(interface))
 
 
 def _in_exit(ex: TopoExit, dst) -> bool:
@@ -1716,6 +1883,15 @@ def _enforce(g: Graph, found: list[dict], src, unsure, with_rules: bool) -> bool
                     "verglichen – nach dem SNAT davor nicht geprüft",
                     f"{hop['label']}: policy routes compared with the original source {src} – "
                     "not checked after the SNAT before it",
+                ))  # fmt: skip
+            if hop.get("_src_filter") and cur_src != src:
+                # der Quell-Filter der VIP ist mit der urspruenglichen Quelle verglichen (P-2)
+                names = ", ".join(hop["_src_filter"][:3])
+                unsure("nat", L(
+                    f"NAT nicht geprüft an {hop['label']}: Quell-Filter der VIP {names} mit der "
+                    f"ursprünglichen Quelle {src} verglichen – nach dem SNAT davor nicht geprüft",
+                    f"NAT not checked at {hop['label']}: source filter of VIP {names} compared "
+                    f"with the original source {src} – not checked after the SNAT before it",
                 ))  # fmt: skip
             if i > 0 and cur_src is not None and ingress:
                 res = path_stages.reverse_path(g, key, hop.get("vrf", 0), cur_src, ingress)
@@ -1847,10 +2023,26 @@ def _service_text(service: tuple[str, int | None] | None) -> str | None:
 
 
 def _signature(p: dict) -> tuple:
-    return tuple(
-        (h["key"], *((h.get("egress") or {}).get(k) for k in ("next_hop", "interface")))
-        for h in p["hops"]
-    ) + (p["end"]["kind"],)
+    """Woran zwei Wege derselbe sind: Hops mit Ausgang, die Server hinter VIP bzw. Load Balancer
+    (`targets`) und das Ende. Wege, die sich nur im Server unterscheiden, sind **nicht** gleich
+    (Gegenpruefung P-5): Server derselben Klasse hat `record` schon zu einem Weg mit allen
+    Zielen zusammengefasst - was hier noch getrennt ankommt, hat eigene Regeln (andere EPG,
+    anderes Urteil der Policies) und darf nicht still wegfallen. Ebenso der Eingang am Start:
+    mehrere Starts am selben Knoten (Teile der Quelle an verschiedenen Interfaces, P-13; mehrere
+    Eingaenge von aussen) haben je eigene Policies."""
+    first = (p["hops"][0].get("ingress") or {}).get("interface") if p["hops"] else None
+    return (
+        (first,)
+        + tuple(
+            (
+                h["key"],
+                *((h.get("egress") or {}).get(k) for k in ("next_hop", "interface")),
+                tuple((h.get("lb") or h.get("nat") or {}).get("targets") or ()),
+            )
+            for h in p["hops"]
+        )
+        + (p["end"]["kind"], p["end"].get("text"))
+    )
 
 
 def _merge_parallel(paths: list[dict]) -> list[dict]:

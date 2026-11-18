@@ -150,6 +150,12 @@ def cut_text(kind: str, x: dict) -> str:
                    f"{n} connections of {rules} rules without a known start – the source is "
                    "connected to no device read, and no device read knows the path to it; the "
                    "path is not checked"),
+        "start_part": L(f"{n} Verbindungen von {rules} Regeln mit einem Netz als Quelle, von "
+                        "dem nur Teile an gelesenen Geräten angeschlossen sind – der Weg beginnt "
+                        "dort, für den übrigen Teil ist der Start nicht geprüft",
+                        f"{n} connections of {rules} rules with a network as source of which "
+                        "only parts are connected to devices read – the path starts there, for "
+                        "the remaining part the start is not checked"),
         "truncated": L(f"{n} Verbindungen von {rules} Regeln mit mehr als {paths.MAX_PATHS} "
                        "Wegen – die übrigen Wege sind nicht geprüft",
                        f"{n} connections of {rules} rules with more than {paths.MAX_PATHS} "
@@ -1243,25 +1249,36 @@ def connection_trace(session: Session, tid: int, graph: paths.Graph,
     res = paths.trace(session, tid, dst, src, None, 0, service, graph=graph,
                       checks=checks)  # fmt: skip
     start = None
+    turned = False  # ein Eingang von aussen schickte den Verkehr gleich wieder hinaus (M-1)
     if not res["paths"]:
         # Quelle an keinem gelesenen Geraet (0.107.0, Anwender: Wege, „welche Routing technisch
         # keinen Sinn ergeben“): der Weg beginnt, wo der Rueckweg das gelesene Netz verlaesst -
         # nicht auf irgendeinem Geraet mit einer Regel dafuer
-        entries = entries_of(session, tid, graph, checks, src, dst)
-        if not entries:
-            entries = edge_entries(graph, src)
-        found = paths.trace(session, tid, dst, src, None, 0, service, graph=graph,
-                            checks=checks, entries=entries) if entries else None  # fmt: skip
-        if found is not None:
+        # Reihenfolge der Eingaenge: nach dem Rueckweg, sonst am Rand, sonst an der Firewall,
+        # der das Ziel als VIP gehoert (Befund M-1: Verkehr von aussen zu einer oeffentlichen
+        # Adresse kommt dort an, wo die Adresse liegt)
+        for entries in (entries_of(session, tid, graph, checks, src, dst),
+                        edge_entries(graph, src), vip_entries(graph, src, dst)):  # fmt: skip
+            if not entries:
+                continue
+            found = paths.trace(session, tid, dst, src, None, 0, service, graph=graph,
+                                checks=checks, entries=entries)  # fmt: skip
             # ein Eingang, der den Verkehr gleich wieder dorthin zurueckschickt, woher er kam,
             # ist keiner: der Nachbar haette ihn nie hierher geroutet
-            found["paths"] = [p for p in found["paths"] if not _hairpin(p)]
-        if found and found["paths"]:
-            res = found
-            used = {paths.parse_key(x.get("key")) for p in found["paths"]
+            kept = [p for p in found["paths"] if not _hairpin(graph, p, src)]
+            # ein Eingang zaehlt nur mit einem aktiven Weg: bleibt von ihm nur ein Backup-Weg
+            # (z. B. ein nicht gewaehlter BGP-Pfad), kommt der Verkehr dort nicht an
+            alive = {_entry_of(p) for p in kept if p.get("kind") != "backup"}
+            kept = [p for p in kept if _entry_of(p) in alive]
+            turned = turned or len(kept) < len(found["paths"])
+            if not kept:
+                continue
+            res = {**found, "paths": kept}
+            used = {paths.parse_key(x.get("key")) for p in kept
                     for x in _parts(p["hops"][0])}  # fmt: skip
             start = ", ".join(dict.fromkeys(graph.nodes[k].label for k, *_ in entries
                                             if k in used))  # fmt: skip
+            break
     if not res["paths"]:
         for key in starts or []:
             node = graph.nodes.get(paths.parse_key(key))
@@ -1280,24 +1297,93 @@ def connection_trace(session: Session, tid: int, graph: paths.Graph,
             "Start unknown – the source is connected to no device read, and no device read has "
             "a route to it via a neighbor that is not read; the path is not checked",
         )
+        if turned:
+            # die Eingaenge von aussen leiten das Ziel nur wieder hinaus: dort kommt Verkehr
+            # fuer dieses Ziel nicht an - nie „nicht ueber die Firewall der Regel“ (M-1)
+            text = L(
+                f"Start unbekannt – Verkehr von {src} zu {dst} kommt dort an, wo {dst} liegt "
+                "(Besitzer der Adresse bzw. der VIP); an den gelesenen Eingängen von aussen "
+                "ginge er nur wieder hinaus, und das Routing des Besitzers ist nicht gelesen; "
+                "der Weg ist nicht geprüft",
+                f"Start unknown – traffic from {src} to {dst} arrives where {dst} is located "
+                "(owner of the address or the VIP); at the entries from outside that were read "
+                "it would only leave again, and the routing of the owner has not been read; the "
+                "path is not checked",
+            )
         if text not in res["notes"]:
             res["notes"].append(text)
         res.setdefault("uncertain", {})["start"] = 1
     return res, start
 
 
-def _hairpin(p: dict) -> bool:
-    """Weg, der am ersten Knoten ueber seinen Eingang wieder hinausgeht (nicht zu einem
-    gelesenen Geraet)."""
+def _entry_of(p: dict) -> tuple:
+    """Eingang eines Wegs: Knoten und Interface des ersten Hops (bzw. des Verbunds)."""
+    first = (p.get("hops") or [{}])[0]
+    return tuple(sorted((str(x.get("key")), str((x.get("ingress") or {}).get("interface")))
+                        for x in _parts(first)))  # fmt: skip
+
+
+# Enden, an denen der Weg die gelesenen Geraete verlaesst (bzw. dort nicht weiter bekannt ist)
+_LEAVES = ("exit", "external", "unknown", "unchecked", "vpn")
+
+
+def _hairpin(graph: paths.Graph, p: dict, src: str | None = None) -> bool:
+    """Weg, der am ersten Knoten wieder dorthin hinausgeht, woher er kam (nicht zu einem
+    gelesenen Geraet): ueber seinen Eingang - bzw. ueber einen der Wege, auf denen der Knoten
+    die Quelle erreicht (Befund M-1: mit zwei Providern kommt der Verkehr von „any“ an wan1 an
+    und ginge fuer ein oeffentliches Ziel ueber die Default-Route an wan2 wieder hinaus - der
+    Provider haette ihn nie hierher geroutet, das Ziel liegt woanders)."""
     hops = p.get("hops") or []
     if len(hops) != 1:
         return False
+    try:
+        source = endpoint(src) if src else None
+    except ValueError:
+        source = None
     for part in _parts(hops[0]):
         ingress = (part.get("ingress") or {}).get("interface")
-        egress = (part.get("egress") or {}).get("interface")
-        if ingress and ingress == egress:
+        egress = part.get("egress") or {}
+        if ingress and ingress == egress.get("interface"):
             return True
+        key = paths.parse_key(part.get("key"))
+        if source is None or key not in graph.nodes or (p.get("end") or {}).get("kind") \
+                not in _LEAVES or part.get("nat") or part.get("lb"):  # fmt: skip
+            continue
+        back = graph.route(key, source, part.get("vrf", 0)) or {}
+        for b in back.get("branches") or []:
+            same_hop = b.get("ip") and b.get("ip") == egress.get("next_hop")
+            same_port = b.get("interface") and b.get("interface") == egress.get("interface")
+            if same_hop or (same_port and not (b.get("ip") and egress.get("next_hop"))):
+                return True
     return False
+
+
+def vip_entries(graph: paths.Graph, src: str, dst: str) -> list[tuple]:
+    """Firewalls (mit gelesenem Routing), denen das Ziel als VIP gehoert (Befund M-1): Verkehr
+    von aussen zu einer veroeffentlichten Adresse kommt an der Firewall der VIP an - am Eingang
+    der VIP (`extintf`; any: nach der Route zur Quelle). -> wie `entries_of`."""
+    try:
+        ip = endpoint(dst)
+    except ValueError:
+        return []
+    if paths.is_net(ip):
+        return []
+    out: list[tuple] = []
+    for key, node in graph.nodes.items():
+        if node.kind not in path_stages.FIREWALLS:
+            continue
+        for n in path_stages._vips_at(graph, key, ip):
+            raw = n.raw if isinstance(n.raw, dict) else {}
+            if str(raw.get("status") or "enable") == "disable":
+                continue
+            extintf = str(raw.get("extintf") or "any").strip()
+            iface = None if extintf == "any" else extintf
+            how = L(f"VIP {n.name}", f"VIP {n.name}") if iface is None else L(
+                f"VIP {n.name}, Eingang {iface}", f"VIP {n.name}, incoming {iface}")  # fmt: skip
+            zone = graph.zone(key[0], iface) if iface else None
+            out.append((key, iface, zone, how))
+            break
+    return out
 
 
 def edge_entries(graph: paths.Graph, src: str) -> list[tuple]:

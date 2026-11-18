@@ -84,10 +84,16 @@ def test_netz_als_ganzes_route_und_policy(client):
     assert rules["rules"][0]["src"] == "10.10.0.5 (Teil)"  # das Objekt der Policy
     assert rules["text"].endswith("abhängig von: Quelle nur teilweise, Ziel nur teilweise")
 
-    # ein Netz, das kein Gerät ganz angeschlossen hat: Startpunkt wählen
+    # ein Netz, von dem nur ein Teil angeschlossen ist (Gegenprüfung P-13): der Weg beginnt am
+    # angeschlossenen Teil, der Rest ist gezählt - bis 1.21 „Startpunkt wählen“, kein Weg
     out = _trace(client, tid, src="10.10.0.0/16", dst="10.30.0.0/23")
+    assert [p["hops"][0]["label"] for p in out["paths"]] == ["fw-r"]
+    assert out["start"][0]["via"] == "Teil der Quelle angeschlossen (10.10.0.0/22)"
+    assert out["uncertain"]["start_part"] == 1
+    # kein Teil angeschlossen: Startpunkt wählen
+    out = _trace(client, tid, src="10.99.0.0/16", dst="10.30.0.0/23")
     assert out["paths"] == []
-    assert out["notes"][0].startswith("Kein gelesenes Gerät hat 10.10.0.0/16 (das ganze Netz)")
+    assert out["notes"][0].startswith("Kein gelesenes Gerät hat 10.99.0.0/16 (das ganze Netz)")
 
 
 def test_netz_in_lookup_und_validierung(client):

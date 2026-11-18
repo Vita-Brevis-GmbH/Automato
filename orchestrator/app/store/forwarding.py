@@ -17,7 +17,8 @@ Modell, getrennt von der Suche:
   - `link` - Route nur mit Interface (Tunnel, Punkt-zu-Punkt, Inter-VDOM-Link): das Paket geht
     an die Gegenseite der Leitung; das Ziel ist **nicht** angeschlossen.
 - **Reverse Path** (FortiGate): gibt es eine aktive Route zur Quelle ueber den Eingang
-  (`feasible`), bzw. ist es die beste (`strict`)?
+  (`feasible`), bzw. ist es die beste (`strict`)? Aktiv sind auch die Routen gleicher Distanz
+  mit hoeherer Prioritaet, ueber die das Geraet nicht weiterleitet (`best=False`).
 
 Die Entscheidung je Menge gleicher Routen wird einmal je Datenstand gerechnet und im
 Wege-Speicher geteilt (`shared["decisions"]`) - viele Ziele treffen dieselbe Route, also dieselbe
@@ -223,7 +224,11 @@ def _reverse_path(g, key, table: Table, src, ingress: str) -> tuple[str, bool]:
     if strict:
         return "feasible", True
     blind = False
-    for r in rows:
+    # dazu die Routen, die in der Routing-Tabelle stehen, ueber die aber nicht weitergeleitet
+    # wird (FortiOS: gleiche Distanz, hoehere Prioritaet - ueblich bei Dual-WAN): fuer
+    # „feasible“ genuegt eine aktive Route ueber den Eingang, die beste muss es nicht sein
+    standby = [r for r in g.standby_routes(src, key) if table_of(r) == table and not is_null(r)]
+    for r in [*rows, *standby]:
         for h in r.next_hops or []:
             if _via(h, ingress):
                 return "feasible", False

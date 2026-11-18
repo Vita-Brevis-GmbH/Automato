@@ -510,8 +510,8 @@ def _app_coverage(subject: str, d: dict) -> tuple[str, str]:
         )
         hint = vpn if set(cuts) == {"vpn"} else f"{hint} {vpn}"
     # ADR 0070: Stellen der Wege, die nicht sicher entschieden sind (gezaehlt statt still)
-    ways = set(cuts) & {"start", "rpf", "nat", "default", "onlink", "policy_route", "sdwan",
-                        "truncated", "return"}  # fmt: skip
+    ways = set(cuts) & {"start", "start_part", "rpf", "nat", "default", "onlink", "policy_route",
+                        "sdwan", "truncated", "return"}  # fmt: skip
     if ways:
         way = L(
             "Nicht geprüfte Stellen der Wege (Start unbekannt, Default-Route, Reverse Path, NAT, "

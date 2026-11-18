@@ -25,6 +25,7 @@ import test_fable_regeln as fr
 import test_fable_wege as fw
 import test_paths as tp
 import test_policy_check as pc
+import test_search_nat as sn
 from test_fable_wege import (
     REACHED,
     _active,
@@ -424,12 +425,6 @@ def test_s3_dnat_load_balancer_und_umleitung(client, session_factory):
     assert {_labels(p)[0] for p in res["paths"]} == {"rt-wan-01", "rt-wan-02"}
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="P-5: Server des Pools in verschiedenen EPGs derselben "
-    "ACI-VRF - der Weg zum zweiten Server fällt still weg (`paths._unique`: "
-    "gleiche Hops ohne Ausgang gelten als derselbe Weg), nicht gezählt",
-)
 def test_p5_s3_weg_zu_jedem_server_des_pools_im_fabric(client):
     """S3: der Load Balancer verteilt auf alle Mitglieder - der Weg (mit den Contracts je EPG)
     ist bis zu jedem Server zu prüfen, auch wenn beide in derselben VRF liegen."""
@@ -440,11 +435,6 @@ def test_p5_s3_weg_zu_jedem_server_des_pools_im_fabric(client):
     assert servers == {"10.30.10.20", "10.30.11.20"}, servers
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="P-5: der Contract zum zweiten Server (andere EPG) wird "
-    "nie geprüft - fehlt er, steht der Fluss trotzdem als „erlaubt“ da",
-)
 def test_p5_s3_fehlender_contract_zum_zweiten_server_ist_nicht_erlaubt(client):
     apic = copy.deepcopy(S3_APIC)
     apic["rules"] = [r for r in apic["rules"] if r["name"] != "CT_lb_srv2"]
@@ -453,12 +443,6 @@ def test_p5_s3_fehlender_contract_zum_zweiten_server_ist_nicht_erlaubt(client):
     assert any(p["policy"]["verdict"] != "allow" for p in _active(out))
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="P-5: auch an der FortiGate - zwei Server des Pools im selben Netz, aber mit "
-    "verschiedenen Urteilen der Policies (andere Adressklasse): der Weg zum zweiten Server "
-    "fällt still weg, sein „implizit gesperrt“ erscheint nie",
-)
 def test_p5_server_im_selben_netz_mit_anderem_urteil_faellt_nicht_weg(client):
     """Pool mit 10.10.0.20 und 10.10.0.21 hinter demselben Interface; die Policy vom Load
     Balancer zum Server erlaubt nur .20. Echt: die Hälfte der Sitzungen (.21) wird gesperrt."""
@@ -517,13 +501,6 @@ def test_reverse_path_besteht_mit_ecmp_ueber_den_eingang(client):
     assert path["end"]["kind"] == "connected", path["end"]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="P-1: Reverse Path kennt nur die beste Route - eine Route "
-    "gleicher Distanz mit höherer Priorität (vom Collector `best=False`) steht "
-    "auf der FortiGate in der Routing-Tabelle und erfüllt den Reverse Path "
-    "(feasible); die Weg-Suche meldet „verworfen“",
-)
 def test_p1_reverse_path_besteht_mit_route_hoeherer_prioritaet(client):
     """Dual-WAN wie von Fortinet empfohlen: zwei Default-Routen gleicher Distanz, wan2 mit
     höherer Priorität (nicht bevorzugt, aber aktiv). Verkehr von aussen an wan2 besteht den
@@ -562,11 +539,6 @@ def test_vip_mit_quell_filter_schreibt_fuer_passende_quelle_um(client):
     assert _active(out)[0]["hops"][0]["nat"]["name"] == "V-EXT_web"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="P-2: `src-filter` der VIP wird nicht ausgewertet - die "
-    "Weg-Suche schreibt auch für Quellen ausserhalb des Filters um (DNAT)",
-)
 def test_p2_vip_mit_quell_filter_kein_dnat_fuer_andere_quellen(client):
     """FortiOS: mit Quell-Filter trifft der Verkehr die VIP nur, wenn auch die Quelle passt."""
     tid = _tenant(client)
@@ -577,11 +549,6 @@ def test_p2_vip_mit_quell_filter_kein_dnat_fuer_andere_quellen(client):
     assert not hop.get("nat"), hop.get("nat")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="P-2: `srcintf-filter` der VIP wird nicht ausgewertet - "
-    "DNAT auch für Verkehr, der an einem anderen Interface ankommt",
-)
 def test_p2_vip_mit_eingangs_filter_kein_dnat_an_anderem_eingang(client):
     """VIP mit `extintf any` und `srcintf-filter wan2`: Verkehr aus dem LAN zur externen Adresse
     wird nicht umgeschrieben (er geht zur Adresse selbst, hier Richtung Internet)."""
@@ -699,12 +666,6 @@ def test_p7_gleiches_interface_mit_traffic_redirect_braucht_keine_policy(client)
 # -- P-8 / P-9: NSX ALB ------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="P-8: Pool Group - der Weg geht als aktiver Weg auch zu "
-    "den Servern des Pools mit tieferer Priorität (Avi: nur, wenn der Pool mit "
-    "der höchsten Priorität ausfällt)",
-)
 def test_p8_pool_group_nur_der_pool_mit_der_hoechsten_prioritaet_ist_aktiv(client):
     vs = fw._vs("vs-shop", ["10.10.0.20", "10.11.0.20"])
     vs["attrs"]["pool_group"] = "pg-shop"
@@ -715,12 +676,6 @@ def test_p8_pool_group_nur_der_pool_mit_der_hoechsten_prioritaet_ist_aktiv(clien
     assert fw._ends(out) == {("srv1", "connected")}, fw._ends(out)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="P-9: abgeschalteter Virtual Service (`enabled` bzw. "
-    "`traffic_enabled` false) - die VIP antwortet nicht, der Weg gilt trotzdem "
-    "als erreicht bis zum Server",
-)
 def test_p9_abgeschalteter_virtual_service_ist_nicht_erreicht(client):
     vs = fw._vs("vs-shop", ["10.10.0.20"])
     vs["attrs"] |= {"enabled": False, "traffic_enabled": False, "oper_status": "OPER_DISABLED"}
@@ -732,11 +687,6 @@ def test_p9_abgeschalteter_virtual_service_ist_nicht_erreicht(client):
 # -- P-10: Reverse Path für IPv6 ---------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="P-10: für IPv6 gilt `asymroute6` (vom Collector gelesen) "
-    "- die Weg-Suche wertet auch für IPv6 nur `asymroute` aus",
-)
 def test_p10_reverse_path_ipv6_nach_asymroute6(client):
     """`asymroute enable`, `asymroute6 disable`: für IPv6 prüft die FortiGate den Reverse Path."""
     tid = _tenant(client)
@@ -765,12 +715,6 @@ def test_p10_reverse_path_ipv6_nach_asymroute6(client):
 # -- P-12: Route nur mit Interface auf Ethernet (/30) ------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="P-12: Route nur mit Interface auf einem Ethernet-/30 gilt als Leitung zur gelesenen "
-    "Gegenseite und der Weg als erreicht - das Gerät fragt aber per ARP nach dem Ziel, an kommt "
-    "es nur mit Proxy-ARP der Gegenseite (FortiGate: nicht Vorgabe); nicht gezählt",
-)
 def test_p12_route_nur_mit_interface_auf_ethernet_ist_nicht_sicher_erreicht(client):
     """`ip route 10.50.0.0 255.255.255.0 GigabitEthernet0/2` auf einem Ethernet-Transfernetz: der
     Router behandelt das Ziel als angeschlossen und sucht es per ARP - das ist nicht dasselbe wie
@@ -798,13 +742,6 @@ def test_p12_route_nur_mit_interface_auf_ethernet_ist_nicht_sicher_erreicht(clie
 # -- P-13: Quelle als Netz, grösser als das angeschlossene Netz --------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="P-13: eine Quelle als Netz, das grösser ist als das angeschlossene (10.10.0.0/16 "
-    "statt /24 - üblich in breiten Policies), hat keinen Start: kein Weg, in der Doku „Weg nicht "
-    "geprüft“ an jeder solchen Regel; seit 1df5bb8 ist dadurch "
-    "`test_rule_match.py::test_kennzeichen_an_den_regeln_der_verbindungen` rot",
-)
 def test_p13_quelle_groesser_als_das_angeschlossene_netz_hat_einen_start(client):
     """Der Verkehr aus dem angeschlossenen Teil des Netzes kommt an der Firewall an - der Weg
     beginnt dort (für den übrigen Teil höchstens „nicht geprüft“, gezählt)."""
@@ -815,3 +752,275 @@ def test_p13_quelle_groesser_als_das_angeschlossene_netz_hat_einen_start(client)
     assert [_labels(p) for p in _active(part)] == [["fw-r"]]  # das angeschlossene Netz: richtig
     out = _trace(client, tid, src="10.10.0.0/16", dst="10.30.0.10")
     assert [_labels(p) for p in _active(out)] == [["fw-r"]], out["notes"]
+
+
+# -- Korrekturrunde nach der Gegenprüfung: M-1 und Gegenproben zu P-1 … P-13 -------------------
+
+
+def _edge_fw(client, tid) -> int:
+    """fw-edge: zwei Provider (ECMP über wan1 und wan2), dahinter ein LAN - kennt 203.0.113.10
+    nur über die Default-Route."""
+    return _firewall(client, tid, "fw-edge", [
+        _if("fw-edge", "lan", "10.20.0.1/24", "lan"),
+        _if("fw-edge", "wan1", "198.51.100.2/30", "internet"),
+        _if("fw-edge", "wan2", "198.51.100.6/30", "internet"),
+    ], [
+        _r("fw-edge", "root", "10.20.0.0/24", [{"interface": "lan"}], "connected"),
+        _r("fw-edge", "root", "198.51.100.0/30", [{"interface": "wan1"}], "connected"),
+        _r("fw-edge", "root", "198.51.100.4/30", [{"interface": "wan2"}], "connected"),
+        _r("fw-edge", "root", "0.0.0.0/0", [{"ip": "198.51.100.1", "interface": "wan1"},
+                                           {"ip": "198.51.100.5", "interface": "wan2"}]),
+    ], contexts=_ctx("fw-edge", **READ))  # fmt: skip
+
+
+M1_VIP = {"source_platform": "fortigate", "external_id": "V-EXT_www", "name": "V-EXT_www",
+          "nat_type": "dnat_vip", "ext_ip": "203.0.113.10", "mapped_ip": "10.1.1.10",
+          "vdom": "root", "raw": {"extintf": "wan"}}  # fmt: skip
+M1_RULE = fw._policy(3, "wan", "dmz1", "all", "vip:V-EXT_www=203.0.113.10")
+
+
+def test_m1_any_zur_vip_beginnt_nicht_am_rand_einer_anderen_firewall(client, session_factory):
+    """Befund M-1: Gegenstelle any (Internet) → öffentliche VIP einer Firewall, deren Routing
+    nicht gelesen ist. fw-edge kennt 203.0.113.10 nur über die Default-Route - dort käme der
+    Verkehr an wan1 an und ginge an wan2 wieder hinaus: kein Eingang für dieses Ziel. Ohne
+    passenden Start ist der Weg „nicht geprüft“ (gezählt), kein Weg über fw-edge."""
+    tid = _tenant(client)
+    _edge_fw(client, tid)
+    sid = fw._system(client, tid, "fw-vip", "fortigate")
+    fw._deliver(client, tid, sid, "fortigate", {
+        "status": "completed", "rules": [M1_RULE], "nat_rules": [M1_VIP],
+        "inventory": {"devices": [{"name": "fw-vip", "role": "firewall"}], "interfaces": []},
+    })  # fmt: skip
+    res, start = fw._conn(session_factory, tid, "0.0.0.0/0", "203.0.113.10", [])
+    assert res["paths"] == [] and start is None
+    assert res["uncertain"] == {"start": 1}
+    assert any("kommt dort an, wo 203.0.113.10 liegt" in n for n in res["notes"]), res["notes"]
+    # auch eine bestimmte öffentliche Quelle: nie ein Weg über die fremde Firewall
+    res, _start = fw._conn(session_factory, tid, "192.0.2.50", "203.0.113.10", [])
+    assert res["paths"] == [] and res["uncertain"] == {"start": 1}
+
+
+def test_m1_any_zur_vip_in_den_verbindungen_nicht_geprueft_statt_nicht_auf_dem_weg(client):
+    """M-1 in den Verbindungen der Applikation (wie die Beispieldaten der Oberfläche): die
+    Policy „internet-to-www“ mit der VIP steht auf einer Firewall ohne gelesenes Routing, eine
+    andere Firewall hat zwei Provider. Die Verbindung any → VIP bleibt, „Start unbekannt“ und
+    gezählt - nie „führt nicht über die Firewall der Regel“."""
+    tid = sn._seed(client)
+    _edge_fw(client, tid)
+    host = next(s["name"] for s in fr.system_list(client, tid) if s["ip"] == "10.10.10.5")
+    body = {"name": "Web", "members": [{"kind": "host", "ref": host}]}
+    app = client.post(f"/applications?tenant_id={tid}", json=body, headers=fr.OP)
+    assert app.status_code == 201, app.text
+    out = client.get(f"/applications/{app.json()['id']}/connections").json()
+    (conn,) = (c for c in out["connections"] if c["key"].startswith("0.0.0.0/0>203.0.113.10>"))
+    assert conn["hops"] == [] and conn["uncertain"] == {"start": 1}
+    assert [(r["label"], r["state"]) for r in conn["rules"]] == [
+        ("Policy 3 „internet-to-www“", "unknown")]  # fmt: skip
+    assert "kommt dort an, wo 203.0.113.10 liegt" in " ".join(conn["notes"])
+    reasons = [x for w in out["without"] for x in w["reasons"]]
+    assert not any("führt nicht über die Firewall" in x for x in reasons), reasons
+
+
+def _vip_owner(client, tid, routes) -> int:
+    return _firewall(client, tid, "fw-vip", [
+        _if("fw-vip", "wan", "192.0.2.2/30", "internet"),
+        _if("fw-vip", "dmz1", "10.1.1.1/24", "dmz"),
+    ], [
+        _r("fw-vip", "root", "192.0.2.0/30", [{"interface": "wan"}], "connected"),
+        _r("fw-vip", "root", "10.1.1.0/24", [{"interface": "dmz1"}], "connected"),
+        *routes,
+    ], nat_rules=[M1_VIP], rules=[M1_RULE], contexts=_ctx("fw-vip", **READ))  # fmt: skip
+
+
+def test_m1_start_am_rand_der_firewall_mit_der_vip(client, session_factory):
+    """Zwei Firewalls am Rand: der Weg von any zur VIP beginnt nur an der Firewall, der die VIP
+    gehört (DNAT auf den Server) - an fw-edge ginge der Verkehr nur wieder hinaus."""
+    tid = _tenant(client)
+    _edge_fw(client, tid)
+    _vip_owner(client, tid, [_r("fw-vip", "root", "0.0.0.0/0",
+                                [{"ip": "192.0.2.1", "interface": "wan"}])])  # fmt: skip
+    res, start = fw._conn(session_factory, tid, "0.0.0.0/0", "203.0.113.10", [])
+    assert start == "fw-vip"
+    (path,) = _active(res)
+    assert _labels(path) == ["fw-vip"] and path["end"]["kind"] == "connected"
+    assert path["hops"][0]["ingress"]["interface"] == "wan"
+    assert path["hops"][0]["nat"]["name"] == "V-EXT_www"
+
+
+def test_m1_start_an_der_firewall_der_vip_ohne_route_zur_quelle(client, session_factory):
+    """Die Firewall der VIP kennt die Quelle nicht (keine Default-Route gelesen): der Verkehr
+    für die veröffentlichte Adresse kommt trotzdem dort an - Start am Eingang der VIP
+    (`extintf`), nicht an der anderen Firewall."""
+    tid = _tenant(client)
+    _edge_fw(client, tid)
+    _vip_owner(client, tid, [])
+    res, start = fw._conn(session_factory, tid, "0.0.0.0/0", "203.0.113.10", [])
+    assert start == "fw-vip"
+    (path,) = _active(res)
+    assert _labels(path) == ["fw-vip"] and path["end"]["kind"] == "connected"
+    assert res["start"][0]["via"] == "VIP V-EXT_www, Eingang wan"
+
+
+def test_any_nach_innen_beginnt_weiter_am_rand(client, session_factory):
+    """Gegenprobe zu M-1: ein Ziel hinter der Firewall am Rand - der Weg von any beginnt an
+    ihren Eingängen von aussen (kein Weg zurück hinaus)."""
+    tid = _tenant(client)
+    _edge_fw(client, tid)
+    res, start = fw._conn(session_factory, tid, "0.0.0.0/0", "10.20.0.5", [])
+    assert start == "fw-edge"
+    assert {p["end"]["kind"] for p in _active(res)} == {"connected"}
+
+
+def test_p1_strict_src_check_verlangt_weiter_die_beste_route(client):
+    """Gegenprobe zu P-1: mit `strict-src-check` genügt die Route höherer Priorität nicht - die
+    beste Route zur Quelle geht über wan1, der Verkehr an wan2 wird verworfen."""
+    tid = _tenant(client)
+    _wan_router(client, tid)
+    _firewall(client, tid, "fw-01", [
+        _if("fw-01", "lan", "10.20.0.1/24", "lan"),
+        _if("fw-01", "wan1", "198.51.100.2/30", "internet"),
+        _if("fw-01", "wan2", "198.51.100.6/30", "internet"),
+    ], [
+        _r("fw-01", "root", "10.20.0.0/24", [{"interface": "lan"}], "connected"),
+        _r("fw-01", "root", "198.51.100.0/30", [{"interface": "wan1"}], "connected"),
+        _r("fw-01", "root", "198.51.100.4/30", [{"interface": "wan2"}], "connected"),
+        _r("fw-01", "root", "0.0.0.0/0", [{"ip": "198.51.100.1", "interface": "wan1"}],
+           distance=10, attrs={"priority": 1}),
+        _r("fw-01", "root", "0.0.0.0/0", [{"ip": "198.51.100.5", "interface": "wan2"}],
+           distance=10, attrs={"priority": 10}, best=False),
+    ], contexts=_ctx("fw-01", asymroute=False, strict_src_check=True,
+                     central_nat=False))  # fmt: skip
+    (path,) = _active(_trace(client, tid, src="203.0.113.50", dst="10.20.0.5"))
+    assert path["end"]["kind"] == "dropped" and "strict-src-check" in path["end"]["text"]
+
+
+def test_p2_quell_filter_ohne_quelle_bzw_fuer_einen_teil_ist_nur_moeglich(client):
+    """`src-filter` nicht entscheidbar (keine Quelle bzw. ein Netz, das nur zum Teil im Filter
+    liegt): DNAT nur möglich, gezählt (`nat`) - nie still angenommen oder verworfen."""
+    tid = _tenant(client)
+    sid = _vip_fw(client, tid, {"extintf": "wan2", "src-filter": [{"range": "192.0.2.0/24"}]})
+    for src in (None, "192.0.2.0/23"):
+        params = {"dst": "198.51.100.80", "start": f"{sid}|root", "service": "tcp/443"}
+        out = _trace(client, tid, **params, **({"src": src} if src else {}))
+        assert _active(out)[0]["hops"][0]["nat"]["name"] == "V-EXT_web"
+        assert out["uncertain"]["nat"] == 1, out.get("uncertain")
+        assert any("Quell-Filter" in n for n in out["notes"]), out["notes"]
+
+
+def test_p8_pool_tieferer_prioritaet_ist_ein_backup_weg(client):
+    """Pool Group: der Pool tieferer Priorität erscheint als Backup-Weg mit Grund - und wird
+    aktiv, wenn im Pool mit der höchsten Priorität kein Server eingeschaltet ist."""
+    vs = fw._vs("vs-shop", ["10.10.0.20", "10.10.0.21"])
+    vs["attrs"]["pool_group"] = "pg-shop"
+    vs["targets"][0] |= {"priority": "10", "pool": "pool-a"}
+    vs["targets"][1] |= {"priority": "5", "pool": "pool-b"}
+    tid, sid = fw._lb_setup(client, [vs])
+    out = _trace(client, tid, dst="203.0.113.10", start=f"{sid}|root", service="tcp/443")
+    servers = lambda paths: {t for p in paths for h in p["hops"]  # noqa: E731
+                             for t in (h.get("lb") or {}).get("targets", [])}  # fmt: skip
+    assert servers(_active(out)) == {"10.10.0.20"}
+    backup = [p for p in out["paths"] if p.get("kind") == "backup"]
+    assert servers(backup) == {"10.10.0.21"}
+    assert "Pool tieferer Priorität" in backup[0]["deviation"]["reason"]
+    vs2 = copy.deepcopy(vs)
+    vs2["targets"][0]["status"] = "disable"
+    tid2 = client.post("/tenants", json={"name": "Kunde B"}, headers=fw.ADMIN).json()["id"]
+    sid2 = _firewall(client, tid2, "fw-01", fw.LB_IFS, fw.LB_ROUTES, nat_rules=[fw.LB_FW_VIP],
+                     rules=fw.LB_RULES)  # fmt: skip
+    avi = fw._system(client, tid2, "alb-01", "avi", username="ro", password="x")
+    fw._deliver(client, tid2, avi, "avi", {"status": "completed", "nat_rules": [vs2]})
+    out = _trace(client, tid2, dst="203.0.113.10", start=f"{sid2}|root", service="tcp/443")
+    assert servers(_active(out)) == {"10.10.0.21"}
+
+
+def test_p9_nur_traffic_enabled_aus_ist_verworfen_am_load_balancer(client):
+    """`traffic_enabled` false allein genügt: Ende „verworfen“ am Hop des Load Balancers."""
+    vs = fw._vs("vs-shop", ["10.10.0.20"])
+    vs["attrs"] |= {"enabled": True, "traffic_enabled": False}
+    tid, sid = fw._lb_setup(client, [vs])
+    out = _trace(client, tid, dst="203.0.113.10", start=f"{sid}|root", service="tcp/443")
+    (path,) = _active(out)
+    assert path["end"]["kind"] == "dropped" and "abgeschaltet" in path["end"]["text"]
+    assert path["hops"][-1]["dropped"]["stage"] == "lb"
+    assert path["hops"][-1]["lb"]["name"] == "vs-shop"
+
+
+def test_p10_asymroute6_nicht_gelesen_ist_nicht_geprueft(client):
+    """Älterer Lauf ohne `asymroute6`: für IPv6 gilt nicht der Wert für IPv4 - ohne Route zur
+    Quelle über den Eingang „nicht geprüft“ (gezählt), nie still erreicht oder verworfen."""
+    tid = _tenant(client)
+    _routers(client, tid, ["rt-01"], [
+        _l3("rt-01", "2001:db8:1::/64", [{"interface": "Gi0/1"}], "connected", distance=0),
+        _l3("rt-01", "2001:db8:1::1/128", [{"interface": "Gi0/1"}], "local", distance=0),
+        _l3("rt-01", "2001:db8:12::/64", [{"interface": "Gi0/2"}], "connected", distance=0),
+        _l3("rt-01", "2001:db8:12::1/128", [{"interface": "Gi0/2"}], "local", distance=0),
+        _l3("rt-01", "2001:db8:20::/64", [{"ip": "2001:db8:12::2", "interface": "Gi0/2"}],
+            distance=1),
+    ])  # fmt: skip
+    _firewall(client, tid, "fw-01", [
+        _if("fw-01", "lan", "2001:db8:20::1/64", "lan"),
+        _if("fw-01", "port2", "2001:db8:12::2/64", "transit"),
+    ], [
+        _r("fw-01", "root", "2001:db8:20::/64", [{"interface": "lan"}], "connected"),
+        _r("fw-01", "root", "2001:db8:12::/64", [{"interface": "port2"}], "connected"),
+        _r("fw-01", "root", "2001:db8:1::/64", [{"ip": "2001:db8:13::1", "interface": "port3"}]),
+    ], contexts=_ctx("fw-01", asymroute=True))  # fmt: skip
+    out = _trace(client, tid, src="2001:db8:1::5", dst="2001:db8:20::5")
+    (path,) = _active(out)
+    assert path["end"]["kind"] == "unchecked" and out["uncertain"] == {"rpf": 1}
+
+
+def test_p12_route_nur_mit_interface_auf_einem_tunnel_geht_zur_gegenseite(client):
+    """Gegenprobe zu P-12: auf einer echten Punkt-zu-Punkt-Leitung (Tunnel) geht die Route nur
+    mit Interface an die gelesene Gegenseite - ohne ARP, nichts zu zählen."""
+    tid = _tenant(client)
+    _routers(client, tid, ["rt-01", "rt-02"], [
+        _l3("rt-01", "10.1.0.0/24", [{"interface": "Gi0/1"}], "connected", distance=0),
+        _local("rt-01", "10.1.0.1", "Gi0/1"),
+        _l3("rt-01", "10.0.12.0/30", [{"interface": "Tunnel12"}], "connected", distance=0),
+        _local("rt-01", "10.0.12.1", "Tunnel12"),
+        _l3("rt-01", "10.50.0.0/24", [{"interface": "Tunnel12"}], distance=1),
+        _l3("rt-02", "10.0.12.0/30", [{"interface": "Tunnel12"}], "connected", distance=0),
+        _local("rt-02", "10.0.12.2", "Tunnel12"),
+        _l3("rt-02", "10.50.0.0/24", [{"interface": "Gi0/1"}], "connected", distance=0),
+        _local("rt-02", "10.50.0.1", "Gi0/1"),
+    ])  # fmt: skip
+    out = _trace(client, tid, src="10.1.0.5", dst="10.50.0.5")
+    (path,) = _active(out)
+    assert _labels(path) == ["rt-01", "rt-02"] and path["end"]["kind"] == "connected"
+    assert "uncertain" not in out
+
+
+def test_p13_rest_der_quelle_ist_gezaehlt_und_das_ganze_netz_nicht(client):
+    """Nur ein Teil der Quelle ist angeschlossen: der Weg beginnt dort, der Rest ist gezählt
+    (`start_part`). Decken die angeschlossenen Teile die Quelle ganz, ist nichts offen."""
+    tid = fr._seed(client, [
+        pc._policy(1, "lan-dmz", "lan", "dmz", ["10.10.0.0/16"], ["10.30.0.0/24"], ["all"]),
+    ])  # fmt: skip
+    out = _trace(client, tid, src="10.10.0.0/16", dst="10.30.0.10")
+    assert out["uncertain"] == {"start_part": 1}
+    assert out["start"][0]["via"] == "Teil der Quelle angeschlossen (10.10.0.0/24)"
+    assert any("nur Teile" in n for n in out["notes"])
+    # any ist keine Quelle mit angeschlossenen Teilen: dort gilt der Eingang von aussen
+    assert _trace(client, tid, src="0.0.0.0/0", dst="10.30.0.10")["paths"] == []
+
+
+def test_p13_teile_der_quelle_an_zwei_interfaces_sind_zwei_starts(client):
+    """Zwei Teile der Quelle an verschiedenen Interfaces derselben Firewall: je Eingang ein Weg
+    mit eigenem Urteil (die Policy gilt nur für `lan1`) - keiner fällt als „gleicher Weg“ weg."""
+    tid = _tenant(client)
+    _firewall(client, tid, "fw-01", [
+        _if("fw-01", "lan1", "10.10.0.1/24", "lan1"),
+        _if("fw-01", "lan2", "10.10.1.1/24", "lan2"),
+        _if("fw-01", "dmz1", "10.1.1.1/24", "dmz"),
+    ], [
+        _r("fw-01", "root", "10.10.0.0/24", [{"interface": "lan1"}], "connected"),
+        _r("fw-01", "root", "10.10.1.0/24", [{"interface": "lan2"}], "connected"),
+        _r("fw-01", "root", "10.1.1.0/24", [{"interface": "dmz1"}], "connected"),
+    ], rules=[fw._policy(1, "lan1", "dmz1", "all", "all")],
+        contexts=_ctx("fw-01", **READ))  # fmt: skip
+    out = _trace(client, tid, src="10.10.0.0/23", dst="10.1.1.10", service="tcp/443")
+    found = {p["hops"][0]["ingress"]["interface"]: p["hops"][0]["rules"]["verdict"]
+             for p in _active(out)}  # fmt: skip
+    assert found == {"lan1": "allow", "lan2": "implicit_deny"}, found
+    assert "uncertain" not in out  # beide Hälften angeschlossen: nichts offen

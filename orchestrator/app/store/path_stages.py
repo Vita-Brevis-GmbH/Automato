@@ -66,6 +66,8 @@ UNCERTAIN = (
     "default",
     "onlink",
     "return",
+    # Quelle als Netz, von dem nur Teile angeschlossen sind (Gegenpruefung P-13)
+    "start_part",
 )
 
 
@@ -154,8 +156,11 @@ def reverse_path(g, key, table, src, ingress: str | None) -> dict | None:
     if src is None or not ingress:
         return None
     conf = settings(g, key)
-    known = "asymroute" in conf or "strict_src_check" in conf
-    if conf.get("asymroute"):
+    # IPv6 hat einen eigenen Schalter (`asymroute6`, Gegenpruefung P-10); ist er nicht gelesen
+    # (aelterer Lauf), gilt fuer IPv6 „nicht geprueft“ - nie der Wert fuer IPv4
+    asym = "asymroute6" if src.version == 6 else "asymroute"
+    known = asym in conf or (src.version != 6 and "strict_src_check" in conf)
+    if conf.get(asym):
         return None  # asymmetrisches Routing erlaubt: kein Reverse Path
     if ingress in (conf.get("src_check_off") or []):
         return None  # `src-check disable` am Interface
@@ -291,9 +296,71 @@ def _vip_fits_service(n: NatRule, service) -> bool | None:
     return ports[0] <= service[1] <= ports[1]
 
 
-def dnat(g, key, ip, ingress: dict, service) -> tuple[NatRule | None, list[str], str | None]:
+def _filter_values(raw: dict, field: str, *keys: str) -> list[str]:
+    """Werte eines Filters der VIP aus den Rohdaten (`[{"range": "…"}]`, auch als Text)."""
+    value = raw.get(field)
+    if isinstance(value, str | dict):
+        value = [value]
+    out: list[str] = []
+    for item in value or []:
+        if isinstance(item, dict):
+            item = next((item[k] for k in keys if item.get(k)), None)
+        if item not in (None, ""):
+            out += str(item).split()
+    return out
+
+
+def _vip_fits_source(raw: dict, src) -> bool | None:
+    """`src-filter` der VIP (Gegenpruefung P-2): mit Filter trifft der Verkehr die VIP nur, wenn
+    auch die Quelle passt. Ohne Filter immer; None = ohne Quelle, nur fuer einen Teil des
+    Quell-Netzes bzw. mit einem nicht lesbaren Wert nicht entscheidbar."""
+    values = _filter_values(raw, "src-filter", "range", "name")
+    if not values:
+        return True
+    if src is None:
+        return None
+    lo, hi = span(src)
+    unsure = False
+    for v in values:
+        rng = bounds(v)
+        if rng is None:
+            unsure = True
+        elif rng[0].version != src.version:
+            continue
+        elif int(rng[0]) <= lo and hi <= int(rng[1]):
+            return True
+        elif lo <= int(rng[1]) and int(rng[0]) <= hi:
+            unsure = True  # Netz als Quelle, nur zum Teil im Filter
+    return None if unsure else False
+
+
+def _vip_fits_ingress(raw: dict, ingress: dict) -> bool | None:
+    """`srcintf-filter` der VIP (P-2): nur Verkehr, der an einem dieser Interfaces ankommt.
+    None = Eingang nicht bekannt."""
+    names = _filter_values(raw, "srcintf-filter", "interface-name", "name")
+    if not names:
+        return True
+    have = {v for v in (ingress.get("interface"), ingress.get("zone")) if v}
+    if not have:
+        return None
+    return bool(have & set(names))
+
+
+def source_filtered(g, key, ip) -> list[str]:
+    """VIPs des Knotens fuer diese Adresse mit Quell-Filter - ihr DNAT haengt an der Quelle,
+    wie sie am Geraet ankommt (nach einem SNAT davor: `paths._enforce` zaehlt)."""
+    if is_net(ip):
+        return []
+    return [n.name for n in _vips_at(g, key, ip)
+            if _filter_values(n.raw or {}, "src-filter", "range", "name")]  # fmt: skip
+
+
+def dnat(g, key, ip, ingress: dict, service,
+         src=None) -> tuple[NatRule | None, list[str], str | None]:  # fmt: skip
     """VIP der FortiGate, die das Ziel an diesem Knoten umschreibt:
-    -> (VIP, interne Ziele, Hinweis zur Unsicherheit). Ein Netz als Ziel geht ohne DNAT weiter."""
+    -> (VIP, interne Ziele, Hinweis zur Unsicherheit). Ein Netz als Ziel geht ohne DNAT weiter.
+    Die VIP gilt nur, wenn auch ihre Filter passen (`src-filter`, `srcintf-filter`, `service`);
+    was sich davon nicht entscheiden laesst, ist „moeglich“ und gezaehlt."""
     if is_net(ip):
         return None, [], None
     found = _vips_at(g, key, ip)
@@ -306,6 +373,7 @@ def dnat(g, key, ip, ingress: dict, service) -> tuple[NatRule | None, list[str],
     sure: list[tuple[NatRule, list[str]]] = []
     maybe: list[tuple[NatRule, list[str]]] = []
     unused: list[NatRule] = []
+    filtered: dict[str, str] = {}  # VIP -> Filter, der sich nicht entscheiden laesst
     for n in found:
         to = vip_target(n, ip)
         if not to:
@@ -319,10 +387,27 @@ def dnat(g, key, ip, ingress: dict, service) -> tuple[NatRule | None, list[str],
         fits = _vip_fits_service(n, service)
         if fits is False:
             continue
+        by_source = _vip_fits_source(raw, src)
+        by_ingress = _vip_fits_ingress(raw, ingress)
+        if by_source is False or by_ingress is False:
+            continue
         if used is not None and not any(name == n.name for name, _ext in used):
             unused.append(n)
             continue
-        (sure if fits else maybe).append((n, to))
+        # Dienst-Filter der VIP (`set service`): Dienstobjekte, hier nicht aufgeloest
+        named = bool(_filter_values(raw, "service", "name"))
+        if fits and by_source and by_ingress and not named:
+            sure.append((n, to))
+        else:
+            maybe.append((n, to))
+            if fits:  # der Dienst passt - offen ist ein Filter
+                filtered[n.name] = (
+                    L("Quell-Filter (src-filter)", "source filter (src-filter)")
+                    if by_source is None
+                    else L("Eingangs-Filter (srcintf-filter)", "interface filter (srcintf-filter)")
+                    if by_ingress is None
+                    else L("Dienst-Filter (service)", "service filter (service)")
+                )
     note = None
     if unused and central is None:
         names = ", ".join(n.name for n in unused[:3])
@@ -339,6 +424,18 @@ def dnat(g, key, ip, ingress: dict, service) -> tuple[NatRule | None, list[str],
         return sure[0][0], sure[0][1], note
     if maybe:
         n, to = maybe[0]
+        if n.name in filtered:
+            what = filtered[n.name]
+            return (
+                n,
+                to,
+                L(
+                    f"NAT nicht geprüft an {g.nodes[key].label}: VIP {n.name} gilt nur mit ihrem "
+                    f"{what} – hier nicht entscheidbar, DNAT nur möglich",
+                    f"NAT not checked at {g.nodes[key].label}: VIP {n.name} applies with its "
+                    f"{what} only – cannot be decided here, DNAT only possible",
+                ),
+            )
         why = L(
             f"VIP {n.name} an {g.nodes[key].label} gilt nur für ihren Dienst "
             f"({n.protocol or 'tcp'}/{n.ext_port}) – ohne Dienst nur möglich",
