@@ -88,6 +88,9 @@ _MISSING = {
     "IPsec Phase 1": ("vpn", None, None),
     "IPsec Phase 2": ("vpn", None, None),
     "IPsec-Zustand": ("vpn", None, None),
+    # ADR 0070: Einstellungen des VDOMs und Central SNAT - sperren keinen Vergleich der Routen
+    "VDOM-Einstellungen": ("settings", None, None),
+    "Central SNAT": ("settings", None, None),
 }
 _ALL = ("*", None, None)
 

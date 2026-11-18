@@ -488,6 +488,9 @@ class NormalizedRoutingContext(BaseModel):
     context: str
     kind: str = "vdom"  # vdom | vrf | l3 (Router bzw. L3-Switch je VRF, ADR 0032)
     missing: list[str] = Field(default_factory=list)
+    # FortiGate (ADR 0070): Einstellungen des VDOMs, die den Weg bestimmen - `central_nat`,
+    # `asymroute`, `strict_src_check`, `src_check_off`, `central_snat`; leer = nicht gelesen
+    settings: dict[str, Any] = Field(default_factory=dict)
 
 
 class NormalizedBgpObject(BaseModel):

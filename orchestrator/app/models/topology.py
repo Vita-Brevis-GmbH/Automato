@@ -56,6 +56,10 @@ class TopoContext(_TopoRow, Base):
     context: Mapped[str] = mapped_column(String(200))  # VDOM bzw. Tenant:VRF
     kind: Mapped[str] = mapped_column(String(8))  # vdom | vrf | l3 (Router, ADR 0032)
     missing: Mapped[list | None] = mapped_column(JSON, nullable=True)  # nicht lesbar
+    # FortiGate (ADR 0070, Migration 0097): gelesene Einstellungen des VDOMs, die den Weg
+    # bestimmen - `central_nat`, `asymroute`, `strict_src_check`, `src_check_off` (Interfaces
+    # mit `src-check disable`), `central_snat` (Tabelle in Reihenfolge). Leer = nicht gelesen.
+    settings: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
 class TopoRoute(_TopoRow, Base):

@@ -142,7 +142,14 @@ def _rows(run, inv: RoutingInventory) -> dict:
     """Zeilen je Tabelle (`topo_*`) des neuen Stands."""
     base = {"tenant_id": run.tenant_id, "source_system_id": run.source_system_id}
     contexts = [
-        {**base, "node": c.node, "context": c.context, "kind": c.kind, "missing": c.missing or None}
+        {
+            **base,
+            "node": c.node,
+            "context": c.context,
+            "kind": c.kind,
+            "missing": c.missing or None,
+            "settings": c.settings or None,
+        }
         for c in inv.contexts
     ]
     routes = []
