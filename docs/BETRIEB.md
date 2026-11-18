@@ -637,6 +637,40 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
         TE/AP/EG_a (Portgruppe der VM vm-a)“). Sonst die externe EPG über das längste
         Subnetz mit `import-security` (wie in der Doku, 0.28.0). Erfasst keine EPG die IP,
         verwirft das Fabric den Verkehr.
+      - **Wie das Gerät (ADR 0070):** Die Weg-Suche entscheidet je Hop, wie es das Gerät tut –
+        das ändert, was Wege, Verbindungen und Befunde zeigen:
+        - **Ende „verworfen“** (rot): eine Null-/Blackhole-Route, der Reverse Path einer
+          FortiGate (keine Route zur Quelle über den Eingang) bzw. ein IPsec-Tunnel ohne
+          Phase 2, deren Selektoren Quelle und Ziel enthalten, oder down. „Warum dieser Weg?“
+          erklärt die Stelle.
+        - **Ende „nicht geprüft“** (orange): Automato behauptet nichts – ein privates Ziel nur
+          über die Default-Route an ein nicht gelesenes Gerät (bis 1.20 „extern“), eine Route
+          nur mit Interface, der Reverse Path einer Firewall, deren Einstellungen noch nicht
+          gelesen sind. Abhilfe: das Gerät dahinter einlesen bzw. als Anbindung mit seinen
+          Netzen erfassen („Als Anbindung erfassen“), Firewalls neu einlesen.
+        - **„Start unbekannt“** in den Verbindungen einer Applikation: die Quelle hängt an
+          keinem gelesenen Gerät, und kein gelesenes Gerät kennt den Weg zu ihr über einen
+          nicht gelesenen Nachbarn. Der Weg beginnt nicht mehr auf dem Gerät einer passenden
+          Regel (das zeigte Wege über Firewalls, die gar nicht auf dem Weg liegen). Abhilfe:
+          das Gerät mit dem Netz der Quelle einlesen (z. B. die VRF bzw. den L3Out des Tenants).
+        - **Gezählt statt still:** mehr als 16 Wege, Rückweg nur für die ersten 8, Policy-Routen
+          bzw. VIPs, die nur möglicherweise passen, SD-WAN mit mehreren Mitgliedern, Central
+          NAT nicht gelesen – alles steht als Hinweis am Weg und macht die Applikation
+          „unvollständig geprüft“ (Befund *Applikation: unvollständig geprüft*).
+        - **Load Balancer:** der Weg geht zu allen Servern des Pools (Server im selben Netz
+          mit denselben Regeln sind ein Weg, die Server stehen am Hop); mehrere Virtual
+          Services auf derselben VIP (SNI) zählen zusammen; Port 80 mit Umleitung auf HTTPS
+          endet am Load Balancer („Umleitung am Load Balancer“).
+        - **Rückweg mit ECMP:** „Rückweg ✓“ nur, wenn alle gleichwertigen Rückwege über
+          dieselben Firewalls gehen – sonst nennt der Hinweis den Anteil („auf 1 von 2
+          gleichwertigen Rückwegen (ECMP) über …“).
+        - **Nach dem Update neu einlesen:** FortiGates (Reverse Path, Central NAT, Priorität
+          der Routen, Reihenfolge der Policy-Routen), Switches & Router (HSRP/VRRP auf IOS),
+          NSX ALB (Umleitung). Das Profil des REST-API-Benutzers der FortiGate braucht dazu
+          Lesezugriff auf `system settings` und – mit Central NAT – `firewall
+          central-snat-map`; fehlt er, steht „VDOM-Einstellungen“ bzw. „Central SNAT“ als
+          nicht lesbar im Lauf, und die Weg-Suche weist die Stelle als „nicht geprüft“ aus.
+          Switches: zusätzlich `show standby brief` und `show vrrp brief` (nur lesend).
       - **Ohne Quell-IP von aussen (0.135.0):** Kommt der Weg über eine Firewall ins Fabric
         (z. B. Start an der Firewall ohne Quelle), prüft die Weg-Suche jede externe EPG der VRF:
         „abhängig von der Quelle (ohne IP) – erlaubt für externe EPG …, gesperrt für …“,

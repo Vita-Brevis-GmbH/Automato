@@ -87,3 +87,22 @@ Pfade), ADR 0021 (Verbindungen Ende zu Ende), ADR 0048 (keine stillen Grenzen) u
 - Policy-basierte Tunnel (ohne Interface) und andere Hersteller werden nicht gelesen; eine Quelle
   hinter einem Tunnel beginnt in den Verbindungen am Tunnel (Eingang nach dem Rückweg), in der
   Weg-Suche mit gewähltem Startpunkt.
+
+## Nachtrag 2026-11-18 (ADR 0070): ohne passenden Selektor bzw. mit Tunnel down verworfen
+
+Anwender: „Es soll absolut der Wahrheit entsprechen, wie das Netzwerk in Echt funktioniert.“ Bis
+1.20 zählte ein Weg über einen Tunnel als erreicht, auch wenn das Ziel in keinem Phase-2-Selektor
+lag bzw. der Tunnel down war (nur ein Hinweis); die Quelle wurde gar nicht verglichen, die
+Selektoren aller Phase 2 waren vereinigt.
+
+- Die FortiGate verwirft Verkehr in einen Tunnel, den keine Phase 2 abdeckt („no matching IPsec
+  selector, drop“): der Weg endet am Hop als **verworfen** (`end.kind = dropped`,
+  `hop.dropped.stage = ipsec`) mit Begründung – wenn **keine einzelne** Phase 2 Quelle **und** Ziel
+  in ihren Selektoren hat (bei Dial-up zählen die Netze der verbundenen Gegenstellen für das Ziel).
+- Verglichen wird die Quelle nach dem SNAT dieser Firewall (Policy bzw. Central SNAT); ist sie
+  danach unbekannt, nur das Ziel.
+- Tunnel down (bei Dial-up die Instanz): verworfen. Eine einzelne Phase 2 down bei Tunnel up
+  bleibt ein Hinweis (sie kommt bei Verkehr hoch).
+- Nicht entscheidbar (Selektor nur teilweise, Selektoren nicht auflösbar): der Weg geht weiter,
+  die Stelle ist als „nicht geprüft“ gezählt (`uncertain.vpn`, ADR 0048).
+- Ein Tunnel ohne gelesene Phase 2 wird nicht verworfen (nichts zu vergleichen).

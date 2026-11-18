@@ -68,3 +68,15 @@ ADR 0047 (Vorrechnen in Durchgängen).
   den geteilten Policies und Urteilen je Hop. Seit 0.141.0 teilen die Graphen auch den
   Routing-Index und die Routen, Doku und Verbindungen ihre Grundlagen; der Datenstand ist der
   Inhalt statt des letzten Laufs (ADR 0049).
+- Nachtrag 2026-11-18 (ADR 0070): **jede Unsicherheit der Weg-Suche gezählt.** Bisher standen
+  nur als Text am Weg bzw. gar nicht: die Kürzung bei 16 Wegen, der Rückweg nur für die ersten 8
+  Wege, Policy-Routen, die nur „möglich“ sind. `paths.trace` liefert sie je Art gezählt
+  (`uncertain`), die Verbindungen einer Applikation zählen sie in `coverage.cuts` (und damit im
+  Befund `app_coverage`): `truncated` (mehr als 16 Wege), `return` (Rückweg nicht für alle Wege),
+  `policy_route` (Policy-Route nur möglich), `sdwan` (Mitglied hängt vom Zustand der Links ab),
+  `rpf` (Reverse Path nicht geprüft), `nat` (Central NAT bzw. VIP nicht geprüft), `vpn`
+  (Phase-2-Selektoren nicht prüfbar bzw. Gegenstelle nicht gelesen), `default` (privates Ziel über
+  die Default-Route), `onlink` (Route nur mit Interface), `start` (Start unbekannt – kein Rückfall
+  mehr auf das Gerät einer Regel). Wege zu Servern derselben Klasse (gleiche Hops, gleiche
+  Adressklasse der Policies) hinter einer VIP bzw. einem Load Balancer sind ein Weg mit allen
+  Servern – so greift die Grenze von 16 Wegen nicht schon bei einem grossen Pool.
