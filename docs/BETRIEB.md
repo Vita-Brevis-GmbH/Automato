@@ -2280,7 +2280,10 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   Vorschau nur an („Reservierung – nur angezeigt“) und überschreibt es nie; liest ein Gerät das
   reservierte VLAN, übernimmt der Abschnitt Verkabelung bzw. Netzinventar es als aktives VLAN.
   Freigegebene Reservierungen sind veraltet bzw. mit „Löschen zulassen“ entfernt; andere
-  Abschnitte lassen reservierte VLANs stehen, und Ports bekommen nie ein reserviertes VLAN. Für
+  Abschnitte lassen reservierte VLANs stehen, und Ports bekommen nie ein reserviertes VLAN.
+  Weicht ein schon angelegtes reserviertes VLAN bzw. eine ASN ab (neuer Zweck bzw. in NetBox von
+  Hand geändert), steht es in der Karte **Geänderte Reservierungen bestätigen** mit beiden Werten –
+  geschrieben wird nur Angekreuztes (wie Kabelnummern und DNS-Namen). Für
   ASN braucht der Sync-Benutzer `ipam.asn` – `sync-user.sh` erneut ausführen. **Vorschau
   erstellen** liest NetBox nur und zeigt je Art: anlegen / ändern / unverändert / Konflikt
   (von Hand gepflegtes Objekt weicht ab – bleibt unverändert) / löschen / veraltet, mit

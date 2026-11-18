@@ -18,9 +18,11 @@ Vorschau -> Uebernehmen (ADR 0010), nur wenn der Abschnitt gewaehlt ist:
   der Gruppe bzw. diese ASN (von Hand, aus einem anderen Abschnitt, aus einem anderen Mandanten),
   zeigt die Vorschau es nur an (`note`); will ein anderer Abschnitt das VLAN (gelesen in Gebrauch),
   gewinnt dieser - ein eigenes reserviertes VLAN geht dabei in das gelesene ueber.
-- **Eigen** ist, was Tag `automato` und die Beschreibung `Reservierung: …` traegt (VLAN zudem
-  Status `reserved`) bzw. die Gruppen „Reservierungen …“ (`GROUP_MARK`). Nur dieser Abschnitt
-  aendert bzw. entfernt sie - freigegebene Reservierungen sind veraltet bzw. werden mit „Löschen
+- **Eigen** sind VLANs mit Tag `automato`, Status `reserved` und der Beschreibung
+  `Reservierung: …`, die Gruppen „Reservierungen …“ (`GROUP_MARK`) und die ASN mit Tag
+  `automato` - je des Mandanten. Nur dieser Abschnitt aendert bzw. entfernt sie: Aenderungen nur
+  bestaetigt (`confirm` wie Kabelnummern und DNS-Namen, beide Werte in der Vorschau),
+  freigegebene Reservierungen sind veraltet bzw. werden mit „Löschen
   zulassen“ entfernt; andere Abschnitte lassen sie stehen, und Ports nehmen nie ein reserviertes
   VLAN (`owned_vlan` in `netbox_sync._vlan_candidates`).
 
@@ -135,9 +137,11 @@ def owned_vlan(obj: dict) -> bool:
 
 
 def owned_asn(obj: dict) -> bool:
+    """ASN mit Tag `automato`: legt nur dieser Abschnitt an - auch wenn die Beschreibung in NetBox
+    von Hand geaendert wurde (dann aendert der Sync sie nur bestaetigt)."""
     from app.store.netbox_sync import _tagged
 
-    return _tagged(obj) and str(obj.get("description") or "").startswith(MARK)
+    return _tagged(obj)
 
 
 def owned_group(obj: dict) -> bool:
@@ -389,13 +393,34 @@ def _own_group(wants: Wants, state: State, pending: Pending, v: ReservedVlan) ->
 # -- Vorschau: eigene veraltete Objekte und Anzeige ------------------------------------------------
 
 
-def items(wants: Wants, state: State, tslug: str, allow_delete: bool, chosen) -> list[dict]:
+def _ask(item: dict, wants: Wants) -> bool:
+    """Aenderung an einem bestehenden reservierten Objekt dieses Abschnitts (VLAN mit Status
+    `reserved`, ASN, Gruppe „Reservierungen …“)?"""
+    want = wants.get(item["kind"], item["key"])
+    if item["action"] != "update" or want is None:
+        return False
+    if item["kind"] == "vlan":
+        return want.fields.get("status") == "reserved"
+    if item["kind"] == "vlan_group":
+        return str(want.fields.get("description") or "").startswith(GROUP_MARK)
+    return item["kind"] == "asn"
+
+
+def items(wants: Wants, state: State, tslug: str, allow_delete: bool, chosen,
+          current: list[dict] | None = None) -> list[dict]:  # fmt: skip
     """Aktionen des Abschnitts, die `netbox_sync.diff` nicht rechnet: eigene reservierte VLANs
     bzw. Gruppen, die keine Reservierung mehr will (veraltet bzw. loeschen), und die nur
-    angezeigten Nummern (`unchanged` mit `note`)."""
+    angezeigten Nummern (Konflikt mit `note`). Aenderungen an bestehenden reservierten Objekten
+    (`current`, z. B. neuer Zweck - oder in NetBox von Hand geaendert) bekommen `confirm` wie die
+    Kabelnummern und DNS-Namen: die Vorschau zeigt beide Werte, geschrieben wird nur Bestaetigtes
+    (`POST …/apply` mit `{"confirm": [...]}`)."""
     if SECTION not in chosen:
         return []
     from app.store.netbox_sync import _item, _tenant_id
+
+    for item in current or []:
+        if _ask(item, wants):
+            item["confirm"] = True
 
     our = state["tenant"].get(tslug)
     action = "delete" if allow_delete else "obsolete"

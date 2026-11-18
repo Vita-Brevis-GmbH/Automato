@@ -66,9 +66,15 @@ ADR 0039 (Prüfungen je Modul), ADR 0041 (BGP), ADR 0037/0049 (Stand der Doku, D
      Will ein anderer Abschnitt dasselbe VLAN (gelesen in Gebrauch), gewinnt er – ein eigenes
      reserviertes VLAN geht dabei in das gelesene über (Status `active`, gelesener Name).
    - **Eigentum:** reservierte VLANs (Tag, Status `reserved`, Beschreibung `Reservierung: `), ihre
-     Gruppen (`Automato: Reservierungen`) und die ASN des Mandanten gehören nur diesem Abschnitt:
-     andere Abschnitte führen sie weder als veraltet noch löschen sie sie; freigegebene
-     Reservierungen sind mit dem Abschnitt veraltet bzw. werden mit „Löschen zulassen“ entfernt.
+     Gruppen (`Automato: Reservierungen`) und die ASN mit Tag `automato` des Mandanten gehören nur
+     diesem Abschnitt: andere Abschnitte führen sie weder als veraltet noch löschen sie sie;
+     freigegebene Reservierungen sind mit dem Abschnitt veraltet bzw. werden mit „Löschen
+     zulassen“ entfernt.
+   - **Ändern nur bestätigt** (derselbe Weg wie Kabelnummern und DNS-Namen): weicht ein schon
+     angelegtes reserviertes Objekt ab (neuer Zweck in Automato bzw. in NetBox von Hand geändert),
+     ist die Aktion `update` mit `confirm` – die Vorschau zeigt beide Werte, geschrieben wird nur,
+     was der Betreiber je Eintrag bestätigt (`POST …/apply` mit `{"confirm": [...]}`, am Plan
+     `options.confirm`, im Audit `reservations_confirmed`).
      **Ports und Netze nehmen nie ein reserviertes VLAN** (`_vlan_candidates`).
 5. **AS-Nummern einzeln** (Ansicht „AS-Nummern“, `GET /routing/as-numbers`, `store/as_numbers.py`)
    nur aus den schon gelesenen BGP-Daten: je AS die Geräte mit diesem AS (FortiGate aus dem

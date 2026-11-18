@@ -679,3 +679,44 @@ def test_reserviertes_vlan_kein_kandidat_fuer_ports():
     state = {k.name: {} for k in netbox_sync.KINDS}
     state["vlan_ref"] = {"g/130 #1": netbox_sync.Have(1, "g/130 #1", obj, True)}
     assert netbox_sync._vlan_candidates(netbox_sync.Wants(), state) == {}
+
+
+def test_sync_aenderung_nur_mit_bestaetigung(client, netbox, session_factory):
+    """Bestehende reservierte Objekte aendert der Sync nur bestaetigt (`confirm`, wie Kabelnummern
+    und DNS-Namen): die Vorschau zeigt beide Werte; ohne Bestaetigung bleibt NetBox, wie es ist."""
+    ids = _setup(client, bgp=False)
+    _nb(client, ids)
+    tid, zrh = ids["tid"], ids["chzrh1"]
+    netbox.add("ipam/rirs", {"name": "RFC 6996", "slug": "rfc6996", "is_private": True})
+    vlan = _reserve(client, tid, low=300, site_id=zrh, purpose="Projekt X").json()["id"]
+    _reserve(client, tid, kind="asn", low=65500, purpose="Standort")
+    assert _apply(client, _plan(client, ids, sections=RES)["id"])["status"] == "applied"
+    # neuer Zweck in Automato; die ASN hat jemand in NetBox von Hand umbeschrieben
+    body = {"tenant_id": tid, "kind": "vlan", "low": 300, "site_id": zrh, "purpose": "Projekt Y"}
+    assert client.put(f"/reservations/{vlan}", json=body, headers=OP).status_code == 200
+    asn = netbox.find("ipam/asns", asn=65500)
+    asn["description"] = "von Hand geändert"
+
+    plan = _plan(client, ids, sections=RES)
+    asked = {i["key"]: i for i in _items(client, plan["id"], action="update") if i.get("confirm")}
+    assert set(asked) == {"kunde-a-reservierungen-chzrh1/300", "65500"}
+    changes = {c["field"]: (c["old"], c["new"]) for c in asked["65500"]["changes"]}
+    assert changes["description"][0] == "von Hand geändert"
+    assert changes["description"][1].startswith("Reservierung: Standort")
+    # ohne Bestaetigung nichts zu uebernehmen
+    r = client.post(f"/netbox-sync/plans/{plan['id']}/apply", headers=ADMIN)
+    assert r.status_code == 409 and "confirm" in r.json()["detail"]
+    # nur das VLAN bestaetigt: die ASN bleibt, wie sie in NetBox ist
+    r = client.post(f"/netbox-sync/plans/{plan['id']}/apply", headers=ADMIN,
+                    json={"confirm": ["kunde-a-reservierungen-chzrh1/300"]})  # fmt: skip
+    assert r.status_code == 202, r.text
+    done = client.get(f"/netbox-sync/plans/{plan['id']}", headers=ADMIN).json()
+    assert done["status"] == "applied", done
+    assert netbox.find("ipam/vlans", vid=300)["name"] == "Projekt Y"
+    assert netbox.find("ipam/asns", asn=65500)["description"] == "von Hand geändert"
+    with session_factory() as s:
+        from app.audit import decode_detail
+
+        row = (s.query(AuditLog).filter(AuditLog.action == "netbox_sync.applied")
+               .order_by(AuditLog.id.desc()).first())  # fmt: skip
+        assert decode_detail(row)["reservations_confirmed"] == 1

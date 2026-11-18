@@ -2260,7 +2260,7 @@ def diff(
             )
     if "cabling" in chosen:  # Kabelnummern (1.19.0): aendern nur mit Bestaetigung
         items += _label_sync().items(wants, state)
-    items += reserv.items(wants, state, tslug, allow_delete, chosen)  # Reservierungen (1.19.0)
+    items += reserv.items(wants, state, tslug, allow_delete, chosen, items)  # Reservierungen
     if "applications" in chosen:
         gone = {(i["kind"], i["key"]) for i in items if i["action"] == "delete"}
         items += _assignments(wants, state, gone)
