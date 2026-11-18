@@ -7,6 +7,59 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 1.20.0 – 2026-11-18
+
+Rückmeldung des Anwenders 2026-11-18 zum Test von 1.19.2: Abmelden und Rechte im Menü. Neue
+Migration `0095_rolle_operator`; ADR 0068 (neu), Nachtrag zu ADR 0051, Nachträge zu ADR 0007,
+0018, 0050 und 0058. Gegenstück im Cockpit: 0.9.0.
+
+### Rechte je Rolle im eigenen Mandanten, Betreiber (ADR 0068)
+
+Anwender: „Admins alles sehen, und anpassen können in ihrem Mandanten, Operatoren sollen alles sehen
+und nur das einlesen anstossen können. Viewer sollen nur das sehen, wo heute der Admin sieht.“ und
+„Der Betreiber soll alles sehen und anpassen können und auch einen Link zu der ganzen Plattform
+erhalten, dies wenn es nicht eine eigene Instanz ist, sondern nur ein Mandanten.“
+
+- **Neue Kunden-Rolle Operator** (`customer_operator`): im eigenen Mandanten (für den Portal-Kunden
+  angelegt, `cockpit_tenant`) alles sehen – L1–L7, Wege, Wege vergleichen, Abgleich, Läufe,
+  Quellsysteme ohne Geheimnisse, Zeitplan, Standorte – und nur das Einlesen anstossen.
+- **Admin im eigenen Mandanten** (`customer_admin`): alles im Mandanten anpassen – Applikationen,
+  Findings, Prüfungen, Module, Zonen, Wege, Standorte, Quellsysteme (nur mit einem Collector-Agenten
+  des Mandanten), Läufe abbrechen, NetBox-Sync; nie Plattform-Funktionen (System, Kunden-Portal,
+  Mandanten, Benutzer und Rollen, Kunden, Namensprofile, Agenten) oder andere Mandanten. Viewer,
+  Triage und Editor sowie gemeinsame Mandanten wie bisher.
+- **Prüfung auf dem Server:** Positivliste je Endpunkt (`auth/tenant_routes.py`: lesen, einlesen,
+  anpassen), Plattform-Endpunkte ausdrücklich gesperrt, ein Test verlangt jeden Endpunkt in genau
+  einer Liste; fremde `tenant_id` abgewiesen; Lesezugriffe dieser Benutzer immer im Audit.
+- **Betreiber:** Anzeige „Betreiber“ und Link „Ganze Plattform“ zur internen Oberfläche (nicht bei
+  einer eigenen Instanz); dort globaler Admin über den Identity Provider `betrieb` im Realm von
+  Automato, dessen Mapper das Cockpit setzt (ab Cockpit 0.9.0; einmal den Zugang `cockpit` im Realm
+  von Automato einrichten).
+- **Oberfläche:** Navigation und Knöpfe nach Rolle, Rollenanzeige „Kunde · Operator“/„Kunde ·
+  Admin“; ohne `/auth/me` keine Sicht mehr aus dem Token („Rechte nicht lesbar“ statt vollem Menü).
+
+### Abmelden (ADR 0051 Nachtrag 1.20.0)
+
+Anwender: „Das Logout bei den Kundenportalen geht noch nicht, ich komme immer wieder rein, auch,
+wenn ich nicht neu einlogge.“ und „Auch aus dem Automato heraus abmelden muss ich mehrfach auf
+Abmelden klicken, damit ich zum Keycloak zurückkehre“.
+
+- **Abmelden auf allen Adressen des Kunden:** das Cookie des Anmelde-Tors gilt je Adresse; bisher
+  löschte „Abmelden“ nur das der Adresse, auf der geklickt wurde – NetBox, Automato und Magister
+  liessen bis zu 5 min ohne Anmeldung herein. Jetzt führt `/oauth2/abmelden` (Startseite, NetBox
+  `/logout/`, Oberfläche, Magister, CMDB) der Reihe nach über das Abmelden des Tors jeder Adresse
+  des Kunden, beendet die Sitzung in Keycloak und zeigt „Abgemeldet“; danach verlangt jede Adresse
+  die Anmeldung. Betreiber („Anmelden als Betreiber“) sind damit auch im Realm der Betreiber
+  abgemeldet (Cockpit 0.9.0, ADR 0017 Nachtrag).
+- **Abmelden in Automato mit einem Klick:** hinter dem Anmelde-Tor über das Tor, sonst über Keycloak
+  mit `id_token_hint`; keine stille Neuanmeldung während des Abmeldens und kein „Anmeldung nicht
+  möglich“ mehr, wenn kurz nach der Anmeldung abgemeldet wird.
+- **Front-Proxy nach Updates ohne Handgriff:** `status.json` hält die Fassung von `front.sh` fest
+  (`erzeugt_mit`); weicht sie ab, erzeugt `front.sh sync` (Timer) die Konfiguration neu.
+- **Tests:** ein Klick meldet auf allen Adressen ab (Caddy + oauth2-proxy gegen Test-IdP und
+  Keycloak 26.4), `e2e/abmelden.spec.ts`, `sync` nach einem Update, `test_tenant_roles.py`,
+  `e2e/rechte_mandant.spec.ts`.
+
 ## 1.19.2 – 2026-11-18
 
 Korrektur (Anwender 2026-11-18: „alle zusätzlich erstellten werden dann dem ersten zugewiesen … Es
