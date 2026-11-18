@@ -2006,6 +2006,17 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   **Abgleich** ist die Anreicherung wählbar („Vergleich mit …“); gegen AD-DNS zeigt er nur
   *DNS-Name abweichend* (das IPAM hat einen anderen bzw. keinen Namen) und *nur im DNS* (IP fehlt
   im IPAM) – IPs ohne DNS-Eintrag sind kein Fehler. Netz, VLAN und Standort kommen nie aus dem DNS.
+  Seit 1.19.0 (ADR 0045 Nachtrag) übernimmt der NetBox-Sync die DNS-Namen in NetBox (Abschnitt
+  *DNS-Namen aus dem AD*, siehe NetBox-Sync), und drei Prüfungen unter Findings → *DNS aus dem
+  AD* kontrollieren die Zonen:
+  - *PTR widerspricht A-Record* je IP (Warnung bzw. Hinweis bei einem PTR ohne A-Record);
+  - *IP nicht in NetBox* je Quelle (A-Records auf IPs, die die gelesene NetBox nicht kennt, nur
+    gezählt);
+  - *nicht geprüft* je Quelle (nicht gelesen, letzter Lauf fehlgeschlagen, Zonen ohne Einträge,
+    Rückwärtszone fehlt, NetBox nicht gelesen).
+  Die **Reverse-Zonen** (z. B. `20.10.in-addr.arpa`) gehören mit in den Lesebereich und brauchen
+  die Freigabe für den Zonentransfer ebenfalls. Ohne sie ist der PTR nicht prüfbar, und bei IPs mit
+  mehreren A-Records kann der Sync keinen Namen wählen.
 - **Kunden (0.30.0, ADR 0018, Operator schreibt):** Ein Kunde ist ein Ausschnitt der
   Umgebung (des Mandanten). Statt Listen beschreiben ihn **Selektoren**:
   - ACI-Tenant, VRF (`TE_ka:VRF_ka` bzw. `VRF_ka`), Application Profile (`TE_ka/AP_007`),
@@ -2233,7 +2244,19 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   Beschreibung `FW-Objekt <Name>`; nur wenn die Ziel-NetBox das führende IPAM ist (dann
   vorgewählt), bewusst externe Objekte nicht. Damit füllt Automato die NetBox als IPAM, wo es
   kein DDI gibt; nach dem Sync die NetBox neu einlesen, dann entfallen die Befunde „nicht im
-  IPAM“. Seit 1.9.0 gelten die VLAN-Gruppen der Quellsysteme am **Standort des Quellsystems**
+  IPAM“. Seit 1.19.0 *DNS-Namen aus dem AD* (ADR 0045 Nachtrag, Vorgabe aus): setzt nur das
+  Feld `dns_name` **bestehender** IP-Adressen aus den A-Records der gelesenen AD-DNS-Zonen – auch
+  an von Hand gepflegten IPs, ohne Tag und ohne andere Felder; neue IP-Adressen legt er nie an
+  (A-Records auf unbekannte IPs zählt der Hinweis); legt ein anderer Abschnitt die IP im selben
+  Sync an, bekommt sie den Namen gleich mit. Nur wenn die Ziel-NetBox das führende IPAM ist.
+  Mehrere A-Records einer IP: der PTR entscheidet, sonst steht die IP als *mehrdeutig* in der
+  Vorschau (Kandidaten und Grund, kein Vorschlag). Leerer Name in NetBox → *ändern* (wird
+  übernommen). Abweichender Name → *ändern* nur nach Bestätigung (wie die Kabelnummern): der Teil
+  „DNS-Namen aus dem AD“ der Vorschau zeigt NetBox und AD nebeneinander, je Eintrag ein Häkchen
+  (oder „alle“); übernommen werden nur die bestätigten, die übrigen bleiben in NetBox, wie sie
+  sind. Steht nur Unbestätigtes an, bleibt „Übernehmen“ gesperrt. Ändert sich ein Name im AD nach
+  der Vorschau, schreibt die Übernahme nichts (neue Vorschau). Seit 1.9.0 gelten die
+  VLAN-Gruppen der Quellsysteme am **Standort des Quellsystems**
   (Geltungsbereich in NetBox); VLANs der Switches kommen auch dann in die Gruppe des
   Quellsystems, wenn NetBox sie anderswo mehrfach hat (vorher „VLAN … nicht eindeutig“), und
   das Netz eines Firewall-Ports bekommt das VLAN des Switch-Ports (Abschnitte Netzinventar und
@@ -2307,7 +2330,7 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
 | `GET /internal/agent/next-run`, `…/targets`, `POST …/heartbeat` | Agent-Kanal (`X-Agent-Token`): Lauf + Zugangsdaten nur für zugewiesene Geräte |
 | `POST /internal/collector-runs/{id}/result`, `GET …/{id}/target` | Ergebnis (Agent-Token des abholenden Agenten oder internes Token; Antwort = Quittung `status`/`message`); Ziel für den zentralen Worker |
 | `POST /internal/collector-runs/{id}/references` | Teil-Upload einer Referenzquelle (Infoblox/NetBox, je bis 2000 Einträge; das Ergebnis meldet `reference_count`, sonst wird der Lauf verworfen) |
-| `GET /netbox-sync/targets`, `GET/POST /netbox-sync/plans`, `GET …/plans/{id}[/items]`, `POST …/plans/{id}/apply` | NetBox-Sync (admin): Vorschau, Aktionen, Übernahme |
+| `GET /netbox-sync/targets`, `GET/POST /netbox-sync/plans`, `GET …/plans/{id}[/items]`, `POST …/plans/{id}/apply` | NetBox-Sync (admin): Vorschau, Aktionen, Übernahme; seit 1.19.0 `apply` mit `{"confirm": [...]}` = bestätigte Kabelnummern bzw. abweichende DNS-Namen (IPs) |
 | `GET /reservations` (`tenant_id`, `kind` vlan/asn, `q`), `GET /reservations/options`, `POST /reservations`, `PUT/DELETE /reservations/{id}` | Reservierungen (1.19.0, ADR 0066; lesen viewer, schreiben operator, nicht für Kunden-Benutzer): `kind`, `low`, `high`, `site_id`, `vlan_group`, `purpose`; Antwort mit `state` (free/in_use/conflict), `in_use`, `used_before`, `findings`, nach dem Speichern `overlaps`; Optionen `sites`, `vlan_groups`, `limits`; freigeben = `DELETE` |
 | `GET /routing/as-numbers` (`tenant_id`, `q`, `scope` own/foreign, `customer_id`) | AS-Nummern einzeln (1.19.0, ADR 0066; viewer): je AS `devices`, `neighbors` (`peer_ip`, Namen, `peer_node`, `at`, `state`, `session`, `configured_only`), `own`, `private`, `reservations`; `summary`, reservierte AS mit `used` |
 | `GET/POST /naming-profiles`, `…/{id}/dictionary`, `DELETE …/dictionary/{id}`; seit 0.55.0 `GET/PUT/DELETE …/{id}/zone-schema`, `POST …/{id}/zone-schema/preview`, `GET …/{id}/zone-schema/drawing`, `GET /naming-profiles/zone-schema/template[?tenant_id=]`; seit 0.104.0 `GET/PUT/DELETE …/{id}/appdoc-catalog`, `GET /naming-profiles/appdoc-catalog/default`, `GET /zones/appdoc/catalog?tenant_id=` | Namensprofile; Kategorien der Applikations-Doku (`categories`, `areas`, `options`; schreiben = admin; je Mandant mit `suggestions` je Zone); Grundschema der Zonen (`content` = draw.io-XML, `filename`; schreiben = admin): `schema` mit `zones` (Name, Art, Kurzname, Farbe, `match`, Gruppe, Position) und `links` (`src`, `dst`, `intent`, `reason`), `warnings`, Vorschau mit `diff`; Zeichnung bzw. Vorlage als Datei |

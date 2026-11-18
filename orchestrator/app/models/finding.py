@@ -168,6 +168,12 @@ class FindingType(enum.StrEnum):
     RESERVATION_IN_USE = "reservation_in_use"
     RESERVATION_CONFLICT = "reservation_conflict"
     RESERVATION_OVERLAP = "reservation_overlap"
+    # DNS aus dem AD (1.19.0, ADR 0045 Nachtrag, `store/dns_checks`): PTR widerspricht dem
+    # A-Record; A-Records auf IPs, die NetBox nicht kennt (nur gezaehlt); nicht pruefbar
+    # (Quelle bzw. Zone nicht gelesen, Rueckwaertszone fehlt, NetBox nicht gelesen)
+    DNS_PTR_MISMATCH = "dns_ptr_mismatch"
+    DNS_IP_UNKNOWN = "dns_ip_unknown"
+    DNS_UNCHECKED = "dns_unchecked"
 
 
 class Severity(enum.StrEnum):

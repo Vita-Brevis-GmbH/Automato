@@ -1100,6 +1100,7 @@ export type SyncSection =
   | "cabling"
   | "firewall_objects"
   | "applications"
+  | "dns" // DNS-Namen aus dem AD (1.19.0)
   | "reservations"; // 1.19.0, ADR 0066
 export interface SyncTarget {
   id: number;
@@ -1118,14 +1119,23 @@ export interface SyncItem {
   kind: string;
   key: string;
   label: string;
-  action: string; // create | update | conflict | delete | obsolete
+  action: string; // create | update | conflict | delete | obsolete | ambiguous (DNS-Namen, 1.19.0)
   id?: number | null; // null: Ziel wird im selben Sync angelegt (Applikations-Tags)
   manual?: boolean;
-  confirm?: boolean; // 1.19.0: Kabelnummer – nur übernommen, wenn bestätigt
+  confirm?: boolean; // 1.19.0: Kabelnummer bzw. abweichender DNS-Name – nur übernommen, wenn bestätigt
   changes?: SyncChange[];
   fields?: Record<string, unknown>;
   note?: string; // Reservierungen (1.19.0): „exists“ = in NetBox schon vorhanden, nur angezeigt
   reservation?: string;
+  dns?: SyncDns; // DNS-Namen aus dem AD (1.19.0)
+}
+// DNS-Name einer IP aus dem AD (1.19.0): A-Records, PTR, wer entschieden hat bzw. warum mehrdeutig
+export interface SyncDns {
+  names: string[];
+  ptr: string[];
+  by?: "a" | "ptr";
+  why?: "no_ptr" | "ptr_other" | "ptr_several" | "no_reverse" | "netbox_several" | "invalid";
+  vrf?: string;
 }
 // Nachkontrolle des NetBox-Syncs (0.115.0, ADR 0042): NetBox nach dem Schreiben rein lesend neu
 // gelesen, je geschriebenem Objekt verglichen
@@ -2445,7 +2455,7 @@ export const fetchSyncItems = (
   id: number,
   params: { action?: string; kind?: string; q?: string; limit?: number; offset?: number } = {},
 ) => getJSON<Paged<SyncItem>>(`/api/netbox-sync/plans/${id}/items${qs({ ...params, q: params.q?.trim() })}`);
-// 1.19.0: `confirm` = bestätigte Kabelnummern (Schlüssel der Aktionen `cable_label`)
+// 1.19.0: `confirm` = bestätigte Kabelnummern (Schlüssel der Aktionen `cable_label`) bzw. abweichende DNS-Namen (IPs)
 export const applySyncPlan = (id: number, confirm?: string[]) =>
   sendJSON<SyncPlan>(`/api/netbox-sync/plans/${id}/apply`, "POST", confirm?.length ? { confirm } : undefined);
 // Laufende Vorschau/Übernahme beenden (hängt z. B. nach einem Neustart des Orchestrators)
