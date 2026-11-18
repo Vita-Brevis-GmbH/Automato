@@ -11,6 +11,8 @@ echten Gerät (Herstellerdoku; Belege im Bericht der Prüfung, hier je Test die 
   nicht bzw. wertet der Orchestrator sie nicht aus - die Tests nennen den vorgeschlagenen
   Schlüssel in `topo_context.settings` (wie `strict_src_check` für `strict-src-check`). P-11
   (Collector) steht in `collectors/tests/test_fable_pruefung.py`.
+- **Korrigiert** (ADR 0071 Nachtrag „Gegenprüfung“): P-3, P-4, P-6, P-7 und P-11 laufen ohne
+  `xfail`; ihre Gegenproben stehen in `test_fable_korrektur_regeln.py`.
 
 Beispiele anonymisiert: RFC 1918, Dokumentationsnetze (192.0.2.0/24, 198.51.100.0/24,
 203.0.113.0/24, 2001:db8::/32), „Kunde A“.
@@ -260,13 +262,6 @@ def test_s2_weg_endet_am_mpls_uebergang_nicht_an_der_internet_firewall(client, s
     assert res["paths"] and all("fw-inet" not in _labels(p) for p in res["paths"])
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="P-4: endet der Weg an einer nicht gelesenen Grenze, "
-    "bleiben in der Doku die Regeln aller Firewalls stehen (nur markiert „Weg "
-    "nicht geprüft“) - auch die der Internet-Firewall abseits des Wegs; die "
-    "Firewall auf dem belegten Teil des Wegs ist ebenfalls „nicht geprüft“",
-)
 def test_p4_s2_doku_zeigt_nicht_die_regel_der_internet_firewall(client):
     """S2 in der Doku: der belegte Teil des Wegs (VRF T1 → fw-a → MPLS) zeigt, dass fw-a auf dem
     Weg liegt und fw-inet nicht (sie kennt das private Ziel nur über die Default-Route ins
@@ -625,13 +620,6 @@ def test_aci_vzany_contract_mit_filter_gewinnt_gegen_preferred_group(client):
     assert rules["verdict"] == "allow", rules
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="P-3: Preferred Group eingeschaltet - die Zoning-Rules, "
-    "die Nichtmitglieder sperren (Priorität 18/19), fehlen im Vorrang; ein "
-    "Contract vzAny ↔ vzAny mit dem Filter „alles“ (Priorität 21) gilt als "
-    "erlaubt, im Fabric gewinnt die Sperre",
-)
 def test_p3_aci_preferred_group_sperrt_nichtmitglied_vor_vzany_permit_any(client):
     """VRF mit Preferred Group (Mitglied: EPG_web); EPG_db ist kein Mitglied. vzAny bietet und
     nutzt einen Contract mit `ip/any` (Zoning-Rule any_any_any, Priorität 21). Für das
@@ -647,12 +635,6 @@ def test_p3_aci_preferred_group_sperrt_nichtmitglied_vor_vzany_permit_any(client
 # -- P-6 / P-7: Verkehr, den die FortiGate ohne Policy weiterleitet ---------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="P-6: `intrazone allow` der Zone wird nicht gelesen "
-    "(vorgeschlagen: `settings.intrazone_allow`) - Verkehr zwischen zwei "
-    "Interfaces derselben Zone gilt als „implizit gesperrt“",
-)
 def test_p6_zone_mit_intrazone_allow_braucht_keine_policy(client):
     """FortiOS: mit `set intrazone allow` geht Verkehr zwischen den Interfaces der Zone ohne
     Policy durch."""
@@ -671,12 +653,6 @@ def test_p6_zone_mit_intrazone_allow_braucht_keine_policy(client):
     assert path["hops"][0]["rules"]["verdict"] == "allow", path["hops"][0]["rules"]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="P-7: `allow-traffic-redirect` (system global) wird nicht "
-    "gelesen (vorgeschlagen: `settings.allow_traffic_redirect`) - Verkehr, der "
-    "am selben Interface ein- und ausgeht, gilt als „implizit gesperrt“",
-)
 def test_p7_gleiches_interface_mit_traffic_redirect_braucht_keine_policy(client):
     """FortiOS mit `allow-traffic-redirect enable` (Vorgabe bis 7.4.9/7.6.4): Quelle im Netz des
     Interfaces, Route zum Ziel über dasselbe Interface - weitergeleitet ohne Policy."""

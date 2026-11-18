@@ -37,6 +37,15 @@ Seit ADR 0071 (Regel-Zuordnung nach echtem Treffer):
   Nicht gelesen (NULL, Lauf eines aelteren Collectors): Urteil wie bisher, im Ergebnis
   ausgewiesen (`unchecked`).
 
+Nachtrag „Gegenpruefung“ (ADR 0071, P-3/P-11):
+- **Preferred Group sperrt Nichtmitglieder**: ist die Gruppe in der VRF eingeschaltet, legt das
+  Fabric je EPG ausserhalb Sperren mit Prioritaet 18 (Nichtmitglied -> any) und 19 (any ->
+  Nichtmitglied) an. Sie gewinnen gegen vzAny <-> vzAny mit dem Filter ohne EtherType (21) und
+  verlieren gegen alle Contracts mit hoeherem Vorrang (7 bis 17).
+- **Stufe je passendem Filter**: `unspecified/any` (ohne EtherType) = tiefere Stufe, `ip/any`
+  (EtherType `ip`) und Filter mit Protokoll = hoehere Stufe; ohne `raw.ether_types` (aelterer
+  Collector) sind beide nicht unterscheidbar - `ip/any` gilt dort wie bisher als offen.
+
 Nur lesend; nicht beruecksichtigt: ESG-IP-Selektoren, Service Graphs.
 """
 
@@ -542,10 +551,38 @@ class AciChecker:
         for c in self.contracts(sid):
             hit = self._match(c, ps, pd, s, d, service)
             if hit is not None:
-                matched.append((self._priority(c, hit[2], hit[3], hit[1]), c.allow, len(matched),
-                                c, hit))  # fmt: skip
+                matched.append((self._priority(c, hit[2], hit[3], hit[1], service), c.allow,
+                                len(matched), c, hit))  # fmt: skip
+            if c.kind == "preferred_group" and not same:
+                # Preferred Group der VRF (ADR 0071 Nachtrag, P-3): fuer jede EPG ausserhalb legt
+                # das Fabric Sperren an - Nichtmitglied -> any (18), any -> Nichtmitglied (19)
+                for prio, m, proxies, of in ((18, s, ps, vrf), (19, d, pd, dst_vrf or vrf)):
+                    if self._outside_group(c, m, proxies, sid, of):
+                        matched.append((prio, False, len(matched), c, m))
         # Vorrang der Zoning-Rules (ADR 0071): kleinere Zahl zuerst, bei gleicher die Sperre
-        for _prio, _allow, _n, c, hit in sorted(matched, key=lambda m: m[:3]):
+        ordered = sorted(matched, key=lambda m: m[:3])
+        for at, (_prio, _allow, _n, c, hit) in enumerate(ordered):
+            if isinstance(hit, Member):  # Sperre der Preferred Group fuer ein Nichtmitglied
+                # entscheidet nur, wenn dahinter (tieferer Vorrang) etwas erlauben wuerde - sonst
+                # bleibt es beim Text „kein Contract“ bzw. „oeffnet den Dienst nicht“
+                beaten = [x[3] for x in ordered[at + 1:] if not isinstance(x[4], Member)
+                          and x[3].allow and x[4][0] is not False and not x[4][4]
+                          and not x[4][5]]  # fmt: skip
+                if not beaten:
+                    continue
+                label = L(f"{c.name} ({hit.text} ist kein Mitglied)",
+                          f"{c.name} ({hit.text} is not a member)")  # fmt: skip
+                decisive = {
+                    "rule_id": c.id, "external_id": c.external_id, "name": c.name,
+                    "label": label, "kind": c.kind, "action": "deny",
+                    "src": ps.get(s.epg.id, s.text), "dst": pd.get(d.epg.id, d.text),
+                    "srcintf": [], "dstintf": [], "services": [], "unsure": [],
+                    "decides": True, "snat": None, "reverse": False,
+                    # Contracts mit tieferem Vorrang, die sonst erlaubt haetten
+                    "overrides": [_label(x) for x in beaten[:3]],
+                }  # fmt: skip
+                shown.append(decisive)
+                break
             ok, back, consumer, provider, note, closed = hit
             if back:  # Rueckrichtung: die Quelle ist Provider, das Ziel Consumer
                 via_src, via_dst = ps[min(provider)], pd[min(consumer)]
@@ -593,10 +630,25 @@ class AciChecker:
                     "text": text}  # fmt: skip
         return _verdict(decisive, shown, s, d, service, closed_entries)
 
-    def _priority(self, c: _Contract, consumer, provider, back: bool) -> int:
+    def _outside_group(self, c: _Contract, m: Member, proxies: dict, sid: int, vrf: str) -> bool:
+        """Ist die EPG kein Mitglied der Preferred Group `c` ihrer VRF? Die Gruppe gehoert zur VRF
+        ihrer Mitglieder bzw. ihres vzAny (`raw.dn`); ohne erkennbare VRF nie (keine Vermutung)."""
+        members = c.consumers | c.providers
+        if proxies.keys() & members:
+            return False
+        own = {self.cls.vrf_of(self.epgs[i]) for i in members if i in self.epgs}
+        dn = str(c.raw.get("dn") or "")
+        own |= {self.cls.vrf_of(e) for e in self.epgs.values()
+                if e.kind == "vzany" and e.source_system_id == sid and dn
+                and e.dn and (e.dn == dn or e.dn.startswith(f"{dn}/"))}  # fmt: skip
+        return vrf in own
+
+    def _priority(self, c: _Contract, consumer, provider, back: bool, service=None) -> int:
         """Vorrang der Zoning-Rule eines Contracts fuer dieses Paar (ADR 0071, Cisco ACI Contract
         Guide „Zoning-rule priorities“): kleinere Zahl gewinnt. Je genauer Quelle und Ziel,
-        desto hoeher der Vorrang; ein Filter ohne Einschraenkung (`ip/any`) eine Stufe tiefer."""
+        desto hoeher der Vorrang; ein Filter ohne EtherType eine Stufe tiefer - je **passendem**
+        Filter (Nachtrag P-11): passt ein bestimmter Filter des Contracts auf den Dienst, gilt
+        seine Stufe, auch wenn der Contract daneben einen offenen Filter hat."""
         if c.kind == "taboo":
             return 5
         if c.kind == "preferred_group":
@@ -616,7 +668,7 @@ class AciChecker:
                 return 14 if src_any and not dst_any else 13
             if level == "level1":
                 return 17
-        open_ = any(service_ok([x], None) is True for x in c.services)
+        open_ = self._open_filter(c, c.reverse if back else c.services, service)
         if src_any and dst_any:
             return 21 if open_ else 17
         if src_any:
@@ -624,6 +676,27 @@ class AciChecker:
         if dst_any:
             return 15 if open_ else 13
         return 9 if open_ else 7
+
+    @staticmethod
+    def _open_filter(c: _Contract, names: list[str], service) -> bool:
+        """Trifft den Dienst nur ein Filter **ohne EtherType** (`unspecified/any`, z. B.
+        `common/default`)? Dann hat die Zoning-Rule die tiefere Stufe (9 bzw. 15/16/21). Ein
+        Filter mit EtherType `ip` (`ip/any`) bzw. mit Protokoll hat die hoehere (7 bzw.
+        13/14/17). Laeufe aelterer Collectors (ohne `raw.ether_types`) liefern beide als
+        `ip/any` - dort gilt wie bisher die tiefere Stufe."""
+        sure = [n for n in names if service_ok([n], service) is True]
+        pool = sure or [n for n in names if service_ok([n], service) is None]
+        if not pool:
+            return False
+        old = not c.raw.get("ether_types")
+
+        def unspecified(name: str) -> bool:
+            proto, _, port = name.lower().partition("/")
+            if port not in _ALL:
+                return False
+            return proto == "unspecified" or (old and proto in ("ip", "all"))
+
+        return all(unspecified(n) for n in pool)
 
     def _match(self, c: _Contract, ps: dict, pd: dict, s: Member, d: Member, service):
         """(Urteil Dienst, Rueckrichtung, Consumer, Provider) bzw. None: Consumer -> Provider
@@ -674,14 +747,21 @@ def _verdict(decisive: dict | None, shown: list[dict], s: Member, d: Member,
         other = [e for e in before if e["action"] != decisive["action"]]
         if other:
             label = other[0]["label"]
-            text = L(f"{label} kann sperren (Dienst nicht angegeben)",
-                     f"{label} can block (service not specified)")  # fmt: skip
+            if other[0]["action"] == "allow":  # vor einer Sperre (z. B. der Preferred Group)
+                text = L(f"{label} kann vorher erlauben (Dienst nicht angegeben)",
+                         f"{label} can allow before that (service not specified)")  # fmt: skip
+            else:
+                text = L(f"{label} kann sperren (Dienst nicht angegeben)",
+                         f"{label} can block (service not specified)")  # fmt: skip
             return {"verdict": "depends", "rules": shown, "text": text}
         label = decisive["label"]
         if decisive["action"] == "allow":
             text = L(f"erlaubt durch {label}", f"allowed by {label}")
         else:
             text = L(f"gesperrt durch {label}", f"blocked by {label}")
+        if decisive.get("overrides"):  # Sperre der Preferred Group vor einem offenen Contract
+            names = ", ".join(decisive["overrides"])
+            text += L(f" – mit Vorrang vor {names}", f" – with precedence over {names}")
         if decisive.get("reverse"):
             text += L(f" in der Rückrichtung ({aci_direction.text()})",
                       f" in the reverse direction ({aci_direction.text()})")  # fmt: skip

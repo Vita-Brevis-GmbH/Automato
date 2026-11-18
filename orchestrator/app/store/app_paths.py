@@ -178,6 +178,12 @@ def cut_text(kind: str, x: dict) -> str:
                     "das Ziel dort angeschlossen ist, ist nicht geprüft",
                     f"{n} connections of {rules} rules via a route with an interface only – "
                     "whether the destination is connected there is not checked"),
+        "no_policy": L(f"{n} Verbindungen von {rules} Regeln über dasselbe Interface bzw. "
+                       "dieselbe Zone einer Firewall: ob sie den Verkehr ohne Policy weiterleitet "
+                       "(allow-traffic-redirect, intrazone), ist nicht geprüft",
+                       f"{n} connections of {rules} rules via the same interface or the same "
+                       "zone of a firewall: whether it forwards the traffic without a policy "
+                       "(allow-traffic-redirect, intrazone) is not checked"),
         "return": L(f"{n} Verbindungen von {rules} Regeln: Rückweg nur für die ersten "
                     f"{return_path.MAX_PATHS} Wege geprüft",
                     f"{n} connections of {rules} rules: return path checked for the first "

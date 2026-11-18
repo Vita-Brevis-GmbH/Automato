@@ -49,7 +49,7 @@ from app.store.topology import endpoint, span
 
 # Fassung der Zuordnung - Teil des Fingerabdrucks der Doku (ADR 0037): eine neue Fassung
 # rechnet jeden Stand einmal neu
-VERSION = 1
+VERSION = 2  # 2: Gegenpruefung (ADR 0071 Nachtrag) - belegter Teil des Wegs, Verkehr ohne Policy
 
 ANY = "any"  # Seite ohne Einschraenkung
 _SHIFT = {4: 16, 6: 112}

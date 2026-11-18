@@ -1596,6 +1596,9 @@ def _trace(
                                  checks, central=central if any_central else None)  # fmt: skip
         for p in primary + found_backups:
             for h in p["hops"]:
+                free = (h.get("rules") or {}).get("no_policy") or {}
+                if free.get("state") == "unchecked":  # ADR 0071 Nachtrag (P-6/P-7), gezaehlt
+                    unsure("no_policy", policy_check.no_policy_text(h["label"], free))
                 cen = h.get("central_snat") or {}
                 if cen.get("unread") or cen.get("sure") is False:
                     unsure("nat", L(

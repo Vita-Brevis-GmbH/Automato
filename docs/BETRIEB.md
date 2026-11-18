@@ -671,6 +671,19 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
           central-snat-map`; fehlt er, steht „VDOM-Einstellungen“ bzw. „Central SNAT“ als
           nicht lesbar im Lauf, und die Weg-Suche weist die Stelle als „nicht geprüft“ aus.
           Switches: zusätzlich `show standby brief` und `show vrrp brief` (nur lesend).
+        - **Verkehr ohne Policy (ADR 0071 Nachtrag „Gegenprüfung“):** die FortiGate leitet
+          zwei Arten von Verkehr ohne Policy weiter – die Weg-Suche rechnet das jetzt mit:
+          *selbes Interface* (Ein- und Ausgang gleich, Quelle im Netz des Interfaces) mit
+          `allow-traffic-redirect` („ohne Policy weitergeleitet“), *selbe Zone* (zwei
+          Interfaces einer Zone) mit `intrazone allow`, wenn keine Policy passt („erlaubt
+          ohne Policy (intrazone allow der Zone …)“; eine passende Policy entscheidet vorher).
+          Gelesen wird dafür nur, was das Profil schon darf: `system global`
+          (`allow-traffic-redirect`, `ipv6-allow-traffic-redirect`), `system zone`
+          (`intrazone`) und `system settings` (`asymroute6`) – **kein neues Leserecht**, aber
+          die FortiGates einmal neu einlesen. Bis dahin: am selben Interface „abhängig …
+          allow-traffic-redirect nicht geprüft“ statt „gesperrt“, in derselben Zone wie
+          bisher gesperrt mit „(intrazone der Zone … nicht gelesen)“ – beides gezählt
+          (Befund *Applikation: unvollständig geprüft*).
       - **Ohne Quell-IP von aussen (0.135.0):** Kommt der Weg über eine Firewall ins Fabric
         (z. B. Start an der Firewall ohne Quelle), prüft die Weg-Suche jede externe EPG der VRF:
         „abhängig von der Quelle (ohne IP) – erlaubt für externe EPG …, gesperrt für …“,
@@ -684,7 +697,14 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
         aber nicht (0.111.0), heisst es „Contract CT_x von … zu … öffnet tcp/80 nicht (offen:
         tcp/443) – im ACI gesperrt“; der Contract steht mit „öffnet den Dienst nicht“ bei den
         Regeln des Hops.
-      - Ohne Dienst ist nur ein Filter `ip/any` sicher, sonst „möglich“. Ordnet das ACI die
+      - **Preferred Group sperrt Nichtmitglieder (ADR 0071 Nachtrag):** ist die Gruppe in der
+        VRF eingeschaltet, gewinnt ihre Sperre für eine EPG ausserhalb gegen einen Contract
+        vzAny ↔ vzAny mit dem Filter ohne EtherType („gesperrt durch Preferred Group … (EPG …
+        ist kein Mitglied) – mit Vorrang vor Contract …“); Contracts mit bestimmtem Filter bzw.
+        zwischen bestimmten EPGs gehen vor. Filter ohne EtherType heissen nach dem nächsten
+        Lauf des APIC `unspecified/any` (bisher `ip/any`), `ip/any` ist dann der Filter mit
+        EtherType `ip` – ihr Vorrang ist verschieden.
+      - Ohne Dienst ist nur ein Filter `ip/any` bzw. `unspecified/any` sicher, sonst „möglich“. Ordnet das ACI die
         Quelle nicht eindeutig zu (z. B. 0.0.0.0/0 in zwei L3Outs), ist der Hop „abhängig“,
         wenn die Kandidaten verschieden ausgehen.
       - **ACI ist zustandslos (0.69.1):** Filter ohne Ports (`ip`, `tcp/any`, ICMP) gelten auch
@@ -1442,7 +1462,12 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
         trifft anstelle von …“). Ihre Aktion sagt, ob der Zugriff geht.
       - **Weg nicht geprüft:** der Weg zwischen Gegenstelle und System ist nicht bekannt (Routing
         nicht gelesen, Gegenstelle an keinem gelesenen Gerät) bzw. eine Grenze liess ihn nicht
-        ganz prüfen – die Regel bleibt, markiert und gezählt.
+        ganz prüfen – die Regel bleibt, markiert und gezählt. Endet der Weg vor dem Ziel
+        (z. B. an einem nicht gelesenen MPLS-Router), zählt sein **belegter Teil** (ADR 0071
+        Nachtrag): die Firewall darauf liegt auf dem Weg (ohne Kennzeichen); eine Firewall
+        abseits bleibt nur markiert, wenn sie das Ziel selbst kennt (angeschlossen bzw. eigene
+        Route – für ein privates Ziel nicht nur die Default-Route), sonst zählt sie unter
+        „nicht auf dem Weg“.
       - **Negiert** (`srcaddr-negate`/`dstaddr-negate`): die Regel trifft, was sie **nicht**
         nennt (Bezug „nicht …“) – beim genannten System steht sie nicht mehr. **FQDN-Objekte**
         zählen für die Adressen, auf die der Name laut IPAM auflöst („… (FQDN laut IPAM)“).
