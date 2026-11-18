@@ -138,6 +138,14 @@ class Settings(BaseSettings):
     # die Pruefung
     path_store_mb: int = 256
     app_findings_traces: int = 120
+    # Export der Applikations-Doku im Hintergrund (1.21.0, ADR 0069): fertige Exporte liegen in
+    # `export_dir` (Volume orchestrator-data) und sind `export_hours` abrufbar, danach geloescht;
+    # hoechstens `export_max_mb` je Export, `export_parallel` Exporte rechnen gleichzeitig (weitere
+    # warten). Das Export-Passwort lebt nur im Speicher des Auftrags.
+    export_dir: str = "/var/lib/automato/exports"
+    export_hours: int = 24
+    export_max_mb: int = 2048
+    export_parallel: int = 2
     # IPAM im Speicher (0.107.0, Anwender: „es braucht enorm lange, dann sind die Namen da“): so
     # viele Indizes der Referenzquellen (je Quelle und Lauf) bleiben je Prozess geladen statt je
     # Anfrage neu gelesen (0 = aus); ein neuer IPAM-Lauf ersetzt sie

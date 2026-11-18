@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import audit
+from app import audit, modules
 from app.api.customer_filter import (
     actor,
     capability_view,
@@ -143,14 +143,19 @@ _XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
 def _export_tenants(session: Session, principal: Principal, tenant_id: int | None) -> list[int]:
-    """Mandanten des globalen Exports: der gewählte bzw. alle, die der Benutzer sieht."""
+    """Mandanten des globalen Exports: der gewählte bzw. alle, die der Benutzer sieht - ohne
+    Mandanten, in denen das Modul Findings aus ist (1.21.0, wie die Liste: keine Ansicht, keine
+    API)."""
     if tenant_id is not None:
         return [tenant_scope(principal, tenant_id)]
-    if principal.is_admin or (principal.tenant_ids is None and not principal.is_customer):
-        return list(session.scalars(select(Tenant.id).order_by(Tenant.id)))
-    if not principal.tenant_ids:
+    if principal.is_admin or (principal.tenant_ids is None and not principal.is_customer
+                              and not principal.is_tenant_user):  # fmt: skip
+        tids = list(session.scalars(select(Tenant.id).order_by(Tenant.id)))
+    elif not principal.tenant_ids:
         raise HTTPException(status_code=403, detail="no tenant assigned")
-    return sorted(principal.tenant_ids)
+    else:
+        tids = sorted(principal.tenant_ids)
+    return [t for t in tids if modules.enabled(session, t, "findings")]
 
 
 @router.get("/export")

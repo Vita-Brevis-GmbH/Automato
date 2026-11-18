@@ -17,7 +17,7 @@ from datetime import datetime
 from openpyxl import Workbook
 from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from openpyxl.comments import Comment
-from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from app import __version__, checks, modules
@@ -185,7 +185,6 @@ def workbook(findings: Iterable[Finding], tenants: dict[int, str], sources: dict
         _header(ws, labels, widths)
         ws.auto_filter.ref = f"A1:{get_column_letter(len(labels))}1"
         current[module] = [ws, 2]
-    wrap = Alignment(wrap_text=False, vertical="top")
     for cat, f, t in rows:
         ws, r = current[cat.module]
         values = [tenants.get(f.tenant_id), cat.check, f.type.value,
@@ -195,8 +194,7 @@ def workbook(findings: Iterable[Finding], tenants: dict[int, str], sources: dict
                   t["message"], t["hint"] or None, t["note"], _when(f.first_seen),
                   _when(f.last_seen), f.id]  # fmt: skip
         for i, v in enumerate(values, start=1):
-            cell = _put(ws, r, i, v)
-            cell.alignment = wrap
+            _put(ws, r, i, v)  # ohne Stil je Zelle (1.21.0: ein Viertel schneller)
         msg = ws.cell(row=r, column=8)
         msg.comment = Comment(_comment(t["message"], t["hint"], t["detail"], t["note"]),
                               "Automato", width=420, height=260)  # fmt: skip

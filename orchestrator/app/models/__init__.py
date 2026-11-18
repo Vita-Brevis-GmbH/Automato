@@ -39,6 +39,7 @@ from app.models.device_object import (
 )
 from app.models.doc_snapshot import DocSnapshot
 from app.models.epg import Epg, EpgEndpoint, EpgSubnet
+from app.models.export_job import ExportJob
 from app.models.finding import Finding, FindingStatus, FindingType, Severity, SubjectKind
 from app.models.inventory import (
     INVENTORY_MODELS,
@@ -156,6 +157,7 @@ __all__ = [
     "EpgEndpoint",
     "EpgSubnet",
     "EndpointRole",
+    "ExportJob",
     "Family",
     "Finding",
     "FindingStatus",

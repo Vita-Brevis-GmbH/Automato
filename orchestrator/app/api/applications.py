@@ -10,8 +10,8 @@ mit Regeln ihres Ausschnitts. Anlegen, Loeschen, Import, Vorschlaege und die Mit
 und Server bleiben den Betreuern.
 """
 
-import logging
 import re
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
@@ -43,7 +43,6 @@ from app.store import (
     customer_alias,
     doc_snapshots,
     peer_names,
-    secure_zip,
     sites,
     word_export,
 )
@@ -51,7 +50,6 @@ from app.store import applications as store
 from app.store import epgs as epg_store
 from app.store import naming_profiles as profile_store
 
-log = logging.getLogger(__name__)
 router = APIRouter(prefix="/applications", tags=["applications"])
 PLAN_KEYS_MAX = 5000  # Verbindungen im Filter des Exports (0.130.0, bis dahin 120)
 
@@ -1083,94 +1081,6 @@ def _plan_export(background, application_id, format, key, rules, principal, sess
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})  # fmt: skip
 
 
-class ExportAllIn(BaseModel):
-    """Gesamt-Export (1.0.1): Passwort nur in der Anfrage (nie gespeichert, nicht im Audit)."""
-
-    tenant_id: int | None = None
-    customer_id: int | None = None
-    password: str = Field(min_length=secure_zip.MIN_PASSWORD, max_length=200)
-    sections: str | None = Field(default=None, max_length=200)
-    ids: list[int] | None = Field(default=None, max_length=5000)  # Auswahl (leer = alle)
-
-
-@router.post("/export")
-def export_all_applications(
-    body: ExportAllIn,
-    background: BackgroundTasks,
-    principal: Principal = Depends(require_viewer),
-    session: Session = Depends(get_session, scope="function"),
-    factory: sessionmaker = Depends(get_session_factory),
-) -> Response:
-    """Doku aller Applikationen (1.0.1, Anwender: „Export aller Dokumentationen der
-    Applikationen als mehrere Zips, welche mit einem Export Passwort verschlüsselt sind“): ein
-    Download (ZIP) mit je Applikation einem ZIP (Word und Netzwerkplan als draw.io wie der
-    Einzel-Export), jedes mit dem Export-Passwort AES-256-verschlüsselt (`store/secure_zip`).
-    Applikationen wie in der Liste (Mandant, Kunde, Ausschnitt der Kunden-Benutzer); schlägt
-    eine fehl, steht sie in `FEHLER.txt` und die übrigen kommen trotzdem."""
-    if not body.password.strip():
-        raise HTTPException(status_code=422, detail=L("Passwort fehlt", "password missing"))
-    want = _sections(body.sections)
-    tenant_id = tenant_scope(principal, body.tenant_id)
-    view = customer_view(session, principal, tenant_id, body.customer_id)
-    mine = view.applications(session) if view else None
-    chosen = set(body.ids) if body.ids else None
-    apps = [a for a in store.list_applications(session, tenant_id)
-            if (mine is None or mine(a)) and (chosen is None or a.id in chosen)]  # fmt: skip
-    if not apps:
-        raise HTTPException(status_code=404, detail=L("keine Applikationen", "no applications"))
-    for tid in {a.tenant_id for a in apps}:
-        tenant_scope(principal, tid)
-    tenants = {t.id: t.name for t in session.scalars(
-        select(Tenant).where(Tenant.id.in_({a.tenant_id for a in apps})))}  # fmt: skip
-    several = len(tenants) > 1 and not principal.is_customer
-    when = datetime.now(UTC)
-    files: list[tuple[str, bytes]] = []
-    failed: list[str] = []
-    used: set[str] = set()
-    for app in sorted(apps, key=lambda a: (tenants.get(a.tenant_id, ""), a.name.lower(), a.id)):
-        try:
-            with session.begin_nested():
-                name, media, data = _export_one(session, factory, background, principal, app,
-                                                want, "zip")  # fmt: skip
-        except HTTPException:
-            raise
-        except Exception:  # noqa: BLE001 - eine Applikation haelt den Export nicht auf
-            log.exception("Gesamt-Export: Applikation %s fehlgeschlagen", app.id)
-            failed.append(f"{app.name} (ID {app.id})")
-            continue
-        inner = secure_zip.unpack(data) if media == "application/zip" else [(name, data)]
-        slug = word_export.slug(app.name, "applikation")
-        if several:
-            slug = f"{word_export.slug(tenants.get(app.tenant_id, ''), 'mandant')}-{slug}"
-        zip_name, n = f"{slug}.zip", 2
-        while zip_name.lower() in used:
-            zip_name, n = f"{slug}-{n}.zip", n + 1
-        used.add(zip_name.lower())
-        files.append((zip_name, secure_zip.encrypted(inner, body.password)))
-    if failed:
-        files.append(("FEHLER.txt", L(
-            "Diese Applikationen konnten nicht exportiert werden (Protokoll des Orchestrators):\n",
-            "These applications could not be exported (see the orchestrator log):\n",
-        ) + "\n".join(failed) + "\n"))  # fmt: skip
-    audit.record(
-        session,
-        actor=_actor(principal),
-        action="application.exported",
-        subject="applications",
-        detail={
-            "tenant_ids": sorted(tenants),
-            "count": len(apps) - len(failed),
-            "failed": len(failed),
-            "encrypted": True,
-            **actor(principal),
-        },  # fmt: skip
-    )
-    out = word_export.bundle(files)
-    fname = f"{L('applikationen', 'applications')}-{when:%Y-%m-%d}.zip"
-    return Response(content=out, media_type="application/zip",
-                    headers={"Content-Disposition": f'attachment; filename="{fname}"'})  # fmt: skip
-
-
 @router.get("/{application_id}/export")
 def export_application(
     background: BackgroundTasks,
@@ -1203,35 +1113,86 @@ def _sections(sections: str | None) -> set[str] | None:
     return want
 
 
+@dataclass
+class Bulk:
+    """Gesamt-Export (1.21.0, ADR 0069): was fuer alle Applikationen eines Mandanten gleich
+    bleibt, einmal statt je Applikation - Aufloesung der Mitglieder, VMs, Standorte,
+    Fussabdruecke der Abhaengigkeiten (der grosse Teil der Zeit), Namen der Gegenstellen,
+    Quellsysteme und Mandant. Das Lesen protokolliert der Auftrag einmal. Nur fuer Betreuer und
+    Mandanten-Benutzer (Kunden-Benutzer exportieren einzeln)."""
+
+    resolver: store.Resolver
+    vms: store.VmCounter
+    site_index: sites.SiteIndex
+    footprints: store.Footprints
+    names: bool
+    sources: dict[int, str]
+    tenant: str | None
+
+
+def bulk(session: Session, tenant_id: int) -> Bulk:
+    tenant = session.get(Tenant, tenant_id)
+    sources = dict(session.execute(
+        select(SourceSystem.id, SourceSystem.name).where(SourceSystem.tenant_id == tenant_id)
+    ).all())  # fmt: skip
+    return Bulk(store.Resolver(session, tenant_id), store.VmCounter(session, tenant_id),
+                sites.SiteIndex(session, tenant_id), store.Footprints(session, tenant_id),
+                peer_names.enabled(session, tenant_id, False), sources,
+                tenant.name if tenant else None)  # fmt: skip
+
+
 def _export_one(session: Session, factory: sessionmaker, background: BackgroundTasks,
                 principal: Principal, app: Application, want: set[str] | None,
                 format: str) -> tuple[str, str, bytes]:  # noqa: A002  # fmt: skip
-    """Eine Applikation exportieren (Name, Medientyp, Inhalt) - einzeln und im Gesamt-Export
-    (1.0.1)."""
+    """Eine Applikation exportieren (Name, Medientyp, Inhalt) - Word, Markdown bzw. ZIP mit
+    Word und Netzwerkplan."""
+    base, files = export_files(session, factory, background, principal, app, want, format)
+    if format == "md":
+        return f"{base}.md", "text/markdown; charset=utf-8", files[0][1]
+    if format == "docx" or principal.is_customer:  # Kunden-Benutzer: ohne Plan nur Word
+        return f"{base}.docx", _DOCX, files[0][1]
+    return f"{base}.zip", "application/zip", word_export.bundle(files)
+
+
+def export_files(session: Session, factory: sessionmaker, background: BackgroundTasks,
+                 principal: Principal, app: Application, want: set[str] | None, format: str,
+                 ctx: Bulk | None = None) -> tuple[str, list[tuple[str, bytes]]]:  # noqa: A002  # fmt: skip
+    """Dateien des Exports einer Applikation (Basisname, [(Datei, Inhalt)]) - einzeln und im
+    Gesamt-Export (1.0.1; seit 1.21.0 mit `ctx` je Mandant einmal gerechnet und ohne den Umweg
+    ueber ein ZIP je Applikation)."""
     view = _visible(session, principal, app)  # Kunden-Benutzer: ihr Ausschnitt (ADR 0018)
     if principal.is_customer:  # ohne Infrastruktur: keine Verbindungen, kein Plan
         want = (set(word_export.SECTIONS) if want is None else want) - {"connections", "plan"}
         format = "docx" if format == "zip" else format
     with_plan = want is None or "plan" in want
-    reads.maybe_audit_read(session, principal, app.tenant_id, "applications")
-    names = peer_names.enabled(session, app.tenant_id, principal.is_customer)  # 0.95.0
+    if ctx is None:
+        reads.maybe_audit_read(session, principal, app.tenant_id, "applications")
+        names = peer_names.enabled(session, app.tenant_id, principal.is_customer)  # 0.95.0
+    else:
+        names = ctx.names
     # Stand der Doku (0.108.0): der aktuelle - ein alter wird hier neu gerechnet
     doc = _doc(session, factory, background, app, view_ids(session, view, "rule"), names,
                wait=True).data  # fmt: skip
     if want is None or "dependencies" in want:  # 0.88.0
         visible = _visible_apps(session, principal, app)
-        doc["dependencies"] = store.dependencies(session, app, doc, visible)
-    out = ApplicationDocOut(
-        application=_out(session, app, store.Resolver(session, app.tenant_id)), **doc
-    ).model_dump(mode="json")
+        doc["dependencies"] = store.dependencies(session, app, doc, visible,
+                                                 ctx.footprints if ctx else None)  # fmt: skip
+    row = (_out(session, app, ctx.resolver, ctx.vms, ctx.site_index) if ctx
+           else _out(session, app, store.Resolver(session, app.tenant_id)))  # fmt: skip
+    out = ApplicationDocOut(application=row, **doc).model_dump(mode="json")
     needs_paths = want is None or bool(want & {"connections", "plan"})
     conns = doc_snapshots.serve(session, factory, background, app, doc_snapshots.CONNECTIONS,
                                 wait=True).data if needs_paths else None  # fmt: skip
     when = datetime.now(UTC)
-    tenant = session.get(Tenant, app.tenant_id)
-    sources = dict(session.execute(
-        select(SourceSystem.id, SourceSystem.name).where(SourceSystem.tenant_id == app.tenant_id)
-    ).all())  # fmt: skip
+    if ctx is not None:
+        tenant, sources = ctx.tenant, ctx.sources
+    else:
+        found = session.get(Tenant, app.tenant_id)
+        tenant = found.name if found else None
+        sources = dict(session.execute(
+            select(SourceSystem.id, SourceSystem.name)
+            .where(SourceSystem.tenant_id == app.tenant_id)
+        ).all())  # fmt: skip
     if principal.is_customer:  # ohne Geraetenamen (0.58.0) - die Middleware sieht nur JSON
         aliases = customer_alias.Aliases(session, [app.tenant_id])
         out = aliases.clean(out)
@@ -1240,24 +1201,18 @@ def _export_one(session: Session, factory: sessionmaker, background: BackgroundT
     base = (f"{L('applikation', 'application')}-{word_export.slug(app.name, 'applikation')}"
             f"-{when:%Y-%m-%d}")  # fmt: skip
     plan_file = f"{base}-{L('netzwerkplan', 'network-diagram')}.drawio"
-    body = word_export.application(out, conns, sources, when, tenant.name if tenant else None,
+    body = word_export.application(out, conns, sources, when, tenant,
                                    plan_file if format == "zip" and with_plan else None,
                                    want, "md" if format == "md" else "docx")  # fmt: skip
     if format == "md":
-        media, name = "text/markdown; charset=utf-8", f"{base}.md"
-    elif format == "docx":
-        media, name = _DOCX, f"{base}.docx"
-    else:
-        files = [(f"{base}.docx", body)]
-        if with_plan and conns is not None:
-            plan = app_plan.drawio(app_plan.build(conns["connections"],
-                                                  members=conns["members"]),
-                                   f"{L('Netzwerkplan', 'Network diagram')} {app.name}",
-                                   when)  # fmt: skip
-            files.append((plan_file, plan))
-        body = word_export.bundle(files)
-        media, name = "application/zip", f"{base}.zip"
-    return name, media, body
+        return base, [(f"{base}.md", body)]
+    files = [(f"{base}.docx", body)]
+    if format == "zip" and with_plan and conns is not None:
+        plan = app_plan.drawio(app_plan.build(conns["connections"], members=conns["members"]),
+                               f"{L('Netzwerkplan', 'Network diagram')} {app.name}",
+                               when)  # fmt: skip
+        files.append((plan_file, plan))
+    return base, files
 
 
 _DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
