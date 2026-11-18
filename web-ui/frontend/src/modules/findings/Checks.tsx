@@ -3,7 +3,7 @@
 // beim nächsten Abgleich weg. Ist das Modul der Prüfung aus, läuft sie auch nicht.
 import { useCallback, useEffect, useState } from "react";
 import { CheckInfo, fetchChecks, runReconcile, switchCheck } from "../../api";
-import type { Me } from "../../auth";
+import { canManage, type Me } from "../../auth";
 import { L } from "../../i18n";
 import { useModule } from "../../moduleState";
 import { findingLabel } from "../../refs";
@@ -136,7 +136,7 @@ export default function Checks({
                         <span className="chip na" title={L("Das Modul der Prüfung ist aus", "The module of the check is off")}>
                           {L("Modul aus", "module off")}
                         </span>
-                      ) : me.isAdmin ? (
+                      ) : canManage(me) ? (
                         <button
                           className={`btn btn-sm ${c.enabled ? "" : "btn-primary"}`}
                           disabled={busy !== null}

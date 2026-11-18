@@ -13,6 +13,7 @@ export const VIEWS: ViewEntry[] = [
     icon: "dict",
     section: "admin",
     order: 240,
+    platform: true, // Namensprofile gelten für mehrere Mandanten (ADR 0068)
     render: (p) => <NamingProfiles me={p.me} tenants={p.tenants} />,
   },
 ];

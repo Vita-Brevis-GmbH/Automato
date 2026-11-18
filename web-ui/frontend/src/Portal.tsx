@@ -34,7 +34,9 @@ const ROLES: [string, string][] = [
   ["viewer", L("liest die Doku", "reads the documentation")],
   ["triage", L("quittiert Findings", "triages findings")],
   ["editor", L("pflegt Applikationen", "maintains applications")],
-  ["customer_admin", L("ordnet Kunden-Benutzer zu", "assigns customer users")],
+  // ADR 0068: im eigenen Mandanten (für den Kunden angelegt) alles sehen und einlesen bzw. alles anpassen
+  ["customer_operator", L("Operator – sieht im eigenen Mandanten alles, stösst das Einlesen an", "operator – sees everything in the own tenant, starts collecting")],
+  ["customer_admin", L("Admin – ordnet Kunden-Benutzer zu, im eigenen Mandanten alles", "admin – assigns customer users, everything in the own tenant")],
 ];
 
 const EMPTY: PortalCustomerIn = {

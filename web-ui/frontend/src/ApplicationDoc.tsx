@@ -38,7 +38,7 @@ import type { View, ViewParams } from "./App";
 import ConnectionsCard from "./AppConnections";
 import { useModule } from "./moduleState";
 import { DocRow, DocTableView } from "./DocTable";
-import type { Me } from "./auth";
+import { canCollect, type Me } from "./auth";
 import { EpgCard } from "./EpgCard";
 import { Fold, FoldTitle, readStored, useFolds, writeJson } from "./fold";
 import { ObjectDrawer } from "./Objects";
@@ -424,7 +424,7 @@ export default function ApplicationDocView({
             {L("Bearbeiten", "Edit")}
           </button>
         )}
-        {me.isOperator && !me.isCustomer && (
+        {canCollect(me) && !me.isCustomer && (
           <button
             className="btn btn-ghost btn-sm"
             id="app-read-rules"

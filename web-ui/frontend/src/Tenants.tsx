@@ -26,7 +26,7 @@ import {
   SystemCredentials,
   Tenant,
 } from "./api";
-import type { Me } from "./auth";
+import { canManage, isTenantUser, type Me } from "./auth";
 import { L } from "./i18n";
 import { PLATFORM_LABEL, REF_ROLE_LABEL, REFERENCE_PLATFORMS } from "./refs";
 import { ScheduleField, scheduleLabel } from "./Schedule";
@@ -54,10 +54,12 @@ export default function Tenants({
   const [systemsVersion, setSystemsVersion] = useState(0); // neu laden nach Zuordnung
 
   useEffect(() => {
+    // Namensprofile gelten für mehrere Mandanten – nicht für Mandanten-Benutzer (ADR 0068)
+    if (isTenantUser(me)) return;
     fetchNamingProfiles()
       .then(setProfiles)
       .catch(() => setProfiles([]));
-  }, []);
+  }, [me]);
 
   const selected = tenants?.find((t) => t.id === tenantId) ?? null;
   const profileName = (id: number | null) => {
@@ -740,7 +742,7 @@ function Sites({ me, tenant }: { me: Me; tenant: Tenant }) {
                   />
                 )}
               </span>
-              {me.isAdmin && (
+              {canManage(me) && (
                 <span className="s-right">
                   {k === "virtual" && physicalSites.length > 0 && linking !== s.id && (
                     <button className="btn btn-ghost btn-sm" onClick={() => setLinking(s.id)}>
@@ -764,7 +766,7 @@ function Sites({ me, tenant }: { me: Me; tenant: Tenant }) {
       <div className="card-head">
         <h2>{L("Standorte", "Sites")}</h2>
         <div className="spacer" />
-        {me.isAdmin && !adding && (
+        {canManage(me) && !adding && (
           <button className="btn btn-ghost btn-sm" onClick={() => setAdding(true)}>
             {L("+ Standort", "+ Site")}
           </button>
@@ -969,12 +971,14 @@ function SourceSystems({ me, tenant }: { me: Me; tenant: Tenant }) {
 
   useEffect(() => {
     load();
-    // Agenten-Liste ist Admin-Sache; Viewer sehen nur "Agent #id"
-    if (me.isAdmin) fetchAgents().then(setAgents).catch(() => setAgents([]));
+    // Agenten-Liste ist Admin-Sache; Viewer sehen nur "Agent #id" – der Admin im eigenen Mandanten
+    // (ADR 0068) bekommt nur die Agenten seines Mandanten
+    if (canManage(me)) fetchAgents().then(setAgents).catch(() => setAgents([]));
   }, []);
 
-  // Geräte dieses Mandanten dürfen eigene oder mandantsübergreifende Agenten verwalten
-  const usable = agents.filter((a) => a.tenant_id == null || a.tenant_id === tenant.id);
+  // Geräte dieses Mandanten dürfen eigene oder mandantsübergreifende Agenten verwalten; der Admin im
+  // eigenen Mandanten nur die seines Mandanten (der Server prüft es, ADR 0068)
+  const usable = agents.filter((a) => a.tenant_id === tenant.id || (a.tenant_id == null && !isTenantUser(me)));
   const agentName = (id: number) => agents.find((a) => a.id === id)?.name ?? `Agent #${id}`;
 
   return (
@@ -988,7 +992,7 @@ function SourceSystems({ me, tenant }: { me: Me; tenant: Tenant }) {
           )}
         </span>
         <div className="spacer" />
-        {me.isAdmin && (
+        {canManage(me) && (
           <button className="btn btn-ghost btn-sm" onClick={() => setEditing("new")}>
             {L("+ Quellsystem", "+ Source system")}
           </button>
@@ -1079,7 +1083,7 @@ function SourceSystems({ me, tenant }: { me: Me; tenant: Tenant }) {
             systems={systems}
             agentName={agentName}
             actions={
-              me.isAdmin
+              canManage(me)
                 ? (s) => (
                     <>
                       {s.base_url && (
@@ -1141,7 +1145,7 @@ function SourceSystems({ me, tenant }: { me: Me; tenant: Tenant }) {
           onSaved={async () => {
             setEditing(null);
             await load();
-            if (me.isAdmin) fetchAgents().then(setAgents).catch(() => undefined);
+            if (canManage(me)) fetchAgents().then(setAgents).catch(() => undefined);
           }}
         />
       )}

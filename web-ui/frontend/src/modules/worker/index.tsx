@@ -15,6 +15,7 @@ export const VIEWS: ViewEntry[] = [
     section: "admin",
     order: 250,
     adminOnly: true,
+    platform: true, // Agenten und Agent-CA verwaltet der Betreiber (ADR 0068)
     render: (p) => <Agents tenants={p.tenants} tenantId={p.tenantId} onGo={p.go} />,
   },
   {

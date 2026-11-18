@@ -4625,13 +4625,24 @@ export interface ServerMe {
   // Kunden, deren Benutzer und Rollen das Cockpit führt (dort kein Zuordnen durch den Kunden-Admin)
   rolle_fehlt?: { kurzname: string; name: string; meldung: string } | null;
   cockpit_kunden?: number[];
+  // ADR 0068: Mandanten-Benutzer (Operator bzw. Admin im eigenen Mandanten) – Rolle und Rechte dort
+  mandant?: { mandant: number | null; rolle: TenantRole; rechte: TenantCapability[] } | null;
+  // ADR 0068: Benutzer eines Kunden-Realms aus dem Realm der Betreiber (nur Anzeige) und der Link
+  // „Ganze Plattform“ (leer = keiner); Kunde des Realms
+  betreiber?: boolean;
+  plattform_url?: string;
+  realm_kunde?: { kurzname: string; name: string } | null;
 }
 export const fetchServerMe = () => getJSON<ServerMe>("/api/auth/me");
 
 // Feinere Rollen der Kunden-Benutzer (ADR 0018 Ergänzung): Rolle je Kunde → Capabilities;
 // „operator“ = Altbestand aus 0.53.0 (gilt als triage)
-export type CustomerRole = "viewer" | "triage" | "editor" | "customer_admin";
+// ADR 0068: „customer_operator“ – im eigenen Mandanten alles sehen und einlesen
+export type CustomerRole = "viewer" | "triage" | "editor" | "customer_operator" | "customer_admin";
 export type Capability = "doc.read" | "findings.triage" | "applications.edit" | "customer_users.manage";
+// Mandanten-Benutzer (ADR 0068): Rolle und Rechte im eigenen Mandanten (der Server prüft)
+export type TenantRole = "customer_operator" | "customer_admin";
+export type TenantCapability = "mandant.read" | "mandant.collect" | "mandant.manage";
 
 // Zuordnung Benutzer → Kunde (0.53.0, Admin; seit den feineren Rollen auch der Kunden-Admin)
 export interface CustomerUserRow {

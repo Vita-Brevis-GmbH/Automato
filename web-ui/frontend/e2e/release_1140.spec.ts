@@ -72,7 +72,7 @@ test("Kunden-Admin: bei Kunden aus dem Cockpit keine Kunden-Benutzer (1.14.0)", 
     localStorage.setItem("automato_tenant", "1");
   }, login);
   await user.goto("/#kundenbenutzer");
-  await expect(user.locator(".u-role")).toHaveText("Kunde · Kunden-Admin");
+  await expect(user.locator(".u-role")).toHaveText("Kunde · Admin"); // ADR 0068: Rollenanzeige „Kunde · Admin“
   await expect(user.locator("main.main h1")).toHaveText("Kunden-Benutzer");
 
   // der Kunde kommt jetzt aus dem Cockpit: Benutzer und Rollen vergibt nur noch der Betreuer dort
@@ -88,7 +88,7 @@ test("Kunden-Admin: bei Kunden aus dem Cockpit keine Kunden-Benutzer (1.14.0)", 
   const put = await page.request.put("/api/freigaben", { headers: COCKPIT, data: { vertrag: 1, kunden: [kunde] } });
   expect(put.status()).toBe(200);
   await user.reload(); // Rechte neu vom Orchestrator: die Seite „Kunden-Benutzer“ gibt es nicht mehr
-  await expect(user.locator(".u-role")).toHaveText("Kunde · Kunden-Admin");
+  await expect(user.locator(".u-role")).toHaveText("Kunde · Admin"); // ADR 0068: Rollenanzeige „Kunde · Admin“
   await expect(user.locator("main.main h1")).toHaveText("Übersicht");
   const r = await page.request.post("/api/customer-users", {
     headers: { "X-Dev-User": login },

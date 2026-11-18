@@ -1,5 +1,6 @@
 // Modul Design (ADR 0036): logische Zonen, Zonentyp, Zonenmatrix, Zonenplan.
 import { lazy } from "react";
+import { canManage } from "../../auth";
 import { L } from "../../i18n";
 import type { ViewEntry } from "../types";
 
@@ -21,7 +22,7 @@ export const VIEWS: ViewEntry[] = [
         tenantId={p.tenantId}
         tenantLabel={p.tenantLabel}
         canEdit={!p.me.isCustomer && (p.me.isAdmin || p.me.isOperator)}
-        isAdmin={p.me.isAdmin}
+        isAdmin={canManage(p.me)}
         isCustomer={p.me.isCustomer}
       />
     ),
