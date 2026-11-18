@@ -229,6 +229,15 @@ def _build(session: Session, app: Application, doc: dict | None, graph: paths.Gr
             select(Rule).where(Rule.id.in_(rule_ids)).options(selectinload(Rule.services))
         )
     }
+    # Kennzeichen der Regel-Zuordnung (ADR 0071) je Regel, fuer die Regeln der Verbindungen:
+    # überdeckt, breit, Weg nicht geprüft - mit dem Text der Doku
+    doc_marks: dict[int, dict[str, str]] = defaultdict(dict)
+    for h in doc["hits"]:
+        for key, name in (("shadowed", appdoc.SHADOWED), ("broad", appdoc.BROAD_HIT),
+                          ("path_unchecked", appdoc.PATH_UNCHECKED)):  # fmt: skip
+            if h.get(name):
+                doc_marks[h["rule_id"]].setdefault(key, h[name])
+    data.doc_marks = doc_marks
     cuts = _Cuts()  # was eine Grenze nicht prueft (0.140.0)
     conns, notes, without = _candidates(session, data, doc, rules, limit, cuts)
     t_cand = time.monotonic()
@@ -1498,6 +1507,9 @@ def _state(rule: Rule, active: list[dict], data: appdoc.TenantData) -> dict:
     label = _rule_label(rule)
     base = {"rule_id": rule.id, "label": label, "action": rule.action.value,
             "device": data.device(rule)}  # fmt: skip
+    marks = (getattr(data, "doc_marks", None) or {}).get(rule.id)
+    if marks:  # ADR 0071: überdeckt, breit, Weg nicht geprüft (Text der Doku)
+        base["marks"] = [{"key": k, "text": v} for k, v in marks.items()]
     if not active:
         text = L("Weg nicht bekannt – nicht prüfbar", "path not known – not checkable")
         return base | {"state": "unknown", "text": text}

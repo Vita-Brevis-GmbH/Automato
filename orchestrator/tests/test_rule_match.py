@@ -196,3 +196,25 @@ def test_dienst_objekt_all_protokolle():
     assert rule_match._services(P)[0] is True
     P.services = [(Proto.IP, None, None, "gre")]
     assert rule_match._services(P) is None
+
+
+def test_kennzeichen_an_den_regeln_der_verbindungen(client):
+    """Verbindungen: die überdeckte Regel trägt das Kennzeichen der Doku („überdeckt durch …“)
+    neben ihrem Zustand auf dem Weg („vorher entscheidet …“); die real treffende breite Policy
+    trägt „breit“ an ihren Verbindungen (die Verbindungen einer Regel kommen aus ihren eigenen
+    Gegenstellen und Diensten)."""
+    tid = fr._seed(client, [
+        pc._policy(1, "lan-dmz", "lan", "dmz", ["10.10.0.0/16"], ["10.30.0.0/24"], ["all"]),
+        pc._policy(2, "admin-to-web", "lan", "dmz", ["10.10.0.7"], ["10.30.0.10"], ["tcp/22"]),
+    ])  # fmt: skip
+    app = fr._doc(client, tid, "10.30.0.10")["application"]["id"]
+    out = client.get(f"/applications/{app}/connections", params={"tenant_id": tid}).json()
+    rules = [r for c in out["connections"] for r in c["rules"]]
+    marks = {r["label"]: {m["key"]: m["text"] for m in r.get("marks", [])} for r in rules}
+    assert marks == {
+        "Policy 2 „admin-to-web“": {"shadowed": "überdeckt durch Policy 1 „lan-dmz“"},
+        "Policy 1 „lan-dmz“": {"broad": "breit – trifft anstelle von admin-to-web"},
+    }
+    (conn,) = (c for c in out["connections"] if c["service"] == "tcp/22")
+    assert [(r["label"], r["state"], r["text"]) for r in conn["rules"]] == [
+        ("Policy 2 „admin-to-web“", "other", "vorher entscheidet Policy 1 „lan-dmz“")]  # fmt: skip

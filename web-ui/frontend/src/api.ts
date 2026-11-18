@@ -2124,6 +2124,8 @@ export interface AppConnState {
   device: string;
   state: "decides" | "possible" | "other" | "off_path" | "unknown";
   text: string;
+  // Regel-Zuordnung nach echtem Treffer (ADR 0071): Kennzeichen der Doku mit Text
+  marks?: { key: "shadowed" | "broad" | "path_unchecked"; text: string }[];
 }
 export interface AppConnection {
   key: string;

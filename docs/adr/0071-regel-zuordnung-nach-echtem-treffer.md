@@ -146,4 +146,25 @@ Freigabe), sonst Hinweis; gleiche Policies paralleler Firewalls einmal; je Manda
   überdeckt“; Kennzeichen „überdeckt“, „breit“, „Weg nicht geprüft“.
 - Urteile je Hop ändern sich bei VIPs (ohne VIP-Objekt „abhängig“ statt „erlaubt“), negiertem
   Internet Service und im ACI (Vorrang).
-- Laufzeit: siehe `docs/TESTS.md` (Messskript `scripts/bench_fable_regeln.py`).
+- In den Verbindungen tragen die Regeln die Kennzeichen der Doku (`rules[].marks`) neben ihrem
+  Zustand auf dem Weg („vorher entscheidet …“, „nicht prüfbar“).
+
+## Messung
+
+`scripts/bench_fable_regeln.py 4000 4000 2000` (SQLite, 4 Kerne, eine FortiGate, 12 Zonen, 54 085
+Bereiche im Regelindex; im Mittel 420 Policies je Adresse, davon rund 400 über `all`):
+
+| Schritt | bis 1.21 | ADR 0071 |
+|---|---|---|
+| Zuordnung je Adresse | 18,5 ms (`rule_index.covers`, SQL) | 2,2 ms (`rule_match.covers`, im Speicher) |
+| Aufbau im Speicher | – | 1,1 s einmal je Datenstand (mit den Policies des Abgleichs geteilt) |
+| wirksamer Rest | nicht gerechnet | 3,7 ms je Adressklasse und Seite (kalt), danach 0,015 ms je Regel und Adresse |
+| ganz überdeckte Policies (Befund) | – | 0,6 s je Firewall mit 4000 Policies |
+| Doku je Applikation (5 Hosts, 20 Applikationen nacheinander) | 239 ms | 229 ms |
+| Abgleich je Fluss (warm) | 0,040 ms | 0,040 ms |
+
+Hochrechnung 800 Applikationen mit je 5 Adressen: Zuordnung 74 s → rund 9 s, dazu der wirksame
+Rest (höchstens rund 30 s, einmal je Datenstand und Adressklasse); die Doku insgesamt rund 3 Minuten
+wie bisher – sie rechnet jetzt zusätzlich Reihenfolge und Weg je Regel. **Nicht gemessen:** mehrere
+Firewalls mit gelesenem Routing (der Weg wird jetzt für jede Regel geprüft, nicht nur für
+unspezifische – mehr Wege, die der Wege-Speicher je Datenstand teilt) und Postgres.

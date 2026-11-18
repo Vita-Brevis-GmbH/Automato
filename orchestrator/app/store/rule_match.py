@@ -182,16 +182,32 @@ class _Stab:
                     yield a, b, item
 
 
-def _sweep(policies: list, fam: int, forced: str | None = None) -> dict[int, list[int]]:
+def _sweep(policies: list, fam: int, forced: str | None = None,
+           memo: dict | None = None) -> dict[int, list[int]]:  # fmt: skip
     """Policies in Listen-Reihenfolge: ID -> IDs der frueheren, die sie zusammen ganz
-    ueberdecken. `forced`: diese Seite gilt bei allen als erfuellt (das System steht dort)."""
+    ueberdecken. `forced`: diese Seite gilt bei allen als erfuellt (das System steht dort).
+    `memo`: Mengen und Dienste je Policy - ueber die Adressklassen hinweg gleich."""
+    memo = memo if memo is not None else {}
+
+    def desc(p, s: str):
+        key = (p.id, s, fam)
+        if key not in memo:
+            memo[key] = _desc(p, s, fam)
+        return memo[key]
+
+    def services(p):
+        key = (p.id, "svc")
+        if key not in memo:
+            memo[key] = _services(p)
+        return memo[key]
+
     out: dict[int, list[int]] = {}
     open_: list[tuple] = []  # fruehere mit beiden Seiten ANY: (Policy, Dienste)
     stab = {"src": _Stab(fam), "dst": _Stab(fam)}
     info: dict[int, tuple] = {}
     for p in policies:
-        d = {s: ANY if s == forced else _desc(p, s, fam) for s in ("src", "dst")}
-        svc = _services(p)
+        d = {s: ANY if s == forced else desc(p, s) for s in ("src", "dst")}
+        svc = services(p)
         vip = bool(p.vips)
         if p.enabled and not vip and all(v is None or v for v in d.values()):
             # nicht bekannte Seite der geprueften Policy: nur eine fruehere mit ANY deckt sie
@@ -431,10 +447,27 @@ class Matcher:
         cache = self.state.setdefault("classes", {})
         key = (sid, vdom, side, self.checker.addr_class(sid, vdom, side, ip))
         if key not in cache:
-            mine = [p for p in self.checker.policies(sid, vdom)
-                    if policy_check._address(p, side, ip)[0] is True]  # fmt: skip
-            cache[key] = _sweep(mine, ip.version, forced=side)
+            # nur Policies, die die Adresse treffen koennen (Index), in Listen-Reihenfolge
+            order = self._order(sid, vdom)
+            lo, hi = span(ip)
+            ix, fam = self.index, ip.version
+            ids = {pid for pid, _via in ix["anys"].get((side, fam), ()) if pid in order}
+            stab = ix["stabs"].get((side, fam))
+            if stab is not None:
+                ids |= {pid for _a, _b, (pid, _via) in stab.containing(lo, hi) if pid in order}
+            ids |= {pid for pid in ix["neg"].get(side, ()) if pid in order}
+            mine = [order[pid][1] for pid in sorted(ids, key=lambda i: order[i][0])
+                    if policy_check._address(order[pid][1], side, ip)[0] is True]  # fmt: skip
+            cache[key] = _sweep(mine, fam, forced=side, memo=self.state.setdefault("memo", {}))
         return cache[key]
+
+    def _order(self, sid: int, vdom: str | None) -> dict[int, tuple]:
+        """Policy-ID -> (Stelle in der Liste, Policy) einer Firewall/VDOM."""
+        cache = self.state.setdefault("order", {})
+        if (sid, vdom) not in cache:
+            policies = self.checker.policies(sid, vdom)
+            cache[(sid, vdom)] = {p.id: (i, p) for i, p in enumerate(policies)}
+        return cache[(sid, vdom)]
 
     def shadowed_rules(self, sid: int, vdom: str | None) -> dict[int, list[int]]:
         """Ganz ueberdeckte Policies einer Firewall/VDOM: ID -> fruehere, die sie ueberdecken

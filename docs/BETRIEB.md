@@ -1415,6 +1415,8 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
       - **VIP in der Weg-Suche:** eine Policy mit der VIP als Ziel trifft nur Verkehr über diese
         VIP; eine erlaubende Policy mit `all` bzw. der internen Adresse ist für Verkehr zur VIP
         nur „möglich“ („Ziel (VIP ohne VIP-Objekt)“ – ohne Central NAT nicht belegt).
+      - In den **Verbindungen** stehen dieselben Kennzeichen an den Regeln einer Verbindung,
+        neben ihrem Zustand auf dem Weg (z. B. „greift nicht – vorher entscheidet Policy X“).
       - Nach dem Update rechnet jeder Stand der Doku einmal neu.
     - **Wege einmal je Mandant (0.140.0, ADR 0048):** Doku, Verbindungen und Befunde aller
       Applikationen teilen die Wege, die Policies und die Urteile je Hop eines Datenstands; das
