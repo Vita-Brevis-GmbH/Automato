@@ -104,6 +104,10 @@ export const FINDING_LABEL: Record<string, string> = {
   stp_bpdu_guard: L("Spanning Tree: BPDU-Guard", "Spanning Tree: BPDU guard"),
   stp_mode_mixed: L("Spanning Tree: gemischte Modi", "Spanning Tree: mixed modes"),
   stp_topology_changes: L("Spanning Tree: viele Topologieänderungen", "Spanning Tree: many topology changes"),
+  // Reservierungen (1.19.0, ADR 0066)
+  reservation_in_use: L("Reservierung jetzt belegt", "Reservation now in use"),
+  reservation_conflict: L("Reservierung in Gebrauch (Konflikt)", "Reservation in use (conflict)"),
+  reservation_overlap: L("Doppelt reserviert", "Reserved twice"),
   // DNS aus dem AD (1.19.0)
   dns_ptr_mismatch: L("DNS: PTR widerspricht A-Record", "DNS: PTR contradicts A record"),
   dns_ip_unknown: L("DNS: IP nicht in NetBox", "DNS: IP not in NetBox"),
@@ -364,6 +368,18 @@ export const FINDING_HINT: Record<string, string> = {
     "verbundene Switches mit verschiedenen Modi (PVST+, Rapid-PVST+, MST, aus) bzw. Grenze zu einem anderen Protokoll",
     "connected switches with different modes (PVST+, Rapid-PVST+, MST, off) or boundary to another protocol",
   ),
+  reservation_in_use: L(
+    "Hinweis: reservierte VLAN- bzw. AS-Nummer war beim Reservieren frei und ist jetzt gelesen in Gebrauch – umgesetzt? Dann freigeben",
+    "Note: reserved VLAN or AS number was free when reserved and is now read in use – put in place? Then release it",
+  ),
+  reservation_conflict: L(
+    "reservierte VLAN- bzw. AS-Nummer war schon beim Reservieren gelesen in Gebrauch",
+    "reserved VLAN or AS number was already read in use when it was reserved",
+  ),
+  reservation_overlap: L(
+    "zwei Reservierungen derselben Art überschneiden sich (VLANs am selben Standort bzw. für alle Standorte)",
+    "two reservations of the same kind overlap (VLANs at the same site or for all sites)",
+  ),
   stp_topology_changes: L(
     "mindestens die Schwelle an Topologieänderungen je 24 h (Vorgabe 10, unter Spanning Tree einstellbar)",
     "at least the limit of topology changes per 24 h (default 10, adjustable under Spanning Tree)",
@@ -528,6 +544,15 @@ export const FINDING_GROUPS: { key: string; label: string; help: string; types: 
       "Root against the target root, unexpectedly blocked ports, BPDU guard, mixed modes, many topology changes",
     ),
     types: ["stp_root_mismatch", "stp_root_info", "stp_port_blocked", "stp_bpdu_guard", "stp_mode_mixed", "stp_topology_changes"],
+  },
+  {
+    key: "reservations",
+    label: L("Reservierungen", "Reservations"),
+    help: L(
+      "reservierte VLAN- und AS-Nummern gegen das Gelesene (jetzt belegt bzw. Konflikt) und doppelt reserviert",
+      "reserved VLAN and AS numbers against what is read (now in use or conflict) and reserved twice",
+    ),
+    types: ["reservation_in_use", "reservation_conflict", "reservation_overlap"],
   },
   {
     key: "zones",

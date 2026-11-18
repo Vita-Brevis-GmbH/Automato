@@ -26,6 +26,11 @@ _PORTAL = frozenset(
 # Namen und Codes
 _ABBAU = frozenset({"netbox", "automato_kunde", "tor", "realm", "grund", "teil", "stand"})
 
+# Reservierungen (1.19.0, ADR 0066): nur Nummern, Standort, Gruppe und Zweck
+_RESERVATION = frozenset(
+    {"tenant_id", "reservation_id", "kind", "low", "high", "site_id", "vlan_group", "purpose"}
+)
+
 # action -> erlaubte detail-Keys. Nur unkritische, benannte Felder.
 ALLOWLIST: dict[str, frozenset[str]] = {
     "collector_run.queued": frozenset(
@@ -160,6 +165,11 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     # Kabelnummer in Automato (1.19.0): Enden, Nummer und die bisherige (Laufzeitdaten)
     "cable_label.set": frozenset({"tenant_id", "label", "a", "b", "old"}),
     "cable_label.deleted": frozenset({"tenant_id", "label", "a", "b"}),
+    # Reservierungen von VLAN- und AS-Nummern (1.19.0, ADR 0066): Art, Bereich, Standort,
+    # VLAN-Gruppe und Zweck; freigeben = loeschen
+    "reservation.created": _RESERVATION,
+    "reservation.updated": _RESERVATION,
+    "reservation.released": _RESERVATION,
     "reconcile.run": frozenset({"tenant_id", "findings"}),
     "reconcile.version": frozenset({"version", "findings"}),  # 0.133.0: nach einem Update
     # NetBox-Sync (ADR 0010): nur Anzahlen und die gewaehlten Abschnitte (ADR 0031), keine Inhalte
@@ -187,6 +197,7 @@ ALLOWLIST: dict[str, frozenset[str]] = {
             "delete",
             "labels_confirmed",  # bestaetigte Kabelnummern (1.19.0)
             "dns_confirmed",  # bestaetigte abweichende DNS-Namen (1.19.0, Anzahl)
+            "reservations_confirmed",  # bestaetigte Aenderungen an Reservierungen (ADR 0066)
         }
     ),
     "netbox_sync.cancelled": frozenset({"plan_id", "tenant_id"}),

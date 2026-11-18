@@ -194,10 +194,10 @@ MODULES: tuple[Module, ...] = (
         "analyse",
         ("Analyse", "Analysis"),
         (
-            "Routing, statische Routen, VPN-Tunnel, Verkabelung, Spanning Tree, Abgleich IPAM, "
-            "Topologie, Datenqualität",
-            "Routing, static routes, VPN tunnels, cabling, Spanning Tree, IPAM reconciliation, "
-            "topology, data quality",
+            "Routing, statische Routen, VPN-Tunnel, Verkabelung, Spanning Tree, Reservierungen, "
+            "AS-Nummern, Abgleich IPAM, Topologie, Datenqualität",
+            "Routing, static routes, VPN tunnels, cabling, Spanning Tree, reservations, "
+            "AS numbers, IPAM reconciliation, topology, data quality",
         ),
         api=(
             "routing",
@@ -210,8 +210,11 @@ MODULES: tuple[Module, ...] = (
             "static_routes",  # statische Routen (1.19.0)
             "stp",  # Spanning Tree (1.19.0)
             "cable_labels",  # Kabelnummern und Transceiver (1.19.0)
+            "reservations",  # Reservierungen VLAN/AS (1.19.0, ADR 0066)
+            "as_numbers",  # AS-Nummern einzeln (1.19.0, ADR 0066)
         ),
         store=(
+            "as_numbers",  # AS-Nummern aus den BGP-Daten (1.19.0, ADR 0066)
             "bgp_cache",  # Routing-Filter vorab berechnet (0.131.0)
             "bgp_filters",  # BGP-Filter Soll/Ist (0.113.0, ADR 0041)
             "bgp_zones",  # Soll je Nachbar aus den Zonen dahinter (0.114.0, ADR 0041 Stufe 2)
@@ -228,6 +231,7 @@ MODULES: tuple[Module, ...] = (
             "net_lists",  # Netzlisten der Anbindungen (0.111.0)
             "parallel_net",
             "reconcile",
+            "reservations",  # Reservierungen VLAN/AS (1.19.0, ADR 0066)
             "static_routes",  # statische Routen je Geraet und VRF (1.19.0)
             "stp",  # Spanning Tree (1.19.0)
             "stp_findings",
@@ -236,7 +240,16 @@ MODULES: tuple[Module, ...] = (
             "version_refresh",  # Befunde nach einem Update neu (0.133.0)
             "vpn",  # IPsec-Tunnel (1.19.0, ADR 0063)
         ),
-        views=("routing", "statisch", "verkabelung", "spanningtree", "abgleich", "vpn"),
+        views=(
+            "routing",
+            "statisch",
+            "verkabelung",
+            "spanningtree",
+            "abgleich",
+            "vpn",
+            "reservierungen",
+            "asn",
+        ),
     ),  # fmt: skip
     Module(
         "wege",
@@ -348,8 +361,8 @@ MODULES: tuple[Module, ...] = (
         role=WRITE,
         depends=("gateway",),
         api=("netbox_sync",),
-        # Kabelnummern als Label, DNS-Namen aus dem AD (1.19.0)
-        store=("netbox_sync", "cable_label_sync", "netbox_sync_dns"),
+        # Kabelnummern als Label, DNS-Namen aus dem AD, Reservierungen (1.19.0, ADR 0066)
+        store=("netbox_sync", "cable_label_sync", "netbox_sync_dns", "netbox_sync_reserv"),
         views=("netbox",),
         packages=("sot_gateway.adapters.netbox_writer",),
     ),  # fmt: skip

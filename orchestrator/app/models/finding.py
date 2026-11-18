@@ -167,6 +167,12 @@ class FindingType(enum.StrEnum):
     PATH_CABLE_MISMATCH = "path_cable_mismatch"  # Kabel/Nachbarn auf dem Weg weichen ab
     PATH_STP_BLOCKED = "path_stp_blocked"  # Spanning Tree blockiert jeden Weg im VLAN
     PATH_L2_UNCHECKED = "path_l2_unchecked"  # Abschnitte nicht (ganz) geprueft, je Grund
+    # Reservierungen (1.19.0, ADR 0066, `store/reservations`): reservierte VLAN- bzw. AS-Nummer
+    # jetzt gelesen in Gebrauch (Hinweis) bzw. schon beim Reservieren in Gebrauch (Konflikt);
+    # Reservierungen derselben Art ueberschneiden sich (doppelt reserviert)
+    RESERVATION_IN_USE = "reservation_in_use"
+    RESERVATION_CONFLICT = "reservation_conflict"
+    RESERVATION_OVERLAP = "reservation_overlap"
     # DNS aus dem AD (1.19.0, ADR 0045 Nachtrag, `store/dns_checks`): PTR widerspricht dem
     # A-Record; A-Records auf IPs, die NetBox nicht kennt (nur gezaehlt); nicht pruefbar
     # (Quelle bzw. Zone nicht gelesen, Rueckwaertszone fehlt, NetBox nicht gelesen)
@@ -205,6 +211,7 @@ class SubjectKind(enum.StrEnum):
     PATH = "path"  # Weg `<Quelle> → <Ziel>` (von Hand erfasst, 0.109.0)
     NETBOX = "netbox"  # Objekt in der Ziel-NetBox (`<NetBox>|<Art>|<Schluessel>`, 0.115.0)
     APPLICATION = "application"  # Applikation (Name, 0.140.0)
+    RESERVATION = "reservation"  # Reservierung (`vlan|<Nummer>` bzw. `asn|<Nummer>`, 1.19.0)
 
 
 class Finding(Base):

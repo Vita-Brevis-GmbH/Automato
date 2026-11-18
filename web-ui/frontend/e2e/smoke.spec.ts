@@ -10,6 +10,8 @@ const VIEWS: [string, string][] = [
   ["wege", "Weg-Suche"],
   ["routing", "Routing"],
   ["statisch", "Statische Routen"],
+  ["asn", "AS-Nummern"], // 1.19.0, ADR 0066
+  ["reservierungen", "Reservierungen"],
   ["verkabelung", "Verkabelung"],
   ["apps", "Applikationen"],
   ["findings", "Findings"],

@@ -13,6 +13,7 @@ const STEP: Record<string, string> = {
   zonen: L("auch beim Speichern einer Zone", "also when a zone is saved"),
   quellen: L("auch im Zeitplan (Stand der Quellsysteme)", "also on schedule (state of the source systems)"),
   applikationen: L("im Hintergrund nach dem Abgleich", "in the background after the reconciliation"),
+  reservierungen: L("auch beim Speichern einer Reservierung", "also when a reservation is saved"), // 1.19.0
 };
 
 export default function Checks({

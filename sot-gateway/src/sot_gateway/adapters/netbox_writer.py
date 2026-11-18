@@ -32,6 +32,7 @@ WRITABLE = frozenset(
         "dcim/devices",
         "dcim/interfaces",
         "dcim/cables",  # Abschnitt Verkabelung (ADR 0031)
+        "ipam/asns",  # Abschnitt Reservierungen (1.19.0, ADR 0066) - RIR nur gelesen
         "ipam/vrfs",
         "ipam/vlan-groups",
         "ipam/vlans",

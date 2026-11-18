@@ -140,6 +140,17 @@ const ICONS: Record<string, ReactNode> = {
       <path d="M12 7v7M5 17v-3h7M15 14h4v3" />
     </>
   ),
+  // Reservierungen (1.19.0): Lesezeichen; AS-Nummern: AS mit drei Nachbarn
+  reserve: <path d="M6 3h12v18l-6-4-6 4z" />,
+  asn: (
+    <>
+      <circle cx="12" cy="12" r="3" />
+      <circle cx="4" cy="5" r="2" />
+      <circle cx="20" cy="5" r="2" />
+      <circle cx="12" cy="21" r="2" />
+      <path d="M5.5 6.5l4.3 3.8M18.5 6.5l-4.3 3.8M12 15v4" />
+    </>
+  ),
   path: (
     <>
       <circle cx="5" cy="19" r="2" />

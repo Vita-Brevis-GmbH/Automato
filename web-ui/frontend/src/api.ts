@@ -1100,7 +1100,8 @@ export type SyncSection =
   | "cabling"
   | "firewall_objects"
   | "applications"
-  | "dns"; // DNS-Namen aus dem AD (1.19.0)
+  | "dns" // DNS-Namen aus dem AD (1.19.0)
+  | "reservations"; // 1.19.0, ADR 0066
 export interface SyncTarget {
   id: number;
   name: string;
@@ -1124,6 +1125,8 @@ export interface SyncItem {
   confirm?: boolean; // 1.19.0: Kabelnummer bzw. abweichender DNS-Name – nur übernommen, wenn bestätigt
   changes?: SyncChange[];
   fields?: Record<string, unknown>;
+  note?: string; // Reservierungen (1.19.0): „exists“ = in NetBox schon vorhanden, nur angezeigt
+  reservation?: string;
   dns?: SyncDns; // DNS-Namen aus dem AD (1.19.0)
 }
 // DNS-Name einer IP aus dem AD (1.19.0): A-Records, PTR, wer entschieden hat bzw. warum mehrdeutig

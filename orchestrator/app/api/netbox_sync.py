@@ -473,14 +473,15 @@ def apply_plan(
         raise HTTPException(status_code=409, detail="sync for this netbox is already running")
     if not _can_apply(plan):
         raise HTTPException(status_code=409, detail="nothing to apply")
-    # Kabelnummern und abweichende DNS-Namen (1.19.0): nur bestaetigte (Aktionen mit `confirm`);
+    # Kabelnummern, abweichende DNS-Namen und geaenderte Reservierungen (1.19.0, ADR 0066): nur
+    # bestaetigte (Aktionen mit `confirm`);
     # nur Unbestaetigtes -> nichts zu uebernehmen
     asked = set(cable_label_sync.needs_confirm(plan.items or []))
     confirm = sorted(set(body.confirm if body else []) & asked)
     skip = cable_label_sync.unconfirmed(plan.items or [], set(confirm))
     if not any(i["action"] in netbox_sync.WRITE_ACTIONS and (i["kind"], i["key"]) not in skip
                for i in plan.items or []):  # fmt: skip
-        detail = "nothing to apply (confirm cable numbers or DNS names)"
+        detail = "nothing to apply (confirm cable numbers, DNS names or reservations)"
         raise HTTPException(status_code=409, detail=detail)
     plan.options = {**(plan.options or {}), "confirm": confirm}
     plan.status = SyncStatus.APPLYING.value
@@ -783,6 +784,9 @@ def _confirmed(plan: SyncPlan) -> dict:
     out = {"labels_confirmed": kinds.count(cable_label_sync.KIND)}
     if kinds.count(netbox_sync_dns.KIND):
         out["dns_confirmed"] = kinds.count(netbox_sync_dns.KIND)
+    reserved = sum(kinds.count(k) for k in ("vlan", "vlan_group", "asn"))  # nur Reservierungen
+    if reserved:
+        out["reservations_confirmed"] = reserved  # ADR 0066
     return out
 
 

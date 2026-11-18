@@ -22,6 +22,12 @@ import {
 import type { View } from "./App";
 import { CableLabelConfirm } from "./modules/schreibpfad/CableLabelConfirm";
 import { L } from "./i18n";
+import {
+  RESERVATION_KINDS,
+  RESERVATION_SECTION,
+  ReservationConfirm,
+  ReservationNote,
+} from "./modules/schreibpfad/reservationsSync";
 import { REF_ROLE_LABEL } from "./refs";
 import { Dash, Empty, ErrorBox, fmtTime, Icon, Loading, Modal, Note, PageHead } from "./ui";
 
@@ -52,6 +58,7 @@ const KIND_LABEL: Record<string, string> = {
   ip_address: L("IP-Adresse", "IP address"),
   app_tag_vm: L("Applikations-Tag an VM", "Application tag on VM"),
   app_tag_ip: L("Applikations-Tag an IP-Adresse", "Application tag on IP address"),
+  ...RESERVATION_KINDS,
   dns_name: L("DNS-Name an IP-Adresse", "DNS name on IP address"),
 };
 const ACTION: Record<string, [string, string]> = {
@@ -213,6 +220,7 @@ const SECTIONS: { key: SyncSection; label: string; hint: string; more?: ReactNod
       </>,
     ),
   },
+  RESERVATION_SECTION, // 1.19.0, ADR 0066
 ];
 const PAGE = 200;
 
@@ -250,14 +258,20 @@ export default function NetBoxSync({
   // bestätigte abweichende DNS-Namen (IPs) und wie viele zur Bestätigung anstehen (1.19.0)
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [dnsAsked, setDnsAsked] = useState(0);
+  // bestätigte Änderungen an Reservierungen und wie viele anstehen (1.19.0, ADR 0066)
+  const [reserved, setReserved] = useState<string[]>([]);
+  const [reservedAsked, setReservedAsked] = useState(0);
   const planId = plan?.id;
   useEffect(() => {
     setLabels([]);
     setPicked(new Set());
     setDnsAsked(0);
+    setReserved([]);
+    setReservedAsked(0);
   }, [planId]);
-  // ohne Bestätigung schreibt die Übernahme die Kabelnummern bzw. abweichenden DNS-Namen nicht
-  const unconfirmed = (plan?.summary?.cable_label?.update ?? 0) - labels.length + dnsAsked - picked.size;
+  // ohne Bestätigung schreibt die Übernahme die Kabelnummern, abweichenden DNS-Namen bzw. geänderten Reservierungen nicht
+  const unconfirmed =
+    (plan?.summary?.cable_label?.update ?? 0) - labels.length + dnsAsked - picked.size + reservedAsked - reserved.length;
 
   const loadPlans = useCallback(() => {
     if (tenantId === null) return;
@@ -345,7 +359,7 @@ export default function NetBoxSync({
     setConfirm(false);
     setError(null);
     try {
-      setPlan(await applySyncPlan(plan.id, [...labels, ...picked]));
+      setPlan(await applySyncPlan(plan.id, [...labels, ...picked, ...reserved]));
     } catch (e) {
       setError(e);
     }
@@ -504,6 +518,9 @@ export default function NetBoxSync({
       {plan?.status === "ready" && (plan.summary?.cable_label?.update ?? 0) > 0 && (
         <CableLabelConfirm plan={plan} value={labels} onChange={setLabels} />
       )}
+      {plan && plan.status === "ready" && (plan.options.sections ?? []).includes("reservations") && (
+        <ReservationConfirm plan={plan} value={reserved} onChange={setReserved} onAsked={setReservedAsked} />
+      )}
 
       {plans.length > 0 && (
         <div className="card">
@@ -602,6 +619,20 @@ export default function NetBoxSync({
                 <>{plan.totals.conflict} von Hand gepflegte Objekte weichen ab und bleiben unverändert.</>,
                 <>{plan.totals.conflict} objects maintained by hand differ and stay unchanged.</>,
               )}
+            </Note>
+          )}
+          {reservedAsked > 0 && (
+            <Note>
+              <span id="sync-confirm-reservations">
+                {L(
+                  <>
+                    <b>{reserved.length}</b> von {reservedAsked} geänderten Reservierungen bestätigt – nur diese werden geschrieben.
+                  </>,
+                  <>
+                    <b>{reserved.length}</b> of {reservedAsked} changed reservations confirmed – only these are written.
+                  </>,
+                )}
+              </span>
             </Note>
           )}
           {dnsAsked > 0 && (
@@ -958,6 +989,7 @@ function Items({ plan, kinds }: { plan: SyncPlan; kinds: string[] }) {
                   <td className="nowrap">{KIND_LABEL[i.kind] ?? i.kind}</td>
                   <td className="mono">{i.label}</td>
                   <td className="muted" style={{ fontSize: 12 }}>
+                    <ReservationNote item={i} />
                     {i.changes?.length ? (
                       i.changes.map((c) => (
                         <div key={c.field}>
