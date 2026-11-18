@@ -301,7 +301,7 @@ MODULES: tuple[Module, ...] = (
             "Findings with triage; findings of the applications in the background",
         ),
         api=("findings", "checks"),  # Pruefungen je Mandant schaltbar (0.110.0, ADR 0039)
-        store=("findings", "finding_text"),
+        store=("findings", "finding_text", "findings_export"),  # Excel (1.0.1)
         views=("findings",),
     ),  # fmt: skip
     Module(
@@ -311,7 +311,7 @@ MODULES: tuple[Module, ...] = (
             "Applikationen und ihre Doku nach Kategorien, Export Word/Markdown",
             "Applications and their documentation by category, export Word/Markdown",
         ),
-        api=("applications",),
+        api=("applications", "app_exports"),  # Export im Hintergrund (1.21.0, ADR 0069)
         store=(
             "applications",
             "appdoc",
@@ -327,6 +327,8 @@ MODULES: tuple[Module, ...] = (
             "docx_writer",
             "md_writer",
             "word_export",
+            "secure_zip",  # Gesamt-Export, ZIP je Applikation mit Passwort (1.0.1)
+            "export_jobs",  # Export im Hintergrund, Passwort nur im Speicher (1.21.0, ADR 0069)
         ),
         views=("apps",),
     ),  # fmt: skip

@@ -32,6 +32,13 @@ TENANT_ROUTE_CAPABILITIES: dict[tuple[str, str], str] = {
     ("GET", "/applications/candidates"): TENANT_READ,
     ("POST", "/applications/delete"): TENANT_MANAGE,
     ("GET", "/applications/doc-states"): TENANT_READ,
+    # Export der Doku im Hintergrund (1.0.1, seit 1.21.0 als Auftrag): eigene Auftraege
+    ("POST", "/applications/export"): TENANT_READ,
+    ("GET", "/applications/exports"): TENANT_READ,
+    ("DELETE", "/applications/exports/{export_id}"): TENANT_READ,
+    ("GET", "/applications/exports/{export_id}"): TENANT_READ,
+    ("POST", "/applications/exports/{export_id}/cancel"): TENANT_READ,
+    ("GET", "/applications/exports/{export_id}/download"): TENANT_READ,
     ("POST", "/applications/import"): TENANT_MANAGE,
     ("GET", "/applications/import/template"): TENANT_MANAGE,
     ("GET", "/applications/suggestions"): TENANT_READ,
@@ -97,6 +104,7 @@ TENANT_ROUTE_CAPABILITIES: dict[tuple[str, str], str] = {
     # findings
     ("GET", "/findings"): TENANT_READ,
     ("POST", "/findings"): TENANT_MANAGE,
+    ("GET", "/findings/export"): TENANT_READ,  # Excel nach Kategorie (1.0.1)
     ("GET", "/findings/summary"): TENANT_READ,
     ("POST", "/findings/triage"): TENANT_MANAGE,
     ("PATCH", "/findings/{finding_id}"): TENANT_MANAGE,

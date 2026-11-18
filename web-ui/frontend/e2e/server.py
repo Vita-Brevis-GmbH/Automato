@@ -8,6 +8,7 @@ werden keine echten Systeme angesprochen, alle Daten sind anonymisierte Testdate
 """
 
 import os
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -23,6 +24,11 @@ os.environ.setdefault("AUTOMATO_DOC_STALE_SECONDS", "120")
 # 0.133.2: alle Applikationen vorrechnen nicht in den UI-Tests - nach jeder Aenderung rechnete der
 # Hintergrund sonst alle Beispiel-Applikationen (Uebersicht laufend neu); geprueft in Python-Tests
 os.environ.setdefault("AUTOMATO_DOC_WARM_ALL", "false")
+# 1.21.0 (ADR 0069): Exporte im Hintergrund neben der Datenbank des Shards (sonst unter
+# /var/lib/automato) - je Start leer
+EXPORTS = DB.with_suffix(".exports")
+shutil.rmtree(EXPORTS, ignore_errors=True)
+os.environ.setdefault("AUTOMATO_EXPORT_DIR", str(EXPORTS))
 # 1.11.0 (ADR 0054): Freigaben aus dem Cockpit (PUT /freigaben) in den UI-Tests - nur ein
 # Test-Token des lokalen UI-Servers, kein Geheimnis. Seit 1.14.0 (ADR 0058) nicht mehr aus der
 # Umgebung, sondern als Kopplung (umschaltbar): mit verbundenem Cockpit ist das Kunden-Portal nur

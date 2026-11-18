@@ -843,3 +843,11 @@ tbody tr.group-row td {
 .drawer-body td, .modal-body td, .drawer-body dd, .modal-body dd { overflow-wrap: anywhere; }
 .drawer-body .chip, .modal-body .chip { max-width: 100%; overflow-wrap: anywhere; white-space: normal; }
 .modal-head .size + .iconbtn { margin-left: 0; }
+/* Meine Exporte (1.21.0, ADR 0069): Fortschritt der Exporte im Hintergrund */
+.my-exports { width: 100%; }
+.my-exports td { vertical-align: top; }
+.export-progress-line { margin-top: 4px; font-size: 12.5px; }
+.export-progress { width: 220px; max-width: 45%; height: 10px; vertical-align: middle; accent-color: var(--accent); }
+.export-message { margin-top: 3px; font-size: 12.5px; }
+.export-errors { margin-top: 4px; }
+.export-error-list { margin: 4px 0 0 18px; padding: 0; font-size: 12px; }

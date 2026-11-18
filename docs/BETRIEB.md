@@ -1047,6 +1047,46 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   (Application Profiles, EPGs, Server, seit 0.124.0 auch **einzelne VMs**); **Vorschläge** nach der Projektnummer aus
   `AP_<nr>`/`H_…-<nr>-…` mit einem Klick übernehmen (Operator) – seit 0.38.0 unter der
   Liste der Applikationen, seit 0.74.1 je ACI-Tenant getrennt („Projekt 001 · TE_a“).
+  - **Alle exportieren** (1.0.1; seit 1.21.0 mit Auswahl und im Hintergrund, ADR 0069; Viewer
+    und Mandanten-Benutzer im eigenen Mandanten): Knopf über der Liste (mit Auswahl in der Liste
+    „N exportieren“) → im Dialog die **Applikationen wählen** (Liste des gewählten Mandanten bzw.
+    Kunden mit Suche nach Name, Kürzel, Verantwortlichen; „alle“/„keine“ wirken auf die
+    gefundenen; ohne Auswahl in der Liste sind alle gewählt) → Export-Passwort zweimal eingeben
+    (mindestens 8 Zeichen) → „N exportieren“. Der Export läuft **im Hintergrund**: der Dialog
+    darf geschlossen, die Seite verlassen bzw. neu geladen werden. **Meine Exporte** (im Dialog
+    und über der Liste der Applikationen) zeigt je Export den Stand (wartet, läuft, fertig,
+    Fehler, abgebrochen), den Fortschritt (*n von m Applikationen*, die aktuelle Applikation),
+    die Applikationen mit Fehler (aufklappbar) und bei „fertig“ **Herunterladen**:
+    `applikationen-<mandant>-<Datum>-<Zeit>.zip` mit **je Applikation einem ZIP** (Doku als Word
+    und Netzwerkplan als draw.io wie „Für Confluence“), jedes mit dem Passwort
+    **AES-256-verschlüsselt**. Öffnen mit 7-Zip bzw. WinRAR (`7z x web.zip`); der
+    Windows-Explorer kennt AES je nach Version nicht. Schlägt eine Applikation fehl, steht sie
+    im Export und in `FEHLER.txt`, die übrigen kommen trotzdem. „Abbrechen“ beendet einen
+    laufenden Export nach der aktuellen Applikation, „Entfernen“ löscht einen beendeten samt
+    Datei.
+    - **Nur für den Auftraggeber:** nur wer den Export gestartet hat, sieht ihn und lädt ihn
+      herunter (alle anderen, auch Admins: „nicht gefunden“). Ein Export je Benutzer zugleich;
+      höchstens zwei rechnen gleichzeitig, weitere warten (`AUTOMATO_EXPORT_PARALLEL`).
+    - **Passwort nur im Speicher:** es geht mit der Anfrage an den Orchestrator und lebt nur im
+      laufenden Export – nie in Datenbank, Protokoll, Audit (`application.exported` mit Anzahl
+      und Kennung, `application.export_downloaded`) oder Datei. **Startet der Orchestrator neu**
+      (Update, Neustart), ist ein laufender Export **abgebrochen** („abgebrochen (Neustart)“ mit
+      Grund) und muss neu gestartet werden.
+    - **Ablage und Ablauf:** die fertige Datei liegt im Volume des Orchestrators
+      (`/var/lib/automato/exports`, Volume `orchestrator-data`) und ist **24 Stunden** abrufbar
+      (`AUTOMATO_EXPORT_HOURS`), danach löscht der Orchestrator Auftrag und Datei (beim Start,
+      alle 10 Minuten, bei jeder Liste); höchstens 2048 MB je Export
+      (`AUTOMATO_EXPORT_MAX_MB`, darüber „Fehler“ – weniger Applikationen wählen). Löschen des
+      Mandanten nimmt seine Exporte mit.
+    - **Dauer:** seit 1.21.0 rechnet der Export die Abhängigkeiten je Applikation einmal statt
+      je Paar (Messung mit 51 Applikationen: vorgerechnete Stände 68 s → 7 s); Stände der Doku,
+      die nicht mehr passen, rechnet er wie bisher neu (ohne Stände 212 s → 160 s).
+    - Nicht für Kunden-Benutzer in gemeinsamen Mandanten (sie exportieren ihre Applikationen
+      einzeln, ohne Verbindungen und Netzwerkplan). API: `POST /applications/export` mit
+      `{tenant_id, password, ids?, customer_id?, sections?}` → 202 mit dem Auftrag (jede Id muss
+      sichtbar sein, sonst 404 mit den Ids; ohne `ids` alle der Liste);
+      `GET /applications/exports`, `GET …/exports/{id}`, `POST …/{id}/cancel`, `DELETE …/{id}`,
+      `GET …/{id}/download`.
   - **Stammdaten aus CSV** (0.75.0, Operator, einzige Ausnahme vom „kein CSV-Import“):
     „CSV importieren“ über der Liste → Datei wählen (Excel-CSV mit „;“ oder „,“, UTF-8 bzw.
     Windows-1252) → Vorschau je Zeile (neu, ändern, unverändert, Fehler mit Grund) →
@@ -1708,6 +1748,17 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     Contract“. Das Regel-Detail blendet die übrigen Consumer bzw. Provider mit ihren VMs aus,
     „alle zeigen“ holt sie zurück. Firewalls mit mehreren VDOMs stehen mit dem VDOM der Policy
     da.
+- **Findings – Excel-Export** (1.0.1, Viewer): Knopf „Excel-Export“ oben rechts → `findings-<Datum>.xlsx`
+  mit **allen Findings aller Mandanten**, die der Benutzer sieht (alle Status, unabhängig von
+  Filter und Mandantenwahl). Blatt „Übersicht“: je Modul → Prüfung → Typ die Zahl offen,
+  quittiert, erledigt, ignoriert; danach **ein Blatt je Modul** mit Mandant, Prüfung, Typ,
+  Schweregrad, Status, Objekt, Quellsystem, Meldung, Hinweis, Notiz, erstmals/zuletzt gesehen
+  und ID (Autofilter). Die **Details** des Befunds (Meldung, Hinweis, Notiz, gelesene Angaben)
+  stehen als **Kommentar an der Meldung** – so bleibt nachvollziehbar, was zum Zeitpunkt des
+  Exports war. Ohne Mandanten, in denen das Modul Findings aus ist. Für Mandanten-Benutzer nur
+  ihr Mandant (ADR 0068); nicht für Kunden-Benutzer in gemeinsamen Mandanten (ADR 0018). Direkt
+  als Download (1.21.0 gemessen: 5000 Findings rund 2 s, 20 000 rund 6 s – kein Hintergrund
+  nötig). API: `GET /findings/export` (optional `tenant_id`), im Audit `finding.exported`.
 - **Findings:** oben eine **Übersicht nach Kategorien** (IPAM-Abgleich, Namenskonvention,
   Bereinigung, ACI / VMware) mit offenen/gesamten Befunden je Typ (Klick filtert). Neu mit
   dem vCenter: *VM-IP fehlt im IPAM* und *Portgruppe nach ACI-Schema ohne EPG*. Je Befund ein Satz,

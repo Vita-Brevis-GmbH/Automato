@@ -1812,6 +1812,23 @@ def footprint(session: Session, app: Application, res: Resolver,
     return out
 
 
+class Footprints:
+    """Fussabdruecke der Applikationen eines Mandanten fuer die Abhaengigkeiten, je Applikation
+    einmal gerechnet (1.21.0): im Gesamt-Export rechnete jede Applikation die aller anderen neu -
+    bei 51 Applikationen 2601 statt 51 Fussabdruecke, rund 90 % der Zeit des Exports."""
+
+    def __init__(self, session: Session, tenant_id: int):
+        self.session = session
+        self.res = Resolver(session, tenant_id)
+        self.groups = virtual.PortgroupIndex.load(session, tenant_id)
+        self._prints: dict[int, Footprint] = {}
+
+    def of(self, app: Application) -> Footprint:
+        if app.id not in self._prints:
+            self._prints[app.id] = footprint(self.session, app, self.res, self.groups)
+        return self._prints[app.id]
+
+
 def rule_objects(rules: list) -> list:
     """Regeln der Doku als `RuleOut` - auch aus dem gespeicherten Stand (JSON, 0.108.0)."""
     from app.schemas.rules import RuleOut  # spaet: Schemas nutzen den Store nicht
@@ -1820,19 +1837,18 @@ def rule_objects(rules: list) -> list:
 
 
 def dependencies(session: Session, app: Application, doc: dict,
-                 visible: set[int] | None = None) -> dict:  # fmt: skip
+                 visible: set[int] | None = None,
+                 prints: Footprints | None = None) -> dict:  # fmt: skip
     """Abhaengigkeiten der Applikation (0.60.0): Regeln, die ein System von ihr spezifisch mit
     einem System einer anderen Applikation verbinden (EPG, Host bzw. Netz in deren EPG-Subnetz -
     nicht any, nicht groessere Netze). Eigene Seite Quelle bzw. Consumer -> sie **nutzt** die
     andere; Ziel bzw. Provider -> sie **wird genutzt**. `visible` = sichtbare Applikationen
     (Kunden-Benutzer). -> {uses, used_by} je Applikation mit den Regeln; seit 0.88.0 je
     Eintrag `infrastructure` (Monitoring, Backup, DNS u. a. - in der Doku getrennt von den
-    fachlichen)."""
+    fachlichen). `prints`: Fussabdruecke mehrerer Aufrufe teilen (Gesamt-Export, 1.21.0)."""
     from app.models import RuleEndpoint, RuleIpRange
 
     tid = app.tenant_id
-    res = Resolver(session, tid)
-    groups = virtual.PortgroupIndex.load(session, tid)
     others = [a for a in session.scalars(
         select(Application).where(Application.tenant_id == tid, Application.id != app.id)
         .order_by(Application.name)) if visible is None or a.id in visible]  # fmt: skip
@@ -1846,8 +1862,9 @@ def dependencies(session: Session, app: Application, doc: dict,
                 both.add(h["rule_id"])
     if not others or not sides:
         return empty
-    own = footprint(session, app, res, groups)
-    prints = {a.id: footprint(session, a, res, groups) for a in others}
+    fps = prints or Footprints(session, tid)
+    own = fps.of(app)
+    by_app = {a.id: fps.of(a) for a in others}
     epgs_of: dict[tuple[int, str], set[int]] = defaultdict(set)
     for rid, role, eid in session.execute(
         select(RuleEndpoint.rule_id, RuleEndpoint.role, RuleEndpoint.epg_id).where(
@@ -1875,7 +1892,7 @@ def dependencies(session: Session, app: Application, doc: dict,
             epg_ids, ranges = epgs_of.get((rid, other), set()), ranges_of.get((rid, other), [])
             if own.matches(epg_ids, ranges):
                 continue  # Gegenseite gehoert auch zur Applikation selbst (intern)
-            for aid, fp in prints.items():
+            for aid, fp in by_app.items():
                 via = fp.matches(epg_ids, ranges)
                 if via is None:
                     continue

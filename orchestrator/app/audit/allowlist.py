@@ -80,6 +80,8 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "finding.created": frozenset(
         {"finding_id", "tenant_id", "type", "severity", "source_system_id"}
     ),  # fmt: skip
+    # Excel-Export aller Findings (1.0.1): Mandanten und Anzahl
+    "finding.exported": frozenset({"tenant_ids", "count", "customer_roles"}),
     # seit 1.19.2 (ADR 0058 Nachtrag) beim Anlegen fuer das Cockpit Herkunft und Portal-Kunde
     "tenant.created": frozenset({"tenant_id", "name", "code", "quelle", "portal_kunde"}),
     # IPv4/IPv6-Paare nach dem Umschalten von rule_pairs_auto neu gebildet (0.138.0)
@@ -231,6 +233,12 @@ ALLOWLIST: dict[str, frozenset[str]] = {
         }
     ),
     "application.deleted": frozenset({"application_id", "tenant_id", "name", "members"}),
+    # Export der Doku (1.0.1, im Hintergrund seit 1.21.0, ADR 0069): Anzahl und Kennungen - nie
+    # das Export-Passwort
+    "application.exported": frozenset(
+        {"tenant_ids", "count", "failed", "encrypted", "export_id", "customer_roles"}
+    ),
+    "application.export_downloaded": frozenset({"tenant_id", "export_id"}),
     # 0.75.0: Stammdaten aus CSV - nur Zahlen und Kennungen, keine Inhalte der Datei
     "application.imported": frozenset(
         {"tenant_id", "created", "updated", "errors", "application_ids"}

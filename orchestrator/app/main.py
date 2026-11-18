@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from app import __version__, modules, scheduler
 from app.api import (
     agents,
+    app_exports,
     applications,
     auth_config,
     bgp,
@@ -54,7 +55,7 @@ from app.config import Settings, check_security_config, get_settings
 from app.db import get_sessionmaker
 from app.i18n import middleware as i18n_middleware
 from app.secrets import resolve_settings
-from app.store import customer_alias, version_refresh
+from app.store import customer_alias, export_jobs, version_refresh
 from app.store import verwaltung as verwaltung_store
 
 log = logging.getLogger(__name__)
@@ -80,6 +81,15 @@ def _lifespan(settings: Settings):
                         log.info("Soll-Stand des Front-Proxys nachgefuehrt")
             except Exception:  # noqa: BLE001 - Ordner fehlt/nicht beschreibbar: Start geht vor
                 log.warning("Soll-Stand des Front-Proxys nicht geschrieben", exc_info=True)
+        # Exporte im Hintergrund (1.21.0, ADR 0069): mit dem alten Prozess gestorbene Auftraege
+        # als abgebrochen zeigen, Abgelaufenes loeschen, danach alle 10 Minuten aufraeumen
+        try:
+            export_jobs.abort_interrupted(get_sessionmaker())
+            with get_sessionmaker()() as session:
+                export_jobs.purge(session)
+        except Exception:  # noqa: BLE001 - Datenbank noch nicht migriert o. ae.: Start geht vor
+            log.exception("Exporte nicht bereinigt")
+        cleanup = export_jobs.start_cleanup(get_sessionmaker())
         if settings.scheduler_enabled:  # zeitgesteuerte Laeufe je Quellsystem
             stop = scheduler.start(
                 get_sessionmaker(),
@@ -89,6 +99,7 @@ def _lifespan(settings: Settings):
             # 0.133.0: nach einem Update die Befunde je Mandant einmal mit der neuen Version
             version_refresh.start(get_sessionmaker(), stop)
         yield
+        cleanup.set()
         if stop is not None:
             stop.set()
 
@@ -145,6 +156,8 @@ def create_app() -> FastAPI:
     app.include_router(systems.router)
     app.include_router(tenants.router)
     app.include_router(nat.router)
+    # Export im Hintergrund (1.21.0) vor den Applikationen: `/applications/exports` vor `/{id}`
+    app.include_router(app_exports.router, dependencies=[Depends(modules.guard("doku"))])
     app.include_router(applications.router, dependencies=[Depends(modules.guard("doku"))])
     app.include_router(naming_profiles.router)
     app.include_router(reconcile.router, dependencies=[Depends(modules.guard("analyse"))])

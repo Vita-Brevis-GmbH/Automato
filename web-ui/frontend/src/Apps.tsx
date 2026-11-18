@@ -32,6 +32,8 @@ import { siteLabel, SiteOptions } from "./sites";
 import type { Me } from "./auth";
 import { Dash, Drawer, Empty, ErrorBox, Icon, Loading, Modal, Note } from "./ui";
 import AppImport from "./AppImport";
+import AppExportAll from "./modules/doku/AppExportAll";
+import MyExports from "./modules/doku/MyExports";
 import { readStored, writeJson } from "./fold";
 import { L } from "./i18n";
 
@@ -84,6 +86,8 @@ export default function Apps({
   const [chosen, setChosen] = useState<Set<number>>(new Set());
   const [confirmBulk, setConfirmBulk] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [exportingAll, setExportingAll] = useState(false); // 1.0.1
+  const [exportsTick, setExportsTick] = useState(0); // 1.21.0: „Meine Exporte“ neu laden
 
   const load = useCallback(() => {
     if (tenantId == null) return;
@@ -203,6 +207,8 @@ export default function Apps({
   return (
     <>
       <ErrorBox error={err} onClose={() => setErr(null)} />
+      {/* 1.21.0 (ADR 0069): Exporte im Hintergrund - Fortschritt und Download auch nach dem Neuladen */}
+      {!me.isCustomer && <MyExports tenantId={tenantId} refresh={exportsTick} page />}
       <div className="card">
         <div className="card-head">
           <h2>{L("Applikationen", "Applications")}</h2>
@@ -235,6 +241,21 @@ export default function Apps({
           {me.isOperator && chosen.size > 0 && (
             <button className="btn btn-danger btn-sm" id="apps-delete" onClick={() => setConfirmBulk(true)}>
               {L(`${chosen.size} löschen`, `Delete ${chosen.size}`)}
+            </button>
+          )}
+          {!me.isCustomer && apps.length > 0 && (
+            <button
+              className="btn btn-ghost btn-sm"
+              id="apps-export-all"
+              title={L(
+                "Doku aller (bzw. der ausgewählten) Applikationen: je Applikation ein ZIP mit Export-Passwort – Auswahl im Dialog, Export im Hintergrund",
+                "Documentation of all (or the selected) applications: one ZIP per application with an export password – selection in the dialog, export in the background",
+              )}
+              onClick={() => setExportingAll(true)}
+            >
+              {chosen.size > 0
+                ? L(`${chosen.size} exportieren`, `Export ${chosen.size}`)
+                : L("Alle exportieren", "Export all")}
             </button>
           )}
           {me.isOperator && (
@@ -350,6 +371,18 @@ export default function Apps({
             setImporting(false);
             load();
           }}
+        />
+      )}
+      {exportingAll && (
+        <AppExportAll
+          tenantId={tenantId}
+          apps={apps}
+          preselected={[...chosen]}
+          onClose={() => {
+            setExportingAll(false);
+            setExportsTick((n) => n + 1);
+          }}
+          onStarted={() => setExportsTick((n) => n + 1)}
         />
       )}
       {confirmBulk && (

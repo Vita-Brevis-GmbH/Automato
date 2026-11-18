@@ -29,6 +29,7 @@ from app.models import (
     Epg,
     EpgEndpoint,
     EpgSubnet,
+    ExportJob,
     Finding,
     L3OutFirewall,
     LogicalZone,
@@ -200,6 +201,8 @@ def delete_tenant(session: Session, tenant: Tenant) -> dict[str, int]:
     tid = tenant.id
     session.execute(delete(SyncPlan).where(SyncPlan.tenant_id == tid))
     session.execute(delete(TenantModule).where(TenantModule.tenant_id == tid))  # 0.107.0
+    # Exporte im Hintergrund (1.21.0): die Dateien raeumt `export_jobs.purge` als Reste weg
+    session.execute(delete(ExportJob).where(ExportJob.tenant_id == tid))
     from app.models import CableLabel  # Kabelnummern (1.19.0)
 
     session.execute(delete(CableLabel).where(CableLabel.tenant_id == tid))
