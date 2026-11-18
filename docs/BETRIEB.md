@@ -1047,6 +1047,16 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   (Application Profiles, EPGs, Server, seit 0.124.0 auch **einzelne VMs**); **Vorschläge** nach der Projektnummer aus
   `AP_<nr>`/`H_…-<nr>-…` mit einem Klick übernehmen (Operator) – seit 0.38.0 unter der
   Liste der Applikationen, seit 0.74.1 je ACI-Tenant getrennt („Projekt 001 · TE_a“).
+  - **Alle exportieren** (1.0.1, Viewer): Knopf über der Liste (mit Auswahl „N exportieren“) →
+    Export-Passwort zweimal eingeben (mindestens 8 Zeichen) → ein Download
+    `applikationen-<Datum>.zip` mit **je Applikation einem ZIP** (Doku als Word und Netzwerkplan
+    als draw.io wie „Für Confluence“), jedes mit dem Passwort **AES-256-verschlüsselt**. Öffnen
+    mit 7-Zip bzw. WinRAR (`7z x web.zip`); der Windows-Explorer kennt AES je nach Version nicht.
+    Das Passwort wird nicht gespeichert und steht nicht im Audit (`application.exported` mit
+    Anzahl). Nicht für Kunden-Benutzer. Schlägt eine Applikation fehl, steht sie in `FEHLER.txt`, die übrigen kommen
+    trotzdem. Bei vielen Applikationen dauert der Export einige Minuten (Stände der Doku werden
+    bei Bedarf neu gerechnet). API: `POST /applications/export` mit `{tenant_id, password,
+    ids?, sections?}`.
   - **Stammdaten aus CSV** (0.75.0, Operator, einzige Ausnahme vom „kein CSV-Import“):
     „CSV importieren“ über der Liste → Datei wählen (Excel-CSV mit „;“ oder „,“, UTF-8 bzw.
     Windows-1252) → Vorschau je Zeile (neu, ändern, unverändert, Fehler mit Grund) →
@@ -1708,6 +1718,15 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     Contract“. Das Regel-Detail blendet die übrigen Consumer bzw. Provider mit ihren VMs aus,
     „alle zeigen“ holt sie zurück. Firewalls mit mehreren VDOMs stehen mit dem VDOM der Policy
     da.
+- **Findings – Excel-Export** (1.0.1): Knopf „Excel-Export“ oben rechts → `findings-<Datum>.xlsx`
+  mit **allen Findings aller Mandanten**, die der Benutzer sieht (alle Status, unabhängig von
+  Filter und Mandantenwahl). Blatt „Übersicht“: je Modul → Prüfung → Typ die Zahl offen,
+  quittiert, erledigt, ignoriert; danach **ein Blatt je Modul** mit Mandant, Prüfung, Typ,
+  Schweregrad, Status, Objekt, Quellsystem, Meldung, Hinweis, Notiz, erstmals/zuletzt gesehen
+  und ID (Autofilter). Die **Details** des Befunds (Meldung, Hinweis, Notiz, gelesene Angaben)
+  stehen als **Kommentar an der Meldung** – so bleibt nachvollziehbar, was zum Zeitpunkt des
+  Exports war. Nicht für Kunden-Benutzer (wie alle neuen Endpunkte gesperrt, ADR 0018). API:
+  `GET /findings/export` (optional `tenant_id`), im Audit `finding.exported`.
 - **Findings:** oben eine **Übersicht nach Kategorien** (IPAM-Abgleich, Namenskonvention,
   Bereinigung, ACI / VMware) mit offenen/gesamten Befunden je Typ (Klick filtert). Neu mit
   dem vCenter: *VM-IP fehlt im IPAM* und *Portgruppe nach ACI-Schema ohne EPG*. Je Befund ein Satz,

@@ -16,6 +16,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import audit
@@ -32,6 +33,7 @@ from app.auth import capabilities as caps
 from app.auth.deps import require_operator, require_viewer, tenant_scope
 from app.auth.principal import Principal
 from app.db import get_session
+from app.i18n import L
 from app.models import (
     Finding,
     FindingStatus,
@@ -39,9 +41,10 @@ from app.models import (
     Severity,
     SourceSystem,
     SubjectKind,
+    Tenant,
 )
 from app.schemas.findings import FindingOut
-from app.store import finding_text
+from app.store import customer_alias, finding_text, findings_export
 from app.store import findings as findings_store
 
 router = APIRouter(prefix="/findings", tags=["findings"])
@@ -134,6 +137,69 @@ def list_findings(
     response.headers["X-Total-Count"] = str(findings_store.count_findings(session, **flt))
     rows = findings_store.list_findings(session, limit=limit, offset=offset, **flt)
     return [_finding_out(f, principal) for f in rows]
+
+
+_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+def _export_tenants(session: Session, principal: Principal, tenant_id: int | None) -> list[int]:
+    """Mandanten des globalen Exports: der gewählte bzw. alle, die der Benutzer sieht."""
+    if tenant_id is not None:
+        return [tenant_scope(principal, tenant_id)]
+    if principal.is_admin or (principal.tenant_ids is None and not principal.is_customer):
+        return list(session.scalars(select(Tenant.id).order_by(Tenant.id)))
+    if not principal.tenant_ids:
+        raise HTTPException(status_code=403, detail="no tenant assigned")
+    return sorted(principal.tenant_ids)
+
+
+@router.get("/export")
+def export_findings(
+    tenant_id: int | None = None,
+    customer_id: int | None = None,
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> Response:
+    """Globaler Export aller Findings als Excel, nach Kategorie (1.0.1): alle Mandanten, die der
+    Benutzer sieht (bzw. der gewählte), alle Status; Modul → Prüfung → Typ, Details als Kommentar
+    (`store/findings_export`). Kunden-Benutzer: nur ihre Findings, ohne Geräte- und Mandanten-
+    namen (ADR 0018). Auditiert als Lesen."""
+    tids = _export_tenants(session, principal, tenant_id)
+    rows: list = []
+    for tid in tids:
+        reads.maybe_audit_read(session, principal, tid, "findings")
+        view = customer_view(session, principal, tid, customer_id)
+        rows += findings_store.list_findings(
+            session, tenant_id=tid, limit=None, only=view.ids("finding") if view else None
+        )
+    clean = None
+    if principal.is_customer:  # ohne Geraete- und Mandantennamen (ADR 0018)
+        tenants: dict[int, str] = {}
+        aliases = customer_alias.Aliases(session, tids)
+        sources = {k: v for k, v in aliases.systems.items() if v}
+        clean = aliases.clean
+    else:
+        tenants = dict(session.execute(
+            select(Tenant.id, Tenant.name).where(Tenant.id.in_(tids))
+        ).all())  # fmt: skip
+        sources = dict(session.execute(
+            select(SourceSystem.id, SourceSystem.name).where(SourceSystem.tenant_id.in_(tids))
+        ).all())  # fmt: skip
+    when = datetime.now(UTC)
+    scope = ", ".join(tenants[t] for t in tids if t in tenants) or None
+    body = findings_export.workbook(rows, tenants, sources, when,
+                                    lambda d: finding_detail(principal, d), scope,
+                                    clean or (lambda v: v))  # fmt: skip
+    audit.record(
+        session,
+        actor=f"user:{principal.subject}",
+        action="finding.exported",
+        subject="findings",
+        detail={"tenant_ids": tids, "count": len(rows), **actor(principal)},
+    )
+    name = f"{L('findings', 'findings')}-{when:%Y-%m-%d}.xlsx"
+    return Response(content=body, media_type=_XLSX,
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})  # fmt: skip
 
 
 @router.post("", response_model=FindingOut, status_code=201)

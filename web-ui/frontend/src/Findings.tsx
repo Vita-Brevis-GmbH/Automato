@@ -2,6 +2,7 @@
 // stimmt" + Hinweis, aufklappbar mit allen Angaben und Links auf die betroffenen Regeln.
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import {
+  exportFindings,
   fetchFindings,
   fetchFindingSummary,
   fetchSystems,
@@ -19,7 +20,7 @@ import Checks from "./modules/findings/Checks";
 import { NetAssignDialog } from "./modules/wege/NetAssign";
 import type { BgpWhy, BgpZoneChain } from "./api";
 import { FINDING_GROUPS, FINDING_HINT, FINDING_LABEL, findingLabel } from "./refs";
-import { Empty, ErrorBox, fmtTime, Icon, Loading, PageHead, SeverityBadge } from "./ui";
+import { download, Empty, ErrorBox, fmtTime, Icon, Loading, PageHead, SeverityBadge } from "./ui";
 import { L } from "./i18n";
 
 const PAGE = 500; // Findings je Seite
@@ -390,6 +391,7 @@ export default function Findings({
   const [q, setQ] = useState(initialQuery);
   const [open, setOpen] = useState<number | null>(null); // aufgeklappter Befund
   const [adding, setAdding] = useState(false); // Finding von Hand (0.109.0)
+  const [exporting, setExporting] = useState(false); // Excel-Export (1.0.1)
   const [assigning, setAssigning] = useState<string | null>(null); // grosses Netz zuordnen (0.111.0)
   const [tab, setTab] = useState(initialTab);
   // Mehrfachauswahl (0.117.0, Anwender: „Multi-Checkbox für das Ignorieren der Findings“)
@@ -496,24 +498,55 @@ export default function Findings({
   const loaded = findings?.length ?? 0;
 
   const canAdd = me.isOperator && !me.isCustomer && tenantId !== null;
+  // 1.0.1: globaler Export aller Findings (alle Mandanten, alle Status) als Excel nach Kategorie
+  const exportAll = async () => {
+    setExporting(true);
+    try {
+      const { blob, filename } = await exportFindings();
+      download(filename, blob);
+    } catch (e) {
+      setError(e);
+    } finally {
+      setExporting(false);
+    }
+  };
+  const exportButton = (
+    <button
+      className="btn btn-ghost btn-sm"
+      id="findings-export"
+      disabled={exporting}
+      onClick={exportAll}
+      title={L(
+        "Alle Findings aller Mandanten (alle Status) als Excel, nach Modul und Prüfung; Details als Kommentar an der Meldung",
+        "All findings of all tenants (every status) as Excel, by module and check; details as a comment on the message",
+      )}
+    >
+      {exporting ? L("Exportiere …", "Exporting …") : L("Excel-Export", "Excel export")}
+    </button>
+  );
   return (
     <>
       <PageHead
         title="Findings"
         actions={
-          canAdd && tab === "befunde" ? (
-            <button
-              className="btn btn-sm"
-              id="finding-add"
-              onClick={() => setAdding(true)}
-              title={L(
-                "Befund von Hand erfassen (Typ „Von Hand erfasst“): bleibt nach dem Abgleich bestehen, Triage wie jedes Finding",
-                "Capture a finding manually (type “Captured manually”): stays after the reconciliation, triage like any finding",
-              )}
-            >
-              + {L("Finding erfassen", "Capture finding")}
-            </button>
-          ) : undefined
+          tab !== "befunde" || me.isCustomer ? undefined : !canAdd ? (
+            exportButton
+          ) : (
+            <>
+              {exportButton}
+              <button
+                className="btn btn-sm"
+                id="finding-add"
+                onClick={() => setAdding(true)}
+                title={L(
+                  "Befund von Hand erfassen (Typ „Von Hand erfasst“): bleibt nach dem Abgleich bestehen, Triage wie jedes Finding",
+                  "Capture a finding manually (type “Captured manually”): stays after the reconciliation, triage like any finding",
+                )}
+              >
+                + {L("Finding erfassen", "Capture finding")}
+              </button>
+            </>
+          )
         }
       >
         {L(

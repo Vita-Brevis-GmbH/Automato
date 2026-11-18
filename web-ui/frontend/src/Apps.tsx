@@ -32,6 +32,7 @@ import { siteLabel, SiteOptions } from "./sites";
 import type { Me } from "./auth";
 import { Dash, Drawer, Empty, ErrorBox, Icon, Loading, Modal, Note } from "./ui";
 import AppImport from "./AppImport";
+import AppExportAll from "./AppExportAll";
 import { readStored, writeJson } from "./fold";
 import { L } from "./i18n";
 
@@ -84,6 +85,7 @@ export default function Apps({
   const [chosen, setChosen] = useState<Set<number>>(new Set());
   const [confirmBulk, setConfirmBulk] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [exportingAll, setExportingAll] = useState(false); // 1.0.1
 
   const load = useCallback(() => {
     if (tenantId == null) return;
@@ -237,6 +239,21 @@ export default function Apps({
               {L(`${chosen.size} löschen`, `Delete ${chosen.size}`)}
             </button>
           )}
+          {!me.isCustomer && apps.length > 0 && (
+            <button
+              className="btn btn-ghost btn-sm"
+              id="apps-export-all"
+              title={L(
+                "Doku aller (bzw. der ausgewählten) Applikationen: je Applikation ein ZIP mit Export-Passwort",
+                "Documentation of all (or the selected) applications: one ZIP per application with an export password",
+              )}
+              onClick={() => setExportingAll(true)}
+            >
+              {chosen.size > 0
+                ? L(`${chosen.size} exportieren`, `Export ${chosen.size}`)
+                : L("Alle exportieren", "Export all")}
+            </button>
+          )}
           {me.isOperator && (
             <button className="btn btn-ghost btn-sm" id="app-import" onClick={() => setImporting(true)}>
               {L("CSV importieren", "Import CSV")}
@@ -350,6 +367,14 @@ export default function Apps({
             setImporting(false);
             load();
           }}
+        />
+      )}
+      {exportingAll && (
+        <AppExportAll
+          tenantId={tenantId}
+          ids={[...chosen]}
+          total={apps.length}
+          onClose={() => setExportingAll(false)}
         />
       )}
       {confirmBulk && (
