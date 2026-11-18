@@ -63,8 +63,8 @@ def reason_text(key: str) -> str:
                           "egress or ingress without interface (recursive next-hop)"),
         "fabric": L("im ACI-Fabric – L2 dort nicht abgebildet", "inside the ACI fabric – L2 not "
                     "modelled there"),
-        "no_cabling": L("kein Kabel am Ausgang bekannt (CDP/LLDP)",
-                        "no cable known at the egress (CDP/LLDP)"),
+        "no_cabling": L("kein Kabel am Aus- bzw. Eingang bekannt (CDP/LLDP)",
+                        "no cable known at the egress or ingress (CDP/LLDP)"),
         "no_path": L("kein Weg über die Kabel – Switch dazwischen nicht gelesen",
                      "no path via the cables – switch in between not read"),
         "vlan_unknown": L("VLAN des Abschnitts unbekannt", "VLAN of the section unknown"),
@@ -188,14 +188,14 @@ class Comparer:
         self.session, self.tenant_id = session, tenant_id
         self.topo = l2_topo.L2(session, tenant_id, cab)
         self.cab = self.topo.cab
-        self._stp: dict | None = None
+        self._stp_cache: dict | None = None
         self._netbox: dict | None = None
 
     # -- Daten ------------------------------------------------------------------------------------
 
     def _stp_index(self) -> dict:
-        if self._stp is not None:
-            return self._stp
+        if self._stp_cache is not None:
+            return self._stp_cache
         read: set[str] = set()
         errdisabled: dict[tuple[str, str], dict] = {}
         for d in self.session.scalars(select(StpDevice).where(
@@ -216,8 +216,9 @@ class Comparer:
                 per_mst[dk].append((vlan_set(inst.vlans) or set(), ports))
             elif inst.vlan is not None:
                 per_vlan[(dk, inst.vlan)] = ports
-        self._stp = {"read": read, "errdisabled": errdisabled, "vlan": per_vlan, "mst": per_mst}
-        return self._stp
+        self._stp_cache = {"read": read, "errdisabled": errdisabled, "vlan": per_vlan,
+                           "mst": per_mst}  # fmt: skip
+        return self._stp_cache
 
     def _netbox_index(self) -> dict:
         """Kabel der NetBox je Ende und ihr Abgleich mit CDP/LLDP (`cable_labels`)."""
@@ -413,8 +414,8 @@ class Comparer:
             return key in targets
 
         phys = self._bfs(starts, goal, lambda lk: True)
-        if phys is None:
-            return sec.skip("no_path")
+        if phys is None:  # am Eingang kein Kabel bzw. dazwischen ein Switch, der fehlt
+            return sec.skip("no_path" if targets & set(self.topo.adj) else "no_cabling")
         if vlan is None:
             vlan, how = self._port_vlan(phys[0][2])
         if vlan is None and to_vlan is not None:
@@ -439,6 +440,9 @@ class Comparer:
             if chain is None:
                 chain = self._bfs(starts, goal, allowed)
                 usable = allowed
+            if chain is None:  # VLAN gesperrt: der Weg ueber die Kabel, moeglichst offen
+                usable = lambda lk: not self._link_blocked(lk, vlan)  # noqa: E731
+                chain = self._bfs(starts, goal, usable)
             if chain is None:
                 chain, usable = phys, (lambda lk: True)
             self._end_port(chain, want, usable)
@@ -490,10 +494,17 @@ class Comparer:
     def _stp(self, sec: Section, chain, vlan: int) -> None:
         c = sec.checks["stp"]
         unread: set[str] = set()
-        for lk, _mine, _other in chain:
-            for end, why in self._link_blocked(lk, vlan):
-                c.state = DEVIATION
-                c.items.append({"kind": "blocked", "link": lk.id, **_port_out(end, **why)})
+        for lk, mine, other in chain:
+            if self._link_blocked(lk, vlan):
+                # blockiert: alle Kabel zwischen denselben Geraeten, die das VLAN zulassen
+                same = self.topo.adj.get(mine.device.key, {}).get(other.device.key, [lk])
+                for alt in same:
+                    if alt is not lk and l2_topo.link_allows(alt, vlan) is False:
+                        continue
+                    for end, why in self._link_blocked(alt, vlan):
+                        c.state = DEVIATION
+                        c.items.append({"kind": "blocked", "link": alt.id,
+                                        **_port_out(end, **why)})  # fmt: skip
             for end in (lk.a, lk.b):
                 if not end.device.switching:
                     continue
@@ -616,10 +627,12 @@ def summary_out(secs: list[dict]) -> dict:
 class Sections:
     items: list[Section]
     not_l2: Counter  # vpn | internal -> Anzahl
+    cabling: bool = True  # Verkabelung gelesen (sonst nichts zu vergleichen, keine Befunde)
 
     def out(self) -> dict:
         data = [s.out() for s in self.items]
-        return {"items": data, "summary": summary_out(data), "not_l2": dict(self.not_l2)}
+        return {"items": data, "summary": summary_out(data), "not_l2": dict(self.not_l2),
+                "cabling": self.cabling}  # fmt: skip
 
 
 def sections(session: Session, tenant_id: int, graph=None,
@@ -675,7 +688,7 @@ def sections(session: Session, tenant_id: int, graph=None,
             sec = comparer.section(a, b)
         sec.source_system_id = ka[0]
         items.append(sec)
-    return Sections(items, not_l2)
+    return Sections(items, not_l2, bool(comparer.cab.links))
 
 
 def of_check(session: Session, tenant_id: int, cx=None) -> Sections:

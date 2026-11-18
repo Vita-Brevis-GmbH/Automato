@@ -120,7 +120,8 @@ Inventar (Subnetze und VRFs = L3). Auch die Dateien sind verflochten: `api/cabli
    Paar einmal): `path_vlan_missing`, `path_cable_mismatch`, `path_stp_blocked` (Warnung je
    Abschnitt) und `path_l2_unchecked` (Hinweis je Grund mit Zahl und Beispielen). So deckt der
    Abgleich jeden Weg der Weg-Suche und der Applikationen ab, ohne alle Wege zu rechnen; der
-   Anschluss von Quelle und Ziel steht nur in der Ansicht.
+   Anschluss von Quelle und Ziel steht nur in der Ansicht. Ohne gelesene Verkabelung (kein Kabel
+   im Mandanten) gibt es nichts zu vergleichen und keine Befunde – die Ansicht weist das aus.
 7. **Ansicht „Wege vergleichen“** (übergreifend, neben der Weg-Suche): Weg wie in der Weg-Suche
    bzw. die Verbindungen einer Applikation (je Verbindung bzw. alle nacheinander, gezählt) und die
    Abschnitte des Mandanten; je Abschnitt die drei Prüfungen mit Ports und Geräten, je Weg die

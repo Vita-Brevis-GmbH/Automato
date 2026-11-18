@@ -16,8 +16,11 @@ def deviations(session: Session, tenant_id: int, cx: Context, kind: str,
     from app.store import path_compare
     from app.store.reconcile import Issue
 
+    data = path_compare.of_check(session, tenant_id, cx)
+    if not data.cabling:  # ohne gelesene Verkabelung nichts zu vergleichen (Ansicht zeigt es)
+        return []
     out = []
-    for s in path_compare.of_check(session, tenant_id, cx).items:
+    for s in data.items:
         check = s.checks[kind]
         if s.reasons or check.state != path_compare.DEVIATION:
             continue
@@ -36,8 +39,11 @@ def unchecked(session: Session, tenant_id: int, cx: Context) -> list:
     from app.store import path_compare
     from app.store.reconcile import Issue
 
+    data = path_compare.of_check(session, tenant_id, cx)
+    if not data.cabling:
+        return []
     groups: dict[str, list[str]] = defaultdict(list)
-    for s in path_compare.of_check(session, tenant_id, cx).items:
+    for s in data.items:
         for reason in s.unchecked():
             groups[reason].append(s.label)
     out = []
