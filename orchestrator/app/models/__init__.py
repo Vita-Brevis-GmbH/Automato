@@ -114,7 +114,7 @@ from app.models.topology import (
     TopoRoute,
     TopoVpnTunnel,
 )
-from app.models.verwaltung import CockpitCustomer
+from app.models.verwaltung import CockpitCustomer, CockpitTenant
 from app.models.virtual import Portgroup, Vm, VmIp, VmNic
 from app.models.zone import Zone
 
@@ -142,6 +142,7 @@ __all__ = [
     "CableLabel",
     "CollectorRun",
     "CockpitCustomer",
+    "CockpitTenant",
     "Coupling",
     "IstMeldung",
     "DataChange",

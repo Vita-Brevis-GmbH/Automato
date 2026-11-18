@@ -33,7 +33,7 @@ from app.config import Settings, get_settings
 from app.db import get_session
 from app.i18n import L
 from app.models import PortalCustomer
-from app.store import portal, verwaltung
+from app.store import cockpit_mandant, portal, verwaltung
 
 router = APIRouter(prefix="/portal", tags=["portal"])
 
@@ -147,13 +147,16 @@ def list_customers(
     kunden = portal.listing(session)
     # „zugeordnet“ nur mit Kunden, die es noch gibt (1.13.0, wie Inventar und Anmeldung)
     live = portal.live_customers(session, (pc.tenant_id for pc in kunden))
-    # 1.14.0 (ADR 0058): Kunde, den Automato fuer das Cockpit im Mandanten angelegt hat
+    # 1.14.0 (ADR 0058): Kunde, den Automato fuer das Cockpit im Mandanten angelegt hat; 1.19.2
+    # der Mandant, den Automato fuer das Cockpit angelegt hat ({"id", "name"} oder null)
     angelegt = verwaltung.angelegt_je_kunde(session)
+    mandanten = cockpit_mandant.mandanten(session)
     return {
         "customers": [
             {
                 **portal.out(pc, settings.front_domain, live),
                 "kunde_angelegt": angelegt.get((pc.short_name, pc.tenant_id)),
+                "mandant_angelegt": mandanten.get(pc.short_name),
             }
             for pc in kunden
         ],

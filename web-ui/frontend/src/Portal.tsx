@@ -700,6 +700,15 @@ function PortalEditor({
             </option>
           ))}
         </select>
+        {existing?.mandant_angelegt != null && existing.mandant_angelegt.id === f.tenant_id && (
+          <div className="hint" id="pc-tenant-angelegt">
+            <span className="chip info">{L("für das Cockpit angelegt", "created for the cockpit")}</span>{" "}
+            {L(
+              "Eigener Mandant dieses Kunden – Benutzer seines Realms sehen keine anderen Mandanten.",
+              "Own tenant of this customer – users of its realm do not see any other tenants.",
+            )}
+          </div>
+        )}
       </div>
       {f.tenant_id != null && (
         <div className="field">

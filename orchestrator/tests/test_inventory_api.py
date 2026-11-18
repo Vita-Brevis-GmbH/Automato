@@ -76,7 +76,9 @@ def test_inventar_aus_der_topologie(client, tmp_path):
     assert data["automato"] == {"version": __version__, "umgebung": "test",
                                 "oberflaeche": "https://automato.int.example.ch",
                                 # 1.13.0: Auswahl fuer die Zuordnung (hier ohne Mandanten)
-                                "mandanten": [], "rollen": rollen}  # fmt: skip
+                                "mandanten": [], "rollen": rollen,
+                                # 1.19.2 (ADR 0058 Nachtrag): eigener Mandant je Kunde
+                                "funktionen": ["mandant_anlegen"]}  # fmt: skip
     assert data["keycloak"] == {"issuer": ISSUER}
     front = data["front"]
     assert front["vm"] == {"name": "automato-vm.int.example.ch", "adressen": ["10.0.20.5"]}
@@ -248,15 +250,17 @@ def test_mandanten_rollen_und_zuordnung_je_kunde(client, tmp_path, session_facto
     assert data["automato"]["rollen"] == ["viewer", "triage", "editor", "customer_admin"]
     assert data["automato"]["mandanten"] == [
         {"id": ids["Rechenzentrum"], "name": "Rechenzentrum",
-         "kunden": [{"id": a, "name": "Kunde A"}, {"id": b, "name": "Kunde B"}]},
-        {"id": ids["Zentrum"], "name": "Zentrum", "kunden": []},
+         "kunden": [{"id": a, "name": "Kunde A"}, {"id": b, "name": "Kunde B"}],
+         "portal_kunde": None},
+        {"id": ids["Zentrum"], "name": "Zentrum", "kunden": [], "portal_kunde": None},
     ]  # fmt: skip
     kunden = {k["kurzname"]: k for k in data["kunden"]}
     assert kunden["kunde-a"]["automato_zugeordnet"] is True
     assert kunden["kunde-a"]["zuordnung"] == {"mandant": ids["Rechenzentrum"],
                                               "kunden": sorted([a, b]), "rolle": "triage",
                                               "von": "cockpit",
-                                              "kunde_angelegt": None}  # fmt: skip
+                                              "kunde_angelegt": None,
+                                              "mandant_angelegt": None}  # fmt: skip
     assert kunden["kunde-b"]["automato_zugeordnet"] is False  # Mandant ohne Kunden
     assert kunden["kunde-b"]["zuordnung"]["von"] == "automato"
     assert kunden["kunde-c"]["automato_zugeordnet"] is None  # ohne Doku
@@ -302,7 +306,7 @@ def test_zuordnung_mit_geloeschtem_kunden(client, tmp_path, session_factory):
     k = kunde()
     assert k["automato_zugeordnet"] is False
     assert k["zuordnung"] == {"mandant": tid, "kunden": [], "rolle": "viewer", "von": "cockpit",
-                              "kunde_angelegt": None}  # fmt: skip
+                              "kunde_angelegt": None, "mandant_angelegt": None}  # fmt: skip
     with session_factory() as s:  # gespeichert bleibt, was das Cockpit schickte
         assert s.query(PortalCustomer).one().customer_ids == ids
 

@@ -3721,6 +3721,8 @@ export interface PortalCustomer {
   // Standard-Rolle) und der Kunde, den Automato für das Cockpit im Mandanten angelegt hat
   users?: PortalUser[] | null;
   kunde_angelegt?: number | null;
+  // 1.19.2 (ADR 0058 Nachtrag): der Mandant, den Automato für das Cockpit angelegt hat (null = keiner)
+  mandant_angelegt?: { id: number; name: string } | null;
   // 1.14.0 (ADR 0059): vom Cockpit zum Entfernen vorgemerkt – Front-Proxy sperrt alle Adressen, Daten bleiben
   gesperrt?: boolean;
   addresses: Record<string, string>; // start, netbox, doc, um, cmdb (mit Domain)
@@ -3747,6 +3749,7 @@ export type PortalCustomerIn = Omit<
   | "links_source"
   | "users"
   | "kunde_angelegt"
+  | "mandant_angelegt"
   | "gesperrt"
 >;
 export interface PortalAgent {

@@ -122,8 +122,9 @@ class Plan:
     eintraege: list[Eintrag] | None  # None = `entfernen` nicht gesendet (keine Aussage)
     anfrage: set[str] = field(default_factory=set)  # Kurznamen in kunden[] der Anfrage
     vorher: dict[str, Vorher] = field(default_factory=dict)
-    #: Kurznamen mit `zuordnung.kunde_anlegen` in der Anfrage - das Cockpit will den Kunden in
-    #: Automato, der Teil `automato_kunde` ist also aktiv (auch ohne `doc`)
+    #: Kurznamen mit `zuordnung.kunde_anlegen` (bzw. `mandant_anlegen`, 1.19.2) in der Anfrage -
+    #: das Cockpit will den Kunden in Automato, der Teil `automato_kunde` ist also aktiv (auch
+    #: ohne `doc`)
     anlegen: set[str] = field(default_factory=set)
 
 
@@ -208,8 +209,10 @@ def vorbereiten(session: Session, data: object) -> Plan:
     kunden = [k for k in kunden if isinstance(k, dict) and isinstance(k.get("kurzname"), str)] \
         if isinstance(kunden, list) else []  # fmt: skip
     anfrage = {k["kurzname"].strip() for k in kunden}
+    # mit eigenem Mandanten (`mandant_anlegen`, 1.19.2) legt Automato den Kunden ebenso an
     anlegen = {k["kurzname"].strip() for k in kunden if isinstance(k.get("zuordnung"), dict)
-               and k["zuordnung"].get("kunde_anlegen") is True}  # fmt: skip
+               and (k["zuordnung"].get("kunde_anlegen") is True
+                    or k["zuordnung"].get("mandant_anlegen") is True)}  # fmt: skip
     if eintraege is None:
         return Plan(None, anfrage, anlegen=anlegen)
     namen = [e.kurzname for e in eintraege]

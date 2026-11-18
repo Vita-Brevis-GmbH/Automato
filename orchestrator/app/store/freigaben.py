@@ -51,6 +51,13 @@ Seit 1.16.0 (ADR 0061) je Kunde optional `automato_instanz` (Name der eigenen Au
 `<kunde>-doc` an diese Instanz. Eine Instanz gehoert genau einem Kunden (doppelt in der Anfrage:
 abgelehnt, alles oder nichts). Angelegt und entfernt wird sie nicht hier, sondern vom Host-Agenten
 des Cockpits (`deploy/betrieb.sh installieren` bzw. `entfernen`).
+
+Seit 1.19.2 (ADR 0058 Nachtrag, `store/cockpit_mandant.py`) in `zuordnung` statt `mandant` auch
+`mandant_anlegen: true` (optional `mandant_name`, Vorgabe der Name des Portal-Kunden): Automato legt
+fuer den Portal-Kunden einen eigenen Mandanten an (einmal je Kurzname), darin einen Kunden wie bei
+`kunde_anlegen`, und ordnet beides zu. `kunden` nennt dann nur Kunden dieses Mandanten (vor dem
+Anlegen leer). Zieht ein Portal-Kunde so aus einem anderen Mandanten um, entfernt Automato den dort
+fuer ihn angelegten Kunden nur ohne Daten (Antwort `umzug`).
 """
 
 import base64
@@ -66,7 +73,7 @@ from app import audit
 from app.auth import capabilities as caps
 from app.i18n import L
 from app.models import PortalCustomer
-from app.store import portal, verwaltung
+from app.store import cockpit_mandant, portal, verwaltung
 
 #: Fassung der Anfrage und Antwort (Vertrag v1)
 VERTRAG = 1
@@ -107,6 +114,9 @@ class Freigabe:
     kurzname: str
     werte: dict
     kunde_anlegen: bool = False
+    #: 1.19.2 (ADR 0058 Nachtrag): Name des eigenen Mandanten, den Automato fuer ihn anlegen soll
+    #: (bzw. schon angelegt hat, dann in `werte["tenant_id"]`); None = kein eigener Mandant
+    mandant_anlegen: str | None = None
 
 
 @dataclass(frozen=True)
@@ -134,11 +144,16 @@ class Ergebnis:
     tor_geaendert: bool = False
     #: 1.14.0 (ADR 0058): Kunden in Automato, die fuer das Cockpit angelegt wurden (Id)
     kunden_angelegt: list[int] = field(default_factory=list)
+    #: 1.19.2 (ADR 0058 Nachtrag): neu angelegte Mandanten ({"kurzname", "id", "name"}) und der
+    #: Umzug aus einem anderen Mandanten (`cockpit_mandant.umziehen`, je frueher angelegtem Kunden)
+    mandanten_angelegt: list[dict] = field(default_factory=list)
+    umzug: list[dict] = field(default_factory=list)
 
     @property
     def etwas_geaendert(self) -> bool:
         return bool(self.angelegt or self.geaendert or self.uebernommen or self.entfernt
-                    or self.tor_geaendert or self.kunden_angelegt)  # fmt: skip
+                    or self.tor_geaendert or self.kunden_angelegt or self.mandanten_angelegt
+                    or self.umzug)  # fmt: skip
 
     def antwort(self) -> dict:
         return {
@@ -149,6 +164,9 @@ class Ergebnis:
             "entfernt": self.entfernt,
             "unveraendert": self.unveraendert,
             "tor_geheimnisse": self.tor,
+            # 1.19.2: nur in der Anfrage, die anlegt bzw. umzieht (sonst leer)
+            "mandanten_angelegt": self.mandanten_angelegt,
+            "umzug": self.umzug,
         }
 
 
@@ -187,16 +205,21 @@ def _id(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value > 0
 
 
-def _zuordnung(session: Session, roh: object) -> dict:
+def _zuordnung(session: Session, roh: object, anlegen: bool = False,
+               angelegt: int | None = None) -> dict:  # fmt: skip
     """`zuordnung` eines Kunden pruefen (1.13.0): bestehender Mandant, Kunden nur dieses
     Mandanten (eindeutig, darf leer sein), Kunden-Rolle (nie admin). Ohne bzw. null: keine
-    Aussage - die Felder bleiben in Automato aenderbar."""
+    Aussage - die Felder bleiben in Automato aenderbar. Mit `anlegen` (`mandant_anlegen`,
+    1.19.2) ist der Mandant der fuer diesen Portal-Kunden angelegte (`angelegt`, None = wird erst
+    angelegt - dann noch keine Kunden)."""
     if roh is None:
         return {"scope_source": portal.SCOPE_AUTOMATO}
     if not isinstance(roh, dict):
         raise portal.PortalError(L("zuordnung ist kein Objekt", "zuordnung is not an object"))
     mandant, kunden, rolle = roh.get("mandant"), roh.get("kunden"), roh.get("rolle")
-    if not _id(mandant):
+    if anlegen:
+        mandant = angelegt
+    elif not _id(mandant):
         raise portal.PortalError(L("zuordnung: mandant ist keine Id (Zahl > 0)",
                                    "zuordnung: mandant is not an id (number > 0)"))  # fmt: skip
     if kunden is None:
@@ -213,9 +236,40 @@ def _zuordnung(session: Session, roh: object) -> dict:
             f"zuordnung: Rolle '{str(rolle)[:20]}' unbekannt ({', '.join(caps.CUSTOMER_ROLES)})",
             f"zuordnung: role '{str(rolle)[:20]}' unknown ({', '.join(caps.CUSTOMER_ROLES)})",
         ))  # fmt: skip
+    if mandant is None and kunden:
+        raise portal.PortalError(L(
+            "zuordnung: kunden erst, wenn Automato den Mandanten angelegt hat (mandant_anlegen "
+            "zuerst mit leeren kunden senden)",
+            "zuordnung: kunden only once Automato has created the tenant (send mandant_anlegen "
+            "with empty kunden first)"))  # fmt: skip
     ids = portal.check_scope(session, mandant, kunden)
     return {"tenant_id": mandant, "customer_ids": ids, "default_role": rolle,
             "scope_source": portal.SCOPE_COCKPIT}  # fmt: skip
+
+
+def _mandant_anlegen(roh: object, name: str) -> str | None:
+    """`zuordnung.mandant_anlegen` (1.19.2, ADR 0058 Nachtrag): Wahrheitswert, Vorgabe false;
+    true nur ohne `mandant`. Liefert den Namen des neuen Mandanten (`mandant_name`, Vorgabe der
+    Name des Portal-Kunden) bzw. None. `mandant_name` ohne `mandant_anlegen` hat keine Bedeutung."""
+    if not isinstance(roh, dict):
+        return None  # keine Zuordnung (bzw. ungueltig - das meldet `_zuordnung`)
+    value = roh.get("mandant_anlegen")
+    if value is None or value is False:
+        return None
+    if not isinstance(value, bool):
+        raise portal.PortalError(L("zuordnung: mandant_anlegen ist kein Wahrheitswert",
+                                   "zuordnung: mandant_anlegen is not a boolean"))  # fmt: skip
+    if roh.get("mandant") is not None:
+        raise portal.PortalError(L(
+            "zuordnung: mandant und mandant_anlegen schliessen sich aus",
+            "zuordnung: mandant and mandant_anlegen are mutually exclusive"))  # fmt: skip
+    if roh.get("mandant_name") is None:
+        return name
+    try:
+        return _name(roh.get("mandant_name"))
+    except portal.PortalError as exc:
+        raise portal.PortalError(L(f"zuordnung.mandant_name: {exc}",
+                                   f"zuordnung.mandant_name: {exc}")) from exc  # fmt: skip
 
 
 def _kunde_anlegen(roh: object) -> bool:
@@ -289,6 +343,9 @@ def _freigabe(session: Session, roh: dict) -> Freigabe:
     if netze is not None and not isinstance(netze, list):
         raise portal.PortalError(L("netze ist keine Liste", "netze is not a list"))
     access, nets = portal.check_access(zugriff, netze)
+    # 1.19.2 (ADR 0058 Nachtrag): eigener Mandant - der frueher angelegte bzw. ein neuer
+    mandant = _mandant_anlegen(roh.get("zuordnung"), name)
+    angelegt = cockpit_mandant.angelegt(session, kurz) if mandant is not None else None
     realm = roh.get("realm")
     if realm is not None and not isinstance(realm, str):
         raise portal.PortalError(L("realm ist kein Text", "realm is not a string"))
@@ -297,11 +354,14 @@ def _freigabe(session: Session, roh: dict) -> Freigabe:
         raise portal.PortalError(L("gesperrt ist nicht true/false", "gesperrt is not true/false"))
     werte = {"name": name, "doc": "doc" in tools, "nb": "nb" in tools, "um": "um" in tools,
              "cmdb": "cmdb" in tools, "realm": portal.check_realm(realm), "access": access,
-             "access_nets": nets, **_zuordnung(session, roh.get("zuordnung")),
+             "access_nets": nets,
+             **_zuordnung(session, roh.get("zuordnung"), mandant is not None, angelegt),
              **_kacheln(roh.get("kacheln")), "gesperrt": bool(gesperrt),
              "users": verwaltung.check_benutzer(roh.get("benutzer")),
              "automato_instanz": _instanz(roh.get("automato_instanz"))}  # fmt: skip
-    return Freigabe(kurz, werte, _kunde_anlegen(roh.get("zuordnung")))
+    # mit eigenem Mandanten legt Automato darin immer auch den Kunden an (sonst keine Rechte)
+    anlegen = mandant is not None or _kunde_anlegen(roh.get("zuordnung"))
+    return Freigabe(kurz, werte, anlegen, mandant)
 
 
 def _siegel_ok(value: object) -> bool:
@@ -380,10 +440,12 @@ def pruefen(session: Session, data: object) -> list[Freigabe]:
     return _pruefen(session, data)[0]
 
 
-def _pruefen(session: Session, data: object) -> tuple[list[Freigabe], list[TorGeheimnis] | None,
-                                                      list[verwaltung.Anlegen]]:  # fmt: skip
-    """Wie `pruefen`, dazu die versiegelten Client-Secrets (None = nicht gesendet) und der Plan
-    fuer `kunde_anlegen` (1.14.0)."""
+def _pruefen(session: Session, data: object) -> tuple[
+    list[Freigabe], list[TorGeheimnis] | None, list[verwaltung.Anlegen],
+    list[cockpit_mandant.Anlegen],
+]:  # fmt: skip
+    """Wie `pruefen`, dazu die versiegelten Client-Secrets (None = nicht gesendet), der Plan
+    fuer `kunde_anlegen` (1.14.0) und fuer neue Mandanten (`mandant_anlegen`, 1.19.2)."""
     if not isinstance(data, dict):
         raise FreigabenFehler([_fehler(None, L("Anfrage ist kein JSON-Objekt",
                                                "request is not a JSON object"))])  # fmt: skip
@@ -458,9 +520,15 @@ def _pruefen(session: Session, data: object) -> tuple[list[Freigabe], list[TorGe
         if f.kunde_anlegen and f.werte.get("tenant_id") is not None
     ])  # fmt: skip
     fehler.extend(_fehler(kurz, grund) for kurz, grund in belegt)
+    # 1.19.2 (ADR 0058 Nachtrag): neue Mandanten - ein freier Name (sonst Fehler: alles oder nichts)
+    mplan, belegt = cockpit_mandant.planen(session, [
+        (f.kurzname, f.mandant_anlegen) for f in out
+        if f.mandant_anlegen is not None and f.werte.get("tenant_id") is None
+    ])  # fmt: skip
+    fehler.extend(_fehler(kurz, grund) for kurz, grund in belegt)
     if fehler:
         raise FreigabenFehler(fehler)
-    return out, tor, plan
+    return out, tor, plan, mplan
 
 
 def _wert(pc: PortalCustomer, feld: str) -> object:
@@ -569,6 +637,40 @@ def kunden_anlegen(session: Session, freigaben: list[Freigabe], plan: list[verwa
     return out, neu
 
 
+def mandanten_anlegen(session: Session, freigaben: list[Freigabe],
+                      plan: list[cockpit_mandant.Anlegen], akteur: str = AKTEUR,
+                      ) -> tuple[list[Freigabe], list[dict], list[verwaltung.Anlegen]]:  # fmt: skip
+    """`zuordnung.mandant_anlegen` (1.19.2, ADR 0058 Nachtrag): je geplantem Portal-Kunden den
+    Mandanten anlegen und in die Freigabe setzen (ohne commit). Liefert die Freigaben, die neuen
+    Mandanten ({"kurzname", "id", "name"}) und den Plan fuer die Kunden darin - in einem neuen
+    Mandanten ist jeder Name frei."""
+    if not plan:
+        return freigaben, [], []
+    tids = {p.kurzname: cockpit_mandant.anlegen(session, p, akteur) for p in plan}
+    out = [replace(f, werte={**f.werte, "tenant_id": tids[f.kurzname]})
+           if f.kurzname in tids else f for f in freigaben]  # fmt: skip
+    kunden, belegt = verwaltung.planen(session, [
+        (f.kurzname, f.werte["name"], f.werte["tenant_id"]) for f in out if f.kurzname in tids
+    ])  # fmt: skip
+    if belegt:  # nicht moeglich (neuer Mandant ohne Kunden) - nichts uebernehmen
+        raise FreigabenFehler([_fehler(kurz, grund) for kurz, grund in belegt])
+    neu = [{"kurzname": p.kurzname, "id": tids[p.kurzname], "name": p.name} for p in plan]
+    return out, neu, kunden
+
+
+def umziehen(session: Session, freigaben: list[Freigabe], vorher: dict[str, int | None],
+             akteur: str = AKTEUR) -> list[dict]:  # fmt: skip
+    """Nach `anwenden` (1.19.2): Portal-Kunden mit eigenem Mandanten, die vorher in einem anderen
+    Mandanten standen - dort den fuer sie angelegten Kunden nur ohne Daten entfernen
+    (`cockpit_mandant.umziehen`); nur in dieser Anfrage, spaeter nie still."""
+    out: list[dict] = []
+    for f in freigaben:
+        alt, neu = vorher.get(f.kurzname), f.werte.get("tenant_id")
+        if f.mandant_anlegen is not None and alt is not None and neu is not None and alt != neu:
+            out.extend(cockpit_mandant.umziehen(session, f.kurzname, alt, neu, akteur))
+    return out
+
+
 def tor_anwenden(session: Session, eintraege: list[TorGeheimnis], empfang: str | None,
                  erg: Ergebnis, akteur: str = AKTEUR) -> None:  # fmt: skip
     """Versiegelte Client-Secrets uebernehmen (nach `anwenden`, ohne commit): nur mit der Kennung
@@ -605,10 +707,15 @@ def uebernehmen(session: Session, data: object, akteur: str = AKTEUR,
                 empfang: str | None = None) -> Ergebnis:  # fmt: skip
     """Anfrage pruefen und uebernehmen (ohne commit) - wirft `FreigabenFehler`. `empfang` =
     Kennung des aktuellen Empfangsschluessels der VM (aus dem Front-Status, None = keiner)."""
-    freigaben, tor, plan = _pruefen(session, data)
-    freigaben, neu = kunden_anlegen(session, freigaben, plan, akteur)
+    freigaben, tor, plan, mplan = _pruefen(session, data)
+    vorher = {kurz: tid for kurz, tid in session.execute(
+        select(PortalCustomer.short_name, PortalCustomer.tenant_id))}  # fmt: skip
+    freigaben, mandanten, plan2 = mandanten_anlegen(session, freigaben, mplan, akteur)
+    freigaben, neu = kunden_anlegen(session, freigaben, plan + plan2, akteur)
     erg = anwenden(session, freigaben, akteur)
     erg.kunden_angelegt = neu
+    erg.mandanten_angelegt = mandanten
+    erg.umzug = umziehen(session, freigaben, vorher, akteur)
     if tor is not None:
         tor_anwenden(session, tor, empfang, erg, akteur)
     return erg

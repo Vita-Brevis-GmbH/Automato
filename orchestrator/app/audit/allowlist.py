@@ -80,7 +80,8 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "finding.created": frozenset(
         {"finding_id", "tenant_id", "type", "severity", "source_system_id"}
     ),  # fmt: skip
-    "tenant.created": frozenset({"tenant_id", "name", "code"}),
+    # seit 1.19.2 (ADR 0058 Nachtrag) beim Anlegen fuer das Cockpit Herkunft und Portal-Kunde
+    "tenant.created": frozenset({"tenant_id", "name", "code", "quelle", "portal_kunde"}),
     # IPv4/IPv6-Paare nach dem Umschalten von rule_pairs_auto neu gebildet (0.138.0)
     "rule_pairs.rebuilt": frozenset({"tenant_id", "auto"}),
     "tenant.updated": frozenset(
@@ -258,6 +259,11 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "portal.customer.created": _PORTAL,
     "portal.customer.updated": _PORTAL,
     "portal.customer.deleted": _PORTAL,
+    # Umzug in den neuen Mandanten aus dem Cockpit (1.19.2, ADR 0058 Nachtrag): Mandanten und die
+    # Ids der frueher angelegten Kunden (entfernt bzw. mit Grund geblieben)
+    "portal.customer.umzug": frozenset(
+        {"von_mandant", "nach_mandant", "quelle", "entfernt", "bleibt"}
+    ),
     # Client-Secret des Anmelde-Tors versiegelt aus dem Cockpit (1.13.0, ADR 0055): nur Realm und
     # Kennung des Empfangsschluessels - nie das Chiffrat
     "portal.tor_secret.updated": frozenset({"realm", "kennung"}),

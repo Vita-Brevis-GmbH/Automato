@@ -37,6 +37,11 @@ sperrt (`gesperrt`, aus `topologie.json`; null bei einem aelteren front.sh).
 Seit 1.16.0 (ADR 0061) je Kunde die eigene Automato-Instanz (`automato_instanz`: Name aus dem
 Kunden-Portal, sonst aus `topologie.json`, sonst null = gemeinsame Instanz) und unter `ist.front`
 die Instanzen, deren Anschluss der Front-Proxy auf der VM gefunden hat (`instanzen`).
+
+Seit 1.19.2 (ADR 0058 Nachtrag) je Kunde in `zuordnung` der Mandant, den Automato fuer ihn angelegt
+hat (`mandant_angelegt`: {"id", "name"} oder null), je Mandant der Auswahl der Portal-Kunde, fuer
+den Automato ihn angelegt hat (`portal_kunde`, sonst null), und unter `automato.funktionen` was
+diese Fassung zusaetzlich versteht (`mandant_anlegen`) - das Cockpit sendet es nur dann.
 """
 
 import hashlib
@@ -56,7 +61,7 @@ from app import __version__
 from app.auth import capabilities as caps
 from app.config import Settings
 from app.models import Customer, PortalCustomer, Tenant
-from app.store import ist_stand, portal, verwaltung
+from app.store import cockpit_mandant, ist_stand, portal, verwaltung
 
 TOPOLOGIE = "topologie.json"
 #: Fassung der Antwort (Vertrag im Cockpit: docs/vertraege/inventar.md)
@@ -214,17 +219,21 @@ def _herkunft(k: dict) -> dict:
 
 
 def _zuordnung(pc: PortalCustomer | None, live: dict[int, set[int]],
-               angelegt: dict[tuple[str, int], int] | None = None) -> dict:  # fmt: skip
+               angelegt: dict[tuple[str, int], int] | None = None,
+               mandanten: dict[str, dict] | None = None) -> dict:  # fmt: skip
     """Zuordnung in Automato je Kunde (1.13.0): ob ein Ausschnitt da ist und der Stand im
     Kunden-Portal - nur mit Kunden, die es noch gibt (`portal.live_customers`); ohne Eintrag im
     Kunden-Portal unbekannt (null). Seit 1.14.0 (ADR 0058) in der Zuordnung der Kunde, den
     Automato fuer das Cockpit im Mandanten angelegt hat (`kunde_angelegt`, sonst null), und die
-    Benutzer mit Rolle aus dem Cockpit (`benutzer`, null = keine Aussage)."""
+    Benutzer mit Rolle aus dem Cockpit (`benutzer`, null = keine Aussage). Seit 1.19.2 der
+    Mandant, den Automato fuer ihn angelegt hat (`mandant_angelegt`, {"id", "name"} oder null)."""
     if pc is None:
         return {"automato_zugeordnet": None, "zuordnung": None, "benutzer": None}
     kunde = (angelegt or {}).get((pc.short_name, pc.tenant_id)) if pc.tenant_id else None
+    mandant = (mandanten or {}).get(pc.short_name)
     return {"automato_zugeordnet": portal.assigned(pc, live),
-            "zuordnung": {**portal.scope_of(pc, live), "kunde_angelegt": kunde},
+            "zuordnung": {**portal.scope_of(pc, live), "kunde_angelegt": kunde,
+                          "mandant_angelegt": mandant},
             "benutzer": _benutzer(pc)}  # fmt: skip
 
 
@@ -276,7 +285,8 @@ def _instanz(pc: PortalCustomer | None, k: dict) -> dict:
 
 def _kunden(topo: dict, portal_kunden: dict[str, PortalCustomer],
             live: dict[int, set[int]],
-            angelegt: dict[tuple[str, int], int] | None = None) -> list[dict]:  # fmt: skip
+            angelegt: dict[tuple[str, int], int] | None = None,
+            mandanten: dict[str, dict] | None = None) -> list[dict]:  # fmt: skip
     kunden = topo.get("kunden") if isinstance(topo.get("kunden"), list) else []
     out = []
     for k in kunden[:1000]:
@@ -284,15 +294,17 @@ def _kunden(topo: dict, portal_kunden: dict[str, PortalCustomer],
         if kurz:
             pc = portal_kunden.get(kurz)
             out.append({**{feld: _text(k.get(feld)) for feld in _KUNDE}, **_herkunft(k),
-                        **_zuordnung(pc, live, angelegt), **_kacheln(pc),
+                        **_zuordnung(pc, live, angelegt, mandanten), **_kacheln(pc),
                         **_instanz(pc, k)})  # fmt: skip
     return out
 
 
 def _mandanten(session: Session) -> list[dict]:
     """Alle Mandanten mit ihren Kunden (nur Id und Name), nach Name - die Auswahl fuer die
-    Zuordnung im Cockpit (1.13.0)."""
+    Zuordnung im Cockpit (1.13.0); seit 1.19.2 der Portal-Kunde, fuer den Automato den Mandanten
+    angelegt hat (`portal_kunde`, sonst null)."""
     mandanten = session.scalars(select(Tenant).order_by(Tenant.name).limit(MAX_MANDANTEN)).all()
+    fuer = cockpit_mandant.portal_kunden(session)
     kunden: dict[int, list[dict]] = {t.id: [] for t in mandanten}
     if kunden:
         rows = session.execute(
@@ -303,8 +315,8 @@ def _mandanten(session: Session) -> list[dict]:
         for cid, name, tid in rows:
             if len(kunden[tid]) < MAX_KUNDEN_JE_MANDANT:
                 kunden[tid].append({"id": cid, "name": (name or "")[:MAX_NAME]})
-    return [{"id": t.id, "name": (t.name or "")[:MAX_NAME], "kunden": kunden[t.id]}
-            for t in mandanten]  # fmt: skip
+    return [{"id": t.id, "name": (t.name or "")[:MAX_NAME], "kunden": kunden[t.id],
+             "portal_kunde": fuer.get(t.id)} for t in mandanten]  # fmt: skip
 
 
 def installation(settings: Settings, topo: dict | None = None) -> dict:
@@ -336,11 +348,14 @@ def inventory(settings: Settings, session: Session | None = None) -> dict:
             # 1.13.0 (ADR 0054 Nachtrag): Auswahl fuer die Zuordnung im Cockpit
             "mandanten": _mandanten(session) if session else [],
             "rollen": list(caps.CUSTOMER_ROLES),
+            # 1.19.2 (ADR 0058 Nachtrag): was das Cockpit zusaetzlich senden darf
+            "funktionen": [cockpit_mandant.FUNKTION],
         },
         "keycloak": {"issuer": _text(issuer)},
         "front": _front(topo, settings.front_state_dir),
         "kunden": _kunden(topo, portal_kunden, live,
-                          verwaltung.angelegt_je_kunde(session) if session else None),
+                          verwaltung.angelegt_je_kunde(session) if session else None,
+                          cockpit_mandant.mandanten(session) if session else None),
         # 1.14.0 (ADR 0059): Ist-Stand der Instanzen (Altlasten, Stand der Loeschauftraege)
         "ist": ist_stand.ist(session, settings) if session else None,
     }  # fmt: skip

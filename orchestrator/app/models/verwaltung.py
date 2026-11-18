@@ -7,6 +7,12 @@ der Abbau weiss spaeter, welche Kunden vom Cockpit stammen - auch nachdem der Po
 entfernt ist (darum der Kurzname statt eines Verweises auf `portal_customer`). Wird der Kunde in
 Automato geloescht, faellt der Eintrag mit (`ondelete=CASCADE`); das naechste `kunde_anlegen`
 legt dann wieder einen an.
+
+Seit 1.19.2 (ADR 0058 Nachtrag, Anwender 2026-11-18) dazu `CockpitTenant`: der Mandant, den
+Automato fuer einen Portal-Kunden aus dem Cockpit angelegt hat (`zuordnung.mandant_anlegen`) -
+einer je Portal-Kunde (Kurzname), damit ein zweites `PUT /freigaben` keinen weiteren anlegt. Wird
+der Mandant in Automato geloescht, faellt der Eintrag mit; das naechste `mandant_anlegen` legt dann
+wieder einen an (Soll-Stand des Cockpits).
 """
 
 from datetime import UTC, datetime
@@ -30,6 +36,20 @@ class CockpitCustomer(Base):
     customer_id: Mapped[int] = mapped_column(
         ForeignKey("customer.id", ondelete="CASCADE"), unique=True
     )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
+class CockpitTenant(Base):
+    """Mandant, den Automato fuer einen Portal-Kunden aus dem Cockpit angelegt hat (1.19.2)."""
+
+    __tablename__ = "cockpit_tenant"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # Kurzname des Portal-Kunden (wie `portal_customer.short_name`) - einer je Portal-Kunde
+    short_name: Mapped[str] = mapped_column(String(42), unique=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenant.id", ondelete="CASCADE"), unique=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )

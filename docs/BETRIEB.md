@@ -2690,6 +2690,19 @@ Client-Zertifikat und die passenden Zeilen der `agent.env`.
     schon: „<Name> (<Kurzname>)“) und ordnet ihn zu; im Kunden-Portal mit „für das Cockpit
     angelegt“. Selektoren, Zonen usw. pflegt man danach wie bei jedem Kunden unter Administration
     → Kunden.
+  - einen **eigenen Mandanten** anlegen lassen (1.19.2, Freigaben: `zuordnung.mandant_anlegen`,
+    im Cockpit „Neuer Mandant“, dort die Vorgabe für neue Kunden mit Automato): Automato legt einen
+    Mandanten mit dem Namen des Kunden an (gibt es ihn schon: „<Name> (<Kurzname>)“), darin den
+    Kunden, und ordnet beides zu – einmal je Kurzname. Die Benutzer des Kunden-Realms sehen nur
+    diesen Mandanten. Im Kunden-Portal steht beim Mandanten „für das Cockpit angelegt“. Der Mandant
+    beginnt leer (Quellsysteme, Standorte und Einstellungen gehören dem Mandanten und kommen beim
+    Wechsel nicht mit). Wechselt ein bestehender Kunde so aus einem gemeinsamen Mandanten, entfernt
+    Automato dort den für ihn angelegten Kunden nur, wenn ihm keine Daten zugeordnet sind; sonst
+    bleibt er (Audit „Umzug“, im Cockpit unter „Aufräumen“), von Hand entfernen, wenn gewollt. Ein
+    Quellsystem seiner NetBox bleibt im alten Mandanten; soll es mit, dort entfernen – der Agent des
+    NetBox-Hosts liefert den Zugang dann für den neuen. Automato löscht einen so angelegten
+    Mandanten nie selbst, auch nicht beim Abbau (der nimmt nur den Kunden darin): leer gewordene
+    Mandanten unter Administration → Mandanten löschen.
   - **Benutzer und Rollen** schicken: dann haben nur diese Benutzer des Realms Rechte (Liste im
     Kunden-Portal unter „Ansehen“, Spalte Ausschnitt „N Benutzer“); alle anderen sehen nach der
     Anmeldung „Für Sie ist in Automato keine Rolle vergeben – das macht der Betreiber im Cockpit“.

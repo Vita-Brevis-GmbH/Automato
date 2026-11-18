@@ -93,6 +93,7 @@ MODULES: tuple[Module, ...] = (
             "aci_direction",
             "aci_relevance",
             "aci_shared",
+            "cockpit_mandant",
             "connections",
             "customer_alias",
             "customer_infra",
