@@ -278,6 +278,10 @@ class FortiGateClient:
             "ipsec_phase1": lambda: self._get("vpn.ipsec/phase1-interface", vdom),
             "ipsec_phase2": lambda: self._get("vpn.ipsec/phase2-interface", vdom),
             "ipsec_status": lambda: self._monitor_rows("vpn/ipsec", vdom),
+            # ADR 0070 (nur lesend): Einstellungen des VDOMs (Central NAT, Reverse Path) und die
+            # Tabelle des Central SNAT
+            "settings": lambda: self._get("system/settings", vdom),
+            "central_snat": lambda: self._get("firewall/central-snat-map", vdom),
         }
         out: dict[str, Any] = {"missing": []}
         for key, read in reads.items():

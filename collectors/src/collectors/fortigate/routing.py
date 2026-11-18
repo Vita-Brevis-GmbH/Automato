@@ -58,6 +58,9 @@ TABLE_LABELS = {
     "ipsec_phase1": "IPsec Phase 1",
     "ipsec_phase2": "IPsec Phase 2",
     "ipsec_status": "IPsec-Zustand",
+    # ADR 0070: Einstellungen des VDOMs (Reverse Path, Central NAT) und Central SNAT
+    "settings": "VDOM-Einstellungen",
+    "central_snat": "Central SNAT",
 }
 
 _PROTOCOL = {"connect": "connected", "connected": "connected"}
@@ -150,8 +153,12 @@ def _table(row: dict, interface: Any, ifaces: Ports | None) -> dict[str, Any]:
 def rib(
     rows: list[dict], node: str, vdom: str, ifaces: Ports | None = None
 ) -> list[NormalizedRoute]:
-    """Wirksame Routing-Tabelle: Eintraege je Praefix, Protokoll, Distanz und VRF
-    zusammengefasst - mehrere Gateways sind ECMP."""
+    """Wirksame Routing-Tabelle: Eintraege je Praefix, Protokoll, Distanz, VRF **und
+    Prioritaet** zusammengefasst - mehrere Gateways sind ECMP.
+
+    ADR 0070: FortiOS haelt Routen gleicher Distanz mit verschiedener Prioritaet beide in der
+    Tabelle, leitet aber nur ueber die mit der kleinsten Prioritaet weiter - ECMP verlangt
+    gleiche Distanz **und** Prioritaet. Die uebrigen stehen als `best=False` (Backup) da."""
     grouped: dict[tuple, NormalizedRoute] = {}
     for r in rows or []:
         if not isinstance(r, dict):
@@ -162,7 +169,8 @@ def rib(
         proto = str(r.get("type") or "").lower() or None
         proto = _PROTOCOL.get(proto or "", proto)
         table = _table(r, r.get("interface"), ifaces)
-        key = (net, proto, _int(r.get("distance")), table.get("vrf", 0), bool(table.get("mgmt")))
+        key = (net, proto, _int(r.get("distance")), table.get("vrf", 0), bool(table.get("mgmt")),
+               _int(r.get("priority")) or 0)  # fmt: skip
         route = grouped.get(key)
         if route is None:
             route = grouped[key] = NormalizedRoute(
@@ -178,6 +186,13 @@ def rib(
         hop = NormalizedNextHop(ip=_gateway(r.get("gateway")), interface=r.get("interface"))
         if hop not in route.next_hops:
             route.next_hops.append(hop)
+    # je Praefix, Protokoll, Distanz und VRF gewinnt die kleinste Prioritaet
+    lowest: dict[tuple, int] = {}
+    for key in grouped:
+        lowest[key[:5]] = min(lowest.get(key[:5], key[5]), key[5])
+    for key, route in grouped.items():
+        if key[5] != lowest[key[:5]]:
+            route.best = False
     return list(grouped.values())
 
 
@@ -262,8 +277,10 @@ def peers(rows: list[dict], node: str, vdom: str) -> list[NormalizedPeer]:
 
 
 def policy_routes(rows: list[dict], node: str, vdom: str) -> list[NormalizedPolicyRoute]:
+    """Policy-Routen in der Reihenfolge der Liste (`attrs.position`, ADR 0070): die FortiGate
+    prueft von oben nach unten - nach `move` weicht die Reihenfolge von `seq-num` ab."""
     out = []
-    for r in rows or []:
+    for position, r in enumerate(rows or []):
         if not isinstance(r, dict):
             continue
         match = {
@@ -287,7 +304,7 @@ def policy_routes(rows: list[dict], node: str, vdom: str) -> list[NormalizedPoli
                 action=r.get("action") or "permit",
                 gateway=_gateway(r.get("gateway")),
                 output_device=[r["output-device"]] if r.get("output-device") else [],
-                attrs=_keep(r, ("comments", "tos", "tos-mask")),
+                attrs={**_keep(r, ("comments", "tos", "tos-mask")), "position": position},
             )
         )
     return out
@@ -303,7 +320,7 @@ def sdwan(cfg: Any, node: str, vdom: str) -> list[NormalizedPolicyRoute]:
         for m in members.values()
     ]
     out = []
-    for s in cfg.get("service") or []:
+    for position, s in enumerate(cfg.get("service") or []):
         if not isinstance(s, dict):
             continue
         order = [members.get(_int(p.get("seq-num"))) for p in s.get("priority-members") or []]
@@ -330,6 +347,7 @@ def sdwan(cfg: Any, node: str, vdom: str) -> list[NormalizedPolicyRoute]:
                 attrs={
                     "zones": _names(s.get("priority-zone")),
                     "members": member_list,
+                    "position": position,
                 },
             )
         )
@@ -408,6 +426,61 @@ def _sync_peers(cluster: Any) -> list[dict[str, Any]]:
     return out
 
 
+def settings(raw: dict, vdom: str, interfaces: list[dict] | None) -> dict[str, Any]:
+    """Einstellungen des VDOMs, die den Weg bestimmen (ADR 0070, nur lesend):
+
+    - `system settings`: `central_nat` (Central NAT statt Policy-NAT), `asymroute` (kein Reverse
+      Path), `strict_src_check` (Reverse Path nur ueber die beste Route) - Schluessel nur, wenn
+      die Tabelle gelesen wurde (fehlt = „nicht geprueft“ in der Weg-Suche);
+    - `src_check_off`: Interfaces des VDOMs mit `src-check disable`;
+    - `central_snat`: `firewall central-snat-map` in der Reihenfolge der Tabelle (nur mit
+      Central NAT) - Positivliste der Felder."""
+    out: dict[str, Any] = {}
+    cfg = raw.get("settings")
+    if isinstance(cfg, list):
+        cfg = cfg[0] if cfg else None
+    if isinstance(cfg, dict) and cfg:
+        out["central_nat"] = cfg.get("central-nat") == "enable"
+        out["asymroute"] = cfg.get("asymroute") == "enable"
+        out["asymroute6"] = cfg.get("asymroute6") == "enable"
+        out["strict_src_check"] = cfg.get("strict-src-check") == "enable"
+        off = [
+            str(i["name"])
+            for i in interfaces or []
+            if isinstance(i, dict)
+            and i.get("name")
+            and i.get("src-check") == "disable"
+            and str(i.get("vdom") or vdom) == vdom
+        ]
+        if off:
+            out["src_check_off"] = sorted(off)
+        if out["central_nat"]:
+            missing = any(str(m).startswith(TABLE_LABELS["central_snat"])
+                          for m in raw.get("missing") or [])  # fmt: skip
+            if not missing:
+                out["central_snat"] = [_snat_row(r) for r in raw.get("central_snat") or []
+                                       if isinstance(r, dict)]  # fmt: skip
+    return out
+
+
+def _snat_row(r: dict) -> dict[str, Any]:
+    row = {
+        "id": _int(r.get("policyid")),
+        "status": r.get("status") or "enable",
+        "srcintf": _names(r.get("srcintf")),
+        "dstintf": _names(r.get("dstintf")),
+        "orig_addr": _names(r.get("orig-addr")) + _names(r.get("orig-addr6")),
+        "dst_addr": _names(r.get("dst-addr")) + _names(r.get("dst-addr6")),
+        "nat": r.get("nat") or "enable",
+        "nat_ippool": _names(r.get("nat-ippool")) + _names(r.get("nat-ippool6")),
+        "protocol": _int(r.get("protocol")) or None,  # 0 = alle
+        "orig_port": r.get("orig-port"),
+        "nat_port": r.get("nat-port"),
+        "comments": r.get("comments"),
+    }
+    return {k: v for k, v in row.items() if v not in (None, "", [])}
+
+
 def normalize(
     vdoms: list[dict], global_ha: dict | None, node: str, interfaces: list[dict] | None = None
 ) -> RoutingInventory:
@@ -422,7 +495,12 @@ def normalize(
             continue
         vdom = str(v.get("vdom") or "root")
         inv.contexts.append(
-            NormalizedRoutingContext(node=node, context=vdom, missing=raw.get("missing", []))
+            NormalizedRoutingContext(
+                node=node,
+                context=vdom,
+                missing=raw.get("missing", []),
+                settings=settings(raw, vdom, interfaces),
+            )
         )
         inv.routes += rib(raw.get("rib4"), node, vdom, ifaces)
         inv.routes += rib(raw.get("rib6"), node, vdom, ifaces)

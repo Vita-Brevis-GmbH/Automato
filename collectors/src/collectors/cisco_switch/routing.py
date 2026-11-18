@@ -55,6 +55,10 @@ IOS_RIB_VRF = "show ip route vrf *"
 IOS_RIB6 = "show ipv6 route"
 IOS_BGP_SUMMARY = "show ip bgp summary"
 IOS_BGP = "show bgp ipv4 unicast"
+# ADR 0070: virtuelle Gateway-Adressen (HSRP, VRRP) - IOS/IOS-XE zeigt sie nicht in der
+# Routing-Tabelle (NX-OS schon), der uebliche Next-Hop einer Firewall ist aber genau diese
+IOS_STANDBY = "show standby brief"
+IOS_VRRP = "show vrrp brief"
 NXOS_RIB = "show ip route vrf all"
 NXOS_RIB6 = "show ipv6 route vrf all"
 NXOS_BGP_SUMMARY = "show ip bgp summary vrf all"
@@ -67,7 +71,7 @@ EOS_ADDRESSES = "show ip interface | json"
 
 # Befehle je Plattform (nur lesend); der erste ist die IPv4-RIB
 COMMANDS: dict[str, tuple[str, ...]] = {
-    "ios": (IOS_RIB, IOS_RIB_VRF, IOS_RIB6, IOS_BGP_SUMMARY, IOS_BGP),
+    "ios": (IOS_RIB, IOS_RIB_VRF, IOS_RIB6, IOS_BGP_SUMMARY, IOS_BGP, IOS_STANDBY, IOS_VRRP),
     "nxos": (NXOS_RIB, NXOS_RIB6, NXOS_BGP_SUMMARY),
     "junos": (JUNOS_ROUTE, JUNOS_BGP),
     "eos": (EOS_RIB, EOS_RIB6, EOS_BGP_SUMMARY, EOS_ADDRESSES),
@@ -87,6 +91,8 @@ PARTS: dict[str, tuple[tuple[str, ...], bool]] = {
     IOS_RIB6: ((V6,), True),
     IOS_BGP_SUMMARY: ((PEERS,), True),
     IOS_BGP: ((BGP4,), True),
+    IOS_STANDBY: ((), False),  # ohne HSRP leer bzw. Fehlermeldung: nur Hinweis
+    IOS_VRRP: ((), False),
     NXOS_RIB: ((V4,), False),
     NXOS_RIB6: ((V6,), False),
     NXOS_BGP_SUMMARY: ((PEERS,), False),
@@ -566,8 +572,49 @@ def eos_addresses(text: str, out: Parsed) -> None:
             route.hop(None, port(name))
 
 
+_FHRP_IF = re.compile(r"^[A-Za-z][A-Za-z-]*\d[\d/.:]*$")
+_FHRP_STATE = re.compile(r"\b(Active|Standby|Master|Backup|Speak|Listen|Init|Learn)\b", re.I)
+
+
+def ios_fhrp(text: str, out: Parsed) -> None:
+    """`show standby brief` bzw. `show vrrp brief` (IOS/IOS-XE): die virtuelle Adresse je
+    Interface als eigene, virtuelle Adresse (`local`, `virtual`) - wie NX-OS sie in der
+    Routing-Tabelle zeigt. `state` (active | standby): nur der aktive Router nimmt den Verkehr
+    an. Die VRF ist die des angeschlossenen Netzes auf dem Interface. Nach den Routing-Tabellen
+    auszuwerten (Reihenfolge in `COMMANDS`)."""
+    nets: list[tuple[str, Any, str | None]] = []
+    for r in out.routes:
+        if r.table == "rib" and r.protocol == "connected":
+            iface = next((i for _ip, i in r.hops if i), None)
+            nets.append((r.vrf, ipaddress.ip_network(r.prefix), iface))
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) < 4 or not _FHRP_IF.match(parts[0]):
+            continue
+        vip = _addr(parts[-1])
+        if vip is None:
+            continue
+        state = _FHRP_STATE.search(line)
+        word = state.group(1).lower() if state else ""
+        if word in ("init", "learn"):
+            continue  # Gruppe nicht in Betrieb (Interface down, keine Adresse gelernt)
+        iface = port(parts[0])
+        addr = ipaddress.ip_address(vip)
+        vrf = next((v for v, n, i in nets if i == iface and addr in n), None)
+        vrf = vrf or next((v for v, n, _i in nets if addr in n), DEFAULT_VRF)
+        attrs: dict[str, Any] = {"virtual": True}
+        if word:
+            attrs["state"] = "active" if word in ("active", "master") else "standby"
+        bits = 128 if addr.version == 6 else 32
+        route = out.rib(vrf, f"{vip}/{bits}", "local", 0, attrs=attrs)
+        route.attrs.update(attrs)
+        route.hop(None, iface)
+
+
 PARSERS: dict[str, Callable[[str, Parsed], None]] = {
     IOS_RIB: ios_rib,
+    IOS_STANDBY: ios_fhrp,
+    IOS_VRRP: ios_fhrp,
     IOS_RIB_VRF: lambda text, out: ios_rib(text, out, vrfs_only=True),
     IOS_RIB6: ios_rib6,
     IOS_BGP_SUMMARY: ios_bgp_summary,
