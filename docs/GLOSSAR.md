@@ -26,7 +26,10 @@ Neue Texte halten sich an diese Liste, damit derselbe Begriff überall gleich he
 | Kunde, Kunden-Benutzer | Customer, customer user |
 | Kopplung, koppeln, entkoppeln (mit dem Cockpit) | Pairing, pair, unpair |
 | Einmal-Code (zum Koppeln) | Pairing code |
-| Kunden-Rolle (Lesen, Triage, Editor, Kunden-Admin) | Customer role (read, triage, editor, customer admin) |
+| Kunden-Rolle (Lesen, Triage, Editor, Operator, Kunden-Admin) | Customer role (read, triage, editor, operator, customer admin) |
+| Betreiber (Anzeige oben rechts) | Service provider |
+| Ganze Plattform (Link für Betreiber) | Whole platform |
+| Rechte nicht lesbar | Rights not readable |
 | pflegbar (Applikation) | editable |
 | Ausschnitt (eines Kunden) | Scope |
 | geteilt | shared |

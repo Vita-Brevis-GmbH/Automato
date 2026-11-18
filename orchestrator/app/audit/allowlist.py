@@ -313,16 +313,17 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "zone_plan.version_saved": frozenset({"tenant_id", "version_id", "number", "label"}),
     "zone_plan.version_deleted": frozenset({"tenant_id", "version_id", "number", "label"}),
     # Lesezugriffs-Audit (per Mandant zuschaltbar, ADR 0007 D5)
-    # Kunden-Benutzer (ADR 0018): immer, mit ihren Kunden-IDs
-    "read.rules": frozenset({"tenant_id", "resource", "customers"}),
-    "read.nat": frozenset({"tenant_id", "resource", "customers"}),
-    "read.findings": frozenset({"tenant_id", "resource", "customers"}),
-    "read.applications": frozenset({"tenant_id", "resource", "customers"}),
-    "read.routing": frozenset({"tenant_id", "resource"}),
-    "read.objects": frozenset({"tenant_id", "resource", "customers"}),
-    "read.virtual": frozenset({"tenant_id", "resource", "customers"}),
-    "read.customers": frozenset({"tenant_id", "resource", "customers"}),
-    "read.zones": frozenset({"tenant_id", "resource"}),
+    # Kunden-Benutzer (ADR 0018): immer, mit ihren Kunden-IDs; Mandanten-Benutzer (ADR 0068):
+    # immer, mit ihrer Mandanten-Rolle
+    "read.rules": frozenset({"tenant_id", "resource", "customers", "mandant_rolle"}),
+    "read.nat": frozenset({"tenant_id", "resource", "customers", "mandant_rolle"}),
+    "read.findings": frozenset({"tenant_id", "resource", "customers", "mandant_rolle"}),
+    "read.applications": frozenset({"tenant_id", "resource", "customers", "mandant_rolle"}),
+    "read.routing": frozenset({"tenant_id", "resource", "mandant_rolle"}),
+    "read.objects": frozenset({"tenant_id", "resource", "customers", "mandant_rolle"}),
+    "read.virtual": frozenset({"tenant_id", "resource", "customers", "mandant_rolle"}),
+    "read.customers": frozenset({"tenant_id", "resource", "customers", "mandant_rolle"}),
+    "read.zones": frozenset({"tenant_id", "resource", "mandant_rolle"}),
     "retention.purged": frozenset(
         {"runs", "sync_plans", "audit", "l2", "topo_changes"}
         | {"runs_days", "sync_days", "audit_days", "l2_days", "topo_changes_days"}

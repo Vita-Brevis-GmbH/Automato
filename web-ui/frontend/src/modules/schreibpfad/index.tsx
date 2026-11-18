@@ -13,6 +13,7 @@ export const VIEWS: ViewEntry[] = [
     section: "admin",
     order: 270,
     adminOnly: true,
+    tenantAdmin: true, // ADR 0068: der Admin im eigenen Mandanten stösst den Sync seiner NetBox an
     render: (p) => <NetBoxSync tenantId={p.tenantId} tenantLabel={p.tenantLabel} onGo={p.go} />,
   },
 ];

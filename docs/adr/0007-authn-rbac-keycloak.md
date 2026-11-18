@@ -192,3 +192,10 @@ Kunden-IdP → zurück.
   Tenant-Struktur, Confluence-Feldschema). Sie präzisieren das
   „Applikationen"-Modell und Model 1 (ACI + Infoblox), **nicht** aber dieses
   Auth-Fundament.
+
+## Nachtrag (2026-11-18): Betreiber über einen Identity Provider im eigenen Realm
+
+Die Rollen `admin`/`operator`/`viewer` kommen weiter nur aus dem eigenen Realm (D2). Neu kann das
+Cockpit dort den Identity Provider `betrieb` (Realm der Betreiber) mit einem Mapper einrichten, der
+den Betreibern eine dieser Realm-Rollen gibt (Vorgabe `admin`) – für Automato ist das eine Rolle
+wie jede andere im Token. Entscheid und Risiko: ADR 0068, R32; Cockpit ADR 0017 Nachtrag.

@@ -33,6 +33,7 @@ from sqlalchemy.orm import Session
 from app.auth import capabilities as caps
 from app.i18n import L
 from app.models import Customer, PortalCustomer, Tenant
+from app.store import cockpit_mandant
 
 SHORT_NAME = re.compile(r"^[a-z0-9]([a-z0-9-]{0,40}[a-z0-9])?$")
 # wie front.sh (seit 1.10.0 auch konsole und connect: Namen der Plattform dahinter)
@@ -74,6 +75,9 @@ class RealmScope:
     # 1.14.0: Benutzername -> Rolle aus dem Cockpit (`benutzer`); None = keine Aussage, gesetzt
     # haben nur diese Benutzer Rechte
     users: dict[str, str] | None = None
+    # ADR 0068: der Mandant der Zuordnung ist der, den Automato fuer genau diesen Portal-Kunden
+    # angelegt hat (`cockpit_tenant`, 1.19.2) - dort sind Operator und Admin Mandanten-Benutzer
+    own_tenant: bool = False
 
     @property
     def assigned(self) -> bool:
@@ -278,6 +282,8 @@ def realm_scopes(session: Session, main_realm: str | None) -> dict[str, RealmSco
         select(PortalCustomer).where(PortalCustomer.realm.is_not(None))
     ) if pc.realm and pc.realm != main_realm and not pc.gesperrt]  # fmt: skip
     live = live_customers(session, (pc.tenant_id for pc in kunden))
+    # ADR 0068: eigener Mandant = fuer diesen Portal-Kunden angelegt (nie aus dem Token)
+    eigen = cockpit_mandant.angelegt_je_kunde(session, [pc.short_name for pc in kunden])
     for pc in kunden:
         out[pc.realm] = RealmScope(
             realm=pc.realm,
@@ -288,6 +294,7 @@ def realm_scopes(session: Session, main_realm: str | None) -> dict[str, RealmSco
             name=pc.name or pc.short_name,
             from_cockpit=pc.source == SOURCE_COCKPIT,
             users=users_of(pc.users),
+            own_tenant=pc.tenant_id is not None and eigen.get(pc.short_name) == pc.tenant_id,
         )
     return out
 

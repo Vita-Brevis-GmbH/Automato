@@ -51,7 +51,7 @@ test("Kunden-Rollen: Editor pflegt seine Applikation, Kunden-Admin ordnet Benutz
   expect(promoted.status()).toBe(200);
   await user.goto("/#kundenbenutzer");
   await user.reload(); // Rolle neu vom Orchestrator (gilt ab der nächsten Anfrage)
-  await expect(user.locator(".u-role")).toHaveText("Kunde · Kunden-Admin");
+  await expect(user.locator(".u-role")).toHaveText("Kunde · Admin"); // ADR 0068: Rollenanzeige „Kunde · Admin“
   await expect(user.locator("main.main h1")).toHaveText("Kunden-Benutzer");
   const card = user.locator("#customer-users");
   await expect(card.locator("#customer-role-legend")).toContainText("Editor");

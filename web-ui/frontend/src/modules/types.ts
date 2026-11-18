@@ -92,6 +92,10 @@ export interface ViewEntry {
   adminOnly?: boolean;
   customer?: boolean; // auch für Kunden-Benutzer (ADR 0018; serverseitig eingeschränkt)
   customerOnly?: boolean; // nur für Kunden-Benutzer (feinere Rollen)
+  // ADR 0068: Plattform-Funktion – nie für Benutzer eines Kunden-Realms (auch nicht im eigenen Mandanten)
+  platform?: boolean;
+  // ADR 0068: mit `adminOnly` – auch für den Admin im eigenen Mandanten (Verwaltung des Mandanten)
+  tenantAdmin?: boolean;
   cap?: Capability; // Kunden-Benutzer: nur mit dieser Capability
   needsTenant?: boolean; // erst, wenn der Mandant feststeht
   // Schicht (ADR 0067): die Ansicht steht in der Navigation unter ihrer Schicht (`#<schicht>/<key>`); mit `places` ihre

@@ -318,6 +318,39 @@ def _check_agent(session: Session, agent_id: int | None, tenant_id: int | None) 
         raise HTTPException(status_code=422, detail="agent belongs to another tenant")
 
 
+#: Felder, die bestimmen, wohin gelesen wird (ADR 0068): Mandanten-Admins aendern sie nur an
+#: Systemen, die ein Agent ihres Mandanten liest
+_TARGET_KEYS = ("base_url", "agent_id", "verify_tls", "read_scope", "access", "forget_host_keys",
+                "tenant_id")  # fmt: skip
+
+
+def _tenant_agent(session: Session, agent_id: int | None, tenant_id: int | None) -> bool:
+    """Liest ein Agent genau dieses Mandanten (nicht der zentrale Worker, kein Agent fuer alle)?"""
+    agent = session.get(Agent, agent_id) if agent_id is not None else None
+    return agent is not None and tenant_id is not None and agent.tenant_id == tenant_id
+
+
+def _tenant_target(session: Session, principal: Principal, platform: Platform,
+                   agent_id: int | None, tenant_id: int | None) -> None:  # fmt: skip
+    """Mandanten-Admin (ADR 0068): Quellsysteme nur mit einem Agenten des eigenen Mandanten - so
+    liest die Plattform (zentraler Worker, Agenten fuer alle Mandanten) nie eine Adresse, die ein
+    Kunde vorgibt. NetBox (Ziel des Schreibwegs, ADR 0010) richtet nur der Betreiber ein."""
+    if not principal.is_tenant_user:
+        return
+    if platform == Platform.NETBOX:
+        raise HTTPException(status_code=403, detail=L(
+            "NetBox als Quellsystem richtet der Betreiber ein – den NetBox-Sync stossen Sie an",
+            "NetBox as a source system is set up by the operator – you start the NetBox sync",
+        ))  # fmt: skip
+    if not _tenant_agent(session, agent_id, tenant_id):
+        raise HTTPException(status_code=403, detail=L(
+            "Adresse, Agent und Zugang nur mit einem Collector-Agenten Ihres Mandanten – den "
+            "richtet der Betreiber ein; Zeitplan, Name, Standort und Zugangsdaten gehen immer",
+            "Address, agent and access only with a collector agent of your tenant – the operator "
+            "sets it up; schedule, name, site and credentials always work",
+        ))  # fmt: skip
+
+
 _CREDENTIAL_KEYS = ("token", "username", "password", "write_token", "auth_protocol",
                     "auth_password", "priv_protocol", "priv_password", "context")  # fmt: skip
 _PASSWORDS = ("password", "auth_password", "priv_password")  # ohne strip (Leerzeichen zaehlen)
@@ -729,6 +762,7 @@ def create_system(
     tenant_scope(principal, body.tenant_id)
     if session.get(Tenant, body.tenant_id) is None:
         raise HTTPException(status_code=422, detail="tenant not found")
+    _tenant_target(session, principal, body.platform, body.agent_id, body.tenant_id)
     name = body.name.strip()
     if not name:
         raise HTTPException(status_code=422, detail="name must not be empty")
@@ -793,6 +827,12 @@ def update_system(
     Mandanten daran hängen (sonst stimmten Regeln und Quellsystem nicht mehr überein)."""
     src = _get_scoped(session, principal, system_id)
     data = body.model_dump(exclude_unset=True)
+    if principal.is_tenant_user and any(k in data for k in _TARGET_KEYS):
+        # Mandanten-Admin (ADR 0068): wohin gelesen wird, nur bei Systemen eines eigenen Agenten
+        _tenant_target(session, principal, src.platform, src.agent_id, src.tenant_id)
+        _tenant_target(session, principal, src.platform,
+                       data["agent_id"] if "agent_id" in data else src.agent_id,
+                       data.get("tenant_id", src.tenant_id))  # fmt: skip
     tenant_id = data.get("tenant_id", src.tenant_id)
     if "tenant_id" in data and tenant_id != src.tenant_id:
         if tenant_id is None:

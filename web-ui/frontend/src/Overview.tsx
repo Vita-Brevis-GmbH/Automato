@@ -14,7 +14,7 @@ import {
 } from "./api";
 import { HealthChip, HealthTable } from "./Health";
 import type { Stats, View, ViewParams } from "./App";
-import type { Me } from "./auth";
+import { canCollect, canManage, isTenantUser, type Me } from "./auth";
 import CollectDialog, { CollectAllDialog } from "./CollectDialog";
 import { DataQualityTile } from "./DataQuality";
 import { ErrorBox, Icon, Loading, PageHead } from "./ui";
@@ -80,12 +80,13 @@ export default function Overview({
   }, [tenantId]);
   const customer = me.isCustomer; // Kunden-Benutzer: nur die Doku, kein Betrieb (ADR 0018)
   const quality = !customer && tenantId !== null; // Datenqualität (ADR 0029) je Mandant, nicht für Kunden-Benutzer
+  const tenantUser = isTenantUser(me); // Betriebszustand zeigt auch die Plattform (ADR 0068: nicht für sie)
   useEffect(() => {
-    if (customer) return;
+    if (customer || tenantUser) return;
     fetchOpsHealth(tenantId)
       .then(setHealth)
       .catch(() => setHealth(null));
-  }, [tenantId, runs, customer]);
+  }, [tenantId, runs, customer, tenantUser]);
 
   // offene Läufe (wartet/läuft) vollständig, dazu die letzten – neueste zuerst. 0.78.5: nie
   // zwei Abfragen gleichzeitig (der Orchestrator ist beim Einspielen grosser Läufe langsam –
@@ -247,7 +248,7 @@ export default function Overview({
               <button className="btn btn-ghost btn-sm" onClick={() => loadRuns()}>
                 {L("Aktualisieren", "Refresh")}
               </button>
-              {me.isOperator && (
+              {canCollect(me) && (
                 <button className="btn btn-ghost btn-sm" onClick={() => setCollectOpen(true)}>
                   {L("Jetzt einlesen", "Collect now")}
                 </button>
@@ -262,7 +263,7 @@ export default function Overview({
               ) : runs.length === 0 ? (
                 <div className="empty">
                   <div className="big">{L("Noch keine Läufe", "No runs yet")}</div>
-                  {me.isOperator
+                  {canCollect(me)
                     ? L(
                         "Mit „Jetzt einlesen“ ein Quellsystem zentral oder über einen Agenten erfassen.",
                         "Use “Collect now” to collect a source system centrally or via an agent.",
@@ -330,7 +331,7 @@ export default function Overview({
             <button className="btn btn-ghost btn-sm" id="overview-customize" onClick={() => setEditing((v) => !v)}>
               {L("Ansicht anpassen", "Customize view")}
             </button>
-            {me.isOperator && !customer && (
+            {canCollect(me) && !customer && (
             <>
               {tenantId !== null && (
                 <button className="btn btn-ghost btn-sm" onClick={() => setCollectAllOpen(true)}>
@@ -398,7 +399,7 @@ export default function Overview({
           tenants={tenants}
           tenantId={tenantId}
           systems={systems}
-          isAdmin={me.isAdmin}
+          isAdmin={canManage(me)}
           onClose={() => setCollectOpen(false)}
           onStarted={() => {
             loadRuns();

@@ -72,7 +72,7 @@ def test_inventar_aus_der_topologie(client, tmp_path):
     assert r.status_code == 200, r.text
     data = r.json()
     assert data["vertrag"] == 1
-    rollen = ["viewer", "triage", "editor", "customer_admin"]
+    rollen = ["viewer", "triage", "editor", "customer_operator", "customer_admin"]
     assert data["automato"] == {"version": __version__, "umgebung": "test",
                                 "oberflaeche": "https://automato.int.example.ch",
                                 # 1.13.0: Auswahl fuer die Zuordnung (hier ohne Mandanten)
@@ -247,7 +247,9 @@ def test_mandanten_rollen_und_zuordnung_je_kunde(client, tmp_path, session_facto
     namen = ("kunde-a", "kunde-b", "kunde-c", "kunde-d")
     _topologie(tmp_path, kunden=[{"kurzname": k, "name": k, **basis} for k in namen])
     data = _get(client, tmp_path).json()
-    assert data["automato"]["rollen"] == ["viewer", "triage", "editor", "customer_admin"]
+    # ADR 0068: mit customer_operator (Operator im eigenen Mandanten)
+    assert data["automato"]["rollen"] == [
+        "viewer", "triage", "editor", "customer_operator", "customer_admin"]  # fmt: skip
     assert data["automato"]["mandanten"] == [
         {"id": ids["Rechenzentrum"], "name": "Rechenzentrum",
          "kunden": [{"id": a, "name": "Kunde A"}, {"id": b, "name": "Kunde B"}],

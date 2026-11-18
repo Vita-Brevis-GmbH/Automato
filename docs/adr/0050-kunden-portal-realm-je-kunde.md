@@ -67,3 +67,12 @@ Kunden, Nachtrag Front-Proxy), ADR 0018 (Kunden-Benutzer) und ADR 0007 (Keycloak
 - Offene Punkte für Version 2 (Cockpit): NetBox-Instanz über einen Agenten auf dem NetBox-Host,
   Keycloak-Realm über die Admin-Schnittstelle (eigene ADR), Anmeldung an der NetBox des Kunden über
   seinen Realm (OIDC).
+
+## Nachtrag (2026-11-18): Rechte je Rolle im eigenen Mandanten
+
+Ergänzt Entscheid 4 („immer Kunden-Benutzer“): im Mandanten, den Automato für den Portal-Kunden
+angelegt hat (`cockpit_tenant`, ADR 0058 Nachtrag), sind Benutzer des Realms mit der Rolle
+`customer_operator` bzw. `customer_admin` aus dem Cockpit **Mandanten-Benutzer** – Betreuer-Sicht
+ohne Kunden-Filter, nur dieser Mandant, nie Admin, Endpunkte nur nach einer Positivliste. Alle
+anderen bleiben Kunden-Benutzer wie hier beschrieben. Mandant und Rolle weiterhin nur aus dem
+Portal, nie aus dem Token. Einzelheiten: ADR 0068.

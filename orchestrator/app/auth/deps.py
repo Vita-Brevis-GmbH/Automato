@@ -5,7 +5,7 @@ import logging
 from fastapi import Depends, Header, HTTPException, Request
 
 from app.auth import capabilities as caps
-from app.auth import customer_routes, oidc, realms, verwaltung
+from app.auth import customer_routes, oidc, realms, tenant_routes, verwaltung
 from app.auth import roles as R
 from app.auth.principal import Principal
 from app.config import get_settings
@@ -29,12 +29,14 @@ def get_principal(
     x_dev_customers: str | None = Header(default=None),
     x_dev_user: str | None = Header(default=None),
     x_dev_customer_role: str | None = Header(default=None),
+    x_dev_own_tenant: str | None = Header(default=None),
     factory=Depends(get_session_factory),
 ) -> Principal:
     """Aufrufer aus dem Token (bzw. im dev-Modus aus den Kopfzeilen) - dazu die Zuordnung
     Benutzer -> Kunde aus Automato (0.53.0), die einen Benutzer zum Kunden-Benutzer macht."""
     principal = _authenticate(authorization, x_dev_roles, x_dev_tenants, x_dev_customers,
-                              x_dev_user, x_dev_customer_role, factory)  # fmt: skip
+                              x_dev_user, x_dev_customer_role, factory,
+                              x_dev_own_tenant)  # fmt: skip
     if (principal.customer_source or "").startswith("realm:"):
         # Kunden-Realm (1.3.0): Ausschnitt nur aus dem Portal, keine Zuordnung ueber Kennungen;
         # Kunden aus dem Cockpit vermerken (1.14.0, ADR 0058: dort keine Rechte vergeben)
@@ -44,7 +46,8 @@ def get_principal(
 
 
 def _authenticate(authorization, x_dev_roles, x_dev_tenants, x_dev_customers,
-                  x_dev_user, x_dev_customer_role=None, factory=None) -> Principal:  # fmt: skip
+                  x_dev_user, x_dev_customer_role=None, factory=None,
+                  x_dev_own_tenant=None) -> Principal:  # fmt: skip
     settings = get_settings()
     if settings.auth_mode == "oidc":
         try:
@@ -69,6 +72,12 @@ def _authenticate(authorization, x_dev_roles, x_dev_tenants, x_dev_customers,
         # Kunden-Rolle wie aus dem Token: X-Dev-Customer-Role (Claim `customer_role`), sonst
         # aus den Rollen (viewer/customer -> viewer, operator -> triage)
         role = oidc.customer_role_of(rs, x_dev_customer_role)
+        tenants = _parse_tenants(x_dev_tenants) or ()
+        own = (x_dev_own_tenant or "").strip().lower() in ("1", "true", "ja")
+        if own and len(tenants) == 1 and role in caps.TENANT_ROLE_CAPABILITIES:
+            # Mandanten-Benutzer vorfuehren (ADR 0068): wie ein Kunden-Realm im eigenen Mandanten
+            return Principal(subject="dev-customer", roles=frozenset({R.VIEWER}),
+                             tenant_ids=tenants, tenant_role=role)  # fmt: skip
         return Principal(
             subject="dev-customer",
             roles=rs - {R.ADMIN},
@@ -86,6 +95,9 @@ def require_role(required: str):
     def dep(request: Request, principal: Principal = Depends(get_principal)) -> Principal:
         if principal.is_customer:  # Kunden-Benutzer: Capabilities statt Rollen (fail-closed)
             _customer_gate(request, principal, required)
+            return principal
+        if principal.is_tenant_user:  # Mandanten-Benutzer (ADR 0068): Positivliste, nie Rollen
+            _tenant_gate(request, principal, required)
             return principal
         if not R.satisfies(principal.roles, required):
             raise HTTPException(status_code=403, detail="insufficient role")
@@ -156,6 +168,35 @@ def _customer_gate(request: Request, principal: Principal, required: str) -> Non
     request.state.customer_tenants = tuple(principal.tenant_ids or ())
 
 
+#: Antwort fuer Endpunkte ausserhalb der Positivliste der Mandanten-Benutzer (ADR 0068)
+NOT_FOR_TENANT_USERS = "not available in the own tenant"
+
+
+def _tenant_gate(request: Request, principal: Principal, required: str) -> None:
+    """Mandanten-Benutzer (ADR 0068): nur Endpunkte der Positivliste `auth/tenant_routes.py`, je
+    mit dem genannten Recht ihrer Mandanten-Rolle. Ein Endpunkt fuer Betreuer-Operatoren oeffnet
+    sich nie mit dem Leserecht, einer fuer Admins nur mit `mandant.manage` - auch nicht durch einen
+    falschen Eintrag in der Liste. Ein `tenant_id` eines anderen Mandanten in der Anfrage wird
+    gleich abgewiesen; Objekte prueft der Endpunkt (`tenant_scope`). Ohne Mandant (Zuordnung
+    fehlt) nur `/auth/me` wie bei Kunden-Benutzern."""
+    route = request.scope.get("route")
+    path = getattr(route, "path", None)
+    if principal.without_rights or not principal.tenant_ids:
+        if (request.method, path) in _OHNE_ZUORDNUNG and required == R.VIEWER:
+            return
+        raise HTTPException(status_code=403, detail=without_rights_text(principal))
+    need = tenant_routes.capability(request.method, path) if path is not None else None
+    if (need is None
+            or (required == R.OPERATOR and need == caps.TENANT_READ)
+            or (required == R.ADMIN and need != caps.TENANT_MANAGE)):  # fmt: skip
+        raise HTTPException(status_code=403, detail=NOT_FOR_TENANT_USERS)
+    if need not in principal.tenant_capabilities:
+        raise HTTPException(status_code=403, detail="insufficient role")
+    raw = (request.query_params.get("tenant_id") or "").strip()
+    if raw and (not raw.isdigit() or int(raw) not in principal.tenant_ids):
+        raise HTTPException(status_code=403, detail="tenant not allowed")
+
+
 require_viewer = require_role(R.VIEWER)
 require_operator = require_role(R.OPERATOR)
 require_admin = require_role(R.ADMIN)
@@ -168,9 +209,10 @@ def tenant_scope(principal: Principal, requested: int | None) -> int | None:
     nur innerhalb der erlaubten Mandanten; ein `requested` ausserhalb -> 403; ohne
     `requested` wird auf den einzigen erlaubten Mandanten verengt (sonst 400/403).
     """
-    if principal.is_admin or (principal.tenant_ids is None and not principal.is_customer):
+    if principal.is_admin or (principal.tenant_ids is None and not principal.is_customer
+                              and not principal.is_tenant_user):  # fmt: skip
         return requested
-    allowed = principal.tenant_ids
+    allowed = principal.tenant_ids or ()
     if requested is not None:
         if requested not in allowed:
             raise HTTPException(status_code=403, detail="tenant not allowed")

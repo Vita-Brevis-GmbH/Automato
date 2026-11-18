@@ -1,7 +1,7 @@
 // Modul Kern (ADR 0036): Übersicht, Regeln & Contracts, Objekte, NAT/VIPs, Benutzer, Mandanten, Kunden, System – immer an.
 // Seit 1.19.0 (ADR 0067) stehen Regeln, Objekte und NAT/VIPs unter L4–7, Netze und VRFs des Inventars unter L3.
 import { lazy } from "react";
-import { customerCan } from "../../auth";
+import { canManage, customerCan } from "../../auth";
 import { L } from "../../i18n";
 import type { ViewEntry } from "../types";
 
@@ -54,7 +54,7 @@ export const VIEWS: ViewEntry[] = [
         tenantLabel={p.tenantLabel}
         params={p.params}
         onGo={p.go}
-        isAdmin={p.me.isAdmin}
+        isAdmin={canManage(p.me)}
         customer={p.me.isCustomer}
         canAssign={(p.me.isOperator && !p.me.isCustomer) || customerCan(p.me, "applications.edit")}
       />
@@ -110,6 +110,7 @@ export const VIEWS: ViewEntry[] = [
     icon: "users",
     section: "admin",
     order: 200,
+    platform: true, // Benutzer und Rollen kommen aus dem Cockpit (ADR 0058, 0068)
     render: (p) => <Users cfg={p.cfg} me={p.me} tenants={p.tenants} />,
   },
   {
@@ -136,6 +137,7 @@ export const VIEWS: ViewEntry[] = [
     icon: "customers",
     section: "admin",
     order: 220,
+    platform: true, // Kunden kommen aus dem Cockpit (ADR 0058, 0068)
     render: (p) => (
       <Customers
         tenantId={p.tenantId}
@@ -167,6 +169,7 @@ export const VIEWS: ViewEntry[] = [
     section: "admin",
     order: 240,
     adminOnly: true,
+    platform: true,
     render: (p) => <Portal tenants={p.tenantsList ?? p.tenants} />,
   },
   {
@@ -177,6 +180,7 @@ export const VIEWS: ViewEntry[] = [
     section: "admin",
     order: 290,
     adminOnly: true,
+    platform: true,
     render: () => <System />,
   },
 ];

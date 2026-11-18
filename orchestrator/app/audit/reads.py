@@ -37,6 +37,8 @@ def maybe_audit_read(
     detail: dict = {"tenant_id": tenant_id, "resource": resource}
     if principal.is_customer:  # Kunden-Benutzer: immer (ADR 0018)
         detail["customers"] = list(principal.customer_ids or ())
+    elif principal.is_tenant_user:  # Mandanten-Benutzer (ADR 0068): immer, wie Kunden-Benutzer
+        detail["mandant_rolle"] = principal.tenant_role
     else:
         tenant = session.get(Tenant, tenant_id)
         if tenant is None or not tenant.audit_reads:

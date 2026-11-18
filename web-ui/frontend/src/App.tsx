@@ -44,7 +44,7 @@ const EMPTY_RULES: RuleSummary = {
 type Boot =
   | { state: "loading" }
   | { state: "redirect" }
-  | { state: "error"; error: unknown; oidc: boolean }
+  | { state: "error"; error: unknown; oidc: boolean; rights?: boolean }
   | { state: "ready"; cfg: AuthConfig; me: auth.Me };
 
 // Ansicht und Parameter aus der Adresse (#l4-7/regeln?object=H_web01) - Verlinkung zwischen den Ansichten; alte Adressen
@@ -77,13 +77,19 @@ function initials(name: string): string {
   return ((parts[0]?.[0] ?? "?") + (parts[1]?.[0] ?? "")).toUpperCase();
 }
 
-// Rollen und Kunden laut Orchestrator (0.53.0: auch die Zuordnung Benutzer → Kunde in Automato);
-// ohne Antwort (z. B. Konto ohne Rolle) bleibt die Sicht aus dem Token
+// Rollen und Kunden laut Orchestrator (0.53.0: auch die Zuordnung Benutzer → Kunde in Automato).
+// Ohne Antwort keine Sicht aus dem Token (ADR 0068, vorher fail-open): Fehler statt Oberfläche
+class RightsError extends Error {
+  constructor(readonly reason: unknown) {
+    super("auth/me");
+  }
+}
+
 async function withServerMe(me: auth.Me): Promise<auth.Me> {
   try {
     return auth.withServer(me, await fetchServerMe());
-  } catch {
-    return me;
+  } catch (e) {
+    throw new RightsError(e);
   }
 }
 
@@ -108,9 +114,13 @@ export default function App() {
         return;
       }
       if (cfg.auth_mode !== "oidc") {
-        const me = await withServerMe(auth.devMe());
-        setCustomerUser(me.isCustomer);
-        setBoot({ state: "ready", cfg, me });
+        try {
+          const me = await withServerMe(auth.devMe());
+          setCustomerUser(me.isCustomer);
+          setBoot({ state: "ready", cfg, me });
+        } catch (e) {
+          setBoot({ state: "error", error: e instanceof RightsError ? e.reason : e, oidc: false, rights: true });
+        }
         return;
       }
       auth.init(cfg);
@@ -126,7 +136,8 @@ export default function App() {
         setBoot({ state: "ready", cfg, me });
       } catch (e) {
         window.history.replaceState({}, document.title, window.location.pathname);
-        setBoot({ state: "error", error: e, oidc: true });
+        if (e instanceof RightsError) setBoot({ state: "error", error: e.reason, oidc: true, rights: true });
+        else setBoot({ state: "error", error: e, oidc: true });
       }
     })();
   }, []);
@@ -168,6 +179,32 @@ export default function App() {
         {boot.state === "loading"
           ? L("Verbindung wird aufgebaut…", "Connecting…")
           : L("Weiterleitung zur Anmeldung…", "Redirecting to sign-in…")}
+      </Splash>
+    );
+  }
+  if (boot.state === "error" && boot.rights) {
+    // ADR 0068: ohne Rechte vom Server zeigt Automato nichts an (keine Sicht aus dem Token)
+    return (
+      <Splash>
+        <div id="rechte-fehlen">
+          <ErrorBox error={boot.error} prefix={L("Rechte nicht lesbar", "Rights not readable")} />
+          <Note warn>
+            {L(
+              "Automato zeigt nur an, was der Server für Ihr Konto freigibt – ohne diese Antwort bleibt die Oberfläche leer.",
+              "Automato only shows what the server grants your account – without this answer the interface stays empty.",
+            )}
+          </Note>
+        </div>
+        <div style={{ display: "flex", gap: 9 }}>
+          <button className="btn btn-primary" onClick={() => window.location.reload()}>
+            {L("Neu laden", "Reload")}
+          </button>
+          {boot.oidc && (
+            <button className="btn btn-ghost" onClick={() => auth.logout()}>
+              {L("Abmelden", "Sign out")}
+            </button>
+          )}
+        </div>
       </Splash>
     );
   }
@@ -398,12 +435,18 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
   };
 
   // Kunden-Benutzer sehen nur die freigegebenen Doku-Ansichten (feinere Rollen: dazu, was ihre
-  // Capabilities erlauben); Betreuer nicht die Seiten nur für Kunden-Benutzer
+  // Capabilities erlauben); Betreuer nicht die Seiten nur für Kunden-Benutzer. Mandanten-Benutzer
+  // (ADR 0068, Operator/Admin im eigenen Mandanten) sehen alle Ansichten des Mandanten, nie die der
+  // Plattform; Administrator-Ansichten nur der Admin, wenn sie den Mandanten verwalten (`tenantAdmin`)
   const hidden = hiddenViews(mods);
+  const tenantUser = auth.isTenantUser(me);
   const shown = (n: ViewEntry) =>
     !hidden.has(n.key) &&
-    (!n.adminOnly || me.isAdmin) &&
-    (me.isCustomer ? !!n.customer && (!n.cap || auth.customerCan(me, n.cap)) : !n.customerOnly);
+    (me.isCustomer
+      ? !n.adminOnly && !!n.customer && (!n.cap || auth.customerCan(me, n.cap))
+      : tenantUser
+        ? !n.platform && !n.customerOnly && (!n.adminOnly || (!!n.tenantAdmin && auth.canManage(me)))
+        : (!n.adminOnly || me.isAdmin) && !n.customerOnly);
   const entry = VIEWS.find((n) => n.key === view);
   const current: View = entry && shown(entry) ? view : "uebersicht";
   // Applikationen: Kunden-Benutzer pflegen nichts als Operator – mit der Kunden-Rolle editor nur
@@ -530,6 +573,21 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
           </label>
         )}
         <div className="spacer" />
+        {me.platformUrl ? (
+          // ADR 0068 (Anwender: „Der Betreiber soll … auch einen Link zu der ganzen Plattform erhalten“): nur für
+          // Betreiber in der gemeinsamen Instanz; die Adresse nennt der Server, die Rechte prüft das Ziel
+          <a
+            className="portal-link"
+            id="platform-link"
+            href={me.platformUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            title={L("Interne Oberfläche von Automato mit allen Mandanten (neuer Tab)", "Internal Automato interface with all tenants (new tab)")}
+          >
+            <Icon name="server" size={14} />
+            <span>{L("Ganze Plattform", "Whole platform")}</span>
+          </a>
+        ) : null}
         {cfg.portal_url ? (
           // 1.17.0 (Anwender: „Ein Shortcut wäre schön, wenn ich einfach wieder zu dem Kundenportal gelangen
           // könnte.“): zurück zur Startseite des Kunden – die Adresse nennt der Server, nie geraten
@@ -693,7 +751,7 @@ function UserMenu({
           English
         </button>
       </div>
-      {!me.isCustomer && (
+      {!me.isCustomer && !auth.isTenantUser(me) && (
         <button
           onClick={() => {
             onGo("users");
