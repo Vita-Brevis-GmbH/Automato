@@ -4,6 +4,7 @@
 // Konflikt) und Überschneidungen. Nach NetBox nur über den NetBox-Sync (Abschnitt „Reservierungen“).
 import { useEffect, useState } from "react";
 import { L } from "../../i18n";
+import { replaceHash } from "../../places";
 import { findingLabel } from "../../refs";
 import { Dash, Empty, ErrorBox, fmtTime, Loading, Note, PageHead } from "../../ui";
 import type { View, ViewParams } from "../types";
@@ -54,11 +55,9 @@ interface Form {
 }
 const EMPTY: Form = { id: null, low: "", high: "", site_id: "", vlan_group: "", purpose: "" };
 
+// Adresse der Stelle (1.19.0, ADR 0067): VLANs in L2 (`#l2/vlan-reservierungen`), AS-Nummern in L3 (`#l3/as-reservierungen`)
 function setHash(params: Record<string, string | null>) {
-  const q = new URLSearchParams();
-  for (const [k, v] of Object.entries(params)) if (v) q.set(k, v);
-  const s = q.toString();
-  window.history.replaceState(null, "", `#reservierungen${s ? `?${s}` : ""}`);
+  replaceHash("reservierungen", Object.fromEntries(Object.entries(params).filter((e): e is [string, string] => !!e[1])));
 }
 
 const who = (s: string | null) => (s ?? "").replace(/^user:/, "");

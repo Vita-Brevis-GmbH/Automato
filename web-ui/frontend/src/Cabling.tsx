@@ -37,18 +37,21 @@ import {
 import { Pager, useDebounced } from "./Objects";
 import { CableLabelDialog, CableLabelsTab, LabelCell, TransceiverCell, transceiverText, TransceiverStatusChip } from "./modules/analyse/Kabel";
 import type { CableLabelInfo, NetboxCable, Transceiver, TransceiverStatus } from "./modules/analyse/kabelApi";
+import { TransceiversTab } from "./modules/analyse/Transceivers";
+import { replaceHash } from "./places";
 import { Dash, download, Empty, ErrorBox, ExportLangSelect, fmtTime, Loading, Note, PageHead, SharedChip } from "./ui";
 import { L } from "./i18n";
 
 const PAGE = 200;
-type Tab = "plan" | "links" | "devices" | "ports" | "endpoints" | "vlans" | "labels";
+// 1.19.0 (ADR 0067, Schichten): VLANs ziehen in eine eigene Ansicht (L2), dazu der Reiter Transceiver (L1)
+type Tab = "plan" | "links" | "devices" | "ports" | "endpoints" | "transceiver" | "labels";
 const TABS: { key: Tab; label: string }[] = [
   { key: "links", label: L("Verbindungen", "Links") },
   { key: "plan", label: "Plan" },
   { key: "devices", label: L("Geräte", "Devices") },
   { key: "ports", label: "Ports" },
   { key: "endpoints", label: L("Endpunkte", "Endpoints") },
-  { key: "vlans", label: "VLANs" },
+  { key: "transceiver", label: "Transceiver" }, // 1.19.0
   { key: "labels", label: L("Kabelnummern", "Cable numbers") }, // 1.19.0
 ];
 // 1.19.0 (Verkabelung im Detail): Transceiver je Ende bzw. Port, Kabelnummer mit Herkunft
@@ -130,13 +133,18 @@ export default function Cabling({ tenantId, tenantLabel, canEdit = false, params
     fetchCablingDevices(tenantId).then(setData).catch(setErr);
   }, [tenantId]);
   const s = data?.summary;
+  // Reiter mit Adresse (ADR 0067): Ports, Transceiver und Kabelnummern sind eigene Stellen in L1
+  const pick = (to: Tab) => {
+    setTab(to);
+    replaceHash("verkabelung", to === "links" ? {} : { tab: to });
+  };
   const open = (key: string, to: Tab) => {
     setDevice(key);
-    setTab(to);
+    pick(to);
   };
   const endpointsAt = (dev: string, port: string) => {
     setEpPort({ device: dev, port });
-    setTab("endpoints");
+    pick("endpoints");
   };
   return (
     <>
@@ -192,7 +200,7 @@ export default function Cabling({ tenantId, tenantLabel, canEdit = false, params
       )}
       <div className="tabbar sticky">
         {TABS.map((t) => (
-          <button key={t.key} className={tab === t.key ? "on" : ""} onClick={() => setTab(t.key)}>
+          <button key={t.key} className={tab === t.key ? "on" : ""} onClick={() => pick(t.key)}>
             {t.label}
           </button>
         ))}
@@ -208,7 +216,7 @@ export default function Cabling({ tenantId, tenantLabel, canEdit = false, params
       {tenantId !== null && tab === "endpoints" && (
         <EndpointsTab tenantId={tenantId} devices={data?.items ?? []} at={epPort} onClearAt={() => setEpPort(null)} />
       )}
-      {tenantId !== null && tab === "vlans" && <VlansTab tenantId={tenantId} />}
+      {tenantId !== null && tab === "transceiver" && <TransceiversTab tenantId={tenantId} initialQ={params.q} />}
       {tenantId !== null && tab === "labels" && <CableLabelsTab tenantId={tenantId} canEdit={canEdit} initialQ={params.q} />}
     </>
   );
@@ -801,7 +809,7 @@ function EndpointsTab({ tenantId, devices, at: port, onClearAt }: {
 
 // 1.9.0 (Anwender: „die VLANs sind entweder physischer Standort spezifisch oder für einen virtuellen Standort
 // spezifisch … pro Standort aufklappen“): je Standort des Quellsystems eine Gruppe; bei einem Standort offen.
-function VlansTab({ tenantId }: { tenantId: number }) {
+export function VlansTab({ tenantId }: { tenantId: number }) {
   const [items, setItems] = useState<CablingVlan[] | null>(null);
   const [err, setErr] = useState<unknown>(null);
   const [open, setOpen] = useState<Record<string, boolean>>({});

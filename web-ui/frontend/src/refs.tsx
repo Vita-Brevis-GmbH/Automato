@@ -108,6 +108,11 @@ export const FINDING_LABEL: Record<string, string> = {
   reservation_in_use: L("Reservierung jetzt belegt", "Reservation now in use"),
   reservation_conflict: L("Reservierung in Gebrauch (Konflikt)", "Reservation in use (conflict)"),
   reservation_overlap: L("Doppelt reserviert", "Reserved twice"),
+  // Wege vergleichen (1.19.0, ADR 0067)
+  path_vlan_missing: L("Weg: VLAN nicht überall erlaubt", "Path: VLAN not allowed everywhere"),
+  path_cable_mismatch: L("Weg: Kabel bzw. Nachbar weicht ab", "Path: cable or neighbor deviates"),
+  path_stp_blocked: L("Weg: Spanning Tree blockiert", "Path: Spanning Tree blocks"),
+  path_l2_unchecked: L("Wege vergleichen: nicht geprüft", "Compare paths: not checked"),
   // DNS aus dem AD (1.19.0)
   dns_ptr_mismatch: L("DNS: PTR widerspricht A-Record", "DNS: PTR contradicts A record"),
   dns_ip_unknown: L("DNS: IP nicht in NetBox", "DNS: IP not in NetBox"),
@@ -348,6 +353,22 @@ export const FINDING_HINT: Record<string, string> = {
     "vPC nur auf einem Peer, down bzw. inkonsistent – oder der Peer des vPC-Paars ist nicht verbunden",
     "vPC only on one peer, down or inconsistent – or the peer of the vPC pair is not connected",
   ),
+  path_vlan_missing: L(
+    "L3-Abschnitt: das VLAN des Ausgangs ist auf einem Trunk bzw. Port des Wegs über die Kabel nicht erlaubt bzw. der Eingang liegt in einem anderen VLAN",
+    "L3 section: the VLAN of the egress is not allowed on a trunk or port of the path via the cables or the ingress is in another VLAN",
+  ),
+  path_cable_mismatch: L(
+    "L3-Abschnitt: ein Kabel auf dem Weg passt nicht zu NetBox (CDP/LLDP) bzw. hat einen Befund der Verkabelung",
+    "L3 section: a cable on the path does not match NetBox (CDP/LLDP) or has a cabling finding",
+  ),
+  path_stp_blocked: L(
+    "L3-Abschnitt: jeder Weg im VLAN führt über einen Port, den Spanning Tree blockiert (bzw. err-disabled)",
+    "L3 section: every path in the VLAN runs via a port blocked by Spanning Tree (or err-disabled)",
+  ),
+  path_l2_unchecked: L(
+    "L3-Abschnitte, die der Vergleich nicht (ganz) prüfen konnte – je Grund gezählt",
+    "L3 sections the comparison could not (fully) check – counted per reason",
+  ),
   stp_root_mismatch: L(
     "Root eines VLANs bzw. einer MST-Instanz ist nicht der Soll-Root (bzw. der Ersatz-Root ist Root)",
     "root of a VLAN or MST instance is not the target root (or the backup root is root)",
@@ -553,6 +574,15 @@ export const FINDING_GROUPS: { key: string; label: string; help: string; types: 
       "reserved VLAN and AS numbers against what is read (now in use or conflict) and reserved twice",
     ),
     types: ["reservation_in_use", "reservation_conflict", "reservation_overlap"],
+  },
+  {
+    key: "compare",
+    label: L("Wege vergleichen", "Compare paths"),
+    help: L(
+      "L3-Abschnitte gegen L1/L2: VLAN auf allen Trunks erlaubt, Kabel und Nachbarn, Spanning Tree; nicht Prüfbares gezählt",
+      "L3 sections against L1/L2: VLAN allowed on all trunks, cables and neighbors, Spanning Tree; not checkable counted",
+    ),
+    types: ["path_vlan_missing", "path_cable_mismatch", "path_stp_blocked", "path_l2_unchecked"],
   },
   {
     key: "zones",

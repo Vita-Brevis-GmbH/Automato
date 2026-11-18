@@ -1,4 +1,4 @@
-import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import {
   AuthConfig,
   Customer,
@@ -23,6 +23,7 @@ import * as auth from "./auth";
 import { L, lang, setLang } from "./i18n";
 import { hiddenViews, MODULES_CHANGED, ModulesContext } from "./moduleState";
 import { Stats, View, ViewEntry, ViewParams, ViewProps, VIEWS } from "./modules";
+import { HASH_CHANGED, hashOf, LAYERS, NavPlace, PLACES, placeOf, resolve } from "./places";
 import { ErrorBox, Icon, Loading, Note } from "./ui";
 
 // Ansichten je Modul (0.110.0, ADR 0039): Navigation und Anzeige aus dem Verzeichnis `src/modules`; jede Ansicht lädt erst
@@ -46,17 +47,12 @@ type Boot =
   | { state: "error"; error: unknown; oidc: boolean }
   | { state: "ready"; cfg: AuthConfig; me: auth.Me };
 
-const VIEW_KEYS = VIEWS.map((n) => n.key) as string[];
-
-function viewFromHash(): View {
-  const h = window.location.hash.replace(/^#\/?/, "").split("?")[0];
-  return (VIEW_KEYS.includes(h) ? h : "uebersicht") as View;
-}
-
-// Parameter hinter der Ansicht (#regeln?object=H_web01) - Verlinkung zwischen den Ansichten
-function paramsFromHash(): ViewParams {
-  const query = window.location.hash.split("?")[1] ?? "";
-  return Object.fromEntries(new URLSearchParams(query).entries());
+// Ansicht und Parameter aus der Adresse (#l4-7/regeln?object=H_web01) - Verlinkung zwischen den Ansichten; alte Adressen
+// (#regeln?…) leiten auf die neue Stelle um (1.19.0, ADR 0067: Ansichten nach Netzwerkschichten)
+function fromHash(): { view: View; params: ViewParams } {
+  const r = resolve(window.location.hash);
+  if (r.redirect && window.location.hash) window.history.replaceState(null, "", r.redirect);
+  return { view: r.view, params: r.params };
 }
 
 function stored(key: string): string | null {
@@ -236,8 +232,10 @@ function Splash({ children }: { children: React.ReactNode }) {
 }
 
 function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
-  const [view, setView] = useState<View>(viewFromHash);
-  const [params, setParams] = useState<ViewParams>(paramsFromHash);
+  const [view, setView] = useState<View>(() => fromHash().view);
+  const [params, setParams] = useState<ViewParams>(() => fromHash().params);
+  // Parameter der Adresse für die Navigation (ein Reiter innerhalb der Ansicht ändert sie ohne neuen Aufbau, ADR 0067)
+  const [navParams, setNavParams] = useState<ViewParams>(params);
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [tenants, setTenants] = useState<Tenant[] | null>(null);
   const [tenantsErr, setTenantsErr] = useState<unknown>(null);
@@ -290,20 +288,28 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
   }, [tenantId, customersVersion]);
 
   const go = useCallback((v: View, p: ViewParams = {}) => {
-    setView(v);
-    setParams(p);
+    const r = resolve(hashOf(v, p)); // umgezogene Reiter (z. B. VLANs der Verkabelung) landen in ihrer Ansicht
+    setView(r.view);
+    setParams(r.params);
+    setNavParams(r.params);
     setFindingType("");
-    const query = new URLSearchParams(p).toString();
-    window.history.replaceState(null, "", `#${v}${query ? `?${query}` : ""}`);
+    window.history.replaceState(null, "", hashOf(r.view, r.params));
   }, []);
 
   useEffect(() => {
     const onHash = () => {
-      setView(viewFromHash());
-      setParams(paramsFromHash());
+      const r = fromHash();
+      setView(r.view);
+      setParams(r.params);
+      setNavParams(r.params);
     };
+    const onReplace = () => setNavParams(resolve(window.location.hash).params);
     window.addEventListener("hashchange", onHash);
-    return () => window.removeEventListener("hashchange", onHash);
+    window.addEventListener(HASH_CHANGED, onReplace);
+    return () => {
+      window.removeEventListener("hashchange", onHash);
+      window.removeEventListener(HASH_CHANGED, onReplace);
+    };
   }, []);
 
   useEffect(() => {
@@ -430,7 +436,7 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
   };
 
   const renderNav = (section: "doc" | "admin") =>
-    VIEWS.filter((n) => n.section === section && shown(n)).map((n) => {
+    VIEWS.filter((n) => n.section === section && !n.layer && !n.places && shown(n)).map((n) => {
       const b = badges[n.key];
       return (
         <button
@@ -444,6 +450,38 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
             <span className={`badge-n ${b.warn ? "warn" : ""}`}>{b.n}</span>
           )}
         </button>
+      );
+    });
+
+  // Schichten (ADR 0067): je Schicht ihre Stellen – eine Ansicht bzw. ein Reiter davon; aktiv ist die Stelle der Adresse
+  const activePlace = placeOf(current, navParams);
+  const placeShown = (p: NavPlace) =>
+    shown(p.entry) && (!me.isCustomer || (p.customer ?? true));
+  const renderLayers = () =>
+    LAYERS.map((l) => {
+      const items = PLACES.filter((p) => p.layer === l.key && placeShown(p)).sort((a, b) => a.order - b.order);
+      if (!items.length) return null;
+      return (
+        <Fragment key={l.key}>
+          <div className="nav-sec nav-layer" data-layer={l.key} title={l.hint}>
+            {l.label}
+          </div>
+          {items.map((p) => {
+            const b = p.home ? badges[p.view] : undefined;
+            return (
+              <button
+                key={`${p.layer}/${p.slug}`}
+                className={`nav-item ${activePlace === p ? "active" : ""}`}
+                data-place={`${p.layer}/${p.slug}`}
+                onClick={() => go(p.view, p.params ?? {})}
+              >
+                <Icon name={p.icon} className="ico" size={17} />
+                {p.label}
+                {b && b.n !== undefined && <span className={`badge-n ${b.warn ? "warn" : ""}`}>{b.n}</span>}
+              </button>
+            );
+          })}
+        </Fragment>
       );
     });
 
@@ -532,6 +570,7 @@ function Shell({ cfg, me }: { cfg: AuthConfig; me: auth.Me }) {
       <nav className="nav">
         <div className="nav-sec">{L("Dokumentation", "Documentation")}</div>
         {renderNav("doc")}
+        {renderLayers()}
         {VIEWS.some((n) => n.section === "admin" && shown(n)) && (
           <div className="nav-sec">{L("Administration", "Administration")}</div>
         )}

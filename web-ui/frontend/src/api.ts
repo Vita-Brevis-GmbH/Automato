@@ -1359,7 +1359,18 @@ export const fetchTenants = () => getJSON<Tenant[]>("/api/tenants");
 export const createTenant = (body: { name: string; code?: string | null }) =>
   sendJSON<Tenant>("/api/tenants", "POST", body);
 // Module je Mandant (0.107.0, ADR 0036): Kern und Einstellungen immer an; `effective` mit den Abhängigkeiten
-export type ModuleKey = "kern" | "einstellungen" | "worker" | "gateway" | "analyse" | "wege" | "findings" | "doku" | "design" | "schreibpfad";
+export type ModuleKey =
+  | "kern"
+  | "einstellungen"
+  | "worker"
+  | "gateway"
+  | "analyse"
+  | "wege"
+  | "vergleich" // Wege vergleichen (1.19.0, ADR 0067)
+  | "findings"
+  | "doku"
+  | "design"
+  | "schreibpfad";
 export interface ModuleInfo {
   key: ModuleKey;
   title: string;

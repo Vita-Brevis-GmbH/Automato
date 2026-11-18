@@ -161,6 +161,18 @@ def test_vip_ohne_load_balancer_unveraendert(client):
     assert mail["rule_count"] == 0 and mail["interface"] == "wan1"
 
 
+def test_filter_load_balancer(client):
+    """1.19.0 (ADR 0067): Stelle „Load Balancer“ in L4–7 - nur Virtual Services des NSX ALB und
+    Virtual Server der FortiGate (`nat_type=lb`), auch mit Suche und Gesamtzahl."""
+    tid = _seed(client)
+    r = client.get("/nat", params={"tenant_id": tid, "nat_type": "lb"})
+    names = {n["name"] for n in r.json()}
+    assert names and all(n.startswith("vs-") for n in names)
+    assert int(r.headers["X-Total-Count"]) == len(r.json())
+    assert {n["name"] for n in _rows(client, tid, nat_type="lb", q="vs-shop")} == {"vs-shop"}
+    assert "V-EXT_mail" in {n["name"] for n in _rows(client, tid)}
+
+
 def test_suche_findet_die_kette(client):
     tid = _seed(client)
 

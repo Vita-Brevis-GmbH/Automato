@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { ViewParams } from "../types";
 import { useDebounced } from "../../Objects";
 import { L } from "../../i18n";
+import { replaceHash } from "../../places";
 import { Dash, Empty, ErrorBox, fmtTime, Loading, Note, PageHead } from "../../ui";
 import {
   deleteStpTarget,
@@ -90,11 +91,9 @@ const TARGET: Record<StpTargetState, [string, string]> = {
 const kindText = (k: string | null) => (k ? (KIND[k] ?? k) : L("unbekannt", "unknown"));
 const modeText = (m: string | null) => (m ? m.split("/").map((x) => MODE[x] ?? x).join(" / ") : "–");
 
+// Adresse der Stelle (1.19.0, ADR 0067: `#l2/spanningtree?…`)
 function setHash(params: Record<string, string | null>) {
-  const q = new URLSearchParams();
-  for (const [k, v] of Object.entries(params)) if (v) q.set(k, v);
-  const s = q.toString();
-  window.history.replaceState(null, "", `#spanningtree${s ? `?${s}` : ""}`);
+  replaceHash("spanningtree", Object.fromEntries(Object.entries(params).filter((e): e is [string, string] => !!e[1])));
 }
 
 export default function SpanningTree({

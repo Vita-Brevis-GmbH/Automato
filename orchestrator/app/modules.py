@@ -249,6 +249,7 @@ MODULES: tuple[Module, ...] = (
             "vpn",
             "reservierungen",
             "asn",
+            "vlans",  # VLANs je Standort, eigene Ansicht in L2 (1.19.0, ADR 0067)
         ),
     ),  # fmt: skip
     Module(

@@ -158,6 +158,42 @@ const ICONS: Record<string, ReactNode> = {
       <path d="M19 3v8M19 3l3 2-3 2" />
     </>
   ),
+  // Schichten (1.19.0, ADR 0067): Wege vergleichen (L3 über L1/L2), Port, Transceiver, VLAN, Netz, Load Balancer
+  compare: (
+    <>
+      <path d="M3 7h13l-3-3m3 3-3 3" />
+      <path d="M3 17h18" strokeDasharray="2 3" />
+      <circle cx="19" cy="7" r="2" />
+    </>
+  ),
+  port: (
+    <>
+      <rect x="4" y="6" width="16" height="12" rx="1" />
+      <path d="M8 18v-4h8v4M10 10h4" />
+    </>
+  ),
+  sfp: (
+    <>
+      <rect x="3" y="8" width="12" height="8" rx="1" />
+      <path d="M15 10h4l2 2-2 2h-4M7 12h4" />
+    </>
+  ),
+  vlan: <path d="M3 6h18M3 12h18M3 18h18M8 4v4M14 10v4M10 16v4" />,
+  net: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" />
+    </>
+  ),
+  lb: (
+    <>
+      <circle cx="5" cy="12" r="2" />
+      <path d="M7 12h4M11 12l6-6M11 12h6M11 12l6 6" />
+      <circle cx="19" cy="6" r="2" />
+      <circle cx="19" cy="12" r="2" />
+      <circle cx="19" cy="18" r="2" />
+    </>
+  ),
 };
 
 export function Icon({ name, size = 16, className }: { name: string; size?: number; className?: string }) {

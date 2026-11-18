@@ -302,6 +302,10 @@ function viewLinks(f: Finding): { label: string; view: View; params: ViewParams 
               params: f.type === "stp_bpdu_guard" || f.type === "stp_topology_changes" ? { tab: "devices" }
                 : vlan ? { vlan } : q ? { q } : {} }];
   }
+  // Wege vergleichen (1.19.0, ADR 0067): Abschnitt in der Ansicht „Wege vergleichen“ (Reiter „Alle Abschnitte“)
+  if (f.type.startsWith("path_"))
+    return [{ label: L("In „Wege vergleichen“ öffnen", "Open in “Compare paths”"), view: "vergleich",
+              params: { tab: "abschnitte", ...(d.section ? { q: String(d.section) } : { state: "unchecked" }) } }];
   // Reservierungen (1.19.0, ADR 0066): Ansicht mit der Reservierung bzw. das AS im Routing
   if (f.type.startsWith("reservation_") && d.reservation_id != null) {
     const tab = d.kind === "asn" ? "asn" : "vlan";
