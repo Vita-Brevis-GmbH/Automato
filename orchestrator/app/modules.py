@@ -319,6 +319,7 @@ MODULES: tuple[Module, ...] = (
             "appdoc",
             "appdoc_filter",
             "appdoc_path",  # unspezifische Regeln nur auf dem Weg (0.113.2)
+            "rule_match",  # Zuordnung Regel <-> Applikation nach echtem Treffer (ADR 0071)
             "appdoc_zones",
             "peer_names",
             "app_import",

@@ -266,13 +266,24 @@ def _build(session: Session, app: Application, doc: dict | None, graph: paths.Gr
     data = appdoc.TenantData(session, tid)
     doc = doc or applications.build_doc(session, app, data=data)
     t_doc = time.monotonic()
-    rule_ids = {h["rule_id"] for h in doc["hits"]}
+    # mit den Regeln abseits des Wegs (ADR 0071, `doc["off_path"]`): nicht in der Doku, hier
+    # weiter als „Regel nie gebraucht“ (0.107.0)
+    rule_ids = {h["rule_id"] for h in [*doc["hits"], *(doc.get("off_path") or [])]}
     rules = {
         r.id: r
         for r in session.scalars(
             select(Rule).where(Rule.id.in_(rule_ids)).options(selectinload(Rule.services))
         )
     }
+    # Kennzeichen der Regel-Zuordnung (ADR 0071) je Regel, fuer die Regeln der Verbindungen:
+    # überdeckt, breit, Weg nicht geprüft - mit dem Text der Doku
+    doc_marks: dict[int, dict[str, str]] = defaultdict(dict)
+    for h in doc["hits"]:
+        for key, name in (("shadowed", appdoc.SHADOWED), ("broad", appdoc.BROAD_HIT),
+                          ("path_unchecked", appdoc.PATH_UNCHECKED)):  # fmt: skip
+            if h.get(name):
+                doc_marks[h["rule_id"]].setdefault(key, h[name])
+    data.doc_marks = doc_marks
     cuts = _Cuts()  # was eine Grenze nicht prueft (0.140.0)
     conns, notes, without = _candidates(session, data, doc, rules, limit, cuts)
     t_cand = time.monotonic()
@@ -601,7 +612,11 @@ def _candidates(
     # spezifische Treffer zuerst, je Regel in der Reihenfolge der Doku
     order = {r.id: i for i, r in enumerate(doc["rules"])}
     hits = sorted(
-        (h for h in doc["hits"] if h["system"] in systems and h["rule_id"] in rules),
+        (
+            h
+            for h in [*doc["hits"], *(doc.get("off_path") or [])]
+            if h["system"] in systems and h["rule_id"] in rules
+        ),
         key=lambda h: (
             h["scope"] != "specific",
             order.get(h["rule_id"], 1 << 30),
@@ -611,7 +626,7 @@ def _candidates(
     )
     for h in hits:
         rule = rules[h["rule_id"]]
-        if h["relevance"] == "impossible":
+        if h["relevance"] == "impossible" and not h.get("off_path"):
             without[rule.id].add(_why("impossible"))
             continue
         if h["scope"] in _SKIP:
@@ -1661,6 +1676,9 @@ def _state(rule: Rule, active: list[dict], data: appdoc.TenantData) -> dict:
     label = _rule_label(rule)
     base = {"rule_id": rule.id, "label": label, "action": rule.action.value,
             "device": data.device(rule)}  # fmt: skip
+    marks = (getattr(data, "doc_marks", None) or {}).get(rule.id)
+    if marks:  # ADR 0071: überdeckt, breit, Weg nicht geprüft (Text der Doku)
+        base["marks"] = [{"key": k, "text": v} for k, v in marks.items()]
     if not active:
         text = L("Weg nicht bekannt – nicht prüfbar", "path not known – not checkable")
         return base | {"state": "unknown", "text": text}

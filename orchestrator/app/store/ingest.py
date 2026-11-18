@@ -387,6 +387,7 @@ def _apply_epgs(session: Session, run, epgs) -> None:
         epg.vrf_tenant = e.vrf_tenant  # aufgeloester Tenant der VRF (0.44.0)
         epg.selectors = e.selectors or None
         epg.pref_group = e.pref_group
+        epg.isolated, epg.vrf_unenforced = e.isolated, e.vrf_unenforced  # ADR 0071
         epg.source_system_id = run.source_system_id
         session.flush()
         seen.add(epg.id)

@@ -901,3 +901,37 @@ def test_a14_start_unbekannt_macht_die_applikation_unvollstaendig_geprueft(clien
     assert out["coverage"]["complete"] is False
     assert out["coverage"]["cuts"]["start"] == {"rules": 1, "missing": 1}
     assert any("ohne bekannten Start" in n for n in out["notes"])
+
+
+# -- Zusammenspiel Weg-Suche (ADR 0070) und Abgleich je Hop (ADR 0071) ------------------------
+
+
+def test_central_nat_der_weg_suche_erreicht_den_abgleich(client):
+    """Central NAT je VDOM aus der Weg-Suche steht am Hop (`central_nat`) und entscheidet im
+    Abgleich: mit Central NAT trifft eine Policy mit Ziel `all` die VIP sicher, ohne gelesene
+    NAT (Policy-NAT) bleibt sie nur „möglich“ (ADR 0071)."""
+    vip = {"source_platform": "fortigate", "external_id": "V-EXT_web", "name": "V-EXT_web",
+           "nat_type": "dnat_vip", "ext_ip": "203.0.113.10", "mapped_ip": "10.1.1.10",
+           "vdom": "root"}  # fmt: skip
+
+    def seed(name, central):
+        tid = client.post("/tenants", json={"name": name}, headers=ADMIN).json()["id"]
+        rules = [_policy(1, "wan1", "dmz1", "all", "all")]
+        if not central:  # Policy-NAT: die VIP wirkt nur, wenn sie in einer Policy steht -
+            # dann entscheidet die VIP-Policy, die Policy mit `all` davor ist nur „möglich“
+            rules.append(_policy(2, "wan1", "dmz1", "all", "vip:V-EXT_web=203.0.113.10"))
+        sid = _firewall(client, tid, "fw-01", VIP_IFS, VIP_ROUTES, nat_rules=[vip], rules=rules,
+                        contexts=_ctx("fw-01", central_nat=central, asymroute=True,
+                                      central_snat=[]))  # fmt: skip
+        out = _trace(client, tid, src="198.51.100.1", dst="203.0.113.10", start=f"{sid}|root",
+                     service="tcp/443")  # fmt: skip
+        return _active(out)[0]["hops"][0]
+
+    hop = seed("Kunde A", central=True)
+    assert hop["nat"]["name"] == "V-EXT_web" and hop["central_nat"] is True
+    assert hop["rules"]["verdict"] == "allow" and hop["rules"]["rules"][0]["name"] == "p1"
+    hop = seed("Kunde B", central=False)
+    assert hop["nat"]["name"] == "V-EXT_web" and hop["central_nat"] is False
+    first, second = hop["rules"]["rules"]
+    assert first["decides"] is False and first["unsure"] == ["Ziel (VIP ohne VIP-Objekt)"]
+    assert second["name"] == "p2" and hop["rules"]["verdict"] == "allow"

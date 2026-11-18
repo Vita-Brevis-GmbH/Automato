@@ -13,13 +13,25 @@ from collections.abc import Collection
 
 from app.i18n import L
 from app.store import appdoc, appdoc_path, appdoc_ruleset, relevance
-from app.store.appdoc_ruleset import EXCEPT, MARK, TABLE
+from app.store.appdoc_ruleset import COUNTED, EXCEPT, MARK, TABLE
 
 # Kurztext an der Zeile bei der Wirkung `mark` (Spalte Aktion)
 _MARKS = {"disabled": ("deaktiviert", "disabled")}
 # Auswahl spezifisch/unspezifisch der Kategorie (0.125.0, ADR 0046): keine Bedingung des
 # Regelwerks, sondern eine Einstellung der Kategorie im Namensprofil - gilt nach dem Regelwerk
 CATEGORY_SCOPE = "category_scope"
+# Regel-Zuordnung nach echtem Treffer (ADR 0071) - gilt fuer jedes Profil, keine Bedingung des
+# Regelwerks: eine fuer das System ganz ueberdeckte Regel ist kein Zugriff (nur Treffer, mit
+# Kennzeichen); eine Regel, deren Firewall nicht auf dem Weg liegt, steht nicht in der Doku
+# (gezaehlt unter der Bedingung „nicht auf dem Weg“, auch wenn das Profil sie ausgeschaltet hat)
+SHADOWED = "shadowed"
+HARD = ("off_path", "off_path_specific")  # gelten in jedem Profil (ADR 0071)
+
+
+def shadowed_title() -> str:
+    return L("Überdeckt: frühere Policies entscheiden allen Verkehr des Systems, den die Regel "
+             "trifft", "Shadowed: earlier policies decide all traffic of the system the rule "
+             "matches")  # fmt: skip
 
 
 def category_scope_title() -> str:
@@ -64,13 +76,24 @@ def decide(row: dict, profile: appdoc_ruleset.Profile, assigned: Collection[int]
            excluded: Collection[int] = ()) -> tuple[str, str | None]:  # fmt: skip
     """Wirkung und entscheidende Bedingung einer Zeile nach dem Regelwerk `profile`."""
     lifted: set[str] = set()
-    for rule in profile.active():
+    rid = row.get(appdoc.RULE)
+    for rule in profile.rules:
+        # Weg als harte Bedingung (ADR 0071): „Firewall nicht auf dem Weg“ gilt an ihrer Stelle
+        # im Profil auch ausgeschaltet - dann gezaehlt, nie in der Doku; direkt zugeordnete
+        # Regeln bleiben, ebenso wo eine Ausnahme des Profils die Bedingung aufhebt
+        forced = not rule.on and rule.key in HARD and rid not in assigned
+        if not (rule.on or forced):
+            continue
         if rule.key in lifted or not matches(rule.key, row, assigned, excluded):
             continue
         if rule.effect == EXCEPT:
             lifted |= set(rule.lifts)
             continue
-        return rule.effect, rule.key
+        return (COUNTED if forced else rule.effect), rule.key
+    if rid not in assigned:  # Profil ohne die Bedingung
+        for key in HARD:
+            if key not in lifted and matches(key, row, assigned, excluded):
+                return COUNTED, key
     return TABLE, None
 
 

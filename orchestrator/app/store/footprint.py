@@ -250,8 +250,16 @@ class Context:
         anys: set[tuple[int, str]] = set()
         for i in range(0, len(ids), _CHUNK):
             chunk = ids[i : i + _CHUNK]
-            sids = dict(session.execute(select(Rule.id, Rule.source_system_id)
-                                        .where(Rule.id.in_(chunk))).all())  # fmt: skip
+            sids = {}
+            for rid, sid, raw in session.execute(
+                select(Rule.id, Rule.source_system_id, Rule.raw).where(Rule.id.in_(chunk))
+            ):
+                sids[rid] = sid
+                # negierte Seite (ADR 0071): die Regel trifft das Komplement ihrer Bereiche -
+                # wie any jede Applikation, deren Wege ueber ihr Geraet gehen
+                for role, key in (("src", "srcaddr-negate"), ("dst", "dstaddr-negate")):
+                    if isinstance(raw, dict) and raw.get(key) == "enable":
+                        anys.add((rid, role))
             for rid, role, fam, lo, hi, any_ in session.execute(
                 select(RuleIpRange.rule_id, RuleIpRange.role, RuleIpRange.family,
                        RuleIpRange.lo, RuleIpRange.hi, RuleIpRange.is_any)

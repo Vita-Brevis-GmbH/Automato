@@ -1587,6 +1587,11 @@ def _trace(
                                             cur_svc)  # fmt: skip
 
         any_central = any(c.get("central_nat") for c in g.settings.values())
+        for p in primary + found_backups:  # Central NAT je FortiGate/VDOM fuer den Abgleich
+            for h in p["hops"]:  # (ADR 0071): True | False | None = nicht gelesen
+                if h.get("kind") in policy_check.FIREWALL_KINDS:
+                    key = (h.get("source_system_id"), h.get("context"))
+                    h["central_nat"] = path_stages.settings(g, key).get("central_nat")
         policy_check.check_paths(session, tenant_id, primary + found_backups, src, dst, service,
                                  checks, central=central if any_central else None)  # fmt: skip
         for p in primary + found_backups:

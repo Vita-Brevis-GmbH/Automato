@@ -60,6 +60,8 @@ class FindingType(enum.StrEnum):
     SNAT_POOL_MISSING = "snat_pool_missing"
     # VIP der Firewall ohne Ziel: kein Load Balancer, interne IP nirgends vergeben (0.134.0)
     VIP_TARGET_MISSING = "vip_target_missing"
+    # Regel überdeckt durch Policy X (ADR 0071): frühere Policies entscheiden ihren ganzen Verkehr
+    RULE_SHADOWED = "rule_shadowed"
     # Topologie (0.50.0, `store/topo_model`): Plausibilitaet der gelesenen Netze und Routen
     TOPO_DUPLICATE_IP = "topo_duplicate_ip"  # dieselbe IP auf zwei Knoten im selben Netz
     TOPO_MASK_MISMATCH = "topo_mask_mismatch"  # Gegenstellen mit verschiedener Netzmaske

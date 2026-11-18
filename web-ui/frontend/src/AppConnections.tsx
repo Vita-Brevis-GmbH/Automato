@@ -42,6 +42,13 @@ const STATE: Record<AppConnState["state"], [string, string]> = {
   unknown: ["na", L("nicht prüfbar", "not checkable")],
 };
 
+// ADR 0071: Kennzeichen der Regel-Zuordnung an den Regeln einer Verbindung
+const MARK: Record<NonNullable<AppConnState["marks"]>[number]["key"], [string, string]> = {
+  shadowed: ["warn", L("überdeckt", "shadowed")],
+  broad: ["", L("breit", "broad")],
+  path_unchecked: ["warn", L("Weg nicht geprüft", "path not checked")],
+};
+
 // Filter nach Art (0.80.0, Anwender): Urteil des Wegs, Aktion der Regeln, Regel auf dem Weg,
 // Richtung, Hinweise – in einer Gruppe „oder“, zwischen den Gruppen „und“, leere Gruppe = alle
 type Facet = { key: string; label: string; title: string; test: (c: AppConnection) => boolean };
@@ -541,6 +548,11 @@ function ConnDetail({ c, onRule, onExplain }: { c: AppConnection; onRule: (id: n
           {c.rules.map((r) => (
             <li key={r.rule_id}>
               <span className={`chip ${STATE[r.state][0]}`}>{STATE[r.state][1]}</span>{" "}
+              {(r.marks ?? []).map((m) => (
+                <span key={m.key} className={`chip ${MARK[m.key][0]} conn-mark-${m.key}`} title={m.text}>
+                  {MARK[m.key][1]}
+                </span>
+              ))}{" "}
               <button className="linkbtn" onClick={() => onRule(r.rule_id)}>
                 {r.label}
               </button>{" "}
