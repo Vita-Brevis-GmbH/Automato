@@ -13,7 +13,8 @@ test("Kunden-Portal: Zuordnung aus dem Cockpit (1.13.0)", async ({ page }) => {
   const customer = (await created.json()) as { id: number };
   // Auswahl fürs Cockpit im Inventar
   const inventar = await (await page.request.get("/api/inventory", { headers: COCKPIT })).json();
-  expect(inventar.automato.rollen).toEqual(["viewer", "triage", "editor", "customer_admin"]);
+  // 1.20.0 (ADR 0068): Kunden-Rolle Operator zwischen editor und customer_admin
+  expect(inventar.automato.rollen).toEqual(["viewer", "triage", "editor", "customer_operator", "customer_admin"]);
   const mandant = (inventar.automato.mandanten as { id: number; kunden: { id: number }[] }[]).find((m) => m.id === 1);
   expect(mandant?.kunden.map((k) => k.id)).toContain(customer.id);
 
