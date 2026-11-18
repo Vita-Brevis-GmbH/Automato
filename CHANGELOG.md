@@ -7,6 +7,29 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 1.10.0 – 2026-11-18
+
+Die Exporte aus 1.0.1 (Nachtrag auf 1.0.0 für die Produktion, Branch auf Basis 1.0.0) auch im
+aktuellen Stand (Anwender 2026-11-18: „ja bitte auch in den letzten Stand dann mit einbringen“).
+
+Ursprünglicher Wunsch (Anwender 2026-11-18: „Export aller Dokumentationen der
+Applikationen als mehrere Zips, welche mit einem Export Passwort verschlüsselt sind, sowie ein
+globaler Export aller Findings, kategorisiert“). Ohne Migration.
+
+- **Applikationen – Alle exportieren:** Knopf über der Liste (bzw. „N exportieren“ mit Auswahl),
+  Export-Passwort im Dialog (zweimal, mindestens 8 Zeichen). Ein Download mit **je Applikation
+  einem ZIP** (Doku als Word und Netzwerkplan als draw.io wie der Einzel-Export), jedes mit dem
+  Passwort **AES-256** verschlüsselt (öffnen mit 7-Zip/WinRAR). Das Passwort wird nicht
+  gespeichert und steht nicht im Audit; eine fehlgeschlagene Applikation steht in `FEHLER.txt`,
+  die übrigen kommen trotzdem. Nicht für Kunden-Benutzer (ADR 0018, wie alle neuen Endpunkte).
+  API `POST /applications/export` (`store/secure_zip.py`).
+- **Findings – Excel-Export:** alle Findings aller Mandanten, die der Benutzer sieht, alle Status,
+  **nach Kategorie** (Modul → Prüfung → Typ): Blatt „Übersicht“ mit den Zählern je Status, je Modul
+  ein Blatt mit allen Findings und Autofilter; die **Details** des Befunds als **Kommentar an der
+  Meldung**. Werte aus Geräten nie als Formel. Nicht für Kunden-Benutzer. API `GET /findings/export` (`store/findings_export.py`).
+- **Neue Abhängigkeiten** (Open Source): `pyzipper` (AES-ZIP, MIT) und `openpyxl` (Excel, MIT).
+- Tests: `orchestrator/tests/test_export_all.py`, UI `e2e/release_101.spec.ts`.
+
 ## 1.9.0 – 2026-11-11
 
 Rückmeldung zum Test von 1.8.x (Anwender 2026-11-11). Ein Teil ging zuerst ohne die Collector-

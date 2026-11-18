@@ -1691,6 +1691,24 @@ export const exportApplication = (id: number, format: "docx" | "zip" | "md", sec
     `/api/applications/${id}/export${qs({ format, sections: sections?.length ? sections.join(",") : undefined })}`,
     `applikation.${format}`,
   );
+// Gesamt-Export (1.0.1): je Applikation ein ZIP mit dem Export-Passwort (AES-256) in einem Download;
+// das Passwort nur im Rumpf (nie in der Adresse), der Server speichert es nicht
+export async function exportAllApplications(
+  tenantId: number,
+  password: string,
+  ids?: number[],
+): Promise<{ blob: Blob; filename: string }> {
+  const response = await fetchChecked(withLang("/api/applications/export"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tenant_id: tenantId, password, ids: ids?.length ? ids : null }),
+  });
+  const match = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") ?? "");
+  return { blob: await response.blob(), filename: match?.[1] ?? "applikationen.zip" };
+}
+// Findings als Excel nach Kategorie (1.0.1): ohne Mandant alle, die der Benutzer sieht
+export const exportFindings = (tenantId?: number | null) =>
+  fileOf(`/api/findings/export${qs({ tenant_id: tenantId ?? undefined })}`, "findings.xlsx");
 export const zoneSchemaDrawing = (profileId: number) => fileOf(`/api/naming-profiles/${profileId}/zone-schema/drawing`, "zonenschema.drawio");
 // Vorlage: ohne Mandant Beispiel-Zonen, mit Mandant dessen Zonen und Absichten als Ausgangspunkt
 export const zoneSchemaTemplate = (tenantId?: number) =>
