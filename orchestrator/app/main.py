@@ -44,6 +44,7 @@ from app.api import inventory as inventory_api
 from app.api import kopplung as kopplung_api
 from app.api import modules as module_api
 from app.api import netbox_host as netbox_host_api
+from app.api import path_compare as path_compare_api
 from app.api import portal as portal_api
 from app.api import static_routes as static_routes_api
 from app.api import stp as stp_api
@@ -172,6 +173,8 @@ def create_app() -> FastAPI:
     app.include_router(data_quality.router, dependencies=[Depends(modules.guard("analyse"))])
     app.include_router(vpn.router, dependencies=[Depends(modules.guard("analyse"))])  # 1.19.0
     app.include_router(stp_api.router, dependencies=[Depends(modules.guard("analyse"))])  # 1.19.0
+    app.include_router(path_compare_api.router,  # Wege vergleichen (1.19.0, ADR 0067)
+                       dependencies=[Depends(modules.guard("vergleich"))])  # fmt: skip
     app.include_router(module_api.router)
     return app
 

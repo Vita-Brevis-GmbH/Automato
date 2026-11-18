@@ -1252,6 +1252,10 @@ def explain(ftype: str, subject: str, detail: dict | None) -> tuple[str, str]:
         from app.store import dns_checks
 
         return dns_checks.explain(ftype, subject, d)
+    if ftype.startswith("path_"):  # Wege vergleichen (1.19.0, ADR 0067)
+        from app.store import path_compare
+
+        return path_compare.explain(ftype, subject, d)
     return subject, ""
 
 

@@ -162,6 +162,11 @@ class FindingType(enum.StrEnum):
     STP_BPDU_GUARD = "stp_bpdu_guard"
     STP_MODE_MIXED = "stp_mode_mixed"
     STP_TOPOLOGY_CHANGES = "stp_topology_changes"
+    # Wege vergleichen (1.19.0, ADR 0067): L3-Abschnitt gegen L1/L2
+    PATH_VLAN_MISSING = "path_vlan_missing"  # VLAN auf dem Weg nicht ueberall erlaubt
+    PATH_CABLE_MISMATCH = "path_cable_mismatch"  # Kabel/Nachbarn auf dem Weg weichen ab
+    PATH_STP_BLOCKED = "path_stp_blocked"  # Spanning Tree blockiert jeden Weg im VLAN
+    PATH_L2_UNCHECKED = "path_l2_unchecked"  # Abschnitte nicht (ganz) geprueft, je Grund
     # DNS aus dem AD (1.19.0, ADR 0045 Nachtrag, `store/dns_checks`): PTR widerspricht dem
     # A-Record; A-Records auf IPs, die NetBox nicht kennt (nur gezaehlt); nicht pruefbar
     # (Quelle bzw. Zone nicht gelesen, Rueckwaertszone fehlt, NetBox nicht gelesen)

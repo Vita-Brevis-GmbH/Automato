@@ -265,6 +265,20 @@ MODULES: tuple[Module, ...] = (
         views=("wege",),
     ),  # fmt: skip
     Module(
+        "vergleich",
+        ("Wege vergleichen", "Compare paths"),
+        (
+            "L3-Wege gegen L1/L2: VLAN auf allen Trunks erlaubt, Kabel und Nachbarn, Spanning "
+            "Tree - je Abschnitt, Befunde je Abweichung (ADR 0067)",
+            "L3 paths against L1/L2: VLAN allowed on all trunks, cables and neighbors, Spanning "
+            "Tree - per section, findings per deviation (ADR 0067)",
+        ),
+        depends=("analyse", "wege"),
+        api=("path_compare",),
+        store=("path_compare",),
+        views=("vergleich",),
+    ),  # fmt: skip
+    Module(
         "findings",
         ("Findings", "Findings"),
         (
