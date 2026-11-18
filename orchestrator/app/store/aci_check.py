@@ -518,8 +518,10 @@ class AciChecker:
               dst_vrf: str | None = None) -> dict:  # fmt: skip
         if s.epg.vrf_unenforced and d.epg.vrf_unenforced:
             # VRF im Modus „unenforced“ (ADR 0071): das Fabric wendet keine Contracts an
-            text = L(f"VRF {vrf} im Modus „unenforced“ – Contracts werden nicht angewendet, erlaubt",
-                     f"VRF {vrf} in mode “unenforced” – contracts are not applied, allowed")  # fmt: skip
+            text = L(
+                f"VRF {vrf} im Modus „unenforced“ – Contracts werden nicht angewendet, erlaubt",
+                f"VRF {vrf} in mode “unenforced” – contracts are not applied, allowed",
+            )
             return {"verdict": "allow", "rules": [], "text": text}
         same = s.epg.id == d.epg.id
         if same and not s.epg.isolated:

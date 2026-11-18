@@ -220,7 +220,9 @@ def _build(session: Session, app: Application, doc: dict | None, graph: paths.Gr
     data = appdoc.TenantData(session, tid)
     doc = doc or applications.build_doc(session, app, data=data)
     t_doc = time.monotonic()
-    rule_ids = {h["rule_id"] for h in doc["hits"]}
+    # mit den Regeln abseits des Wegs (ADR 0071, `doc["off_path"]`): nicht in der Doku, hier
+    # weiter als „Regel nie gebraucht“ (0.107.0)
+    rule_ids = {h["rule_id"] for h in [*doc["hits"], *(doc.get("off_path") or [])]}
     rules = {
         r.id: r
         for r in session.scalars(
@@ -549,7 +551,11 @@ def _candidates(
     # spezifische Treffer zuerst, je Regel in der Reihenfolge der Doku
     order = {r.id: i for i, r in enumerate(doc["rules"])}
     hits = sorted(
-        (h for h in doc["hits"] if h["system"] in systems and h["rule_id"] in rules),
+        (
+            h
+            for h in [*doc["hits"], *(doc.get("off_path") or [])]
+            if h["system"] in systems and h["rule_id"] in rules
+        ),
         key=lambda h: (
             h["scope"] != "specific",
             order.get(h["rule_id"], 1 << 30),
@@ -559,7 +565,7 @@ def _candidates(
     )
     for h in hits:
         rule = rules[h["rule_id"]]
-        if h["relevance"] == "impossible":
+        if h["relevance"] == "impossible" and not h.get("off_path"):
             without[rule.id].add(_why("impossible"))
             continue
         if h["scope"] in _SKIP:

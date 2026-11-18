@@ -1120,6 +1120,7 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
     ruleset = data.ruleset
     counted = appdoc_ruleset.Counted(ruleset)
     kept_rows = []
+    off_rows: list = []
     decided: dict[int, list[tuple[str, str | None]]] = defaultdict(list)
     for item in rows:
         row = item[2]
@@ -1133,12 +1134,23 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
         ):
             row[appdoc.DECIDED] = appdoc_ruleset.HIT
             row[appdoc.DECIDED_BY] = appdoc_filter.CATEGORY_SCOPE
+        # ganz ueberdeckt (ADR 0071, fuer jedes Profil): kein Zugriff - nur noch Treffer mit
+        # Kennzeichen; direkt zugeordnete Regeln bleiben in ihrer Kategorie (gekennzeichnet)
+        if (row.get(appdoc.SHADOWED) and row[appdoc.DECIDED] in appdoc_ruleset.SHOWN
+                and row.get(appdoc.RULE) not in assigned):  # fmt: skip
+            row[appdoc.DECIDED] = appdoc_ruleset.HIT
+            row[appdoc.DECIDED_BY] = appdoc_filter.SHADOWED
         if trace and row.get(appdoc.RULE) is not None:
             decided[row[appdoc.RULE]].append((row[appdoc.DECIDED], row[appdoc.DECIDED_BY]))
         if row[appdoc.DECIDED] in appdoc_ruleset.KEPT:
             kept_rows.append(item)
         elif row[appdoc.DECIDED] == appdoc_ruleset.COUNTED:
             counted.add(row.get(appdoc.RULE), row[appdoc.DECIDED_BY])
+        # Regel nennt das System, ihre Firewall liegt nicht auf dem Weg (ADR 0071): nicht in der
+        # Doku - aber fuer den Befund „Regel nie gebraucht“ der Verbindungen gemerkt (`off_path`)
+        if (row[appdoc.DECIDED] not in appdoc_ruleset.KEPT
+                and row[appdoc.DECIDED_BY] == "off_path_specific"):  # fmt: skip
+            off_rows.append(item)
     rows = kept_rows
     filtered = counted.by_condition({r[2].get(appdoc.RULE) for r in rows})
     broad = filtered.get("out_broad", set())
@@ -1148,6 +1160,8 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
         peer_names.apply(session, tid, [row for _, _, row in rows])
     hits, tables = _hits_and_tables(rows, _pairs(session, {r[2].get(appdoc.RULE) for r in rows}),
                                     data.catalog)  # fmt: skip
+    off_path = [h | {"off_path": True}
+                for h in _hits_and_tables(off_rows, None, data.catalog)[0]]  # fmt: skip
     narrower = _narrower(rows, systems, epg_out, data.catalog)  # 0.78.2: enger als die Firewall
     possible = hits + [_assigned_hit(rid, m) for rid, m in assigned.items() if rid not in excluded]
     hits = possible
@@ -1235,11 +1249,21 @@ def build_doc(session: Session, app: Application, rule_ids: set[int] | None = No
             "findings": len(findings),
             "helpers": len(helpers),  # Hilfs-Contracts ueber L3Outs (ADR 0034)
             # 0.140.0: Regeln, deren Weg eine Grenze nicht pruefen liess - sie bleiben stehen
-            "path_unchecked": len(data.on_path.unchecked) if "on_path" in vars(data) else 0,
+            # seit ADR 0071 auch Regeln, deren Weg nicht bekannt ist („Weg nicht geprüft“)
+            "path_unchecked": len(
+                {r[2].get(appdoc.RULE) for r in rows if r[2].get(appdoc.PATH_UNCHECKED)}
+            ),
+            # ADR 0071: fuer ihre Systeme ganz ueberdeckte Regeln (nur Treffer) und breite
+            # Regeln, die real vor einer konkreten treffen
+            "shadowed": len({r[2].get(appdoc.RULE) for r in rows if r[2].get(appdoc.SHADOWED)}),
+            "broad_hits": len({r[2].get(appdoc.RULE) for r in rows if r[2].get(appdoc.BROAD_HIT)}),
         },
         "systems": systems,
         "epgs": epg_out,
         "hits": hits,
+        # ADR 0071: Regeln, die ein System nennen, deren Firewall aber nicht auf dem Weg liegt -
+        # keine Treffer der Doku; die Verbindungen melden sie als „Regel nie gebraucht“
+        "off_path": off_path,
         "rules": rules,
         "findings": findings,
         "tables": tables,
@@ -1313,7 +1337,8 @@ def compare_rulesets(session: Session, app: Application, other: appdoc_ruleset.P
                 "key": key or "", "effect": d.get("effect") or "",
                 "why": appdoc_ruleset.BY_KEY[key].out()["title"] if key in appdoc_ruleset.BY_KEY
                 else appdoc_filter.category_scope_title()
-                if key == appdoc_filter.CATEGORY_SCOPE else "",
+                if key == appdoc_filter.CATEGORY_SCOPE else appdoc_filter.shadowed_title()
+                if key == appdoc_filter.SHADOWED else "",
                 "effect_label": appdoc_ruleset.effect_label(d["effect"]) if d.get("effect")
                 else "",
             })  # fmt: skip
@@ -1626,6 +1651,10 @@ def _hits_and_tables(
                 "l3out_note": row.get(appdoc.L3OUT_NOTE) or "",
                 # nicht in der Kategorie nach ihrer Auswahl spezifisch/unspezifisch (0.125.0)
                 "category_hidden": row.get(appdoc.DECIDED_BY) == appdoc_filter.CATEGORY_SCOPE,
+                # ADR 0071: Kennzeichen mit Text - ueberdeckt, breit, Weg nicht geprueft
+                appdoc.SHADOWED: row.get(appdoc.SHADOWED) or "",
+                appdoc.BROAD_HIT: row.get(appdoc.BROAD_HIT) or "",
+                appdoc.PATH_UNCHECKED: row.get(appdoc.PATH_UNCHECKED) or "",
             }
         )
     seen_rows: dict[tuple, dict] = {}

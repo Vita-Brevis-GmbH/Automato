@@ -127,9 +127,14 @@ def _tenant_parts(session: Session, tid: int, full_only: bool = False) -> tuple:
 def _base(app: Application, var: str, tenant: tuple, own: int | None) -> str:
     """Abdruck ohne den Datenstand (0.141.0): Version, Applikation, Quellsysteme, Konfiguration,
     Variante - aendert sich davon etwas, rechnet der Stand neu."""
+    from app.store import rule_match  # spaet: rule_match -> policy_check -> paths
+
     _generation, sources, config = tenant
+    # Fassung der Regel-Zuordnung (ADR 0071): eine neue Fassung aendert, welche Regeln die Doku
+    # zeigt - jeder Stand rechnet einmal neu, danach bleibt der Abdruck stabil
     parts = [__version__, app.id, str(app.updated_at), sources, config, own, var,
-             get_settings().app_traces_max]  # 0.130.0: andere Grenze = neu rechnen  # fmt: skip
+             get_settings().app_traces_max,  # 0.130.0: andere Grenze = neu rechnen
+             ("rule_match", rule_match.VERSION)]  # fmt: skip
     return hashlib.sha256(repr(parts).encode()).hexdigest()
 
 

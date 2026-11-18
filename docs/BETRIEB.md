@@ -1390,6 +1390,32 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
       (`AUTOMATO_APP_TRACES_MAX=0`) bzw. die Applikation kleiner schneiden. In der Doku zeigt
       „n Regeln: Weg nicht geprüft“ Regeln, deren Weg eine Grenze nicht prüfen liess – sie
       bleiben stehen (im Zweifel zeigen).
+    - **Welche Regel trifft (ADR 0071, Regel-Zuordnung nach echtem Treffer):** die Doku zeigt
+      eine Firewall-Regel bei einem System, wenn sie dessen Verkehr **trifft** – nicht mehr, wenn
+      sie seine Adresse nur nennt. Das gilt für jedes Regelwerk.
+      - **Nicht auf dem Weg:** eine Regel steht nur da, wenn ihre Firewall auf dem Weg zwischen
+        Gegenstelle und System liegt – auch Regeln, die das System nennen. Die übrigen sind
+        gezählt („n ausgelassen: Nicht im Pfad: Firewall nicht auf dem Weg …“); nennt die Regel
+        das System, bleibt der Befund „Regel nie gebraucht“ der Verbindungen.
+      - **überdeckt** (Chip an der Regel unter „Regeln & Contracts“, „n Regeln überdeckt“ oben):
+        frühere Policies der Firewall entscheiden allen Verkehr des Systems, den die Regel
+        trifft („überdeckt durch Policy X“). Sie ist kein Zugriff und steht nicht mehr in den
+        Kategorien. Ist eine Policy ganz überdeckt, gibt es unter Findings → Regeln den Befund
+        **„Regel überdeckt“** (Warnung, wenn die frühere anders entscheidet – z. B. Sperre vor
+        Freigabe; sonst Hinweis). Abhilfe: Reihenfolge auf der Firewall prüfen bzw. aufräumen.
+      - **breit:** an der Stelle einer überdeckten Regel, die das System nennt, steht die Policy
+        davor, die real trifft – mit Gegenstelle und Dienst des gemeinten Zugriffs („breit –
+        trifft anstelle von …“). Ihre Aktion sagt, ob der Zugriff geht.
+      - **Weg nicht geprüft:** der Weg zwischen Gegenstelle und System ist nicht bekannt (Routing
+        nicht gelesen, Gegenstelle an keinem gelesenen Gerät) bzw. eine Grenze liess ihn nicht
+        ganz prüfen – die Regel bleibt, markiert und gezählt.
+      - **Negiert** (`srcaddr-negate`/`dstaddr-negate`): die Regel trifft, was sie **nicht**
+        nennt (Bezug „nicht …“) – beim genannten System steht sie nicht mehr. **FQDN-Objekte**
+        zählen für die Adressen, auf die der Name laut IPAM auflöst („… (FQDN laut IPAM)“).
+      - **VIP in der Weg-Suche:** eine Policy mit der VIP als Ziel trifft nur Verkehr über diese
+        VIP; eine erlaubende Policy mit `all` bzw. der internen Adresse ist für Verkehr zur VIP
+        nur „möglich“ („Ziel (VIP ohne VIP-Objekt)“ – ohne Central NAT nicht belegt).
+      - Nach dem Update rechnet jeder Stand der Doku einmal neu.
     - **Wege einmal je Mandant (0.140.0, ADR 0048):** Doku, Verbindungen und Befunde aller
       Applikationen teilen die Wege, die Policies und die Urteile je Hop eines Datenstands; das
       Urteil je Hop gilt für alle Adressen derselben Klasse (gleiche Objekte der Policies). Ein
@@ -1676,6 +1702,10 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
          und nur gezählt, nicht gezeigt und nicht gezählt). Trifft keine, steht die Zeile in
          ihrer Kategorie. „Direkt zugeordnete Regeln“ ist eine Ausnahme: sie hebt die gewählten
          Regeln darunter auf.
+       - **Fest für jedes Regelwerk (ADR 0071):** eine Regel, deren Firewall nicht auf dem Weg
+         liegt, steht nie in der Doku – ist „Nicht im Pfad: Firewall nicht auf dem Weg“
+         ausgeschaltet, wird sie trotzdem gezählt; eingeschaltet gilt die gewählte Wirkung.
+         Direkt zugeordnete Regeln bleiben. Ganz überdeckte Regeln sind nur Treffer.
        - **Profil** wählen und „Aktivieren“: **Regelwerk 1** = Stand bis 0.117.0 (Vorgabe),
          **Regelwerk 2** = Rückmeldung 2026-10-30 (nicht im Pfad und über das Internet-Gateway
          hinaus weder gezeigt noch gezählt; ausgehend mit breiter Quelle und deaktivierte Regeln

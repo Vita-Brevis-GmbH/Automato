@@ -506,7 +506,8 @@ class Checker:
 
     def check(self, sid: int, vdom: str, ingress: dict | None, egress: dict | None, src, dst,
               service: tuple[str, int | None] | None, after: int = 0,
-              vip: str | None = None, mapped=None, central: bool | None = None) -> dict:  # fmt: skip
+              vip: str | None = None, mapped=None,
+              central: bool | None = None) -> dict:  # fmt: skip
         """Urteil je Hop: allow | deny | implicit_deny | depends | unknown, mit der
         entscheidenden Policy und den moeglichen davor; mit `after` bis zu so viele passende
         Policies dahinter (`after`, greifen nicht mehr - z. B. hinter einer Sperre zuoberst).

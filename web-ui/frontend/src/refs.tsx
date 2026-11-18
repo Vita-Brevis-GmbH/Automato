@@ -51,6 +51,7 @@ export const FINDING_LABEL: Record<string, string> = {
   epg_assignment_conflict: L("EPG: gelernt ≠ konfiguriert", "EPG: learned ≠ configured"),
   snat_pool_missing: L("SNAT-Pool fehlt", "SNAT pool missing"),
   vip_target_missing: L("VIP ohne Ziel", "VIP without target"),
+  rule_shadowed: L("Regel überdeckt", "Rule shadowed"),
   topo_duplicate_ip: L("IP doppelt im Netz", "Duplicate IP in network"),
   topo_mask_mismatch: L("Netzmaske abweichend", "Netmask differs"),
   topo_route_loop: L("Routing-Schleife", "Routing loop"),
@@ -190,6 +191,10 @@ export const FINDING_HINT: Record<string, string> = {
   vip_target_missing: L(
     "VIP der Firewall ohne Load Balancer dahinter – die interne Adresse ist im IPAM nicht vergeben und gehört zu keiner VM bzw. keinem ACI-Endpunkt",
     "Firewall VIP without a load balancer behind it – the internal address is not assigned in the IPAM and belongs to no VM or ACI endpoint",
+  ),
+  rule_shadowed: L(
+    "Firewall-Policy, deren ganzen Verkehr frühere Policies in der Reihenfolge der Firewall schon entscheiden – sie trifft nie Verkehr (überdeckt durch Policy X)",
+    "Firewall policy whose entire traffic is already decided by earlier policies in the order of the firewall – it never matches traffic (shadowed by policy X)",
   ),
   topo_duplicate_ip: L("dieselbe IP auf zwei Geräten im selben Netz", "the same IP on two devices in the same network"),
   topo_mask_mismatch: L(
@@ -471,7 +476,7 @@ export const FINDING_GROUPS: { key: string; label: string; help: string; types: 
       "ohne Quelle/Ziel bzw. ohne Consumer/Provider, Contract-Scope ohne Gegenstelle",
       "without source/destination or without consumer/provider, contract scope without peer",
     ),
-    types: ["rule_incomplete", "aci_scope_unpaired", "aci_contract_both_sides", "snat_pool_missing", "vip_target_missing"],
+    types: ["rule_incomplete", "aci_scope_unpaired", "aci_contract_both_sides", "snat_pool_missing", "vip_target_missing", "rule_shadowed"],
   },
   {
     key: "parallel",

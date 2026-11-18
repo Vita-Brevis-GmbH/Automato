@@ -70,3 +70,53 @@ def test_b13_umleitung_http_zu_https_geht_nicht_zum_server():
     plain = [n for n in normalize(data) if n.ext_port == "80" and not (n.attrs or {}).get("ssl")]
     assert plain, "Beispieldaten ohne Virtual Service auf Port 80"
     assert all(not n.targets for n in plain), [(n.name, n.targets) for n in plain]
+
+
+# -- Phase 2 (ADR 0071): was der ACI-Collector zusätzlich liest ---------------------------------
+
+
+def test_subject_mit_erlaubenden_und_sperrenden_filtern_ergibt_zwei_regeln():
+    """Ein Subject mit einem erlaubenden und einem sperrenden Filter: je Aktion eine Regel, die
+    sperrende mit ihrem Vorrang (`priorityOverride`) - die Kennungen bleiben verschieden."""
+    subj = _mo("vzSubj", "SJ_1", [
+        _mo("vzRsSubjFiltAtt", tnVzFilterName="FT_https"),
+        _mo("vzRsSubjFiltAtt", tnVzFilterName="FT_ssh", action="deny", priorityOverride="level3"),
+    ])  # fmt: skip
+    export = [_mo("fvTenant", "TE_a", [
+        _mo("vzBrCP", "CT_web", [subj], scope="context"),
+        _filter("FT_https", "443"),
+        _filter("FT_ssh", "22"),
+        _mo("fvAp", "AP_1", [_epg("EG_web", cons=["CT_web"]), _epg("EG_db", prov=["CT_web"])]),
+    ])]  # fmt: skip
+    rules = [r for c in parse_mo_export(export) for r in normalize_contract(c)]
+    assert [(r.name, r.action, r.services) for r in rules] == [
+        ("CT_web:SJ_1", "allow", ["tcp/443"]),
+        ("CT_web:SJ_1 (deny)", "deny", ["tcp/22"]),
+    ]
+    assert len({r.external_id for r in rules}) == 2
+    assert rules[1].raw["priority_override"] == "level3"
+
+
+def test_vrf_unenforced_und_intra_epg_isolation_werden_gelesen():
+    """`pcEnfPref`: an der VRF `unenforced` = keine Contracts, an der EPG `enforced` =
+    Intra-EPG-Isolation; fehlt das Attribut im Export, bleibt es ungelesen (None)."""
+    from collectors.cisco_aci.mo import parse_epgs
+
+    export = [_mo("fvTenant", "TE_a", [
+        _mo("fvCtx", "VRF_offen", pcEnfPref="unenforced"),
+        _mo("fvCtx", "VRF_zu", pcEnfPref="enforced"),
+        _mo("fvCtx", "VRF_alt"),
+        _mo("fvBD", "BD_offen", [_mo("fvRsCtx", tnFvCtxName="VRF_offen")]),
+        _mo("fvBD", "BD_zu", [_mo("fvRsCtx", tnFvCtxName="VRF_zu")]),
+        _mo("fvBD", "BD_alt", [_mo("fvRsCtx", tnFvCtxName="VRF_alt")]),
+        _mo("fvAp", "AP_1", [
+            _mo("fvAEPg", "EG_offen", [_mo("fvRsBd", tnFvBDName="BD_offen")],
+                pcEnfPref="unenforced"),
+            _mo("fvAEPg", "EG_isoliert", [_mo("fvRsBd", tnFvBDName="BD_zu")],
+                pcEnfPref="enforced"),
+            _mo("fvAEPg", "EG_alt", [_mo("fvRsBd", tnFvBDName="BD_alt")]),
+        ]),
+    ])]  # fmt: skip
+    found = {e["name"]: (e["vrf_unenforced"], e["isolated"]) for e in parse_epgs(export)}
+    assert found == {"EG_offen": (True, False), "EG_isoliert": (False, True),
+                     "EG_alt": (None, None)}  # fmt: skip

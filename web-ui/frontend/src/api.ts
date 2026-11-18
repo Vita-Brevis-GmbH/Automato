@@ -847,6 +847,11 @@ export interface AppDocHit {
   helpers?: { l3out: string; rule_ids: number[]; names: string[]; missing: string[] }[];
   l3out_note?: string;
   category_hidden?: boolean; // 0.125.0: nicht in der Kategorie (Auswahl spezifisch/unspezifisch im Namensprofil)
+  // Regel-Zuordnung nach echtem Treffer (ADR 0071), je mit Text: für das System ganz überdeckt
+  // („überdeckt durch Policy X“), breite Regel, die real vor einer konkreten trifft, Weg nicht geprüft
+  _shadowed?: string;
+  _broad?: string;
+  _path_unchecked?: string;
 }
 export interface AppDocFinding {
   id: number;
@@ -882,7 +887,9 @@ export interface ApplicationDoc {
     helpers?: number; // Hilfs-Contracts über L3Outs, an den Firewall-Regeln (ADR 0034)
     outbound_broad?: number; // 0.103.0: ausgehende Firewall-Regeln mit breiter Quelle, nicht in der Doku
     to_internet?: number; // 0.114.1: Freigaben ins Internet, die das System nur über „all“ erfassen
-    path_unchecked?: number; // 0.140.0: Regeln, deren Weg eine Grenze nicht prüfen liess (bleiben stehen)
+    path_unchecked?: number; // 0.140.0: Regeln, deren Weg eine Grenze nicht prüfen liess (bleiben stehen); ADR 0071: auch Weg nicht bekannt
+    shadowed?: number; // ADR 0071: für ihre Systeme ganz überdeckte Regeln (nur Treffer)
+    broad_hits?: number; // ADR 0071: breite Regeln, die real vor einer konkreten treffen
     ruleset?: { key: string; title: string; description?: string } | null; // 0.118.0: aktives Regelwerk
     filtered?: { key: string; title: string; count: number }[]; // 0.118.0: je Bedingung gezählt
   };

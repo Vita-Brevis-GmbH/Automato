@@ -1,4 +1,12 @@
-"""Unspezifische Firewall-Regeln nur von Firewalls auf dem Weg (0.113.2).
+"""Firewall-Regeln nur von Firewalls auf dem Weg (0.113.2; seit ADR 0071 fuer jede Regel).
+
+ADR 0071 (Regel-Zuordnung nach echtem Treffer, Anwender 2026-11-18): der Weg ist eine harte
+Bedingung - auch fuer Regeln, die das System nennen (bis 1.21 nur fuer unspezifische bzw. im
+Regelwerk 2). Ist der Weg nicht bekannt, bleibt die Regel, **markiert** (`unknown`, „Weg nicht
+geprueft“) und gezaehlt - nie still. Gegenstelle `any` bzw. negiert: der Weg ist nicht bestimmt,
+es gilt das Routing der Firewall (`relevance`). Regeln, die das System ueber eine VIP bzw. einen
+Load Balancer erfassen, stehen auf der Firewall, die umschreibt - sie liegt auf dem Weg.
+
 
 Rueckmeldung des Anwenders zu 0.113: in der Doku nach Kategorie und oben standen unspezifische
 Firewall-Regeln je Firewall, obwohl der Weg zwischen Gegenstelle und System nicht ueber jede
@@ -32,6 +40,7 @@ OFF_PATH = "off_path"  # Ursache (`check(...)["cause"]`) neben denen der Relevan
 MAX_PEERS = 64  # Gegenstellen je Regel und Seite, die geprueft werden
 MAX_VALUES = 8  # Adressen des Systems
 MAX_TRACES = 20000  # Wege je Doku; danach bleiben die Regeln ungeprueft stehen
+MAX_UNKNOWN = 4  # Paare ohne bekannten Weg je Regel, danach „Weg nicht geprueft“
 
 
 def _peer(fam: int, lo: int, hi: int) -> str:
@@ -57,7 +66,10 @@ class OnPath:
         self._peers: dict[tuple[int, str], list[str]] = {}
         self._active: dict[tuple[str, str], list[dict] | None] = {}
         self.unchecked: set[int] = set()  # Regeln, die eine Grenze ungeprueft stehen liess
+        # (Regel, Seite) ohne bekannten Weg (ADR 0071): die Regel bleibt, markiert und gezaehlt
+        self.unknown: set[tuple[int, str]] = set()
         self._cut = False
+        self.matcher = None  # `rule_match.Matcher` (negierte Gegenstelle = nicht bestimmt)
 
     def peers(self, rule_id: int, role: str) -> list[str]:
         """Gegenstellen der Regel auf `role` (Hosts bzw. Netze, ohne any)."""
@@ -69,8 +81,10 @@ class OnPath:
                 .order_by(RuleIpRange.id)
             )
             rows = list(self.session.execute(stmt))
-            # any in der Gegenstelle: der Weg ist nicht bestimmt - nicht pruefen
-            found = [] if any(r[3] for r in rows) else [
+            # any in der Gegenstelle bzw. negiert (ihr Komplement, ADR 0071): der Weg ist nicht
+            # bestimmt - nicht pruefen
+            negated = self.matcher is not None and self.matcher.negated(rule_id, role)
+            found = [] if negated or any(r[3] for r in rows) else [
                 _peer(fam, int(lo, 16), int(hi, 16)) for fam, lo, hi, _any in rows]  # fmt: skip
             self._peers[key] = list(dict.fromkeys(found))
         return self._peers[key]
@@ -109,6 +123,7 @@ class OnPath:
         if len(peers) > MAX_PEERS or len(own) > MAX_VALUES:
             self.unchecked.add(rule.id)  # nur ein Teil pruefbar: die Regel bleibt, gezaehlt
             return None
+        unknown = 0
         for peer in peers:
             for ip in own:
                 src, dst = (peer, ip) if side == "dst" else (ip, peer)
@@ -116,8 +131,17 @@ class OnPath:
                 active = self._paths(src, dst)
                 if self._cut:
                     self.unchecked.add(rule.id)
-                if active is None or app_paths.rule_nodes(rule, active):
-                    return None  # Weg unbekannt bzw. ueber das Geraet der Regel
+                if active is None:  # Weg unbekannt: weiter, ob ein anderes Paar ihn zeigt
+                    unknown += 1
+                    if unknown >= MAX_UNKNOWN:
+                        self.unknown.add((rule.id, side))
+                        return None
+                    continue
+                if app_paths.rule_nodes(rule, active):
+                    return None  # ueber das Geraet der Regel
+        if unknown:  # kein Paar zeigt die Firewall, aber nicht jeder Weg ist bekannt
+            self.unknown.add((rule.id, side))
+            return None
         a, b = (peers[0], own[0]) if side == "dst" else (own[0], peers[0])
         text = L(
             f"{device} liegt nicht auf dem Weg von {a} zu {b} – die Regel braucht dieses System "

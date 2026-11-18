@@ -10,7 +10,6 @@ Eine Firewall `fw-r` mit LAN (10.10.0.0/24), DMZ (10.30.0.0/24) und Internet (20
 
 import copy
 
-import pytest
 import test_aci_check as ac
 import test_paths as tp
 import test_policy_check as pc

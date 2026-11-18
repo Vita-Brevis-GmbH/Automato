@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -243,6 +243,14 @@ class DocHitOut(BaseModel):
     l3out_note: str = ""
     # nicht in der Kategorie nach ihrer Auswahl spezifisch/unspezifisch (0.125.0, ADR 0046)
     category_hidden: bool = False
+    # Regel-Zuordnung nach echtem Treffer (ADR 0071), je mit Text in der Sprache der Anfrage:
+    # `_shadowed` = fuer das System ganz ueberdeckt („überdeckt durch Policy X“), `_broad` =
+    # breite Regel, die real vor einer konkreten trifft, `_path_unchecked` = Weg nicht geprueft
+    model_config = ConfigDict(populate_by_name=True)
+    off_path: bool = False  # nur in `DocOut.off_path`: Firewall der Regel nicht auf dem Weg
+    shadowed: str = Field("", alias="_shadowed")
+    broad: str = Field("", alias="_broad")
+    path_unchecked: str = Field("", alias="_path_unchecked")
 
 
 class DocFilteredOut(BaseModel):
@@ -272,6 +280,11 @@ class DocSummaryOut(BaseModel):
     # Regelwerk (0.118.0, ADR 0043): aktives Profil und je Bedingung die gezaehlten Regeln
     ruleset: dict[str, str] | None = None
     filtered: list[DocFilteredOut] = []
+    # ADR 0071: Regeln mit „Weg nicht geprüft“ (bleiben stehen), fuer ihre Systeme ganz
+    # ueberdeckte Regeln (nur Treffer) und breite Regeln, die real vor einer konkreten treffen
+    path_unchecked: int = 0
+    shadowed: int = 0
+    broad_hits: int = 0
 
 
 class DocFindingOut(BaseModel):
@@ -304,6 +317,7 @@ class ApplicationDocOut(BaseModel):
     systems: list[DocSystemOut]
     epgs: list[DocEpgOut]
     hits: list[DocHitOut]
+    off_path: list[DocHitOut] = []  # ADR 0071: Regeln abseits des Wegs (nur fuer Verbindungen)
     rules: list[RuleOut]
     findings: list[DocFindingOut]
     tables: list[DocTableOut]

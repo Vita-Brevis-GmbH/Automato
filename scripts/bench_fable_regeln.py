@@ -352,6 +352,34 @@ print(
     f"  Regeln je Adresse: Mittel {sum(len(x) for x in covered) / len(covered):.0f}, "
     f"Maximum {max(len(x) for x in covered)}"
 )
+# Phase 2 (ADR 0071): die neue Zuordnung im Speicher - Aufbau einmal je Datenstand, dann je
+# Adresse ohne SQL; dazu der wirksame Rest je Adressklasse und die ganz ueberdeckten Policies.
+# `rule_index.covers` oben bleibt als Vergleich (alt), die Doku nutzt es nicht mehr.
+try:
+    from app.store import rule_match  # noqa: E402
+except ImportError:  # Stand vor Phase 2
+    rule_match = None
+if rule_match is not None:
+    matcher = rule_match.for_tenant(session, tid)
+    timed("Zuordnung neu: Aufbau im Speicher (einmal je Datenstand)", lambda: matcher.index)
+    found = timed(
+        "Zuordnung neu: rule_match.covers (400 Adressen einzeln)",
+        lambda: [matcher.covers([ip]) for ip in sample],
+        400,
+    )
+    print(f"  Regeln je Adresse: Mittel {sum(len(x) for x in found) / len(found):.0f}")
+    pairs = [(rid, side, ip) for ip, cov in zip(sample, found, strict=True)
+             for rid, c in cov.items() for side in c.sides]  # fmt: skip
+
+    def shadows():
+        return sum(1 for rid, side, ip in pairs if matcher.shadow(rid, side, [ip]))
+
+    n = timed(f"Wirksamer Rest kalt ({len(pairs)} Regel/Adresse)", shadows, len(pairs))
+    timed(f"Wirksamer Rest warm ({len(pairs)} Regel/Adresse)", shadows, len(pairs))
+    print(f"  ueberdeckt fuer die Adresse: {n} von {len(pairs)}; "
+          f"Adressklassen {len(matcher.state.get('classes', {}))}")  # fmt: skip
+    whole = timed("Ganz ueberdeckte Policies (Befund)", lambda: matcher.shadowed_rules(fw, "root"))
+    print(f"  ganz ueberdeckt: {len(whole)} von {N_RULES}")
 from app.models import NetworkObject  # noqa: E402
 
 picked = [host_ip(i) for i in rnd.sample(range(N_HOSTS), 5)]
@@ -381,6 +409,22 @@ timed(
     "Doku einer Applikation (5 Hosts), warm",
     lambda: ok(c.get(f"/applications/{app['id']}/doc", params={"tenant_id": tid}, headers=H)),
 )
+# mehrere Applikationen nacheinander (Hochrechnung): je 5 Hosts
+N_APPS = int(os.environ.get("BENCH_APPS", "20"))
+more = []
+with get_session_factory()() as s2:
+    for k in range(N_APPS):
+        ips = [host_ip(i) for i in rnd.sample(range(N_HOSTS), 5)]
+        refs = list(s2.scalars(select(NetworkObject.name).where(
+            NetworkObject.tenant_id == tid, NetworkObject.value.in_(ips))))  # fmt: skip
+        body = {"name": f"App B{k}", "members": [{"kind": "host", "ref": n} for n in refs]}
+        more.append(ok(c.post(f"/applications?tenant_id={tid}", json=body, headers=H))["id"])
+timed(
+    f"Doku von {N_APPS} weiteren Applikationen (je 5 Hosts)",
+    lambda: [ok(c.get(f"/applications/{i}/doc", params={"tenant_id": tid}, headers=H))
+             for i in more],
+    N_APPS,
+)  # fmt: skip
 r = timed(
     "Verbindungen der Applikation, kalt",
     lambda: c.get(f"/applications/{app['id']}/connections", params={"tenant_id": tid}, headers=H),

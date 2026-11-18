@@ -1407,6 +1407,39 @@ def _snat_pool(subject: str, d: dict, on: str) -> tuple[str, str]:
     )
 
 
+def _rule_shadowed(subject: str, d: dict, on: str) -> tuple[str, str]:
+    """Regel überdeckt durch Policy X (ADR 0071)."""
+    vdom = f" (VDOM {d['vdom']})" if d.get("vdom") else ""
+    where = f"{d.get('source') or L('der Firewall', 'the firewall')}{vdom}"
+    policy = f"{d.get('external_id') or '?'} {_q(d.get('name') or subject)}"
+    by = d.get("by") or []
+    names = ", ".join(f"Policy {b.get('external_id')} {_q(b.get('name') or '')}".strip()
+                      for b in by[:3])  # fmt: skip
+    more = int(d.get("by_count") or len(by)) - min(len(by), 3)
+    names += f" +{more}" if more > 0 else ""
+    blocks = any(b.get("action") != d.get("action") for b in by)
+    return (
+        L(
+            f"Policy {policy} auf {where} trifft nie Verkehr: überdeckt durch {names} – die "
+            "früheren Policies entscheiden ihren ganzen Verkehr.",
+            f"Policy {policy} on {where} never matches traffic: shadowed by {names} – the "
+            "earlier policies decide all of its traffic.",
+        ),
+        L(
+            "Reihenfolge auf der Firewall prüfen: die überdeckende Policy entscheidet anders – "
+            "soll die Regel wirken, gehört sie davor."
+            if blocks
+            else "Die Regel ist doppelt bzw. wirkungslos – auf der Firewall aufräumen oder vor die "
+            "überdeckende Policy stellen.",
+            "Check the order on the firewall: the shadowing policy decides differently – if the "
+            "rule is meant to apply, it belongs before it."
+            if blocks
+            else "The rule is redundant or without effect – clean up on the firewall or move it "
+            "before the shadowing policy.",
+        ),
+    )
+
+
 def _name_type(subject: str, d: dict, on: str) -> tuple[str, str]:
     expected = _pick(_CLASS, d.get("expected"), d.get("expected"))
     host = d.get("expected") == "host"
@@ -1461,6 +1494,7 @@ _OBJECT_TEXT = {
     "service_mismatch": _service_mismatch,
     "predefined_service_used": _predefined,
     "snat_pool_missing": _snat_pool,
+    "rule_shadowed": _rule_shadowed,
     "name_type_mismatch": _name_type,
     "duplicate_value": _duplicate,
     "unused_object": _unused,
