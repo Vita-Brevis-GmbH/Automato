@@ -838,12 +838,16 @@ class Checks:
 
 
 def check_paths(session: Session, tenant_id: int, paths: list[dict], src, dst, service,
-                checks: Checks | None = None) -> None:  # fmt: skip
+                checks: Checks | None = None, central=None) -> None:  # fmt: skip
     """Je Weg und FortiGate- bzw. ACI-VRF-Hop das Urteil (`hop.rules`), dazu je Weg das
     Gesamturteil (`path.policy`): gesperrt am ersten sperrenden Hop, sonst abhaengig bzw.
     erlaubt. NAT: Ziel je Hop aus dem Weg (`hop.dst` nach einer VIP davor), interner Port bei
     Port-Weiterleitung, Quelle nach SNAT (`hop.snat`) fuer die Hops danach. Ohne `checks`
-    (Weg-Suche) auch die passenden Policies hinter der entscheidenden (`rules.after`)."""
+    (Weg-Suche) auch die passenden Policies hinter der entscheidenden (`rules.after`).
+
+    `central` (ADR 0070, Central NAT der FortiGate): `central(hop, Quelle, Ziel, Dienst)` ->
+    None (kein Central NAT an diesem Hop: SNAT der Policy wie bisher) bzw. die Zeile der
+    Central-SNAT-Tabelle (`path_stages.central_snat`) - dann kommt das SNAT nur aus ihr."""
     from app.store.aci_check import AciChecker  # zirkulaer: aci_relevance -> paths
 
     checks = checks or Checks.load(session, tenant_id, after=AFTER)
@@ -902,7 +906,14 @@ def check_paths(session: Session, tenant_id: int, paths: list[dict], src, dst, s
                 snat = None
                 if cur_src is not None:
                     snat = checker._vip_source(sid, vdom, cur_src, egress)
-                if snat is None and passing.get("snat") is not None:
+                cen = central(hop, cur_src, hop_dst, cur_svc) if central is not None else None
+                if cen is not None:  # Central NAT (ADR 0070): SNAT nur aus der Tabelle
+                    hop["central_snat"] = {k: v for k, v in cen.items() if k != "pools"}
+                    if snat is None and cen.get("pools") is not None:
+                        snat = checker.snat(sid, vdom, cen["pools"], egress, cur_src)
+                    if snat is None and (cen.get("unread") or not cen.get("sure", True)):
+                        cur_src = None  # nicht gelesen bzw. nicht sicher: Quelle danach unbekannt
+                elif snat is None and passing.get("snat") is not None:
                     snat = checker.snat(sid, vdom, passing["snat"], egress, cur_src)
                 if snat is not None:
                     hop["snat"] = snat

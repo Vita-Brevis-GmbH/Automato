@@ -237,7 +237,9 @@ class Explainer:
         key = paths.parse_key(part.get("key"))
         node = self.g.nodes.get(key) if key else None
         table = part.get("vrf", 0)
-        cur = _ip(((part.get("nat") or {}).get("to") or [None])[0]) or _ip(part.get("dst")) or dst
+        nat = part.get("nat") or {}
+        # ADR 0070: der Server dieses Wegs (`targets`), sonst das erste Ziel der VIP
+        cur = _ip((nat.get("targets") or nat.get("to") or [None])[0]) or _ip(part.get("dst")) or dst
         steps: list[dict] = []
         ingress = part.get("ingress") or {}
         port = ingress.get("interface")
@@ -338,7 +340,24 @@ class Explainer:
 
     def _policy_steps(self, key: paths.Key, part: dict) -> list[dict]:
         follow = part.get("policy")
-        maybe = [p for p in part.get("policy_routes") or [] if not p.get("certain")]
+        rules = part.get("policy_routes") or []
+        maybe = [p for p in rules if not p.get("certain") and not p.get("skipped")]
+        early: list[dict] = []
+        for p in rules:  # ADR 0070: uebergangene SD-WAN-Regeln und `deny`
+            if p.get("skipped"):
+                early.append(_step("policy", INFO, L(
+                    f"SD-WAN-Regel {_policy_name(p)} übergangen: die beste Route zum Ziel geht "
+                    "nicht über ein SD-WAN-Mitglied bzw. kein Mitglied hat eine Route dorthin",
+                    f"SD-WAN rule {_policy_name(p)} skipped: the best route to the destination "
+                    "does not use an SD-WAN member, or no member has a route there")))  # fmt: skip
+            elif p.get("decides") and p.get("action") == "deny":
+                early.append(_step("policy", OK, L(
+                    f"Policy-Route {_policy_name(p)} (action deny) passt sicher und beendet das "
+                    "Policy-Routing – weiter nach der Routing-Tabelle",
+                    f"Policy route {_policy_name(p)} (action deny) matches for certain and stops "
+                    "policy routing – onward by the routing table")))  # fmt: skip
+        if early and not follow:
+            return early
         if follow:
             to = " · ".join(x for x in [follow.get("gateway"), *(follow.get("output_device") or [])]
                             if x)  # fmt: skip
@@ -402,9 +421,22 @@ class Explainer:
         if other:
             extra.append(L(f"{other} in anderen VRFs", f"{other} in other VRFs"))
         tail = f" ({', '.join(extra)})" if extra else ""
+        if route is not None and route.get("action") == "drop":  # ADR 0070: Null-Route
+            text = L(f"Route für {cur}: {route['prefix']} ist eine Null-Route (Blackhole) – das "
+                     f"Gerät verwirft{tail}",
+                     f"Route for {cur}: {route['prefix']} is a null route (blackhole) – the "
+                     f"device drops{tail}")  # fmt: skip
+            return _step("routes", STOP, text, items=items)
         if route is not None:
             via = ", ".join(h.get("ip") or h.get("interface") or "?"
                             for h in route.get("next_hops") or []) or "–"  # fmt: skip
+            rec = (part.get("egress") or {}).get("recursive")
+            if rec:  # ADR 0070: rekursiver Next-Hop
+                real = (part.get("egress") or {}).get("next_hop")
+                tail += L(f" – Next-Hop {rec['next_hop']} rekursiv über die Route "
+                          f"{rec.get('via')} aufgelöst: weiter an {real}",
+                          f" – next-hop {rec['next_hop']} resolved recursively via the route "
+                          f"{rec.get('via')}: onward to {real}")  # fmt: skip
             ecmp = ""
             if len(route.get("next_hops") or []) > 1:
                 ecmp = L(
@@ -545,6 +577,54 @@ class Explainer:
                     "capture it as an exit.",
                 ),
             )
+        if kind == "dropped":  # ADR 0070: das Geraet verwirft
+            stage = (part.get("dropped") or {}).get("stage")
+            hints = {
+                "rpf": L(
+                    f"Reverse Path: {label} nimmt Verkehr einer Quelle nur an dem Interface an, "
+                    "über das seine Routing-Tabelle die Quelle erreicht. Fehlt die Route zur "
+                    "Quelle über diesen Eingang, kommt der Verkehr in Wirklichkeit woanders an "
+                    "– oder die Route fehlt (asymmetrisches Routing).",
+                    f"Reverse path: {label} accepts traffic of a source only on the interface "
+                    "through which its routing table reaches the source. If the route to the "
+                    "source via this incoming interface is missing, the traffic really arrives "
+                    "elsewhere – or the route is missing (asymmetric routing).",
+                ),
+                "ipsec": L(
+                    "Ein IPsec-Tunnel trägt nur Verkehr, den eine Phase 2 mit Quelle und Ziel "
+                    "in ihren Selektoren abdeckt, und nur, solange er up ist – sonst verwirft "
+                    "die Firewall („no matching IPsec selector“).",
+                    "An IPsec tunnel carries only traffic covered by a phase 2 with source and "
+                    "destination in its selectors, and only while it is up – otherwise the "
+                    "firewall drops it (“no matching IPsec selector”).",
+                ),
+            }
+            null = L(
+                f"Die wirksame Route auf {label} ist eine Null-Route (Blackhole): das Gerät "
+                "verwirft den Verkehr. Meist eine Sammelroute – es fehlt die genauere Route "
+                "zum Ziel.",
+                f"The effective route on {label} is a null route (blackhole): the device drops "
+                "the traffic. Usually a summary route – the more specific route to the "
+                "destination is missing.",
+            )
+            return _step("end", STOP, text, hints.get(stage, null))
+        if kind == "unchecked":  # ADR 0070: nicht geprueft - nie als erreicht behauptet
+            return _step(
+                "end",
+                WARN,
+                text,
+                L(
+                    "Automato behauptet hier nichts: was dahinter passiert, ist aus den "
+                    "gelesenen Daten nicht belegt. Das Gerät dahinter einlesen bzw. als "
+                    "Anbindung erfassen (mit seinen Netzen), bei Firewalls neu einlesen "
+                    "(Einstellungen des VDOMs).",
+                    "Automato claims nothing here: what happens behind it is not proven by the "
+                    "data read. Collect the device behind it or capture it as an exit (with its "
+                    "networks); for firewalls collect again (settings of the VDOM).",
+                ),
+            )
+        if kind == "redirect":  # ADR 0070: der Load Balancer antwortet selbst
+            return _step("end", OK, text)
         if kind == "no_route":
             return _step(
                 "end",

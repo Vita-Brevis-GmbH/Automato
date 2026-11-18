@@ -108,6 +108,15 @@ FWB = {
 }  # fmt: skip
 
 
+def _partner_up() -> dict:
+    """fw-a mit dem Tunnel zum Partner up - ein Tunnel, der down ist, traegt nichts (ADR 0063
+    Nachtrag): der Weg endet dann als „verworfen“, nicht an der Gegenstelle."""
+    fwa = copy.deepcopy(FWA)
+    fwa["routing"]["vpn"][1]["status"] = "up"
+    fwa["routing"]["vpn"][1]["phase2"][0]["status"] = "up"
+    return fwa
+
+
 def _seed(client, fwa: dict = FWA, fwb: dict | None = FWB,
           tenant: str = "Kunde A") -> tuple[int, dict[str, int]]:  # fmt: skip
     tid = client.post("/tenants", json={"name": tenant}, headers=tp.ADMIN).json()["id"]
@@ -159,10 +168,17 @@ def test_weg_endet_sichtbar_an_fremder_gegenstelle(client):
     assert tp._labels(path) == [FW_A]
     v = _vpn(path["hops"][0])
     assert (v["name"], v["status"], "peer" in v) == ("vpn-partner", "down", False)
-    assert path["end"]["kind"] == "vpn"
-    assert path["end"]["text"] == (
+    # ADR 0063 Nachtrag (ADR 0070): Tunnel down - die Firewall verwirft, nie „erreicht“
+    assert path["end"] == {"kind": "dropped",
+                           "text": "verworfen an fw-a: VPN vpn-partner ist down"}  # fmt: skip
+    assert path["hops"][0]["dropped"]["stage"] == "ipsec"
+    # derselbe Tunnel up: der Weg endet sichtbar an der Gegenstelle ohne gelesenes Geraet
+    tid_up, _ = _seed(client, _partner_up(), tenant="Kunde C")
+    (up,) = tp._trace(client, tid_up, src=LAN_A, dst=PARTNER)["paths"]
+    assert up["end"]["kind"] == "vpn"
+    assert up["end"]["text"] == (
         "weiter über VPN vpn-partner zur Gegenstelle 192.0.2.77 – kein gelesenes Gerät, der Weg "
-        "dahinter ist nicht geprüft – Tunnel down"
+        "dahinter ist nicht geprüft"
     )
     # Dial-up: Instanz in der Routing-Tabelle, Gegenstelle der verbundenen Instanz
     (dial,) = tp._trace(client, tid, src=LAN_A, dst=DIALUP)["paths"]
@@ -170,14 +186,23 @@ def test_weg_endet_sichtbar_an_fremder_gegenstelle(client):
     assert (d["kind"], d["instance"], d["remote_gw"], d["covered"]) == (
         "dialup", "dialup_0", "192.0.2.150", "full")  # fmt: skip
     assert dial["end"]["kind"] == "vpn" and "Dial-up-VPN dialup (dialup_0)" in dial["end"]["text"]
-    # Route ueber den Tunnel ohne passenden Selektor: Hinweis am Weg
+    # Route ueber den Tunnel ohne passenden Selektor: verworfen wie am Geraet (ADR 0063
+    # Nachtrag; bis 1.20 nur ein Hinweis, der Weg ging weiter)
     res = tp._trace(client, tid, src=LAN_A, dst="10.30.0.5")
     assert _vpn(res["paths"][0]["hops"][0])["covered"] == "none"
-    assert "VPN vpn-b an fw-a – Ziel in keinem Phase-2-Selektor" in res["notes"]
+    assert tp._labels(res["paths"][0]) == [FW_A]
+    assert res["paths"][0]["end"] == {
+        "kind": "dropped",
+        "text": "verworfen an fw-a: VPN vpn-b – keine Phase 2, deren Selektoren Quelle und Ziel "
+                "enthalten",
+    }  # fmt: skip
     # englisch
-    en = client.get("/routing/trace", params={"tenant_id": tid, "src": LAN_A, "dst": PARTNER},
+    en = client.get("/routing/trace", params={"tenant_id": tid_up, "src": LAN_A, "dst": PARTNER},
                     headers={"Accept-Language": "en"}).json()  # fmt: skip
     assert en["paths"][0]["end"]["text"].startswith("onward via VPN vpn-partner to the peer")
+    en = client.get("/routing/trace", params={"tenant_id": tid, "src": LAN_A, "dst": PARTNER},
+                    headers={"Accept-Language": "en"}).json()  # fmt: skip
+    assert en["paths"][0]["end"]["text"] == "dropped at fw-a: VPN vpn-partner is down"
 
 
 def test_gegenstelle_hinter_nat_ueber_ihren_tunnel_erkannt(client):
@@ -293,7 +318,7 @@ def _app_connections(client, tid, host=LAN_A) -> dict:
 
 
 def test_verbindungen_netzwerkplan_und_zaehlung(client):
-    tid, sids = _seed(client)
+    tid, sids = _seed(client, _partner_up())  # Tunnel down = verworfen (ADR 0063 Nachtrag)
     app_id, out = _app_connections(client, tid)
     conns = {c["dst"]["ip"]: c for c in out["connections"]}
     lan_b = conns["10.20.0.0/24"]
@@ -364,6 +389,12 @@ def test_erklaerung_und_export(client):
     assert step["kind"] == "next_hop" and step["text"].startswith(
         "Weiter durch VPN vpn-b (Gegenstelle 198.51.100.2) zu fw-b")  # fmt: skip
     out = client.get("/routing/explain", params={"tenant_id": tid, "src": LAN_A, "dst": PARTNER})
+    end = out.json()["paths"][0]["end"]
+    # Tunnel down (ADR 0063 Nachtrag): verworfen, mit Erklaerung
+    assert end["status"] == "stop" and "nur, solange er up ist" in end["hint"]
+    tid_up, _ = _seed(client, _partner_up(), tenant="Kunde C")
+    out = client.get("/routing/explain",
+                     params={"tenant_id": tid_up, "src": LAN_A, "dst": PARTNER})  # fmt: skip
     end = out.json()["paths"][0]["end"]
     assert end["status"] == "info" and "durch einen VPN-Tunnel" in end["hint"]
 

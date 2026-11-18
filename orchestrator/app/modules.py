@@ -276,6 +276,8 @@ MODULES: tuple[Module, ...] = (
             "return_path",  # Rueckweg je Weg, symmetrisch (0.134.0)
             "path_service",  # Dienst je Stelle: Client, Load Balancer, Server (0.137.0)
             "path_store",  # Wege einmal je Mandant und Datenstand (0.140.0, ADR 0048)
+            "forwarding",  # Forwarding-Modell je Knoten und VRF (ADR 0070)
+            "path_stages",  # Stufen der Weg-Suche je Hersteller (ADR 0070)
         ),
         views=("wege",),
     ),  # fmt: skip

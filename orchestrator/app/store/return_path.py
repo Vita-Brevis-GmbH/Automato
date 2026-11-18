@@ -86,7 +86,8 @@ def _snat_hop(hops: list[dict]) -> tuple[int, dict] | None:
 def _dnat(hops: list[dict], dst: str) -> str:
     """Ziel nach dem letzten DNAT des Abschnitts (VIP), sonst das Ziel."""
     for h in reversed(hops):
-        to = (h.get("nat") or {}).get("to") or []
+        nat = h.get("nat") or {}
+        to = nat.get("targets") or nat.get("to") or []  # ADR 0070: der Server dieses Wegs
         if to:
             return str(to[0])
     return dst
@@ -101,7 +102,7 @@ def _legs(path: dict, source: str, dst: str) -> list[tuple[list, str, str]]:
     lb = hops[cut]["lb"]
     front, back = hops[: cut + 1], hops[cut + 1 :]
     vip = nat_store.host_ip(lb.get("ext")) or _dnat(front, dst)
-    server = str((lb.get("to") or [""])[0])
+    server = str((lb.get("targets") or lb.get("to") or [""])[0])  # Server dieses Wegs
     legs = [(front, vip, source)]
     if server and back:  # Server antwortet dem Load Balancer (SNAT) bzw. dem Client
         legs.append((back, server, source if lb.get("snat") == "client" else vip))
@@ -198,6 +199,19 @@ def annotate(session: Session, tenant_id: int, graph, result: dict, src: str | N
     cache = graph.__dict__.setdefault("_return_paths", {}) if graph is not None else {}
     for p in found[:MAX_PATHS]:
         p["return"] = _check(session, tenant_id, graph, p, str(source), target, cache)
+    if len(found) > MAX_PATHS:
+        # Grenze sichtbar und gezaehlt (ADR 0048, ADR 0070): nie still „symmetrisch“
+        rest = found[MAX_PATHS:]
+        for p in rest:
+            p["return"] = {
+                "state": "unknown",
+                "text": L(
+                    f"Rückweg nicht geprüft – mehr als {MAX_PATHS} Wege",
+                    f"Return path not checked – more than {MAX_PATHS} paths",
+                ),
+            }
+        counts = result.setdefault("uncertain", {})
+        counts["return"] = counts.get("return", 0) + len(rest)
     states = [p["return"]["state"] for p in found if p.get("return")]
     good = [p for p in found if (p.get("return") or {}).get("state") == "symmetric"]
     if "asymmetric" in states and good:
@@ -292,8 +306,12 @@ def _check(session, tenant_id, graph, path: dict, source: str, target: str, cach
                 back = paths_store.trace(session, tenant_id, to, frm, None, 0, None,
                                          graph=graph, backups=False, with_rules=False,
                                          balancers=False, entries=[entry])  # fmt: skip
-            cache[key] = [_hops(b.get("hops") or [], scope) for b in back.get("paths") or []
-                          if b.get("kind") != "backup"]  # fmt: skip
+            found = [(_hops(b.get("hops") or [], scope),
+                      (b.get("end") or {}).get("kind") in paths_store.REACHED)
+                     for b in back.get("paths") or [] if b.get("kind") != "backup"]  # fmt: skip
+            # Rückwege, die ankommen; kommt keiner an (Empfänger hinter einem nicht gelesenen
+            # Gerät), alle
+            cache[key] = [b for b, ok in found if ok] or [b for b, _ok in found]
         full = [[x for x in b if x[0] is None or x[0] != skip] for b in cache[key]]
         backs = [[(x[0], x[1]) for x in b if x[0] is not None] for b in full]
         where = frm or next((label for f, label in forward[::-1]), "?")
@@ -311,14 +329,27 @@ def _check(session, tenant_id, graph, path: dict, source: str, target: str, cach
             state = "unknown" if state == "symmetric" else state
             legs.append({**leg, "state": "unknown"})
             continue
-        if any(_same(forward, b) for b in backs):
+        same = [_same(forward, b) for b in backs]
+        if all(same):
             legs.append({**leg, "state": "symmetric"})
             continue
         state = "asymmetric"
         legs.append({**leg, "state": "asymmetric"})
-        other = " → ".join(label for _, label in backs[0]) or L("keine Firewall", "no firewall")
-        texts.append(L(f"Antwort von {where} an {to} über {other}",
-                       f"reply from {where} to {to} via {other}"))  # fmt: skip
+        wrong = next(b for b, ok in zip(backs, same, strict=True) if not ok)
+        other = " → ".join(label for _, label in wrong) or L("keine Firewall", "no firewall")
+        if any(same):
+            # ADR 0070: ECMP verteilt je Sitzung - geht nur ein Teil der Rückwege über dieselben
+            # Firewalls, verwirft die andere Firewall (ohne Sitzung) einen Teil der Antworten
+            n = sum(1 for ok in same if not ok)
+            texts.append(L(
+                f"Antwort von {where} an {to} auf {n} von {len(same)} gleichwertigen Rückwegen "
+                f"(ECMP) über {other}",
+                f"reply from {where} to {to} on {n} of {len(same)} equal-cost return paths "
+                f"(ECMP) via {other}",
+            ))  # fmt: skip
+        else:
+            texts.append(L(f"Antwort von {where} an {to} über {other}",
+                           f"reply from {where} to {to} via {other}"))  # fmt: skip
     if state == "symmetric":
         text = L("Rückweg über dieselben Firewalls", "Return path via the same firewalls")
     elif state == "asymmetric":

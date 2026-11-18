@@ -1,66 +1,21 @@
 # ruff: noqa: S104 - 0.0.0.0/0 sind Routen, keine Bind-Adressen
-"""Prüfung A „Wege“ (Fable, Phase 1): Abweichungen der Weg-Suche vom echten Geräteverhalten.
+"""Weg-Suche nach echtem Geräteverhalten (Prüfung A „Wege“, Fable; ADR 0070).
 
-Jeder Test verlangt das Verhalten des echten Geräts (Herstellerdoku im Grund bzw. im Bericht)
-und schlägt mit dem heutigen Code fehl - darum `xfail(strict=True)`: die Suite bleibt grün, und
-sobald Phase 2 eine Abweichung behebt, meldet pytest den Test als unerwartet bestanden (dann die
-Markierung entfernen). Beispiele anonymisiert: RFC 1918, Dokumentationsnetze, `example.ch`.
+Jeder Test verlangt das Verhalten des echten Geräts (Herstellerdoku im Bericht der Prüfung bzw.
+in ADR 0070). Phase 1 hielt die Abweichungen als `xfail(strict=True)` fest; seit dem neuen Kern
+der Weg-Suche (Forwarding-Modell `store/forwarding.py`, Stufen je Hersteller
+`store/path_stages.py`) bestehen sie. Beispiele anonymisiert: RFC 1918, Dokumentationsnetze,
+`example.ch`.
 
-Nummern wie im Bericht (A-1 …). Abweichungen in der Normalisierung der Collectors stehen in
-`collectors/tests/test_fable_wege.py`.
+Nummern wie im Bericht (A-1 …). Die Normalisierung der Collectors steht in
+`collectors/tests/test_fable_wege.py`. Am Ende: was Phase 2 dazu entschieden hat (Central NAT,
+Reverse Path mit Einstellungen, gezählte Unsicherheiten, Start nur wo Verkehr ankommt).
 """
-
-import pytest
 
 ADMIN = {"X-Dev-Roles": "admin"}
 TOKEN = {"X-Internal-Token": "dev-only-token"}
 # Ende, das die Weg-Suche als „Ziel erreicht“ zählt (`paths.REACHED`)
-REACHED = ("connected", "fabric", "exit", "external", "vpn")
-
-
-GRUENDE = {
-    "A-1": (
-        "Route auf Null0/Blackhole endet als „Ziel angeschlossen“ (erreicht) statt " "verworfen"
-    ),
-    "A-2": (
-        "statische Route nur mit Interface (Tunnel, Punkt-zu-Punkt) gilt als „Ziel "
-        "angeschlossen“"
-    ),
-    "A-3": ("Policy-Route greift ohne Abgleich von Protokoll und Port"),
-    "A-4": ("Policy-Route mit action deny (Stop Policy Routing) wird übergangen"),
-    "A-5": ("Policy-Routen nach seq-num statt in der Reihenfolge der Liste"),
-    "A-6": ("kein Reverse-Path-Check der FortiGate am Eingang (RPF)"),
-    "A-7": ("rekursiver Next-Hop springt direkt zum Besitzer der Adresse"),
-    "A-8": ("VIP mit Port-Weiterleitung ohne Abgleich von Port und Protokoll"),
-    "A-9": ("DNAT auch für eine VIP, die in keiner Policy steht"),
-    "A-10": ("IPsec ohne passenden Phase-2-Selektor (Ziel bzw. Quelle) gilt als erreicht"),
-    "A-13": (
-        "Rückweg gilt als symmetrisch, sobald einer der ECMP-Rückwege über dieselbe "
-        "Firewall geht"
-    ),
-    "A-14": (
-        "ohne Start beginnt der Weg auf dem Gerät irgendeiner passenden Regel - auch "
-        "abseits des Wegs"
-    ),
-    "A-15": (
-        "Weg beginnt auf der Internet-Firewall (Gerät einer Regel) und gilt über die "
-        "Default-Route als erreicht, obwohl der Cluster das Ziel über die MPLS-Router "
-        "kennt"
-    ),
-    "A-16": (
-        "(Stichprobe Fall 3) mehrere Virtual Services auf derselben VIP und demselben Port: "
-        "nur der erste zählt - hat er keinen Pool (SNI-Parent), endet der Weg am Load Balancer"
-    ),
-    "A-17": (
-        "(Stichprobe Fall 3) hinter VIP bzw. Load Balancer geht der Weg nur zum ersten Server "
-        "des Pools"
-    ),
-}
-
-
-def _fable(nr: str):
-    """Abweichung `nr` des Berichts: heute fehlschlagend, darum xfail(strict)."""
-    return pytest.mark.xfail(strict=True, reason=f"Fable {nr}: {GRUENDE[nr]}")
+REACHED = ("connected", "fabric", "exit", "external", "vpn", "redirect")
 
 
 def _r(node, context, prefix, hops, protocol="static", **kw):
@@ -149,7 +104,6 @@ def _active(out) -> list[dict]:
 # -- A-1: Null-Route --------------------------------------------------------------------------
 
 
-@_fable("A-1")
 def test_a1_null_route_verwirft(client):
     tid = _tenant(client)
     _routers(client, tid, ["rt-01"], [
@@ -165,7 +119,6 @@ def test_a1_null_route_verwirft(client):
 # -- A-2: statische Route nur mit Interface (Punkt-zu-Punkt) ----------------------------------
 
 
-@_fable("A-2")
 def test_a2_route_ueber_tunnel_interface_ist_nicht_angeschlossen(client):
     tid = _tenant(client)
     _routers(client, tid, ["rt-01"], [
@@ -200,7 +153,6 @@ def _egress(path) -> str | None:
     return (path["hops"][0].get("egress") or {}).get("interface")
 
 
-@_fable("A-3")
 def test_a3_policy_route_nur_fuer_ihr_protokoll_und_ihren_port(client):
     tid = _tenant(client)
     _firewall(client, tid, "fw-01", FW_IFS, FW_ROUTES, policy_routes=[
@@ -217,7 +169,6 @@ def test_a3_policy_route_nur_fuer_ihr_protokoll_und_ihren_port(client):
 # -- A-4: Policy-Route mit `action deny` (Stop Policy Routing) --------------------------------
 
 
-@_fable("A-4")
 def test_a4_policy_route_deny_beendet_das_policy_routing(client):
     tid = _tenant(client)
     match = {"input_device": ["lan"], "src": ["10.20.0.0/24"], "dst": ["203.0.113.0/24"]}
@@ -233,7 +184,6 @@ def test_a4_policy_route_deny_beendet_das_policy_routing(client):
 # -- A-5: Reihenfolge der Policy-Routen = Liste, nicht seq-num --------------------------------
 
 
-@_fable("A-5")
 def test_a5_policy_routen_in_der_reihenfolge_der_liste(client):
     tid = _tenant(client)
     match = {"input_device": ["lan"], "src": ["10.20.0.0/24"]}
@@ -254,7 +204,6 @@ def test_a5_policy_routen_in_der_reihenfolge_der_liste(client):
 # -- A-6: Reverse Path Forwarding der FortiGate -----------------------------------------------
 
 
-@_fable("A-6")
 def test_a6_fortigate_verwirft_ohne_route_zur_quelle_ueber_den_eingang(client):
     tid = _tenant(client)
     _routers(client, tid, ["rt-01"], [
@@ -285,7 +234,6 @@ def test_a6_fortigate_verwirft_ohne_route_zur_quelle_ueber_den_eingang(client):
 # -- A-7: rekursiver Next-Hop (iBGP ueber Loopback) -------------------------------------------
 
 
-@_fable("A-7")
 def test_a7_rekursiver_next_hop_geht_ueber_den_router_dazwischen(client):
     tid = _tenant(client)
     _routers(client, tid, ["rt-01", "rt-02", "rt-03"], [
@@ -342,7 +290,6 @@ VIP_RULES = [
 ]
 
 
-@_fable("A-8")
 def test_a8_vip_mit_port_weiterleitung_nur_fuer_ihren_port(client):
     tid = _tenant(client)
     sid = _firewall(client, tid, "fw-01", VIP_IFS, VIP_ROUTES, rules=VIP_RULES, nat_rules=[
@@ -355,7 +302,6 @@ def test_a8_vip_mit_port_weiterleitung_nur_fuer_ihren_port(client):
     assert hop["egress"]["interface"] == "dmz2"
 
 
-@_fable("A-8")
 def test_a8_vip_mit_port_weiterleitung_kein_dnat_fuer_andere_ports(client):
     tid = _tenant(client)
     sid = _firewall(client, tid, "fw-01", VIP_IFS, VIP_ROUTES, rules=VIP_RULES[1:], nat_rules=[
@@ -369,7 +315,6 @@ def test_a8_vip_mit_port_weiterleitung_kein_dnat_fuer_andere_ports(client):
 # -- A-9: VIP in keiner Policy (Central NAT aus) ----------------------------------------------
 
 
-@_fable("A-9")
 def test_a9_vip_ohne_policy_macht_kein_dnat(client):
     tid = _tenant(client)
     sid = _firewall(client, tid, "fw-01", VIP_IFS, VIP_ROUTES, nat_rules=[
@@ -425,7 +370,6 @@ def _vpn_pair(client, tid) -> None:
     ], vpn=[tunnel("fw-b", "vpn-a", "203.0.113.1", "10.20.0.0/16", "10.10.0.0/24")])  # fmt: skip
 
 
-@_fable("A-10")
 def test_a10_ipsec_ziel_in_keinem_selektor_wird_verworfen(client):
     tid = _tenant(client)
     _vpn_pair(client, tid)
@@ -436,7 +380,6 @@ def test_a10_ipsec_ziel_in_keinem_selektor_wird_verworfen(client):
     assert _active(out)[0]["end"]["kind"] not in REACHED, _active(out)[0]["end"]
 
 
-@_fable("A-10")
 def test_a10_ipsec_quelle_ausserhalb_des_lokalen_selektors_wird_verworfen(client):
     tid = _tenant(client)
     _vpn_pair(client, tid)
@@ -459,7 +402,6 @@ def _fw_pair_member(client, tid, name, last):
     ])  # fmt: skip
 
 
-@_fable("A-13")
 def test_a13_rueckweg_mit_ecmp_ueber_andere_firewall_ist_nicht_symmetrisch(client):
     """Zwei Firewalls ohne Verbund bzw. Session-Sync, davor und dahinter je ein Router mit ECMP
     über beide: die Antwort einer Sitzung über fw-a kann der Router über fw-b schicken - fw-b
@@ -539,7 +481,6 @@ def _conn(session_factory, tid, src, dst, starts):
                                           starts)  # fmt: skip
 
 
-@_fable("A-14")
 def test_a14_fall1_weg_beginnt_nicht_auf_firewall_abseits_des_wegs(client, session_factory):
     """Echt: tenant-2 → Cluster fw-a → tenant-1. fw-vpn haengt am Cluster, hat denselben
     Regelsatz, liegt aber nicht auf dem Weg - sie darf nicht als Hop (mit ihren Regeln)
@@ -559,7 +500,6 @@ def test_a14_fall1_weg_beginnt_nicht_auf_firewall_abseits_des_wegs(client, sessi
         assert "fw-vpn" not in _labels(p), _labels(p)
 
 
-@_fable("A-15")
 def test_a15_fall2_privates_ziel_nicht_ueber_die_default_route_der_internet_firewall(
         client, session_factory):  # fmt: skip
     """Echt: tenant-1 → Cluster fw-a → zwei MPLS-Router (nicht gelesen; die Route kennt der
@@ -678,7 +618,6 @@ def test_fall3_zwei_dnat_hintereinander_mit_port_umsetzung(client):
     assert [x["service"] for x in out["service_chain"]] == ["tcp/443", "tcp/443", "tcp/8080"]
 
 
-@_fable("A-16")
 def test_a16_fall3_sni_parent_ohne_pool_weg_geht_zum_pool_des_child(client):
     """Mehrere Virtual Services auf derselben VIP und demselben Port (SNI-Hosting: der Parent
     hat keinen Pool, die Children je einen): der Load Balancer verteilt nach dem Hostnamen auf
@@ -688,10 +627,258 @@ def test_a16_fall3_sni_parent_ohne_pool_weg_geht_zum_pool_des_child(client):
     assert ("srv1", "connected") in _ends(out), [p["end"] for p in _active(out)]
 
 
-@_fable("A-17")
 def test_a17_fall3_weg_zu_jedem_server_des_pools(client):
     """Server des Pools in verschiedenen Netzen: der Load Balancer verteilt auf alle - der Weg
     (und die Regeln je Hop) ist bis zu jedem Server zu pruefen, nicht nur zum ersten."""
     tid, sid = _lb_setup(client, [_vs("vs-shop", ["10.10.0.20", "10.11.0.20"])])
     out = _trace(client, tid, dst="203.0.113.10", start=f"{sid}|root", service="tcp/443")
     assert _ends(out) == {("srv1", "connected"), ("srv2", "connected")}
+
+
+# -- Phase 2 (ADR 0070): Entscheide des Anwenders und des Projekts ------------------------------
+
+
+def _ctx(name, **settings):
+    return [{"node": name, "context": "root", "settings": settings}]
+
+
+def test_a6_reverse_path_nach_den_einstellungen_des_vdoms(client):
+    """Reverse Path hängt an `asymroute`, `src-check` und `strict-src-check`: gelesen =
+    „verworfen“ bzw. kein Reverse Path; nicht gelesen = „nicht geprüft“, gezählt - nie still."""
+
+    def seed(name, **settings):
+        tid = client.post("/tenants", json={"name": name}, headers=ADMIN).json()["id"]
+        _routers(client, tid, ["rt-01"], [
+            _l3("rt-01", "10.1.0.0/24", [{"interface": "Gi0/1"}], "connected", distance=0),
+            _local("rt-01", "10.1.0.1", "Gi0/1"),
+            _l3("rt-01", "10.0.12.0/30", [{"interface": "Gi0/2"}], "connected", distance=0),
+            _local("rt-01", "10.0.12.1", "Gi0/2"),
+            _l3("rt-01", "10.20.0.0/24", [{"ip": "10.0.12.2", "interface": "Gi0/2"}],
+                distance=1),
+        ])  # fmt: skip
+        extra = {"contexts": _ctx("fw-01", **settings)} if settings else {}
+        _firewall(client, tid, "fw-01", [
+            _if("fw-01", "lan", "10.20.0.1/24", "lan"),
+            _if("fw-01", "port2", "10.0.12.2/30", "transit"),
+        ], [
+            _r("fw-01", "root", "10.20.0.0/24", [{"interface": "lan"}], "connected"),
+            _r("fw-01", "root", "10.0.12.0/30", [{"interface": "port2"}], "connected"),
+            _r("fw-01", "root", "10.1.0.0/24", [{"ip": "10.0.13.1", "interface": "port3"}]),
+        ], **extra)  # fmt: skip
+        return _trace(client, tid, src="10.1.0.5", dst="10.20.0.5")
+
+    unread = seed("Kunde A")
+    assert _active(unread)[0]["end"]["kind"] == "unchecked"
+    assert unread["uncertain"] == {"rpf": 1}
+    assert "asymroute und src-check sind nicht gelesen" in _active(unread)[0]["end"]["text"]
+    read = seed("Kunde B", asymroute=False, strict_src_check=False)
+    (path,) = _active(read)
+    assert path["end"]["kind"] == "dropped" and path["hops"][1]["dropped"]["stage"] == "rpf"
+    assert "uncertain" not in read
+    assert "rules" not in path["hops"][1]  # verworfen vor der Policy
+    asym = seed("Kunde C", asymroute=True, strict_src_check=False)
+    assert _active(asym)[0]["end"]["kind"] == "connected"
+    off = seed("Kunde D", asymroute=False, strict_src_check=False, src_check_off=["port2"])
+    assert _active(off)[0]["end"]["kind"] == "connected"
+
+
+def test_a15_default_route_privat_nicht_geprueft_oeffentlich_extern(client):
+    """Privates Ziel über die Default-Route an ein nicht gelesenes Gerät: Grenze „nicht geprüft
+    (Default-Route)“, gezählt - nie „erreicht“. Öffentliches Ziel: weiter „extern“."""
+    tid = _tenant(client)
+    _firewall(client, tid, "fw-01", FW_IFS, FW_ROUTES)
+    private = _trace(client, tid, src="10.20.0.5", dst="10.99.0.5")
+    (path,) = _active(private)
+    assert path["end"]["kind"] == "unchecked" and path["end"]["kind"] not in REACHED
+    assert path["end"]["text"].startswith("nicht geprüft (Default-Route)")
+    assert private["uncertain"] == {"default": 1}
+    public = _trace(client, tid, src="10.20.0.5", dst="203.0.113.9")
+    assert _active(public)[0]["end"]["kind"] == "external" and "uncertain" not in public
+
+
+def test_a9_central_nat_vip_ohne_policy_und_central_snat(client):
+    """Central NAT (je VDOM `system settings`): die VIP wirkt ohne Policy, das SNAT kommt aus
+    der Tabelle `central-snat-map` (erste passende Zeile), nicht aus der Policy."""
+    tid = _tenant(client)
+    vip = {"source_platform": "fortigate", "external_id": "V-EXT_web", "name": "V-EXT_web",
+           "nat_type": "dnat_vip", "ext_ip": "203.0.113.10", "mapped_ip": "10.1.1.10",
+           "vdom": "root"}  # fmt: skip
+    pool = {"source_platform": "fortigate", "external_id": "IPP_out", "name": "IPP_out",
+            "nat_type": "snat_pool", "ext_ip": "198.51.100.77", "family": "v4",
+            "attrs": {"type": "overload"}, "vdom": "root", "raw": {"type": "overload"}}  # fmt: skip
+    snat = [
+        {"id": 1, "srcintf": ["dmz1"], "dstintf": ["wan1"], "orig_addr": ["all"],
+         "dst_addr": ["all"], "nat": "enable", "nat_ippool": ["IPP_out"]},
+    ]  # fmt: skip
+    sid = _firewall(client, tid, "fw-01", VIP_IFS, VIP_ROUTES, nat_rules=[vip, pool],
+                    rules=[_policy(1, "dmz1", "wan1", "all", "all", "ALL")],
+                    contexts=_ctx("fw-01", central_nat=True, asymroute=False,
+                                  strict_src_check=False, central_snat=snat))  # fmt: skip
+    out = _trace(client, tid, dst="203.0.113.10", start=f"{sid}|root", service="tcp/443")
+    hop = _active(out)[0]["hops"][0]
+    assert hop["nat"]["name"] == "V-EXT_web" and hop["egress"]["interface"] == "dmz1"
+    back = _trace(client, tid, src="10.1.1.10", dst="203.0.113.99", service="tcp/443")
+    hop = _active(back)[0]["hops"][0]
+    assert hop["central_snat"] == {"rule": 1, "sure": True}
+    assert (hop["snat"]["pool"], hop["snat"]["to"]) == ("IPP_out", "198.51.100.77")
+    assert "uncertain" not in back
+
+
+def test_central_nat_tabelle_nicht_gelesen_ist_nat_nicht_geprueft(client):
+    """Central NAT an, die Tabelle des Central SNAT aber nicht lesbar: sichtbar „NAT nicht
+    geprüft“ und gezählt - kein SNAT aus der Policy angenommen."""
+    tid = _tenant(client)
+    _firewall(client, tid, "fw-01", VIP_IFS, VIP_ROUTES,
+              rules=[_policy(1, "dmz1", "wan1", "all", "all", "ALL")],
+              contexts=_ctx("fw-01", central_nat=True, asymroute=False,
+                            strict_src_check=False))  # fmt: skip
+    out = _trace(client, tid, src="10.1.1.10", dst="203.0.113.99", service="tcp/443")
+    assert out["uncertain"] == {"nat": 1}
+    assert "NAT nicht geprüft an fw-01: Central SNAT nicht gelesen" in out["notes"]
+    assert "snat" not in _active(out)[0]["hops"][0]
+
+
+def test_a12_hsrp_standby_nimmt_den_verkehr_nicht_an(client):
+    """Virtuelle Gateway-Adresse (HSRP) auf zwei Routern: den Verkehr nimmt der aktive an."""
+    tid = _tenant(client)
+
+    def core(name, own, state):
+        return [
+            _l3(name, "10.0.0.0/24", [{"interface": "Vl10"}], "connected", distance=0),
+            _local(name, own, "Vl10"),
+            _l3(name, "10.0.0.1/32", [{"interface": "Vl10"}], "local", distance=0,
+                attrs={"virtual": True, "state": state}),
+            _l3(name, "10.50.0.0/24", [{"interface": "Vl50"}], "connected", distance=0),
+        ]  # fmt: skip
+
+    _routers(client, tid, ["sw-core-01", "sw-core-02"],
+             core("sw-core-01", "10.0.0.2", "standby") + core("sw-core-02", "10.0.0.3",
+                                                              "active"))  # fmt: skip
+    _firewall(client, tid, "fw-01", [
+        _if("fw-01", "lan", "10.20.0.1/24", "lan"),
+        _if("fw-01", "core", "10.0.0.10/24", "core"),
+    ], [
+        _r("fw-01", "root", "10.20.0.0/24", [{"interface": "lan"}], "connected"),
+        _r("fw-01", "root", "10.0.0.0/24", [{"interface": "core"}], "connected"),
+        _r("fw-01", "root", "10.50.0.0/24", [{"ip": "10.0.0.1", "interface": "core"}]),
+    ])  # fmt: skip
+    out = _trace(client, tid, src="10.20.0.5", dst="10.50.0.5")
+    assert [_labels(p) for p in _active(out)] == [["fw-01", "sw-core-02"]]
+
+
+def test_a18_umleitung_endet_am_load_balancer(client):
+    """Port 80 mit Umleitung HTTP → HTTPS (`attrs.redirect`, vom Collector): der Fluss endet am
+    Load Balancer - „erreicht“ (er antwortet selbst), kein Weg zum Pool."""
+    redirect = _vs("vs-shop", [], port=80)
+    redirect["attrs"]["redirect"] = "https"
+    tid, sid = _lb_setup(client, [redirect, _vs("vs-shop", ["10.10.0.20"])])
+    out = _trace(client, tid, src="10.11.0.7", dst=LB_VIP, service="tcp/80")
+    (path,) = _active(out)
+    assert path["end"]["kind"] == "redirect" and path["end"]["kind"] in REACHED
+    assert _labels(path) == ["fw-01"] and path["hops"][0]["lb"]["redirect"] == "https"
+    https = _trace(client, tid, src="10.11.0.7", dst=LB_VIP, service="tcp/443")
+    assert _ends(https) == {("srv1", "connected")}
+
+
+def test_a17_server_derselben_klasse_sind_ein_weg(client):
+    """Mitglieder des Pools im selben Netz (gleiche Route, gleiche Adressklasse der Policies):
+    ein Weg mit allen Servern, nicht je Server einer - gerechnet je Äquivalenzklasse."""
+    tid, sid = _lb_setup(client, [_vs("vs-shop", ["10.10.0.20", "10.10.0.21", "10.11.0.20"])])
+    out = _trace(client, tid, dst="203.0.113.10", start=f"{sid}|root", service="tcp/443")
+    found = {tuple(h["lb"]["targets"]) for p in _active(out) for h in p["hops"] if h.get("lb")}
+    assert found == {("10.10.0.20", "10.10.0.21"), ("10.11.0.20",)}
+    assert "uncertain" not in out
+
+
+def test_virtual_server_der_fortigate_zu_jedem_real_server(client):
+    """Virtual Server (VIP `server-load-balance`) der FortiGate: zu jedem Real Server."""
+    tid = _tenant(client)
+    vs = {"source_platform": "fortigate", "external_id": "VS_web", "name": "VS_web",
+          "nat_type": "dnat_vip", "ext_ip": "203.0.113.10", "mapped_ip": "10.1.1.10",
+          "portforward": True, "protocol": "tcp", "ext_port": "443", "mapped_port": "443",
+          "vip_type": "server-load-balance", "vdom": "root",
+          "targets": [{"ip": "10.1.1.10", "port": 443, "status": "active"},
+                      {"ip": "10.1.2.20", "port": 443, "status": "active"}]}  # fmt: skip
+    sid = _firewall(client, tid, "fw-01", VIP_IFS, VIP_ROUTES, nat_rules=[vs], rules=[
+        _policy(1, "wan1", "dmz1", "all", "vip:VS_web=203.0.113.10", "tcp/443")])  # fmt: skip
+    out = _trace(client, tid, dst="203.0.113.10", start=f"{sid}|root", service="tcp/443")
+    assert {(p["hops"][0]["egress"]["interface"], p["end"]["kind"]) for p in _active(out)} == {
+        ("dmz1", "connected"), ("dmz2", "connected")}  # fmt: skip
+
+
+def test_a3_policy_route_ohne_dienst_ist_nur_moeglich_und_gezaehlt(client):
+    """Policy-Route mit Protokoll und Port, Weg ohne Dienst: nicht sicher - der Weg folgt der
+    Routing-Tabelle, die Unsicherheit ist sichtbar und gezählt (ADR 0048)."""
+    tid = _tenant(client)
+    _firewall(client, tid, "fw-01", FW_IFS, FW_ROUTES, policy_routes=[
+        {"node": "fw-01", "context": "root", "seq": 1, "gateway": "198.51.100.5",
+         "output_device": ["wan2"], "action": "permit",
+         "match": {"input_device": ["lan"], "protocol": 6, "ports": [443, 443]}},
+    ])  # fmt: skip
+    out = _trace(client, tid, src="10.20.0.5", dst="203.0.113.9")
+    assert _egress(_active(out)[0]) == "wan1"
+    assert out["uncertain"] == {"policy_route": 1}
+    assert any("passt nur möglicherweise" in n for n in out["notes"])
+
+
+def test_sdwan_regel_ohne_route_ueber_ein_mitglied_wird_uebergangen(client):
+    """FortiOS übergeht eine SD-WAN-Regel, wenn kein Mitglied eine Route zum Ziel hat."""
+    tid = _tenant(client)
+    rule = {"node": "fw-01", "context": "root", "kind": "sdwan", "seq": 1, "name": "inet",
+            "output_device": ["wan2", "wan1"], "match": {"dst": ["all"], "src": ["all"]},
+            "attrs": {"members": [{"interface": "wan1", "gateway": "198.51.100.1"},
+                                  {"interface": "wan2", "gateway": "198.51.100.5"}]}}  # fmt: skip
+    _firewall(client, tid, "fw-01", FW_IFS, [
+        *FW_ROUTES,
+        _r("fw-01", "root", "10.30.0.0/24", [{"ip": "10.20.0.254", "interface": "lan"}]),
+    ], policy_routes=[rule])  # fmt: skip
+    inside = _trace(client, tid, src="10.20.0.5", dst="10.30.0.9")
+    hop = _active(inside)[0]["hops"][0]
+    assert hop["egress"]["interface"] == "lan" and "policy" not in hop
+    # nur wan1 hat eine Route (Default): die Regel greift mit diesem Mitglied
+    out = _trace(client, tid, src="10.20.0.5", dst="203.0.113.9")
+    hop = _active(out)[0]["hops"][0]
+    assert hop["policy"]["name"] == "inet" and hop["egress"]["interface"] == "wan1"
+    assert hop["egress"]["next_hop"] == "198.51.100.1"
+
+
+def test_a14_start_unbekannt_wird_gezaehlt_statt_geraten(client, session_factory):
+    """Ohne Knoten, an dem der Verkehr der Quelle ankommt: „Start unbekannt“, gezählt - kein
+    Rückfall auf das Gerät einer Regel."""
+    tid = _tenant(client)
+    fw = _firewall(client, tid, "fw-01", FW_IFS, FW_ROUTES)
+    res, start = _conn(session_factory, tid, "10.77.0.5", "10.20.0.5", [f"{fw}|root"])
+    assert res["paths"] == [] and start is None
+    assert res["uncertain"] == {"start": 1}
+    assert any(n.startswith("Start unbekannt") for n in res["notes"])
+
+
+def test_a14_start_am_rand_wo_die_route_zur_quelle_das_gelesene_netz_verlaesst(
+        client, session_factory):  # fmt: skip
+    """Fall 1 (Muster): die Quelle hängt an keinem gelesenen Knoten, der Cluster kennt sie über
+    einen nicht gelesenen Nachbarn - dort kommt ihr Verkehr an (Eingang = Interface der Route)."""
+    tid = _tenant(client)
+    _aci_subnets(client, tid)
+    fwa = _cluster(client, tid)
+    res, start = _conn(session_factory, tid, "10.42.8.14", "10.41.6.25", [])
+    (path,) = res["paths"]
+    assert start == "fw-a" and _labels(path) == ["fw-a"]
+    assert path["hops"][0]["ingress"]["interface"] == "t2"
+    assert path["hops"][0]["egress"]["interface"] == "t1"
+    assert fwa
+
+
+def test_mehr_als_16_wege_gekuerzt_und_gezaehlt(client):
+    """Die Kürzung bei 16 Wegen steht nicht nur im Hinweis, sie wird gezählt (ADR 0048)."""
+    tid = _tenant(client)
+    hops = [{"ip": f"10.0.12.{i}", "interface": "Gi0/2"} for i in range(2, 22)]
+    _routers(client, tid, ["rt-01"], [
+        _l3("rt-01", "10.1.0.0/24", [{"interface": "Gi0/1"}], "connected", distance=0),
+        _local("rt-01", "10.1.0.1", "Gi0/1"),
+        _l3("rt-01", "10.0.12.0/24", [{"interface": "Gi0/2"}], "connected", distance=0),
+        _l3("rt-01", "10.50.0.0/16", hops, "ospf", distance=110),
+    ])  # fmt: skip
+    out = _trace(client, tid, src="10.1.0.5", dst="10.50.1.1")
+    # dazu der Rückweg: nur für die ersten 8 Wege geprüft - ebenfalls gezählt
+    assert len(_active(out)) == 16 and out["uncertain"] == {"truncated": 4, "return": 8}
+    assert "mehr als 16 Wege – gekürzt" in out["notes"]

@@ -52,9 +52,16 @@ def _deliver(client, tid, sid, platform, result):
         assert client.get(f"/jobs/{run_id}").json()["rule_count"] == len(result["nat_rules"])
 
 
-def _seed(client) -> tuple[int, int]:
+def _seed(client, asymroute: bool = False) -> tuple[int, int]:
     tid = client.post("/tenants", json={"name": "Kunde A"}, headers=ADMIN).json()["id"]
     fw = copy.deepcopy(FW)
+    if asymroute:
+        # ADR 0070 (Reverse Path): mit der Client-IP als Quelle kaeme der Verkehr vom Load
+        # Balancer am Interface dmz an, die Route zur Quelle zeigt aber ins LAN - die Firewall
+        # verwuerfe ihn, bevor eine Policy prueft. Mit `asymroute` gilt der Reverse Path nicht.
+        fw["routing"] = copy.deepcopy(fw["routing"])
+        for c in fw["routing"]["contexts"]:
+            c["settings"] = {"asymroute": True, "strict_src_check": False}
     fw["rules"] = [
         _policy(8, "lan-to-vip", "lan", "dmz", ["10.10.0.0/24"], [VIP], ["tcp/443"]),
         # Service Engine (SNAT, im Netz der VIP) zum Server
@@ -112,7 +119,7 @@ def test_weg_ueber_den_load_balancer(client):
 
 
 def test_client_ip_bleibt(client):
-    tid, sid = _seed(client)
+    tid, sid = _seed(client, asymroute=True)
     avi = copy.deepcopy(AVI)
     for n in avi["nat_rules"]:
         n["attrs"]["snat"] = "client"
