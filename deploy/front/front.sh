@@ -350,14 +350,58 @@ html() {  # Text für HTML maskieren
 
 # --- Seiten ------------------------------------------------------------------------------------
 # Abmelden mit Anmelde-Tor (1.12.2): das Tor löscht sein Cookie und beendet die Sitzung in
-# Keycloak selbst (--backend-logout-url), dann zeigt $1 die Seite „Abgemeldet“ ausserhalb des Tors.
+# Keycloak selbst (--backend-logout-url), dann zeigt die Seite „Abgemeldet“ ausserhalb des Tors.
 # 1.12.1 schickte den Browser noch über die Abmeldeseite von Keycloak zurück auf die Startseite –
 # im Dev-Test blieb er dort stehen, ohne dass sichtbar war, dass er abgemeldet ist.
-abmelde_url() {  # $1 Adresse der Seite „Abgemeldet“ (Domain des Tors, --whitelist-domain)
-  printf '/oauth2/sign_out?rd=%s' "$(url_kodiert "$1")"
+#
+# Über alle Adressen (1.19.3, ADR 0051 Nachtrag): das Cookie des Tors gilt je Adresse (Host). Bis
+# 1.19.2 löschte „Abmelden“ nur das der Adresse, auf der geklickt wurde – NetBox, Automato und
+# Magister liessen den Benutzer bis zur nächsten Erneuerung (5 min) ohne Anmeldung wieder herein
+# (Anwender 2026-11-18). Jetzt geht der Browser der Reihe nach über /oauth2/sign_out jeder Adresse
+# des Kunden: Einstieg $ABMELDEN auf jeder Adresse (Startseite, NetBox /logout/, Oberfläche), jede
+# Adresse leitet mit $ABMELDEN/weiter an die nächste, die letzte auf die Seite „Abgemeldet“. Jeder
+# Schritt ist einfach kodiert (keine verschachtelten Adressen, die eine WAF als doppelte Kodierung
+# ablehnen könnte); die Kopfzeilen der Anmeldung setzt weiter nur das Tor.
+ABMELDEN=/oauth2/abmelden
+ABGEMELDET=/abgemeldet
+ABMELDEN_ADRESSEN=() ABMELDEN_SCHRITTE=()
+
+# Adressen eines Kunden hinter dem Tor, Startseite zuerst (nach lies_kunde): $1 Kurzname
+kunden_adressen() {
+  local k=$1
+  printf 'https://%s.%s\n' "$k" "$DOMAIN"
+  [ -z "$NETBOX" ] || [ "$NB" != ja ] || printf 'https://%s-nb.%s\n' "$k" "$DOMAIN"
+  [ "$DOC" != ja ] || printf 'https://%s-doc.%s\n' "$k" "$DOMAIN"
+  [ "$UM" != ja ] || [ -z "$UM_ZIEL" ] || printf 'https://%s-um.%s\n' "$k" "$DOMAIN"
+  [ "$CMDB_AN" != ja ] || [ -z "$CMDB" ] || printf 'https://%s-cmdb.%s\n' "$k" "$DOMAIN"
+  return 0
 }
 
-ABGEMELDET=/abgemeldet
+# Schritte des Abmeldens: $1 Seite „Abgemeldet“, $2… alle Adressen in fester Reihenfolge; setzt
+# ABMELDEN_ADRESSEN und ABMELDEN_SCHRITTE (je Adresse: ihr /oauth2/sign_out, danach die nächste)
+abmelden_kette() {
+  local ziel=$1 i naechste
+  shift
+  ABMELDEN_ADRESSEN=("$@")
+  ABMELDEN_SCHRITTE=()
+  for ((i = 0; i < $#; i++)); do
+    naechste=$ziel
+    [ $((i + 1)) -ge $# ] || naechste="${ABMELDEN_ADRESSEN[i + 1]}$ABMELDEN/weiter"
+    ABMELDEN_SCHRITTE+=("${ABMELDEN_ADRESSEN[i]}/oauth2/sign_out?rd=$(url_kodiert "$naechste")")
+  done
+}
+
+# Abmelden auf der Adresse $1 (in route vor dem Tor): Einstieg zur ersten Adresse, Schritt zur nächsten
+abmelden_routen() {
+  local i
+  for ((i = 0; i < ${#ABMELDEN_ADRESSEN[@]}; i++)); do
+    [ "${ABMELDEN_ADRESSEN[i]}" = "$1" ] || continue
+    printf '\t\tredir %s %s 302\n\t\tredir %s/weiter %s 302\n' \
+      "$ABMELDEN" "${ABMELDEN_SCHRITTE[0]}" "$ABMELDEN" "${ABMELDEN_SCHRITTE[i]}"
+    return 0
+  done
+  return 0
+}
 
 # Route „Abgemeldet“ vor dem Tor: $1 Ordner der statischen Seiten
 abgemeldet_route() {
@@ -387,7 +431,7 @@ a.knopf { display:inline-block; padding:8px 14px; border-radius:8px; background:
 <body>
 <main>
 <h1>Abgemeldet · signed out</h1>
-<p>$(html "$1"): Sie sind abgemeldet, auch bei der Anmeldung (Keycloak). · You are signed out.</p>
+<p>$(html "$1"): Sie sind abgemeldet – bei allen Werkzeugen und bei der Anmeldung (Keycloak). · You are signed out of all tools.</p>
 <a class="knopf" href="/">Wieder anmelden · sign in again</a>
 </main>
 </body>
@@ -581,9 +625,10 @@ tor_fuer_kunde() {  # setzt TOR_DIENST (Container des Tors; leer = ohne Tor bzw.
 }
 
 route_kunde() {  # route einer Kunden-Adresse: $1 Ziel, $2 vor dem Tor (immer), $3 vor dem Tor (nur mit Tor),
-  # $4 noch vor der Sperre nach Absender (Automato selbst an seine NetBox, 1.10.0). Kunde gesperrt
-  # (SPERRE=ja, ADR 0059): nach der Sperre nach Absender und dem Zugriff nur „Zugang gesperrt“ –
-  # auch für die NetBox-API mit Token und Automato selbst
+  # $4 noch vor der Sperre nach Absender (Automato selbst an seine NetBox, 1.10.0), $5 die Adresse
+  # selbst (Abmelden über alle Adressen des Kunden, 1.19.3). Kunde gesperrt (SPERRE=ja, ADR 0059):
+  # nach der Sperre nach Absender und dem Zugriff nur „Zugang gesperrt“ – auch für die NetBox-API
+  # mit Token und Automato selbst
   printf '\troute {\n'
   [ "${SPERRE:-nein}" = ja ] || [ -z "${4:-}" ] || printf '%s\n' "$4"
   printf '\t\timport front-kunden-sperre\n'
@@ -599,6 +644,7 @@ route_kunde() {  # route einer Kunden-Adresse: $1 Ziel, $2 vor dem Tor (immer), 
   fi
   if [ -n "$TOR_DIENST" ]; then
     [ -z "${3:-}" ] || printf '%s\n' "$3"
+    [ -z "${5:-}" ] || abmelden_routen "$5"
     printf '\t\timport front-tor %s\n' "$TOR_DIENST"
   fi
   printf '%s\n\t}\n' "$1"
@@ -608,12 +654,19 @@ schreibe_kunde() {  # Caddy-Einträge eines Kunden
   local k=$1 trust="" ident="" nb_ziel
   lies_kunde "$k"
   tor_fuer_kunde
-  [ -z "$TOR_DIENST" ] || ident=$'\n\t\t\t'"import front-identitaet $REALM"
+  ABMELDEN_ADRESSEN=() ABMELDEN_SCHRITTE=()
+  if [ -n "$TOR_DIENST" ]; then
+    ident=$'\n\t\t\t'"import front-identitaet $REALM"
+    local adressen=()
+    mapfile -t adressen < <(kunden_adressen "$k")
+    abmelden_kette "https://$k.$DOMAIN$ABGEMELDET" "${adressen[@]}"
+  fi
   [ -z "$NETBOX_CA" ] || trust=$'\n\t\t\t\ttls_trust_pool file /etc/caddy/pki/'"$NETBOX_CA"
   printf '# Kunde %s (front.sh) – nicht von Hand ändern\n' "$k"
   printf '%s.%s {\n\timport front-kunden\n' "$k" "$DOMAIN"
   zugriff_matcher
-  route_kunde $'\t\t'"root * /srv/front/$k"$'\n\t\timport front-seite' "" "$(abgemeldet_route "/srv/front/$k")"
+  route_kunde $'\t\t'"root * /srv/front/$k"$'\n\t\timport front-seite' "" "$(abgemeldet_route "/srv/front/$k")" "" \
+    "https://$k.$DOMAIN"
   printf '}\n'
   if [ -n "$NETBOX" ] && [ "$NB" = ja ]; then
     nb_ziel() {  # NetBox auf dem NetBox-Host; $1 = Zeile(n) für den Benutzer
@@ -632,9 +685,10 @@ schreibe_kunde() {  # Caddy-Einträge eines Kunden
       printf '\t@front_eigen {\n\t\tremote_ip %s\n\t\tpath /api/* /graphql/*\n\t\theader_regexp Authorization ^(Token|Bearer)\\s\n\t}\n' "$EIGENE_NETZE"
       eigen=$'\t\timport front-ohne-identitaet\n\t\thandle @front_eigen {\n'"$(nb_ziel "" | sed 's/^/\t/')"$'\n\t\t}'
     fi
+    # Abmelden in NetBox (/logout/): wie „Abmelden“ der Startseite über alle Adressen des Kunden
     route_kunde "$(nb_ziel "$ident")" \
       $'\t\thandle @front_nb_token {\n'"$(nb_ziel "" | sed 's/^/\t/')"$'\n\t\t}' \
-      $'\t\tredir /logout/ '"$(abmelde_url "https://$k.$DOMAIN$ABGEMELDET")"' 302' "$eigen"
+      $'\t\tredir /logout/ '"${ABMELDEN_SCHRITTE[0]:-}"' 302' "$eigen" "https://$k-nb.$DOMAIN"
     printf '}\n'
   fi
   if [ "$DOC" = ja ]; then
@@ -649,7 +703,7 @@ schreibe_kunde() {  # Caddy-Einträge eines Kunden
     printf '\t@internal path /api/internal /api/internal/*\n\t@front_api path /api/*\n'
     # die API prüft das Token von Automato selbst (Kunden-Realm, ADR 0050) – nur die Oberfläche hinter dem Tor
     route_kunde "$ui" $'\t\trespond @internal 404' \
-      $'\t\thandle @front_api {\n'"$(printf '%s' "$ui" | sed 's/^/\t/')"$'\n\t\t}'
+      $'\t\thandle @front_api {\n'"$(printf '%s' "$ui" | sed 's/^/\t/')"$'\n\t\t}' "" "https://$k-doc.$DOMAIN"
     printf '}\n'
   fi
   if [ "$UM" = ja ] && [ -n "$UM_ZIEL" ]; then
@@ -663,13 +717,13 @@ schreibe_kunde() {  # Caddy-Einträge eines Kunden
     fi
     printf '\n%s-um.%s {\n\timport front-kunden\n' "$k" "$DOMAIN"
     zugriff_matcher
-    route_kunde "$um_ziel"
+    route_kunde "$um_ziel" "" "" "" "https://$k-um.$DOMAIN"
     printf '}\n'
   fi
   if [ "$CMDB_AN" = ja ] && [ -n "$CMDB" ]; then
     printf '\n%s-cmdb.%s {\n\timport front-kunden\n' "$k" "$DOMAIN"
     zugriff_matcher
-    route_kunde $'\t\t'"reverse_proxy $CMDB {$ident"$'\n\t\t}'
+    route_kunde $'\t\t'"reverse_proxy $CMDB {$ident"$'\n\t\t}' "" "" "" "https://$k-cmdb.$DOMAIN"
     printf '}\n'
   fi
 }
@@ -823,7 +877,7 @@ cmd_erzeugen() {
     lies_kunde "$k"
     tor_fuer_kunde
     abmelden=""
-    [ -z "$TOR_DIENST" ] || abmelden=$(abmelde_url "https://$k.$DOMAIN$ABGEMELDET")
+    [ -z "$TOR_DIENST" ] || abmelden=$ABMELDEN  # über alle Adressen des Kunden (schreibe_kunde)
     kacheln "$k" | seite "$NAME" "Werkzeuge · tools" "$abmelden" >"$www/$k/index.html"
     abgemeldet_seite "$NAME" >"$www/$k$ABGEMELDET.html"
   done
@@ -848,12 +902,16 @@ cmd_erzeugen() {
   } >"$g/sites/_unbekannt.caddy"
   if [ -n "$INTERN" ]; then
     # Portal: mit Anmelde-Tor nur für die Rollen AUTOMATO_FRONT_INTERN_ROLLEN im Realm von Automato
-    local portal=$'\t\troot * /srv/front/_portal\n\t\timport front-seite'
+    local portal_ziel=$'\t\troot * /srv/front/_portal\n\t\timport front-seite' portal
+    portal=$portal_ziel
     abmelden=""
     if tor_an; then
       if [ -n "$HAUPT_REALM" ] && tor_bereit "$HAUPT_REALM"; then
-        portal="$(abgemeldet_route /srv/front/_portal)"$'\n\t\timport front-tor tor-intern\n'"$portal"
-        abmelden=$(abmelde_url "https://start.$INTERN$ABGEMELDET")
+        # Abmelden: das Portal hat nur seine eigene Adresse (eigener Container, nur intern)
+        abmelden_kette "https://start.$INTERN$ABGEMELDET" "https://start.$INTERN"
+        portal="$(abgemeldet_route /srv/front/_portal)"$'\n'"$(abmelden_routen "https://start.$INTERN")"
+        portal+=$'\n\t\timport front-tor tor-intern\n'"$portal_ziel"
+        abmelden=$ABMELDEN
       else
         portal=$'\t\timport front-gesperrt'
       fi
@@ -2019,11 +2077,7 @@ tor_adressen() {  # Valid redirect URIs des Clients automato-front in einem Real
   for k in $(kunden); do
     lies_kunde "$k"
     [ "$REALM" = "$realm" ] || continue
-    printf '            https://%s.%s/oauth2/callback\n' "$k" "$DOMAIN"
-    [ -z "$NETBOX" ] || [ "$NB" != ja ] || printf '            https://%s-nb.%s/oauth2/callback\n' "$k" "$DOMAIN"
-    [ "$DOC" != ja ] || printf '            https://%s-doc.%s/oauth2/callback\n' "$k" "$DOMAIN"
-    [ "$UM" != ja ] || [ -z "$UM_ZIEL" ] || printf '            https://%s-um.%s/oauth2/callback\n' "$k" "$DOMAIN"
-    [ "$CMDB_AN" != ja ] || [ -z "$CMDB" ] || printf '            https://%s-cmdb.%s/oauth2/callback\n' "$k" "$DOMAIN"
+    kunden_adressen "$k" | sed 's|^|            |; s|$|/oauth2/callback|'
   done
   if [ "$realm" = "$HAUPT_REALM" ] && [ -n "$INTERN" ]; then
     printf '            https://start.%s/oauth2/callback\n' "$INTERN"

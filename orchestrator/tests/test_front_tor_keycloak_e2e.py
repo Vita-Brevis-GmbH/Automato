@@ -8,7 +8,8 @@ Test … bei jeder Änderung“). Hier erlebt ein Browser die Kette wie in Betri
 Formular von Keycloak → zurück auf die Adresse samt Abfrage; Realm-Rollen aus dem echten Token
 (Portal nur admin/operator); kein Anmelden über Realms hinweg; „Abmelden“ der Startseite und
 NetBox `/logout/` beenden die Sitzung in Keycloak über `--backend-logout-url` - danach zeigt
-Keycloak wieder sein Formular, und er kennt keine Sitzung des Benutzers mehr.
+Keycloak wieder sein Formular, und er kennt keine Sitzung des Benutzers mehr; seit 1.19.3 mit einem
+Klick auf allen Adressen des Kunden (auch aus der Oberfläche).
 
 Braucht Docker, Port 443, die Images wie test_front_tor_e2e.py und einen Keycloak (nur Test, mit
 Realms zum Wegwerfen):
@@ -333,7 +334,7 @@ def test_anmelden_ueber_keycloak_und_zurueck(kette):
         assert r.headers["location"].startswith(anmeldung)
         assert "code_challenge_method=S256" in r.headers["location"]
         r, weg = b.anmelden(f"https://vb.{DOMAIN}/", "tester")
-        assert r.status_code == 200 and "Eigene Firma" in r.text and "/oauth2/sign_out" in r.text
+        assert r.status_code == 200 and "Eigene Firma" in r.text and "/oauth2/abmelden" in r.text
         assert any(u.startswith(f"https://vb.{DOMAIN}/oauth2/callback") for u in weg)
         assert weg[-1] == f"https://vb.{DOMAIN}/"
         # andere Adresse, gleicher Realm: Keycloak kennt die Sitzung, kein Formular - zurück
@@ -376,7 +377,7 @@ def test_abmelden_beendet_die_sitzung_in_keycloak(kette):
         assert r.status_code == 200
         sid = sitzung(weg)
         assert sid in kette.admin.sitzungen(kette.vb, "tester")
-        link = html.unescape(re.search(r'href="(/oauth2/sign_out[^"]*)"', r.text).group(1))
+        link = html.unescape(re.search(r'href="(/oauth2/abmelden)"', r.text).group(1))
         r, weg = b.folgen(urllib.parse.urljoin(f"https://vb.{DOMAIN}/", link))
         assert weg[-1] == f"https://vb.{DOMAIN}/abgemeldet", weg
         assert r.status_code == 200 and "Abgemeldet" in r.text
@@ -395,10 +396,43 @@ def test_netbox_abmelden(kette):
         assert r.status_code == 200 and f"user=tester@{kette.vb} " in r.text
         sid = sitzung(weg)
         assert sid in kette.admin.sitzungen(kette.vb, "tester")
-        r = b.get(f"https://vb-nb.{DOMAIN}/logout/")
-        assert r.status_code == 302 and "abgemeldet" in r.headers["location"]
+        r = b.get(f"https://vb-nb.{DOMAIN}/logout/")  # 1.19.3: über alle Adressen von vb
+        assert r.status_code == 302
+        assert r.headers["location"].startswith(f"https://vb.{DOMAIN}/oauth2/sign_out?rd=")
         r, weg = b.folgen(f"https://vb-nb.{DOMAIN}/logout/")
         assert weg[-1] == f"https://vb.{DOMAIN}/abgemeldet" and r.status_code == 200, weg
         assert sid not in kette.admin.sitzungen(kette.vb, "tester")
         r, _ = b.folgen(f"https://vb-nb.{DOMAIN}/")
         assert formular(r)
+
+
+@pytest.mark.parametrize(
+    "klick",
+    [f"https://vb.{DOMAIN}/oauth2/abmelden",  # Startseite
+     f"https://vb-nb.{DOMAIN}/logout/",  # NetBox
+     f"https://vb-doc.{DOMAIN}/oauth2/abmelden"],  # Automato (Oberfläche, auth.ts)
+)  # fmt: skip
+def test_ein_klick_meldet_bei_allen_adressen_ab(kette, klick):
+    """1.19.3 (Anwender 2026-11-18: „Das Logout bei den Kundenportalen geht noch nicht, ich komme
+    immer wieder rein, auch, wenn ich nicht neu einlogge“): angemeldet auf Startseite, NetBox,
+    Automato und Magister (je Adresse ein Cookie des Tors, eine Sitzung in Keycloak). Ein Klick auf
+    „Abmelden“, gleich wo: die Sitzung in Keycloak ist weg, und jede Adresse verlangt wieder das
+    Passwort – bis 1.19.2 kamen die übrigen Adressen bis zu 5 min ohne Anmeldung durch."""
+    adressen = [f"https://vb{w}.{DOMAIN}/" for w in ("", "-nb", "-doc", "-um")]
+    with Browser() as b:
+        r, weg = b.anmelden(adressen[0], "tester")
+        assert r.status_code == 200
+        sid = sitzung(weg)
+        for url in adressen[1:]:  # SSO: ohne Formular, dieselbe Sitzung in Keycloak
+            r, weg = b.folgen(url)
+            assert r.status_code == 200 and not formular(r), (url, weg)
+        assert kette.admin.sitzungen(kette.vb, "tester") >= {sid}
+        r, weg = b.folgen(klick)
+        assert weg[-1] == f"https://vb.{DOMAIN}/abgemeldet", weg
+        assert r.status_code == 200 and "Abgemeldet" in r.text
+        # keine Seite von Keycloak dazwischen (das Tor meldet sich dort selbst ab)
+        assert not any(u.startswith(kette.kc) for u in weg), weg
+        assert sid not in kette.admin.sitzungen(kette.vb, "tester")
+        for url in adressen:  # überall wieder das Formular von Keycloak
+            r, weg = b.folgen(url)
+            assert formular(r), (url, weg, r.status_code, r.text[:200])

@@ -10,6 +10,7 @@ import os
 import re
 import shutil
 import subprocess
+import urllib.parse
 from pathlib import Path
 
 import pytest
@@ -493,8 +494,8 @@ def test_tor_schuetzt_jede_adresse_und_sperrt_ohne_realm(front):
     assert site.count(f"import front-tor {dienst}") == 4
     nb = site.split("vb-nb.mgmt.example.ch {")[1].split("\n}\n")[0]
     assert nb.index("front-kunden-sperre") < nb.index("handle @front_nb_token {") < nb.index(
-        "redir /logout/ /oauth2/sign_out") < nb.index("import front-tor") < nb.index(
-        "import front-identitaet vb")  # fmt: skip
+        "redir /logout/ https://vb.mgmt.example.ch/oauth2/sign_out") < nb.index(
+        "import front-tor") < nb.index("import front-identitaet vb")  # fmt: skip
     doc = site.split("vb-doc.mgmt.example.ch {")[1].split("\n}\n")[0]
     assert doc.index("respond @internal 404") < doc.index("handle @front_api") < doc.index(
         "import front-tor")  # fmt: skip
@@ -502,13 +503,35 @@ def test_tor_schuetzt_jede_adresse_und_sperrt_ohne_realm(front):
     assert "Abmelden" in (front.gen / "www" / "vb" / "index.html").read_text()
     # 1.12.2: Abmelden beendet die Keycloak-Sitzung über das Tor (Backend-Logout) und zeigt die
     # Seite „Abgemeldet“ ausserhalb des Tors (Fund aus dem Dev-Test: der Browser blieb sonst auf
-    # der Startseite stehen)
-    abmelden = "/oauth2/sign_out?rd=https%3A%2F%2Fvb.mgmt.example.ch%2Fabgemeldet"
-    assert f'href="{abmelden}"' in (front.gen / "www" / "vb" / "index.html").read_text()
-    assert f"redir /logout/ {abmelden} 302" in nb
+    # der Startseite stehen). 1.19.3: über alle Adressen des Kunden (das Cookie des Tors gilt je
+    # Adresse) – Einstieg /oauth2/abmelden auf jeder Adresse, je Adresse ein Schritt zur nächsten
+    assert 'href="/oauth2/abmelden"' in (front.gen / "www" / "vb" / "index.html").read_text()
+    start = site.split("vb.mgmt.example.ch {")[1].split("\n}\n")[0]
+    doc_ = site.split("vb-doc.mgmt.example.ch {")[1].split("\n}\n")[0]
+    um = site.split("vb-um.mgmt.example.ch {")[1].split("\n}\n")[0]
+    kette = [
+        ("https://vb.mgmt.example.ch", start),
+        ("https://vb-nb.mgmt.example.ch", nb),
+        ("https://vb-doc.mgmt.example.ch", doc_),
+        ("https://vb-um.mgmt.example.ch", um),
+    ]
+    einstieg = "https://vb.mgmt.example.ch/oauth2/sign_out?rd=" + urllib.parse.quote(
+        "https://vb-nb.mgmt.example.ch/oauth2/abmelden/weiter", safe=""
+    )
+    for i, (adresse, teil) in enumerate(kette):
+        naechste = (kette[i + 1][0] + "/oauth2/abmelden/weiter" if i + 1 < len(kette)
+                    else "https://vb.mgmt.example.ch/abgemeldet")  # fmt: skip
+        schritt = f"{adresse}/oauth2/sign_out?rd={urllib.parse.quote(naechste, safe='')}"
+        assert f"redir /oauth2/abmelden {einstieg} 302" in teil, adresse
+        assert f"redir /oauth2/abmelden/weiter {schritt} 302" in teil, adresse
+        # vor dem Tor (auch ohne gültige Sitzung), nach der Sperre nach Absender
+        reihe = [teil.index(x) for x in ("front-kunden-sperre", "redir /oauth2/abmelden ",
+                                         "import front-tor")]  # fmt: skip
+        assert reihe == sorted(reihe), adresse
+        assert "%25" not in teil  # nie doppelt kodiert (WAF)
+    assert f"redir /logout/ {einstieg} 302" in nb
     seite = (front.gen / "www" / "vb" / "abgemeldet.html").read_text()
     assert "Abgemeldet" in seite and 'href="/"' in seite
-    start = site.split("vb.mgmt.example.ch {")[1].split("\n}\n")[0]
     assert start.index("front-kunden-sperre") < start.index("handle /abgemeldet {") < start.index(
         "import front-tor")  # fmt: skip
     assert "rewrite * /abgemeldet.html" in start
@@ -540,9 +563,13 @@ def test_tor_schuetzt_jede_adresse_und_sperrt_ohne_realm(front):
     assert "name: automato-front-tor\n    external: true" in compose
     assert "--whitelist-domain=login.example.ch" not in compose  # kein Umweg über Keycloak mehr
     portal = (front.gen / "www" / "_portal" / "index.html").read_text()
-    assert "/oauth2/sign_out?rd=https%3A%2F%2Fstart.mgmt.int.example.ch%2Fabgemeldet" in portal
+    assert 'href="/oauth2/abmelden"' in portal
+    abmelden = ("redir /oauth2/abmelden https://start.mgmt.int.example.ch/oauth2/sign_out?rd="
+                "https%3A%2F%2Fstart.mgmt.int.example.ch%2Fabgemeldet 302")  # fmt: skip
+    assert abmelden in intern
     assert (front.gen / "www" / "_portal" / "abgemeldet.html").is_file()
-    assert intern.index("handle /abgemeldet {") < intern.index("import front-tor tor-intern")
+    assert intern.index("handle /abgemeldet {") < intern.index(abmelden) < intern.index(
+        "import front-tor tor-intern")  # fmt: skip
     stand = front("tor")
     assert "Valid post logout redirect URIs:" in stand.stdout
     assert "https://vb.mgmt.example.ch/*" in stand.stdout

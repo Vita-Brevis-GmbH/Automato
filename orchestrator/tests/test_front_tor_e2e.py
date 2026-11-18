@@ -352,7 +352,7 @@ def test_ohne_anmeldung_zu_keycloak_und_zurueck(tor):
         )
         assert "code_challenge_method=S256" in r.headers["location"]
         r, weg = _folgen(c, "https://vb.mgmt.example.ch/")
-        assert r.status_code == 200 and "Eigene Firma" in r.text and "/oauth2/sign_out" in r.text
+        assert r.status_code == 200 and "Eigene Firma" in r.text and "/oauth2/abmelden" in r.text
         assert any(u.startswith("https://vb.mgmt.example.ch/oauth2/callback") for u in weg)
 
 
@@ -453,15 +453,66 @@ def test_abmelden_beendet_auch_keycloak(tor):
         vorher = len(tor.logouts)
         # 1.12.2: der Link der Startseite; das Tor beendet die Keycloak-Sitzung selbst und zeigt
         # die Seite „Abgemeldet“ ausserhalb des Tors (Fund aus dem Dev-Test: Browser blieb stehen)
-        link = r.text.split('href="/oauth2/sign_out')[1].split('"')[0]
-        r, weg = _folgen(c, "https://vb.mgmt.example.ch/oauth2/sign_out" + link)
+        link = r.text.split('href="')[-1].split('"')[0]
+        assert link == "/oauth2/abmelden"
+        r, weg = _folgen(c, "https://vb.mgmt.example.ch" + link)
         assert weg[-1] == "https://vb.mgmt.example.ch/abgemeldet"
         assert r.status_code == 200 and "Abgemeldet" in r.text
         assert len(tor.logouts) == vorher + 1 and tor.logouts[-1].get("id_token_hint")
         assert c.get("https://vb.mgmt.example.ch/").status_code == 302  # wieder abgemeldet
-        # NetBox: /logout/ landet auf derselben Seite
-        r = c.get("https://vb-nb.mgmt.example.ch/logout/")
-        assert r.status_code == 302 and "abgemeldet" in r.headers["location"]
+
+
+# Adressen von vb hinter dem Tor (Startseite, NetBox, Automato, Magister)
+VB = [f"https://vb{w}.mgmt.example.ch/" for w in ("", "-nb", "-doc", "-um")]
+
+
+@pytest.mark.parametrize(
+    "klick",
+    [
+        "https://vb.mgmt.example.ch/oauth2/abmelden",  # Startseite
+        "https://vb-nb.mgmt.example.ch/logout/",  # NetBox
+        "https://vb-doc.mgmt.example.ch/oauth2/abmelden",  # Automato (Oberfläche, auth.ts)
+        "https://vb-um.mgmt.example.ch/oauth2/abmelden",
+    ],
+)
+def test_ein_klick_meldet_auf_allen_adressen_ab(tor, klick):
+    """1.19.3 (Anwender 2026-11-18: „Das Logout bei den Kundenportalen geht noch nicht, ich komme
+    immer wieder rein, auch, wenn ich nicht neu einlogge“): das Cookie des Tors gilt je Adresse.
+    Bis 1.19.2 löschte „Abmelden“ nur das der Adresse, auf der geklickt wurde; NetBox, Automato und
+    Magister liessen bis zur nächsten Erneuerung (5 min) ohne Anmeldung herein. Jetzt: ein Klick,
+    gleich wo, und keine Adresse des Kunden kommt ohne Anmeldung durch."""
+    with _browser() as c:
+        for url in VB:  # überall angemeldet (je Adresse ein Cookie des Tors)
+            r, _ = _folgen(c, url)
+            assert r.status_code == 200, url
+        assert {k.domain for k in c.cookies.jar if k.name.startswith("_automato_tor")} == {
+            u.split("/")[2] for u in VB
+        }
+        vorher = len(tor.logouts)
+        r, weg = _folgen(c, klick)
+        assert weg[-1] == "https://vb.mgmt.example.ch/abgemeldet", weg
+        assert r.status_code == 200 and "Abgemeldet" in r.text
+        assert len(weg) <= 12, weg  # Browser folgen höchstens 20 Weiterleitungen
+        # die Sitzung in Keycloak beendet das Tor (Backend-Logout mit dem ID-Token)
+        assert len(tor.logouts) > vorher and tor.logouts[vorher].get("id_token_hint")
+        assert not [k for k in c.cookies.jar if k.name.startswith("_automato_tor")]
+        for url in VB:  # nirgends mehr ohne Anmeldung
+            r = c.get(url)
+            assert r.status_code == 302, (url, r.status_code, r.text[:200])
+            assert r.headers["location"].startswith(f"{tor.base}/realms/vb/"), url
+
+
+def test_abmelden_ohne_sitzung_und_nur_eigene_adressen(tor):
+    """Der Einstieg liegt vor dem Tor: ohne Sitzung (z. B. ein zweiter Klick) geht er trotzdem bis
+    „Abgemeldet“; ein Kunde meldet nur bei seinen eigenen Adressen ab (eigenes Ende)."""
+    with _browser() as c:
+        r = c.get("https://vb-doc.mgmt.example.ch/oauth2/abmelden")
+        assert r.status_code == 302  # die Oberfläche erkennt daran das Tor (auth.ts)
+        r, weg = _folgen(c, "https://vb-doc.mgmt.example.ch/oauth2/abmelden")
+        assert weg[-1] == "https://vb.mgmt.example.ch/abgemeldet" and "Abgemeldet" in r.text
+        r, weg = _folgen(c, "https://kunde-a.mgmt.example.ch/oauth2/abmelden")
+        assert weg[-1] == "https://kunde-a.mgmt.example.ch/abgemeldet", weg
+        assert all("kunde-a" in u for u in weg), weg
 
 
 def test_client_secret_versiegelt_aus_dem_cockpit(tor):

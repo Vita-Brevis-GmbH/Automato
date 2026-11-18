@@ -103,6 +103,13 @@ export async function handleRedirectCallback(): Promise<boolean> {
   if (!manager) return false;
   const params = new URLSearchParams(window.location.search);
   if (params.has("error") && params.has("state")) return handleErrorCallback(params);
+  if (params.has("state") && !params.has("code")) {
+    // zurück vom Abmelden über Keycloak (nur ?state=…, 1.19.3): Zustand aufräumen, Adresse bereinigen;
+    // danach meldet ensureSession neu an (Formular von Keycloak)
+    await manager.signoutRedirectCallback().catch(() => undefined);
+    window.history.replaceState({}, document.title, window.location.pathname + window.location.hash);
+    return false;
+  }
   if (!params.has("code")) return false;
   const user = await manager.signinRedirectCallback();
   session(RETRY, null);
@@ -250,9 +257,52 @@ async function redirect(): Promise<void> {
   }
 }
 
+// Abmelden (1.19.3, Befund des Anwenders 2026-11-18: „aus dem Automato heraus abmelden muss ich
+// mehrfach auf Abmelden klicken“). Bis 1.19.2 ging es nur über Keycloak (end_session) zurück auf die
+// Oberfläche: das Cookie des Anmelde-Tors blieb gültig, eine Anfrage während des Abmeldens konnte
+// still neu anmelden (die Weiterleitung zur Anmeldung gewann), und kam der Browser binnen einer
+// Minute nach der Anmeldung zurück, hielt der Schleifenschutz das für eine Schleife („Anmeldung
+// nicht möglich“ mit noch einem „Abmelden“, danach die Rückfrage von Keycloak ohne id_token_hint).
+// Jetzt: hinter dem Anmelde-Tor (ADR 0051) über dessen Abmelden – es beendet die Sitzung in Keycloak
+// und löscht seine Cookies auf allen Adressen des Kunden, danach „Abgemeldet“; sonst wie bisher
+// über Keycloak. In beiden Fällen ein Klick.
+const TOR_ABMELDEN = "/oauth2/abmelden";
+
+// Steht die Oberfläche hinter dem Anmelde-Tor? Dort leitet der Front-Proxy /oauth2/abmelden weiter
+// (vor dem Tor, auch ohne Sitzung); ohne Tor liefert die Oberfläche selbst die Seite (200).
+async function behindGate(): Promise<boolean> {
+  try {
+    const r = await fetch(TOR_ABMELDEN, { redirect: "manual", cache: "no-store", credentials: "same-origin" });
+    return r.type === "opaqueredirect" || (r.status >= 300 && r.status < 400);
+  } catch {
+    return false;
+  }
+}
+
 export async function logout(): Promise<void> {
-  if (!manager) return;
-  await manager.signoutRedirect();
+  if (!manager || leaving) return;
+  // ab hier keine stille Neuanmeldung mehr (laufende Anfragen warten, bis die Seite wechselt)
+  leaving = true;
+  manager.stopSilentRenew();
+  // die nächste Anmeldung ist eine neue - kein Schleifenschutz, kein zweiter Anlauf von früher
+  session(LOGIN_AT, null);
+  session(RETRY, null);
+  callbackError = null;
+  try {
+    if (await behindGate()) {
+      await manager.removeUser();
+      window.location.assign(TOR_ABMELDEN);
+      return;
+    }
+    await manager.signoutRedirect();
+  } catch (e) {
+    leaving = false; // Keycloak nicht erreichbar: Grund zeigen statt still zu warten
+    problemHandler?.(
+      `${L("Abmelden bei Keycloak nicht möglich", "Sign-out at Keycloak not possible")}: ${
+        e instanceof Error ? e.message : String(e)
+      }`,
+    );
+  }
 }
 
 // --- Anzeige: wer ist angemeldet (nur Darstellung, Prüfung macht der Orchestrator) ---

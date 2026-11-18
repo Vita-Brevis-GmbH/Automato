@@ -1254,6 +1254,9 @@ function detailText(body: unknown): string {
 // Im dev-Modus kein Token -> der Orchestrator nimmt den Standard-Admin an.
 async function authHeaders(): Promise<Record<string, string>> {
   if (!auth.isOidc()) return auth.devHeaders(); // dev-Modus: ggf. vorgeführter Kunden-Benutzer
+  // Seite wechselt zu Keycloak bzw. zum Abmelden (1.19.3): keine Anfrage ohne Token (sonst 401 und
+  // eine Fehlermeldung, kurz bevor die Seite geht)
+  if (auth.isLeaving()) return new Promise<Record<string, string>>(() => {});
   const token = await auth.accessToken();
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
