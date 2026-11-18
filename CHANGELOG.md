@@ -7,6 +7,23 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 1.19.2 – 2026-11-18
+
+Korrektur (Anwender 2026-11-18: „alle zusätzlich erstellten werden dann dem ersten zugewiesen … Es
+sollte gemäss mir einen neuen Mandanten angelegt und mit dem Account verknüpft werden, sowie die
+anderen Mandanten nicht sichtbar machen.“; ADR 0058 Nachtrag, Migration `0094_cockpit_mandant`).
+
+- **Eigener Mandant aus dem Cockpit:** `PUT /freigaben` mit `zuordnung.mandant_anlegen` (optional
+  `mandant_name`) legt für den Portal-Kunden einen eigenen Mandanten mit einem Kunden darin an und
+  ordnet beides zu – einmal je Kurzname, Name belegt → „<Name> (<Kurzname>)“, nie still übernommen;
+  Audit `tenant.created` mit Akteur `cockpit`. Benutzer des Kunden-Realms sehen nur diesen Mandanten.
+- **Umzug:** wechselt ein Kunde so aus einem gemeinsamen Mandanten, entfernt Automato den dort für
+  ihn angelegten Kunden nur ohne Daten; sonst bleibt er und wird gemeldet (Antwort `umzug`, Audit,
+  Ist-Stand). Quellsysteme bleiben im alten Mandanten. Den neuen Mandanten löscht Automato nie selbst.
+- **Inventar und Oberfläche:** `automato.funktionen`, `mandanten[].portal_kunde`,
+  `zuordnung.mandant_angelegt`; Kunden-Portal „für das Cockpit angelegt“ beim Mandanten. Gewählt
+  wird im Cockpit ab 0.8.2 („Neuer Mandant“).
+
 ## 1.19.1 – 2026-11-18
 
 Korrektur (Anwender 2026-11-18: „sync-user.sh in welchem Pfad muss ich es ausführen?“): Das
