@@ -288,14 +288,17 @@ def _current_version(settings: Settings) -> str | None:
 
 @router.get("", response_model=list[AgentOut])
 def list_agents(
-    _: Principal = Depends(require_admin),
+    principal: Principal = Depends(require_admin),
     session: Session = Depends(get_session, scope="function"),
     settings: Settings = Depends(get_settings),
 ):
+    """Collector-Agenten - Admin; ein Mandanten-Admin (ADR 0068) sieht nur die Agenten seines
+    Mandanten (Auswahl im Quellsystem), nie die fuer alle Mandanten."""
     current = _current_version(settings)
-    return [
-        _out(a, store.assigned_systems(session, a), current) for a in store.list_agents(session)
-    ]
+    agents = store.list_agents(session)
+    if principal.is_tenant_user:
+        agents = [a for a in agents if a.tenant_id in (principal.tenant_ids or ())]
+    return [_out(a, store.assigned_systems(session, a), current) for a in agents]
 
 
 @router.post("", response_model=AgentCreated, status_code=201)

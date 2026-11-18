@@ -19,6 +19,7 @@ Benutzer und Rollen - der Kunden-Admin bekommt 409 (`auth/verwaltung.py`), seine
 Zuordnungen wirken nicht mehr; der globale Admin bleibt Notzugang.
 """
 
+import re
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -38,10 +39,11 @@ from app.auth.deps import (
     tenant_scope,
 )
 from app.auth.principal import Principal
+from app.config import Settings, get_settings
 from app.db import get_session
 from app.i18n import L
 from app.models import CUSTOMER_USER_ROLES, Customer, CustomerUser
-from app.store import verwaltung
+from app.store import inventory, verwaltung
 
 router = APIRouter(tags=["customer-users"])
 
@@ -251,14 +253,42 @@ def remove(
     session.delete(a)
 
 
+#: nur eine https-Adresse ohne Pfad-Tricks (Host, optional Port und Pfad)
+_PLATTFORM_URL = re.compile(r"https://[A-Za-z0-9.-]{1,253}(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?")
+
+
+def plattform_url(principal: Principal, settings: Settings) -> str:
+    """Link „Ganze Plattform“ (ADR 0068): nur fuer Betreiber aus einem Kunden-Realm, nur in der
+    gemeinsamen Instanz (nicht in einer eigenen, ADR 0061) und nur mit der internen Adresse der
+    Oberflaeche aus dem Front-Proxy (`topologie.json`, `https://<AUTOMATO_UI_HOST>`) - nur
+    Anzeige, die Rechte prueft das Ziel. Leer = kein Link."""
+    if not principal.betreiber or principal.realm_customer is None or settings.instanz_kunde:
+        return ""
+    url = str(inventory.installation(settings).get("oberflaeche") or "")
+    return url if _PLATTFORM_URL.fullmatch(url) else ""
+
+
+def _mandant(principal: Principal) -> dict | None:
+    """Mandanten-Benutzer (ADR 0068): Rolle und Rechte im eigenen Mandanten."""
+    if not principal.is_tenant_user:
+        return None
+    return {
+        "mandant": principal.tenant_ids[0] if principal.tenant_ids else None,
+        "rolle": principal.tenant_role,
+        "rechte": sorted(principal.tenant_capabilities),
+    }
+
+
 @router.get("/auth/me")
 def me(
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
+    settings: Settings = Depends(get_settings),
 ) -> dict:
     """Wer bin ich laut Orchestrator: Rollen, Mandanten, Kunden (auch aus der Zuordnung in
     Automato) - die Oberflaeche richtet sich danach. Seit den feineren Rollen dazu die Kunden-Rolle
-    je Kunde und die Capabilities (Betreuer: zur Anzeige aus ihren Rollen)."""
+    je Kunde und die Capabilities (Betreuer: zur Anzeige aus ihren Rollen). Seit ADR 0068 die
+    Mandanten-Rolle (`mandant`), ob Betreiber und der Link „Ganze Plattform“."""
     customers = []
     if principal.customer_ids:
         customers = [
@@ -269,11 +299,13 @@ def me(
                 .order_by(Customer.name)
             )
         ]
-    capabilities = (
-        principal.capabilities
-        if principal.is_customer
-        else caps.staff_capabilities(principal.roles)
-    )
+    if principal.is_customer:
+        capabilities = principal.capabilities
+    elif principal.is_tenant_user:  # zur Anzeige: Doku-Rechte der Stufe und die des Mandanten
+        capabilities = (caps.TENANT_DOC_CAPABILITIES.get(principal.tenant_role or "", frozenset())
+                        | principal.tenant_capabilities)  # fmt: skip
+    else:
+        capabilities = caps.staff_capabilities(principal.roles)
     return {
         "subject": principal.subject,
         "roles": sorted(principal.roles),
@@ -314,4 +346,17 @@ def me(
         else None,
         # 1.14.0: Kunden, deren Benutzer und Rollen das Cockpit fuehrt (hier kein Zuordnen)
         "cockpit_kunden": list(principal.cockpit_customers),
+        # ADR 0068: Mandanten-Benutzer (Operator bzw. Admin im eigenen Mandanten), sonst null
+        "mandant": _mandant(principal),
+        # ADR 0068: Benutzer eines Kunden-Realms aus dem Realm der Betreiber (nur Anzeige) und
+        # der Link „Ganze Plattform“ (leer = keiner)
+        "betreiber": principal.betreiber,
+        "plattform_url": plattform_url(principal, settings),
+        # Kunde des Realms (Kurzname, Name) - Anzeige „Kunde · …“
+        "realm_kunde": {
+            "kurzname": principal.realm_customer[0],
+            "name": principal.realm_customer[1],
+        }
+        if principal.realm_customer
+        else None,
     }

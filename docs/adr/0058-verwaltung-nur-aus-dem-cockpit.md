@@ -205,3 +205,16 @@ Folgen: das Token des Cockpits kann jetzt auch Mandanten anlegen (nie ändern, u
 löschen) – vertrauenswürdig wie ein Admin des Kunden-Portals (R26). Die Reihenfolge der Updates
 bleibt frei: ein älteres Cockpit sendet weiter `mandant`, ein älteres Automato meldet keine
 `funktionen`, dann bietet das Cockpit „Neuer Mandant“ nicht an.
+
+## Nachtrag (2026-11-18): Rollen im eigenen Mandanten, Betreiber auf der ganzen Plattform
+
+- `benutzer` und die Standard-Rolle kennen die neue Rolle `customer_operator` (`automato.rollen`).
+  Im eigenen Mandanten (Nachtrag 1.19.2) sehen Operator und Admin alles des Mandanten; der Admin
+  passt alles im Mandanten an, der Operator stösst nur das Einlesen an (ADR 0068). Benutzer, Rollen
+  und Kunden bleiben beim Cockpit – auch der Admin im eigenen Mandanten vergibt keine Rechte und
+  legt keine Kunden an.
+- Neuer Weg zu Rechten (diese ADR verlangt eine ADR): Betreiber werden in der **gemeinsamen
+  Instanz** globaler Admin über den Identity Provider `betrieb` im Realm von Automato, dessen
+  Mapper das Cockpit setzt (Cockpit ADR 0017 Nachtrag) – Automato nimmt die Rolle wie jede Rolle
+  des eigenen Realms (ADR 0007). Unter `<kunde>-doc` bleiben sie Benutzer des Kunden-Realms mit
+  dem Link „Ganze Plattform“ (nur Anzeige). Einzelheiten und Risiko: ADR 0068, R32.

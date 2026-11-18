@@ -130,6 +130,10 @@ def realm_principal(claims: dict, scope: RealmScope, settings) -> Principal:
     Seit 1.14.0 (ADR 0058) bei Kunden aus dem Cockpit: die Rolle aus dem Token zaehlt nicht
     (Standard-Rolle des Portals); nennt das Cockpit Benutzer (`benutzer`), haben nur diese
     Rechte, mit ihrer Rolle (nach `preferred_username`) - alle anderen keine, mit eigener Meldung.
+
+    ADR 0068: im eigenen Mandanten (`RealmScope.own_tenant`) sind `customer_operator` und
+    `customer_admin` Mandanten-Benutzer (`Principal.tenant_role`), alle anderen Rollen bleiben
+    Kunden-Benutzer mit Kunden-Filter.
     """
     subject = claims.get("sub") or claims.get("preferred_username") or "unknown"
     if scope.users is not None:
@@ -158,6 +162,23 @@ def realm_principal(claims: dict, scope: RealmScope, settings) -> Principal:
         role = customer_role_of(roles, _dig(claims, settings.oidc_customer_role_claim))
         role = role or scope.default_role
     customers = scope.customer_ids if scope.tenant_id is not None else ()
+    betreiber = is_betreiber(claims)
+    if (scope.own_tenant and scope.from_cockpit and scope.assigned and scope.tenant_id is not None
+            and caps.normalize(role) in caps.TENANT_ROLE_CAPABILITIES):  # fmt: skip
+        # ADR 0068: Operator bzw. Admin im eigenen Mandanten - Betreuer-Sicht ohne Kunden-Filter,
+        # nur dieser Mandant, nie Admin; Endpunkte nur nach `auth/tenant_routes.py`. Nur mit der
+        # Rolle aus dem Cockpit (Kunde aus dem Cockpit), nie aus dem Token des Kunden-Realms
+        return Principal(
+            subject=f"{scope.realm}:{subject}",
+            roles=frozenset({"viewer"}),
+            tenant_ids=(scope.tenant_id,),
+            customer_ids=None,
+            logins=(),
+            customer_source=f"realm:{scope.realm}",
+            realm_customer=(scope.short_name, scope.name or scope.short_name),
+            tenant_role=caps.normalize(role),
+            betreiber=betreiber,
+        )
     return Principal(
         subject=f"{scope.realm}:{subject}",
         roles=frozenset({"viewer"}),
@@ -167,7 +188,20 @@ def realm_principal(claims: dict, scope: RealmScope, settings) -> Principal:
         customer_source=f"realm:{scope.realm}",
         customer_roles=tuple((c, role) for c in customers),
         realm_customer=(scope.short_name, scope.name or scope.short_name),
+        betreiber=betreiber,
     )
+
+
+#: Endung der Betreiber in den Kunden-Realms (Identity Provider `betrieb`, Cockpit ADR 0017)
+BETREIBER_ENDUNG = "@betrieb"
+
+
+def is_betreiber(claims: dict) -> bool:
+    """Betreiber im Kunden-Realm (`<name>@betrieb`) - nur fuer die Anzeige des Links „Ganze
+    Plattform“ (ADR 0068), nie fuer Rechte: ein Kunde mit eigenem Verzeichnis koennte den Namen
+    anlegen; die Rechte prueft das Ziel (Realm von Automato)."""
+    name = str(claims.get("preferred_username") or "").strip().lower()
+    return len(name) > len(BETREIBER_ENDUNG) and name.endswith(BETREIBER_ENDUNG)
 
 
 def realm_issuer(settings, realm: str) -> str | None:

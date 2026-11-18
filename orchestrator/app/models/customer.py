@@ -154,7 +154,7 @@ class CustomerUser(Base):
         ForeignKey("customer.id", ondelete="CASCADE"), index=True
     )
     login: Mapped[str] = mapped_column(String(200), index=True)
-    role: Mapped[str] = mapped_column(String(16), default="viewer")  # siehe CUSTOMER_USER_ROLES
+    role: Mapped[str] = mapped_column(String(32), default="viewer")  # CUSTOMER_USER_ROLES (0095)
     origin: Mapped[str] = mapped_column(
         String(16), nullable=False, default="staff", server_default="staff"
     )  # siehe CUSTOMER_USER_ORIGINS

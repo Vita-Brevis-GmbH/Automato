@@ -43,16 +43,36 @@ class Principal:
     # Benutzer eines Kunden-Realms, dem das Cockpit keine Rolle gibt (1.14.0, `benutzer`): keine
     # Rechte, eine klare Meldung (wie ohne Zuordnung)
     realm_role_missing: bool = False
+    # Mandanten-Rolle (ADR 0068): Benutzer eines Kunden-Realms mit `customer_operator` bzw.
+    # `customer_admin` im eigenen Mandanten (`cockpit_tenant`) - Betreuer-Sicht ohne Kunden-Filter,
+    # nur `tenant_ids` (genau dieser Mandant), nie Admin; Endpunkte nur nach der Positivliste
+    # `auth/tenant_routes.py` (`deps._tenant_gate`)
+    tenant_role: str | None = None
+    # Benutzer eines Kunden-Realms, dessen Name auf `@betrieb` endet (ADR 0068): nur fuer die
+    # Anzeige des Links „Ganze Plattform“ - gibt keine Rechte
+    betreiber: bool = False
 
     @property
     def is_admin(self) -> bool:
-        return "admin" in self.roles and self.customer_ids is None
+        return "admin" in self.roles and self.customer_ids is None and self.tenant_role is None
+
+    @property
+    def is_tenant_user(self) -> bool:
+        """Mandanten-Benutzer (ADR 0068): Kunden-Realm im eigenen Mandanten, Operator bzw. Admin."""
+        return self.tenant_role is not None
+
+    @property
+    def tenant_capabilities(self) -> frozenset[str]:
+        """Rechte im eigenen Mandanten (leer = kein Mandanten-Benutzer)."""
+        return caps.tenant_capabilities(self.tenant_role) if self.tenant_ids else frozenset()
 
     @property
     def assignment_missing(self) -> bool:
         """Benutzer eines Kunden-Realms, dessen Kunde in Automato noch keinen Mandanten bzw.
         keine Kunden hat (1.13.0): keine Rechte (fail-closed), aber eine klare Meldung. Ohne Rolle
         aus dem Cockpit (1.14.0) gilt stattdessen `realm_role_missing`."""
+        if self.tenant_role is not None:  # Mandanten-Benutzer: zugeordnet, wenn der Mandant steht
+            return not self.tenant_ids
         return (self.realm_customer is not None and not self.realm_role_missing
                 and not (self.tenant_ids and self.customer_ids))  # fmt: skip
 

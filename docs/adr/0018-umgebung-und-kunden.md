@@ -320,3 +320,11 @@ Anmeldung (Keycloak) / Zuordnung (Automato) aus Schritt 4 ist die Grundlage.
   Zuordnung in Automato.
 - dev-Modus: `X-Dev-Customer-Role` bzw. `localStorage automato_dev_customer` =
   `<Mandant>:<Kunden>:<Rolle>`; mit `X-Dev-User` die Rollen aus der Zuordnung.
+
+## Nachtrag (2026-11-18): Rolle `customer_operator`, Mandanten-Benutzer
+
+Die Kunden-Rollen bekommen `customer_operator` zwischen `editor` und `customer_admin` (Rang: wer
+mehr sieht). Im gemeinsamen Mandanten liest er nur (`doc.read`, bewusst ohne Triage und Pflege der
+Applikationen); im eigenen Mandanten eines Portal-Kunden aus dem Cockpit sind Operator und Admin
+Mandanten-Benutzer mit eigener Positivliste (`auth/tenant_routes.py`, ADR 0068). Die Freigabeliste
+`auth/customer_routes.py` und der Kunden-Filter gelten für alle anderen unverändert.

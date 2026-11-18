@@ -2703,6 +2703,42 @@ Client-Zertifikat und die passenden Zeilen der `agent.env`.
     NetBox-Hosts liefert den Zugang dann für den neuen. Automato löscht einen so angelegten
     Mandanten nie selbst, auch nicht beim Abbau (der nimmt nur den Kunden darin): leer gewordene
     Mandanten unter Administration → Mandanten löschen.
+    **Rechte im eigenen Mandanten** (ADR 0068): hier sehen und dürfen die Benutzer des Kunden-Realms
+    je Rolle mehr – nur mit der Rolle aus dem Cockpit (Standard-Rolle bzw. `benutzer`):
+
+    | Rolle | Anzeige oben rechts | sieht | darf |
+    |---|---|---|---|
+    | `viewer` | Kunde | Doku und L4–7 seines Kunden (wie bisher) | lesen |
+    | `triage` | Kunde · Triage | wie viewer | + Findings quittieren |
+    | `editor` | Kunde · Editor | wie viewer | + Applikationen pflegen |
+    | `customer_operator` | Kunde · Operator | **alles des Mandanten**: L1–L7, Weg-Suche, Wege vergleichen, Abgleich, Läufe, Quellsysteme (ohne Zugangsdaten), Zeitplan, Standorte | **nur** „Jetzt einlesen“, „Alle einlesen“, „Regeln neu einlesen“ |
+    | `customer_admin` | Kunde · Admin | alles des Mandanten | alles im Mandanten: Applikationen, Findings, Prüfungen, Module, Zonen, Wege, Standorte, Quellsysteme (siehe unten), Läufe abbrechen, NetBox-Sync der NetBox dieses Mandanten |
+
+    Nie für Benutzer eines Kunden-Realms: System, Kunden-Portal, Mandanten anlegen/ändern/löschen,
+    andere Mandanten, Benutzer & Rollen, Kunden, Namensprofile, Collector-Agenten verwalten (der
+    Server antwortet `403` „not available in the own tenant“). **Quellsysteme:** der Admin legt neue
+    nur mit einem **Collector-Agenten seines Mandanten** an (Agent unter Administration →
+    Collector-Agenten mit diesem Mandanten anlegen – das macht der Betreiber) und ändert Adresse,
+    Agent, TLS-Prüfung, Switch-Adressen und Zugang nur an solchen; Name, Aktiv, Standort, Zeitplan,
+    Verbund und Zugangsdaten an allen Systemen seines Mandanten. NetBox als Quellsystem richtet der
+    Betreiber ein. In einem gemeinsamen Mandanten (von Hand gewählt) bleibt alles wie bisher
+    (Kunden-Sicht; `customer_operator` liest dort nur). Lesezugriffe dieser Benutzer stehen immer
+    im Audit (`read.*` mit `mandant_rolle`). Nach dem Update `alembic upgrade head` (Migration
+    `0095_rolle_operator`). Vorführen im dev-Modus:
+    `localStorage.setItem("automato_dev_customer", "1::customer_admin:eigen")`.
+  - **Betreiber** (`<name>@betrieb`, Anmelden als Betreiber über die Startseite des Kunden) haben
+    unter `<kunde>-doc` die Rolle, die das Cockpit vergibt (Vorgabe Admin), und sehen oben rechts
+    „Betreiber“ und den Link **„Ganze Plattform“** zur internen Oberfläche (`https://<AUTOMATO_UI_HOST>`
+    aus dem Front-Proxy; nicht bei einer eigenen Instanz). Dort melden sie sich im Realm von
+    Automato an – als **Admin**, wenn das Cockpit den Identity Provider `betrieb` auch dort
+    eingerichtet hat (Cockpit → Betreiber → „Rolle in Automato (ganze Plattform)“, Vorgabe Admin).
+    Einmal von Hand, damit das Cockpit das darf: in Keycloak im Realm von Automato einen Client
+    `cockpit` (Service-Account, vertraulich) mit den Rollen `view-clients`, `manage-clients`,
+    `view-users` und `manage-identity-providers` aus `realm-management` anlegen bzw. ergänzen und
+    den Realm im Cockpit unter Kunden → Keycloak mit diesem Zugang eintragen (Cockpit-Runbook
+    `kunde-einrichten.md`, Abschnitt „Realm von Automato“). Wird die Rolle im Cockpit
+    zurückgenommen, behalten bestehende Konten `<name>@betrieb` sie, bis sie in Keycloak entfernt
+    wird (Users → `<name>@betrieb` → Role mapping).
   - **Benutzer und Rollen** schicken: dann haben nur diese Benutzer des Realms Rechte (Liste im
     Kunden-Portal unter „Ansehen“, Spalte Ausschnitt „N Benutzer“); alle anderen sehen nach der
     Anmeldung „Für Sie ist in Automato keine Rolle vergeben – das macht der Betreiber im Cockpit“.

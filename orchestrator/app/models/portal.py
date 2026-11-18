@@ -67,7 +67,7 @@ class PortalCustomer(Base):
     )
     customer_ids: Mapped[list] = mapped_column(JSON, default=list)
     # Kunden-Rolle fuer Benutzer des Realms ohne eigene Rolle im Token (viewer, triage, …)
-    default_role: Mapped[str] = mapped_column(String(16), default="viewer")
+    default_role: Mapped[str] = mapped_column(String(32), default="viewer")  # 0095: 32 Zeichen
     access: Mapped[str] = mapped_column(String(16), default="ueberall", server_default="ueberall")
     access_nets: Mapped[list | None] = mapped_column(JSON, nullable=True, default=list)
     position: Mapped[int] = mapped_column(Integer, default=0)
