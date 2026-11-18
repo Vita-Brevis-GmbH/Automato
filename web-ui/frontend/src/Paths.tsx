@@ -153,6 +153,12 @@ const END: Record<TracePath["end"]["kind"], [string, string]> = {
   no_route: ["warn", L("keine Route", "no route")],
   loop: ["crit", L("Schleife", "Loop")],
   max_hops: ["warn", L("abgebrochen", "aborted")],
+  // ADR 0070: das Gerät verwirft (Null-Route, Reverse Path, IPsec ohne Selektor bzw. Tunnel down)
+  dropped: ["crit", L("verworfen", "dropped")],
+  // nicht geprüft (privates Ziel über die Default-Route, Reverse Path ohne Einstellungen) – gezählt
+  unchecked: ["warn", L("nicht geprüft", "not checked")],
+  // der Load Balancer beantwortet den Fluss selbst (Umleitung HTTP → HTTPS)
+  redirect: ["ok", L("Umleitung am Load Balancer", "Redirect at the load balancer")],
 };
 
 // Firmengrenze (ADR 0032): hier verlässt der Weg die Firma – Grund und AS am Chip
@@ -1558,7 +1564,7 @@ function TraceCard({
   // Weg endet an einem Next-Hop ohne gelesenes Gerät: als Anbindung erfassen (Internet, MPLS, …)
   // 1.19.0: Weg endet an einer VPN-Gegenstelle ohne gelesenes Gerät – den Tunnel als Anbindung (Partner) erfassen
   const vpnPeer = path.end.kind === "vpn" ? out?.vpn?.remote_gw : undefined;
-  const capturable = onCapture && ((out?.next_hop && (path.end.kind === "unknown" || path.end.kind === "external")) || vpnPeer);
+  const capturable = onCapture && ((out?.next_hop && (path.end.kind === "unknown" || path.end.kind === "external" || path.end.kind === "unchecked")) || vpnPeer);
   // je Hop „mehr“ (ADR 0019 Ergänzung): aufgeklappte Hops
   const [more, setMore] = useState<Set<number>>(() => new Set());
   const toggle = (i: number) =>

@@ -2874,7 +2874,11 @@ export interface TracePath {
   zones?: TraceZoneStep[]; // Zonen auf dem Weg (0.57.0)
   l2_src?: L2Segment; // vom Anschluss der Quelle zum ersten Hop (0.64.0)
   end: {
-    kind: "connected" | "fabric" | "exit" | "external" | "vpn" | "unknown" | "no_route" | "loop" | "max_hops";
+    // ADR 0070: dropped = das Gerät verwirft, unchecked = nicht geprüft (gezählt), redirect = der
+    // Load Balancer antwortet selbst (Umleitung)
+    kind:
+      | "connected" | "fabric" | "exit" | "external" | "vpn" | "unknown" | "no_route" | "loop" | "max_hops"
+      | "dropped" | "unchecked" | "redirect";
     text: string;
     also?: string[]; // Ende über die anderen Firewalls eines Verbunds (0.29.0)
   };
@@ -2883,6 +2887,8 @@ export interface TraceResult {
   start: (RoutingNode & { via: string })[];
   paths: TracePath[];
   notes: string[];
+  // ADR 0070: was am Weg nicht sicher entschieden ist, je Art gezählt (Text dazu in `notes`)
+  uncertain?: Record<string, number>;
   slack?: number; // Backup-Wege mit höchstens so vielen Hops mehr als der kürzeste aktive
   service?: string | null; // geprüfter Dienst (z. B. tcp/443)
   service_name?: string; // angegebenes Service-Objekt bzw. ACI-Filter (FT_https)
