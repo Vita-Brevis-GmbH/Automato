@@ -611,6 +611,13 @@ Anwender: „Es funktioniert bisher alles wie gewünscht … Bitte den Stand fer
 | 19 | Juniper MX am echten Gerät testen: Routing-Tabelle und BGP-Nachbarn (aus Version 1, Anwender 2026-11-11: keine Hardware zum Testen) – **→ Datacenter-Kopie** (wartet auf Hardware) |
 | 20 | **Wege erkennen verbessern** (Anwender 2026-11-17: „mit Fable 5.2 das Wege erkennen verbessern und weiterbringen, … noch ein Schritt bevor wir V2 abschliessen“) – **erledigt in 1.22.0** (Weg-Suche und Regel-Zuordnung ersetzt, ADR 0070/0071; offen: gleiche Adresse in mehreren VRFs, SD-WAN-Zustand, Pools über HTTP-Policies) |
 
+*Vor Version 3 (Anwender 2026-11-19):* erst **Prod auf den aktuellen Stand** (Automato, NetBox-Host,
+Magister-Instanz der Schule hinter dem Front-Proxy), dann **Umzug auf ein internes Git (Forgejo)**:
+Repos samt Verlauf, CI mit eigenem Runner (Forgejo Actions), Registry für die Images, Update-Kette
+des Cockpits mit einem Adapter „Git-Quelle“ statt der GitHub-API (eigene ADR), Deploy-Keys der Hosts
+auf Forgejo; entwickelt wird danach mit Claude Code auf einer internen VM. Erst danach Version 3.
+Die Datacenter-Kopie (`automato-dc`, Nr. 16) ruht vorerst im **Backlog** (nicht mehr forciert).
+
 *Version 3 – CMDB (3.x, Anwender 2026-11-11):* Lizenz- und Gerätemanagement als **CMDB, ein
 eigenes Modul von Automato**. Es ist unabhängig von den anderen Modulen und nutzt dieselben
 Datenquellen (aus Version 2 Nr. 14; als Werkzeug `-cmdb` auf der Startseite je Kunde).
