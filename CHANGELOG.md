@@ -7,6 +7,89 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 1.22.0 – 2026-11-19
+
+Version 2 Nr. 20 „Wege erkennen verbessern“. Anwender (2026-11-18): „Es soll absolut der Wahrheit
+entsprechen, wie das Netzwerk in Echt funktioniert.“ – „Direkt korrigieren oder noch besser, wenn es
+schneller geht, einen neuen Algorithmus schreiben“ – „Ich bin für ersetzen, da das alte Verhalten
+nicht immer richtig lag“. Ablauf: zwei unabhängige Prüfungen gegen Herstellerdoku und die drei
+Stichproben des Anwenders (als anonymisierte Muster), Neubau in zwei Teilen, unabhängige
+Gegenprüfung, Korrekturrunde. ADR 0070 und 0071 (neu), Nachträge zu ADR 0048 und 0063. Migrationen
+`0097_kontext_einstellungen`, `0098_epg_durchsetzung`.
+
+### Weg-Suche nach echtem Geräteverhalten (ADR 0070)
+
+- **Ersetzt (kein Umschalter):** je Hop entscheidet ein Forwarding-Modell des Geräts
+  (`store/forwarding.py`: längster Präfix, Distanz, Priorität, ECMP, rekursiver Next-Hop) und die
+  Stufen des Herstellers (`store/path_stages.py`).
+- **Start nur, wo Verkehr ankommt:** kein Start mehr auf dem Gerät einer passenden Regel (Ursache
+  der Stichproben 1 und 2); Start an der angeschlossenen Quelle, nach dem Rückweg, am Rand oder in
+  der ACI-VRF der Quell-EPG; eine Quelle als Netz, das grösser ist als das angeschlossene, beginnt
+  am angeschlossenen Teil (Rest gezählt); Gegenstelle any → öffentliche VIP beginnt an der Firewall
+  der VIP, nie an einem Rand, an dem der Verkehr nur wieder hinausginge; sonst „Start unbekannt“.
+- **Verworfen statt erreicht:** Null-/Blackhole-Routen, Reverse Path der FortiGate (keine Route zur
+  Quelle über den Eingang; „feasible“ auch über Routen gleicher Distanz mit höherer Priorität, IPv6
+  nach `asymroute6`), IPsec-Tunnel down bzw. ohne Phase 2 für Quelle und Ziel, abgeschalteter Virtual
+  Service am Load Balancer.
+- **Nicht geprüft statt behauptet:** privates Ziel nur über die Default-Route an ein nicht gelesenes
+  Gerät, Route nur mit Interface (auf Ethernet, auch /30), Reverse Path ohne gelesene Einstellungen.
+- **FortiGate:** VIP mit Port-Weiterleitung nur für ihren Dienst, nur in einer eingeschalteten
+  Policy bzw. mit Central NAT, nur mit ihrem `src-filter`/`srcintf-filter`; **Central NAT erkannt**
+  (je VDOM) und Central SNAT aus der Tabelle (erste passende Zeile; nicht lesbar = „NAT nicht
+  geprüft“); Policy-Routen in der Reihenfolge der Liste mit Protokoll, Port und `deny`; SD-WAN-Regeln
+  nur mit Route über ein Mitglied.
+- **Router:** HSRP/VRRP auf IOS/IOS-XE (den Verkehr nimmt der aktive Router).
+- **Load Balancer:** alle Virtual Services je VIP (SNI), Weg zu jedem Server des Pools (Server mit
+  eigener EPG bzw. eigenem Urteil als eigener Weg, Ursache Stichprobe 3), Pool Group nur mit dem Pool
+  höchster Priorität (übrige als Backup-Weg), Umleitung HTTP → HTTPS endet am Load Balancer.
+- **Rückweg:** mit ECMP symmetrisch nur, wenn alle Rückwege es sind.
+- **Gezählt statt still** (ADR 0048 Nachtrag): Kürzung bei 16 Wegen, Rückweg nur für 8, mögliche
+  Policy-Routen, SD-WAN-Mitglied, NAT, Selektoren, Default-Route, Route nur mit Interface, Start,
+  Teilstart – als Hinweis am Weg und im Befund „Applikation: unvollständig geprüft“. Neue Enden
+  „verworfen“, „nicht geprüft“, „Umleitung am Load Balancer“.
+
+### Regel-Zuordnung nach echtem Treffer (ADR 0071)
+
+- **Ersetzt:** die Applikations-Doku zeigt eine Firewall-Regel bei einem System, wenn sie dessen
+  Verkehr trifft – nicht mehr, wenn sie seine Adresse nur nennt. Gilt für jedes Regelwerk; die
+  Profile entscheiden weiter nur, was gezeigt wird (Bedingungen und Reihenfolge unverändert).
+- **Nicht auf dem Weg:** Regeln von Firewalls abseits des Wegs stehen nicht mehr in der Doku, auch
+  wenn sie das System nennen (gezählt; Befund „Regel nie gebraucht“ bleibt). Endet der Weg an einer
+  nicht gelesenen Grenze (z. B. MPLS-Übergang), zählt sein belegter Teil.
+- **Überdeckt:** eine Regel, deren Verkehr frühere Policies schon entscheiden, ist kein Zugriff mehr
+  (nur Treffer, „überdeckt durch Policy X“); an ihrer Stelle steht die real treffende breite Policy
+  („breit“). Neuer Befund **„Regel überdeckt“** (`rule_shadowed`).
+- **Weg nicht geprüft:** ist der Weg nicht bekannt, bleibt die Regel – markiert und gezählt.
+- **Abgleich je Hop wie das Gerät:** Negation als Komplement, FQDN über das IPAM, VIP-Policy nur für
+  umgeschriebenen Verkehr, Adressobjekte nach dem DNAT, `all` zur VIP ohne Central NAT nur
+  „möglich“, `internet-service-negate`, `action ipsec`, Gruppen ganz aufgelöst; Verkehr ohne Policy
+  bei `intrazone allow` der Zone und `allow-traffic-redirect` am selben Interface (nicht gelesen =
+  „nicht geprüft“, gezählt).
+- **ACI:** Vorrang nach der Priorität der Zoning-Rules (EPG–EPG schlägt eine vzAny-Sperre), Filter
+  mit `deny`, Filter ohne EtherType (`unspecified/any`) getrennt von EtherType `ip`, Preferred Group
+  sperrt Nichtmitglieder, VRF „unenforced“, Intra-EPG-Isolation.
+- **Schneller:** Zuordnung im Speicher je Datenstand statt Abfrage je Adresse (4000 Regeln: 18,5 ms
+  → 2,2 ms je Adresse).
+
+### Nach dem Update
+
+- **Neu einlesen:** FortiGates, APIC, Switches & Router und NSX ALB – erst dann wirken Reverse Path,
+  Central NAT, Priorität, HSRP/VRRP und die Umleitung am Load Balancer; bis dahin enden betroffene
+  Wege als „nicht geprüft“.
+- **Neue Leserechte:** FortiGate `system/settings` und `firewall/central-snat-map`; Switches & Router
+  `show standby brief` und `show vrrp brief`.
+- **Sichtbar anders:** mehr Wege „verworfen“ bzw. „nicht geprüft“, Verbindungen ohne lesbaren Start
+  mit „Start unbekannt“, mehr Applikationen „unvollständig geprüft“, Regeln mit „Weg nicht geprüft“
+  dort, wo das Routing nicht gelesen ist. Jeder Stand der Doku rechnet einmal neu.
+- **Laufzeit** (gemessen): Weg je Verbindung unverändert (rund 2,9 ms mit Regeln); Doku für 800
+  Applikationen hochgerechnet 4–10 min in einem Prozess, Verbindungen 0,2–1,5 min.
+- **Grenzen** (gezählt bzw. in ADR 0070/0071): gleiche Adresse in mehreren VRFs, SD-WAN-Zustand,
+  Pools über HTTP-Policies, Proxy-ARP, Punkt-zu-Punkt-Interfaces mit freiem Namen, Dienst-Filter
+  einer VIP. Belege der Herstellerdoku teils nur über Suchtreffer (Seiten von Fortinet/Cisco in der
+  Umgebung gesperrt).
+- Tests: `test_fable_wege.py`, `test_fable_regeln.py`, `test_fable_pruefung.py`,
+  `test_fable_korrektur_regeln.py`, `test_rule_match.py` (Orchestrator und Collectors).
+
 ## 1.21.0 – 2026-11-18
 
 Rückmeldung des Anwenders (2026-11-18): „Ich habe eine Funktion bei Automato v1.0.1 einbauen lassen, kannst du mir diese hier auch einbringen und mergen lassen? Weiter wäre es noch super, wenn ich eine Auswahl treffen könnte, welche Applikationen ich herunterladen möchte. Zudem geht es sehr lange, bis der Export steht, könnte man dies als Hintergrunddienst laufen lassen?“ Migration `0096_export_auftrag`, ADR 0069.

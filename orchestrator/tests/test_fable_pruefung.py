@@ -18,7 +18,6 @@ Beispiele anonymisiert: RFC 1918, Dokumentationsnetze (192.0.2.0/24, 198.51.100.
 
 import copy
 
-import pytest
 import test_aci_check as ac
 import test_aci_relevance as ar
 import test_fable_regeln as fr
