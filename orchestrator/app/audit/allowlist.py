@@ -10,6 +10,27 @@ Neue Aktionen ohne Eintrag hier verlieren ihr `detail` (nur `_dropped` bleibt) -
 bewusst: lieber ein lückenhaftes als ein undichtes Log.
 """
 
+# Kunden-Portal (1.11.0): geaenderte Felder ohne die Kacheln (frei eingegebene Adressen); bei
+# Freigaben aus dem Cockpit (Akteur `cockpit`) die Herkunft in `quelle`; seit 1.13.0 wer Mandant,
+# Kunden und Rolle setzt (`scope_source`) sowie Kacheln aus dem Cockpit nur als Anzahl (`kacheln`)
+# und wer sie setzt (`links_source`); seit 1.14.0 (ADR 0058) die Benutzer aus dem Cockpit als
+# Anzahl und was sich aendert (je Benutzername und Rolle), ob gesperrt (ADR 0059); seit 1.16.0
+# (ADR 0061) die eigene Automato-Instanz (Name)
+_PORTAL = frozenset(
+    {"short_name", "name", "doc", "nb", "um", "cmdb", "realm", "tenant_id", "customer_ids",
+     "default_role", "access", "access_nets", "quelle", "uebernommen", "scope_source", "kacheln",
+     "links_source", "benutzer", "benutzer_neu", "benutzer_entfernt", "benutzer_rolle",
+     "gesperrt", "automato_instanz"}
+)  # fmt: skip
+# Abbau aus dem Cockpit (1.14.0, ADR 0059): gewuenschte Teile, Realm, Stand und Grund - nur
+# Namen und Codes
+_ABBAU = frozenset({"netbox", "automato_kunde", "tor", "realm", "grund", "teil", "stand"})
+
+# Reservierungen (1.19.0, ADR 0066): nur Nummern, Standort, Gruppe und Zweck
+_RESERVATION = frozenset(
+    {"tenant_id", "reservation_id", "kind", "low", "high", "site_id", "vlan_group", "purpose"}
+)
+
 # action -> erlaubte detail-Keys. Nur unkritische, benannte Felder.
 ALLOWLIST: dict[str, frozenset[str]] = {
     "collector_run.queued": frozenset(
@@ -59,7 +80,10 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "finding.created": frozenset(
         {"finding_id", "tenant_id", "type", "severity", "source_system_id"}
     ),  # fmt: skip
-    "tenant.created": frozenset({"tenant_id", "name", "code"}),
+    # Excel-Export aller Findings (1.0.1): Mandanten und Anzahl
+    "finding.exported": frozenset({"tenant_ids", "count", "customer_roles"}),
+    # seit 1.19.2 (ADR 0058 Nachtrag) beim Anlegen fuer das Cockpit Herkunft und Portal-Kunde
+    "tenant.created": frozenset({"tenant_id", "name", "code", "quelle", "portal_kunde"}),
     # IPv4/IPv6-Paare nach dem Umschalten von rule_pairs_auto neu gebildet (0.138.0)
     "rule_pairs.rebuilt": frozenset({"tenant_id", "auto"}),
     "tenant.updated": frozenset(
@@ -119,6 +143,11 @@ ALLOWLIST: dict[str, frozenset[str]] = {
             "access",  # Wechsel des Zugangs (ADR 0033)
         }
     ),
+    # Zugang aus dem NetBox-Host (1.13.0, ADR 0056): nur Kunde, Quellsystem und Herkunft - die
+    # Tokens nie
+    "source.netbox_host_access": frozenset(
+        {"kunde", "source_id", "tenant_id", "name", "angelegt", "quelle"}
+    ),
     # Parallele Firewalls (0.18.0): Verbund gesetzt bzw. aufgeloest
     "source.parallel_group": frozenset({"tenant_id", "group", "source_ids"}),
     "source.parallel_rejected": frozenset({"tenant_id", "source_ids", "pairs"}),
@@ -136,6 +165,14 @@ ALLOWLIST: dict[str, frozenset[str]] = {
         {"tenant_id", "source_system_id", "dn", "l3out", "origin", "firewalls"}
     ),
     "routing.l3out_firewall.removed": frozenset({"tenant_id", "source_system_id", "dn", "l3out"}),
+    # Kabelnummer in Automato (1.19.0): Enden, Nummer und die bisherige (Laufzeitdaten)
+    "cable_label.set": frozenset({"tenant_id", "label", "a", "b", "old"}),
+    "cable_label.deleted": frozenset({"tenant_id", "label", "a", "b"}),
+    # Reservierungen von VLAN- und AS-Nummern (1.19.0, ADR 0066): Art, Bereich, Standort,
+    # VLAN-Gruppe und Zweck; freigeben = loeschen
+    "reservation.created": _RESERVATION,
+    "reservation.updated": _RESERVATION,
+    "reservation.released": _RESERVATION,
     "reconcile.run": frozenset({"tenant_id", "findings"}),
     "reconcile.version": frozenset({"version", "findings"}),  # 0.133.0: nach einem Update
     # NetBox-Sync (ADR 0010): nur Anzahlen und die gewaehlten Abschnitte (ADR 0031), keine Inhalte
@@ -161,6 +198,9 @@ ALLOWLIST: dict[str, frozenset[str]] = {
             "create",
             "update",
             "delete",
+            "labels_confirmed",  # bestaetigte Kabelnummern (1.19.0)
+            "dns_confirmed",  # bestaetigte abweichende DNS-Namen (1.19.0, Anzahl)
+            "reservations_confirmed",  # bestaetigte Aenderungen an Reservierungen (ADR 0066)
         }
     ),
     "netbox_sync.cancelled": frozenset({"plan_id", "tenant_id"}),
@@ -193,6 +233,12 @@ ALLOWLIST: dict[str, frozenset[str]] = {
         }
     ),
     "application.deleted": frozenset({"application_id", "tenant_id", "name", "members"}),
+    # Export der Doku (1.0.1, im Hintergrund seit 1.21.0, ADR 0069): Anzahl und Kennungen - nie
+    # das Export-Passwort
+    "application.exported": frozenset(
+        {"tenant_ids", "count", "failed", "encrypted", "export_id", "customer_roles"}
+    ),
+    "application.export_downloaded": frozenset({"tenant_id", "export_id"}),
     # 0.75.0: Stammdaten aus CSV - nur Zahlen und Kennungen, keine Inhalte der Datei
     "application.imported": frozenset(
         {"tenant_id", "created", "updated", "errors", "application_ids"}
@@ -210,10 +256,39 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "application.rule_shown": frozenset(
         {"application_id", "tenant_id", "rule_ref", "category", "reason", "customer_roles"}
     ),
-    # Kunden als Ausschnitt der Umgebung (ADR 0018): Name und Anzahl der Selektoren
-    "customer.created": frozenset({"tenant_id", "customer_id", "name", "selectors"}),
+    # Kunden als Ausschnitt der Umgebung (ADR 0018): Name und Anzahl der Selektoren; seit 1.14.0
+    # (ADR 0058) beim Anlegen fuer das Cockpit Herkunft und Portal-Kunde
+    "customer.created": frozenset(
+        {"tenant_id", "customer_id", "name", "selectors", "quelle", "portal_kunde"}
+    ),
     "customer.updated": frozenset({"tenant_id", "customer_id", "name", "selectors"}),
     "customer.deleted": frozenset({"tenant_id", "customer_id", "name", "selectors"}),
+    # Kunden-Portal (1.3.0, ADR 0050) bzw. Freigaben aus dem Cockpit (1.11.0, ADR 0054)
+    "portal.customer.created": _PORTAL,
+    "portal.customer.updated": _PORTAL,
+    "portal.customer.deleted": _PORTAL,
+    # Umzug in den neuen Mandanten aus dem Cockpit (1.19.2, ADR 0058 Nachtrag): Mandanten und die
+    # Ids der frueher angelegten Kunden (entfernt bzw. mit Grund geblieben)
+    "portal.customer.umzug": frozenset(
+        {"von_mandant", "nach_mandant", "quelle", "entfernt", "bleibt"}
+    ),
+    # Client-Secret des Anmelde-Tors versiegelt aus dem Cockpit (1.13.0, ADR 0055): nur Realm und
+    # Kennung des Empfangsschluessels - nie das Chiffrat
+    "portal.tor_secret.updated": frozenset({"realm", "kennung"}),
+    # Loeschauftraege aus dem Cockpit (1.14.0, ADR 0059)
+    "portal.abbau.angenommen": _ABBAU,
+    "portal.abbau.geaendert": _ABBAU,
+    "portal.abbau.aufgehoben": _ABBAU,
+    "portal.abbau.fortschritt": _ABBAU,
+    "portal.abbau.erledigt": _ABBAU,
+    # Kopplung mit dem Cockpit (1.13.0, ADR 0057): nie Code oder Token, nur Zeiten, Zaehler und
+    # der Name, den das Cockpit meldet
+    "cockpit.kopplung.code": frozenset({"bis", "ersetzt"}),
+    "cockpit.kopplung.code_verworfen": frozenset(),
+    "cockpit.kopplung.abgelaufen": frozenset(),
+    "cockpit.kopplung.fehlversuch": frozenset({"versuch", "gesperrt"}),
+    "cockpit.kopplung.gekoppelt": frozenset({"name", "ersetzt", "code_von"}),
+    "cockpit.kopplung.entkoppelt": frozenset({"name"}),
     # Zuordnung Benutzer -> Kunde in Automato (0.53.0, ADR 0018 Schritt 4); seit den feineren
     # Rollen mit Herkunft (Betreuer bzw. Kunden-Admin) und den Kunden-Rollen des Handelnden
     "customer_user.assigned": frozenset(
@@ -246,16 +321,17 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     "zone_plan.version_saved": frozenset({"tenant_id", "version_id", "number", "label"}),
     "zone_plan.version_deleted": frozenset({"tenant_id", "version_id", "number", "label"}),
     # Lesezugriffs-Audit (per Mandant zuschaltbar, ADR 0007 D5)
-    # Kunden-Benutzer (ADR 0018): immer, mit ihren Kunden-IDs
-    "read.rules": frozenset({"tenant_id", "resource", "customers"}),
-    "read.nat": frozenset({"tenant_id", "resource", "customers"}),
-    "read.findings": frozenset({"tenant_id", "resource", "customers"}),
-    "read.applications": frozenset({"tenant_id", "resource", "customers"}),
-    "read.routing": frozenset({"tenant_id", "resource"}),
-    "read.objects": frozenset({"tenant_id", "resource", "customers"}),
-    "read.virtual": frozenset({"tenant_id", "resource", "customers"}),
-    "read.customers": frozenset({"tenant_id", "resource", "customers"}),
-    "read.zones": frozenset({"tenant_id", "resource"}),
+    # Kunden-Benutzer (ADR 0018): immer, mit ihren Kunden-IDs; Mandanten-Benutzer (ADR 0068):
+    # immer, mit ihrer Mandanten-Rolle
+    "read.rules": frozenset({"tenant_id", "resource", "customers", "mandant_rolle"}),
+    "read.nat": frozenset({"tenant_id", "resource", "customers", "mandant_rolle"}),
+    "read.findings": frozenset({"tenant_id", "resource", "customers", "mandant_rolle"}),
+    "read.applications": frozenset({"tenant_id", "resource", "customers", "mandant_rolle"}),
+    "read.routing": frozenset({"tenant_id", "resource", "mandant_rolle"}),
+    "read.objects": frozenset({"tenant_id", "resource", "customers", "mandant_rolle"}),
+    "read.virtual": frozenset({"tenant_id", "resource", "customers", "mandant_rolle"}),
+    "read.customers": frozenset({"tenant_id", "resource", "customers", "mandant_rolle"}),
+    "read.zones": frozenset({"tenant_id", "resource", "mandant_rolle"}),
     "retention.purged": frozenset(
         {"runs", "sync_plans", "audit", "l2", "topo_changes"}
         | {"runs_days", "sync_days", "audit_days", "l2_days", "topo_changes_days"}

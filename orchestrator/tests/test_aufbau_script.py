@@ -3,6 +3,7 @@ Container, Verbindungen aus dem Orchestrator-Container und die ufw-Regel zum Kop
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -355,3 +356,78 @@ def test_tls_intern_einrichten_und_pruefen(tmp_path):
     tls.issue(pki, [])
     after = _run(tmp_path, "pruefen", **env).stdout
     assert "eingeschaltet, Zertifikate noch" in after
+
+
+def test_cockpit_token_neu_in_env_und_einmal_angezeigt(tmp_path):
+    """1.10.0 (ADR 0053): cockpit-token legt ein neues Token in .env an, startet den Orchestrator
+    neu und zeigt es genau einmal; ein zweiter Aufruf ersetzt es."""
+    log = tmp_path / "calls.log"
+    stub = _stub(tmp_path / "token-compose", f'echo "$*" >> {log}\n')
+    env = {"AUTOMATO_ENV_FILE": str(tmp_path / "env"), "COMPOSE": str(stub)}
+    (tmp_path / "env").write_text("POSTGRES_PASSWORD=bleibt\n")
+    out = _run(tmp_path, "cockpit-token", **env)
+    assert out.returncode == 0, out.stdout + out.stderr
+    zeilen = (tmp_path / "env").read_text().splitlines()
+    assert zeilen[0] == "POSTGRES_PASSWORD=bleibt"
+    (token,) = (z.split("=", 1)[1] for z in zeilen if z.startswith("AUTOMATO_COCKPIT_TOKEN="))
+    assert re.fullmatch(r"[0-9a-f]{64}", token)
+    assert out.stdout.count(token) == 1 and "nie in Chat" in out.stdout
+    assert log.read_text().strip().endswith("up -d orchestrator")
+
+    neu = _run(tmp_path, "cockpit-token", **env)
+    zeilen = (tmp_path / "env").read_text().splitlines()
+    assert [z for z in zeilen if z.startswith("AUTOMATO_COCKPIT_TOKEN=")] != [
+        f"AUTOMATO_COCKPIT_TOKEN={token}"
+    ]
+    assert len([z for z in zeilen if z.startswith("AUTOMATO_COCKPIT_TOKEN=")]) == 1
+    assert token not in neu.stdout
+
+
+def test_netbox_host_token_eigenes_token(tmp_path):
+    """1.11.0 (ADR 0054): netbox-host-token legt AUTOMATO_NETBOX_HOST_TOKEN an, das Token des
+    Cockpits bleibt unberührt."""
+    log = tmp_path / "calls.log"
+    stub = _stub(tmp_path / "token-compose", f'echo "$*" >> {log}\n')
+    env = {"AUTOMATO_ENV_FILE": str(tmp_path / "env"), "COMPOSE": str(stub)}
+    (tmp_path / "env").write_text("AUTOMATO_COCKPIT_TOKEN=bleibt\n")
+    out = _run(tmp_path, "netbox-host-token", **env)
+    assert out.returncode == 0, out.stdout + out.stderr
+    zeilen = (tmp_path / "env").read_text().splitlines()
+    assert "AUTOMATO_COCKPIT_TOKEN=bleibt" in zeilen
+    (token,) = (z.split("=", 1)[1] for z in zeilen if z.startswith("AUTOMATO_NETBOX_HOST_TOKEN="))
+    assert re.fullmatch(r"[0-9a-f]{64}", token) and out.stdout.count(token) == 1
+    assert "netbox-host.sh agent" in out.stdout
+    assert log.read_text().strip().endswith("up -d orchestrator")
+
+
+def test_cockpit_kopplung_ueber_den_orchestrator(tmp_path):
+    """1.13.0 (ADR 0057): cockpit-kopplung laesst den Orchestrator den Einmal-Code erzeugen
+    (`automato cockpit-kopplung` im Container) - nichts in .env, kein Neustart; ein Token aus
+    .env wird nur erwaehnt, nie angezeigt."""
+    log = tmp_path / "calls.log"
+    stub = _stub(
+        tmp_path / "k-compose",
+        f'echo "$*" >> {log}\n'
+        'case "$*" in *cockpit-kopplung*) echo "    ABCD-EFGH-JKMN" ;; esac\n',
+    )
+    env = {"AUTOMATO_ENV_FILE": str(tmp_path / "env"), "COMPOSE": str(stub)}
+    (tmp_path / "env").write_text("AUTOMATO_COCKPIT_TOKEN=altes-token-geheim\n")
+    out = _run(tmp_path, "cockpit-kopplung", **env)
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert out.stdout.count("ABCD-EFGH-JKMN") == 1
+    assert "AUTOMATO_COCKPIT_TOKEN" in out.stdout and "altes-token-geheim" not in out.stdout
+    (aufruf,) = log.read_text().splitlines()
+    assert aufruf.endswith("exec -T orchestrator automato cockpit-kopplung")
+    assert (tmp_path / "env").read_text() == "AUTOMATO_COCKPIT_TOKEN=altes-token-geheim\n"
+
+    for arg, option in (("status", "--status"), ("verwerfen", "--verwerfen"),
+                        ("entkoppeln", "--entkoppeln")):  # fmt: skip
+        r = _run(tmp_path, "cockpit-kopplung", arg, **env)
+        assert r.returncode == 0 and "AUTOMATO_COCKPIT_TOKEN" not in r.stdout
+        assert log.read_text().splitlines()[-1].endswith(f"cockpit-kopplung {option}")
+    falsch = _run(tmp_path, "cockpit-kopplung", "loeschen", **env)
+    assert falsch.returncode == 2
+
+    kaputt = _stub(tmp_path / "kaputt-compose", "exit 1\n")
+    r = _run(tmp_path, "cockpit-kopplung", **{**env, "COMPOSE": str(kaputt)})
+    assert r.returncode == 1 and "Orchestrator antwortet nicht" in r.stdout

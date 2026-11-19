@@ -36,6 +36,10 @@ class ReferenceKind(StrEnum):
     PTR_RECORD = "ptr_record"
     FIXED_ADDRESS = "fixed_address"  # Infoblox DHCP-Reservierung
     VLAN = "vlan"
+    # Kabel einer NetBox (1.19.0, „Verkabelung im Detail“): `value` = Kabel-ID, `name` = Label
+    # (Kabelnummer), Enden in `attrs` (`a_device`, `a_port`, `b_device`, `b_port`) - nur Kabel mit
+    # je einem Port an beiden Enden; kein IPAM-Eintrag (fliesst nicht in den Abgleich)
+    CABLE = "cable"
 
 
 # Eintragsarten, die eine einzelne IP beschreiben

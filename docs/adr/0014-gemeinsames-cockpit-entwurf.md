@@ -172,6 +172,31 @@ Ops-Benutzer ──OIDC (Ops-Realm, OTP)──► Cockpit (Web + API + Postgres:
 
 ## Offene Entscheide (Anwender)
 
+**Stand 2026-11-11 (Version 2):** zu 1 – das Cockpit kommt in ein **eigenes Repo**, eng mit
+Magister verbunden („stark verheiratet mit Magister“). Es löst das bestehende Cockpit in
+Magister (`cockpit/`) ab. Der Name Automato bleibt. Lizenz- und Gerätemanagement wird nicht
+Teil des Cockpits, sondern die CMDB als eigenes Modul von Automato (Version 3). Die
+Automatisierung ist Version 4.
+
+Repo `Vita-Brevis-GmbH/vitabrevis-cockpit` (privat). Die übrigen Fragen sind dort in ADR 0002
+entschieden (Entscheide E1–E8, Stand 2026-11-11):
+
+- zu 4: Host-Agent („die sicherere und stabilere Variante“);
+- zu 5: nur Container, keine VMs. Der Wechsel auf Proxmox folgt, VMs anlegen erst in Version 4;
+- zu 6: nur der Betrieb von Vita Brevis über Port 4444, nur intern. Vorerst gibt es kein
+  Self-Service-Portal; die Kunden richtet der Betrieb am Anfang ein;
+- zu 7: Automato als Image;
+- zu 8: erst planen, dann nach Phasen.
+
+Neu sind drei weitere Entscheide:
+
+- Das Kundenportal bleibt auf dem Kundenpfad. Das Cockpit orchestriert, gibt frei und richtet
+  Keycloak ein, ohne Kundenzugriffe.
+- Magister läuft wie Automato hinter dem Kundenportal.
+- Das Cockpit läuft unter `/opt/cockpit` auf dem Magister-Host.
+
+Der Plan der Phasen gilt ab jetzt im Cockpit-Repo und ersetzt die Phasen unten.
+
 Stand 2026-11-03 (ADR 0044): zu 2 **eine Instanz mit einem Mandanten je Kunde** (viele kleine
 Kunden), NetBox je Kunde als eigener Stack; zu 3 **Anmeldung je Mandant** (eigene Login-Seite wie
 bei Magister) mit einem Global Admin über alle Mandanten und einer globalen Sicht – Umsetzung in V2.

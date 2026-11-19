@@ -183,3 +183,67 @@ def test_module_je_mandant_schalten(client, session_factory):
     r = client.get("/modules", params={"tenant_id": tid}, headers=user)
     assert r.status_code == 200 and {m["key"]: m["effective"] for m in r.json()}["doku"]
     assert _switch(client, tid, "doku", False, user).status_code == 403
+
+
+# Ansichten nach Netzwerkschichten (1.19.0, ADR 0067): Stelle -> (Schicht, Ansicht, feste
+# Parameter); die Module des Servers bleiben, die Schicht ist ein Merkmal der Ansicht (`places`
+# in `src/modules/<modul>/index.tsx`)
+LAYERS = {
+    "verkabelung": ("l1", "verkabelung", ""),
+    "ports": ("l1", "verkabelung", 'tab: "ports"'),
+    "transceiver": ("l1", "verkabelung", 'tab: "transceiver"'),
+    "kabelnummern": ("l1", "verkabelung", 'tab: "labels"'),
+    "vlans": ("l2", "vlans", ""),
+    "spanningtree": ("l2", "spanningtree", ""),
+    "vlan-reservierungen": ("l2", "reservierungen", 'tab: "vlan"'),
+    "netze": ("l3", "objekte", 'tab: "subnets"'),
+    "vrf": ("l3", "objekte", 'tab: "vrfs"'),
+    "routing": ("l3", "routing", ""),
+    "statisch": ("l3", "statisch", ""),
+    "bgp": ("l3", "routing", 'tab: "peers"'),
+    "asn": ("l3", "asn", ""),
+    "as-reservierungen": ("l3", "reservierungen", 'tab: "asn"'),
+    "regeln": ("l4-7", "regeln", ""),
+    "objekte": ("l4-7", "objekte", ""),
+    "nat": ("l4-7", "nat", ""),
+    "loadbalancer": ("l4-7", "nat", 'type: "lb"'),
+    "vpn": ("l4-7", "vpn", ""),
+}
+# uebergreifend bzw. Administration: ohne Schicht, Adresse `#<ansicht>`
+CROSS = {"uebersicht", "apps", "wege", "vergleich", "findings", "abgleich", "design", "laeufe",
+         "agents", "dict", "users", "tenants", "kunden", "kundenbenutzer", "kundenportal", "system",
+         "netbox"}  # fmt: skip
+
+
+def test_ansichten_nach_schichten():
+    """Jede Ansicht steht in ihrer Schicht (Tabelle in ADR 0067) bzw. übergreifend; die Module
+    und ihre Ansichten bleiben (Schalter je Mandant wirken weiter über das Modul)."""
+    import re
+
+    ui = ROOT / "web-ui" / "frontend" / "src" / "modules"
+    found: dict[str, tuple[str, str, str]] = {}
+    plain: set[str] = set()
+    for index in sorted(ui.glob("*/index.tsx")):
+        text = index.read_text(encoding="utf-8")
+        for block in re.split(r"\n  \{\n|\n  // [^\n]*\n  \{\n", text)[1:]:
+            key = re.search(r'^    key: "([a-z]+)",', block, re.M)
+            if key is None:
+                continue
+            lines = [x for x in block.splitlines() if re.search(r'\{ slug: "', x)]
+            if not lines:
+                plain.add(key.group(1))
+            for line in lines:
+                slug = re.search(r'slug: "([a-z0-9-]+)"', line).group(1)
+                layer = re.search(r'layer: "([a-z0-9-]+)"', line).group(1)
+                params = re.search(r"params: \{ ([^}]*) \}", line)
+                assert slug not in found, slug
+                found[slug] = (layer, key.group(1), params.group(1).strip() if params else "")
+    assert found == LAYERS
+    assert plain == CROSS
+    views = {v for m in modules.MODULES for v in m.views}
+    assert {v for _l, v, _p in LAYERS.values()} | CROSS == views
+    # Module unveraendert: Schichten-Ansichten bleiben in Analyse bzw. Kern
+    assert {"routing", "statisch", "asn", "verkabelung", "vlans", "spanningtree", "reservierungen",
+            "vpn"} <= set(modules.BY_KEY["analyse"].views)  # fmt: skip
+    assert {"regeln", "objekte", "nat"} <= set(modules.BY_KEY["kern"].views)
+    assert modules.BY_KEY["vergleich"].depends == ("analyse", "wege")

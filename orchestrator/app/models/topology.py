@@ -56,6 +56,10 @@ class TopoContext(_TopoRow, Base):
     context: Mapped[str] = mapped_column(String(200))  # VDOM bzw. Tenant:VRF
     kind: Mapped[str] = mapped_column(String(8))  # vdom | vrf | l3 (Router, ADR 0032)
     missing: Mapped[list | None] = mapped_column(JSON, nullable=True)  # nicht lesbar
+    # FortiGate (ADR 0070, Migration 0097): gelesene Einstellungen des VDOMs, die den Weg
+    # bestimmen - `central_nat`, `asymroute`, `strict_src_check`, `src_check_off` (Interfaces
+    # mit `src-check disable`), `central_snat` (Tabelle in Reihenfolge). Leer = nicht gelesen.
+    settings: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
 class TopoRoute(_TopoRow, Base):
@@ -153,8 +157,30 @@ class TopoBgpObject(_TopoRow, Base):
     data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
+class TopoVpnTunnel(_TopoRow, Base):
+    """IPsec-Tunnel einer FortiGate je VDOM (1.19.0, ADR 0063, nur gelesen): Phase 1 (Art
+    static | dialup | ddns, gebundenes Interface, Gegenstelle, IKE-Version, Proposals als Text),
+    Phase 2 mit Selektoren und Zustand, bei Dial-up die verbundenen Gegenstellen."""
+
+    __tablename__ = "topo_vpn_tunnel"
+
+    node: Mapped[str] = mapped_column(String(200))
+    context: Mapped[str] = mapped_column(String(200))  # VDOM
+    name: Mapped[str] = mapped_column(String(200))  # Tunnel-Interface (Phase 1)
+    kind: Mapped[str] = mapped_column(String(8))  # static | dialup | ddns
+    interface: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    remote_gw: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    local_gw: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    ike_version: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    status: Mapped[str | None] = mapped_column(String(8), nullable=True)  # up|partial|down|idle
+    phase2: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    instances: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    attrs: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
 TOPOLOGY_MODELS = (
     TopoContext, TopoRoute, TopoPeer, TopoHa, TopoPolicyRoute, TopoL3Out, TopoBgpObject,
+    TopoVpnTunnel,
 )  # fmt: skip
 
 

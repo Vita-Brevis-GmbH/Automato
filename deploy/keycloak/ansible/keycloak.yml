@@ -28,6 +28,19 @@
     #   kc_tls_cert   Pfad zur Zertifikatskette (Leaf + Intermediates, PEM)
     #   kc_tls_key    Pfad zum privaten Schluessel (PEM, ohne Passphrase)
     kc_tls_internal: false  # true = Caddy nutzt eigene CA (Lab/ohne oeffentliches DNS)
+    # Betrieb aus dem Cockpit (1.17.0, ADR 0062): Automato-Checkout mit
+    # deploy/keycloak/betrieb.sh fuer den Host-Agenten (Produkt keycloak) und dessen
+    # Konfiguration /etc/automato/keycloak-betrieb.conf. Leeres kc_automato_repo = kein Checkout.
+    kc_automato_repo: ""                      # z. B. https://github.com/<owner>/<repo>.git
+    kc_automato_ref: main
+    kc_automato_dir: "{{ kc_base_dir }}/automato"
+    kc_backup_dir: /var/backups/automato-keycloak
+    kc_backup_keep_days: 14
+    # Empfaenger der verschluesselten Sicherung; leer = Schluessel auf der VM erzeugen
+    # (kc_backup_age_identity, danach in den Tresor). Fuer den automatischen Rueckfall braucht
+    # betrieb.sh die Identitaet auf der VM - ohne sie lehnt es Updates ab.
+    kc_backup_age_recipient: ""
+    kc_backup_age_identity: /root/automato-keycloak-backup.agekey
 
   pre_tasks:
     - name: Pflicht-Variablen pruefen (fail-closed)
@@ -129,6 +142,74 @@
         group: root
         mode: "0640"
       notify: Keycloak neu starten
+
+    # --- Betrieb aus dem Cockpit (1.17.0, ADR 0062) -------------------------------------
+    - name: Werkzeuge fuer den Betrieb (git, age, python3)
+      ansible.builtin.package:
+        name: [git, age, python3]
+        state: present
+
+    - name: Sicherungsschluessel (age) auf der VM erzeugen, wenn kein Empfaenger gesetzt ist
+      when: kc_backup_age_recipient | length == 0
+      ansible.builtin.shell:
+        cmd: umask 077 && age-keygen -o {{ kc_backup_age_identity | quote }}
+        creates: "{{ kc_backup_age_identity }}"
+
+    - name: Empfaenger aus dem Schluessel der VM lesen
+      when: kc_backup_age_recipient | length == 0
+      ansible.builtin.command:
+        cmd: age-keygen -y {{ kc_backup_age_identity | quote }}
+      register: _kc_age_empfaenger
+      changed_when: false
+
+    - name: Ordner der Konfiguration und der Sicherungen
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+      loop: [/etc/automato, "{{ kc_backup_dir }}"]
+
+    - name: Konfiguration fuer deploy/keycloak/betrieb.sh (keine Geheimnisse)
+      ansible.builtin.template:
+        src: keycloak-betrieb.conf.j2
+        dest: /etc/automato/keycloak-betrieb.conf
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Automato-Checkout fuer den Host-Agenten (nur anlegen, Updates kommen aus dem Cockpit)
+      when: kc_automato_repo | length > 0
+      ansible.builtin.git:
+        repo: "{{ kc_automato_repo }}"
+        dest: "{{ kc_automato_dir }}"
+        version: "{{ kc_automato_ref }}"
+        update: false
+
+    - name: Taegliche verschluesselte Sicherung der Keycloak-Datenbank
+      when: kc_automato_repo | length > 0
+      ansible.builtin.copy:
+        dest: /etc/cron.d/automato-keycloak
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Keycloak: taegliche Sicherung (deploy/keycloak/betrieb.sh sichern, ADR 0062)
+          23 2 * * * root cd {{ kc_automato_dir }} && deploy/keycloak/betrieb.sh sichern >>/var/log/automato-keycloak-sicherung.log 2>&1
+
+    - name: Version aus dem Cockpit vorhanden?
+      ansible.builtin.stat:
+        path: "{{ kc_base_dir }}/docker-compose.override.yml"
+      register: _kc_override
+
+    - name: Hinweis - die Keycloak-Version fuehrt das Cockpit
+      when: _kc_override.stat.exists
+      ansible.builtin.debug:
+        msg: >-
+          {{ kc_base_dir }}/docker-compose.override.yml (deploy/keycloak/betrieb.sh) legt die
+          Keycloak-Version fest - kc_image gilt nur ohne diese Datei. Aktualisieren ueber das
+          Cockpit (Seite Plattform), zurueck ueber die Aktion zurueck.
 
     - name: Firewall - nur SSH + HTTPS/HTTP (ACME) nach aussen
       community.general.ufw:

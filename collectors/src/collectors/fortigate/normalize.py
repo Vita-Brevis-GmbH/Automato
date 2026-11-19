@@ -89,9 +89,16 @@ def build_vip_map(vips: list[dict] | None) -> dict[str, str]:
 
 
 def resolve_address(
-    name: str, amap: dict[str, dict], vipmap: dict[str, str] | None = None, _depth: int = 0
+    name: str,
+    amap: dict[str, dict],
+    vipmap: dict[str, str] | None = None,
+    _seen: frozenset[str] = frozenset(),
 ) -> list[str]:
-    """Objektname -> Liste von Endpunktwerten (IP/CIDR/Range) oder [name] als Fallback."""
+    """Objektname -> Liste von Endpunktwerten (IP/CIDR/Range) oder [name] als Fallback.
+
+    Adressgruppen loest die FortiGate ganz auf - beliebig tief (Fable B-11, ADR 0071; bis 1.21
+    nur drei Stufen, tiefere Gruppen galten im Abgleich als „nicht pruefbar“). `_seen` schuetzt
+    vor einer Gruppe, die sich selbst enthaelt (laesst die FortiGate nicht zu): dort der Name."""
     vipmap = vipmap or {}
     if name == _ANY:
         return [_ANY]
@@ -101,10 +108,10 @@ def resolve_address(
         if name in vipmap:
             return [f"vip:{name}={vipmap[name]}"]
         return [name]  # nicht bekannt -> Name (Orchestrator nutzt Namenskonvention)
-    if "member" in obj and _depth < 3:  # Adressgruppe -> Mitglieder aufloesen
+    if "member" in obj and name not in _seen:  # Adressgruppe -> Mitglieder aufloesen
         out: list[str] = []
         for member in obj["member"]:
-            out.extend(resolve_address(member["name"], amap, vipmap, _depth + 1))
+            out.extend(resolve_address(member["name"], amap, vipmap, _seen | {name}))
         return out or [name]
 
     obj_type = obj.get("type", "ipmask")
@@ -160,12 +167,15 @@ def build_service_map(
     return smap
 
 
-def _group_tokens(name: str, groups: dict, smap: dict, _depth: int = 0) -> list[str]:
+def _group_tokens(
+    name: str, groups: dict, smap: dict, _seen: frozenset[str] = frozenset()
+) -> list[str]:
+    """Dienste einer Dienstgruppe - beliebig tief wie auf der FortiGate (Fable B-11)."""
     out: list[str] = []
     for member in groups[name].get("member", []):
         mname = member["name"]
-        if mname in groups and _depth < 3:
-            out.extend(_group_tokens(mname, groups, smap, _depth + 1))
+        if mname in groups and mname not in _seen and mname != name:
+            out.extend(_group_tokens(mname, groups, smap, _seen | {name}))
         else:
             out.extend(resolve_service(mname, smap))
     return _dedup(out) or [name.lower()]
@@ -334,7 +344,9 @@ def _normalize_policy(
         source_platform="fortigate",
         external_id=f"v6-{pid}" if v6_table else str(pid),
         name=policy.get("name", ""),
-        action="allow" if policy.get("action") == "accept" else "deny",
+        # `ipsec` (Policy-basiertes IPsec-VPN): laesst den Verkehr in den Tunnel - erlaubt
+        # (Fable B-9, ADR 0071; bis 1.21 als Sperre gelesen)
+        action="allow" if policy.get("action") in ("accept", "ipsec") else "deny",
         sources=_dedup(sources),
         destinations=_dedup(destinations),
         services=_dedup(svc),

@@ -34,7 +34,7 @@ from app.models import FindingType
 
 log = logging.getLogger(__name__)
 
-STEPS = ("zonen", "quellen", "applikationen")
+STEPS = ("zonen", "quellen", "applikationen", "reservierungen")  # Reservierungen: 1.19.0
 STRICT = False  # Tests: Befund eines fremden Typs ist ein Fehler (sonst nur Warnung)
 
 

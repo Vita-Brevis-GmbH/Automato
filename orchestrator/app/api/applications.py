@@ -11,11 +11,12 @@ und Server bleiben den Betreuern.
 """
 
 import re
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -242,6 +243,14 @@ class DocHitOut(BaseModel):
     l3out_note: str = ""
     # nicht in der Kategorie nach ihrer Auswahl spezifisch/unspezifisch (0.125.0, ADR 0046)
     category_hidden: bool = False
+    # Regel-Zuordnung nach echtem Treffer (ADR 0071), je mit Text in der Sprache der Anfrage:
+    # `_shadowed` = fuer das System ganz ueberdeckt („überdeckt durch Policy X“), `_broad` =
+    # breite Regel, die real vor einer konkreten trifft, `_path_unchecked` = Weg nicht geprueft
+    model_config = ConfigDict(populate_by_name=True)
+    off_path: bool = False  # nur in `DocOut.off_path`: Firewall der Regel nicht auf dem Weg
+    shadowed: str = Field("", alias="_shadowed")
+    broad: str = Field("", alias="_broad")
+    path_unchecked: str = Field("", alias="_path_unchecked")
 
 
 class DocFilteredOut(BaseModel):
@@ -271,6 +280,11 @@ class DocSummaryOut(BaseModel):
     # Regelwerk (0.118.0, ADR 0043): aktives Profil und je Bedingung die gezaehlten Regeln
     ruleset: dict[str, str] | None = None
     filtered: list[DocFilteredOut] = []
+    # ADR 0071: Regeln mit „Weg nicht geprüft“ (bleiben stehen), fuer ihre Systeme ganz
+    # ueberdeckte Regeln (nur Treffer) und breite Regeln, die real vor einer konkreten treffen
+    path_unchecked: int = 0
+    shadowed: int = 0
+    broad_hits: int = 0
 
 
 class DocFindingOut(BaseModel):
@@ -303,6 +317,7 @@ class ApplicationDocOut(BaseModel):
     systems: list[DocSystemOut]
     epgs: list[DocEpgOut]
     hits: list[DocHitOut]
+    off_path: list[DocHitOut] = []  # ADR 0071: Regeln abseits des Wegs (nur fuer Verbindungen)
     rules: list[RuleOut]
     findings: list[DocFindingOut]
     tables: list[DocTableOut]
@@ -1096,38 +1111,102 @@ def export_application(
     alle) wie im Export-Dialog; den Plan legt das ZIP nur mit `plan` bei. Seit 0.104.0 auch
     Markdown (`md`) aus demselben Aufbau (bisher in der Oberflaeche gebaut). Kunden-Benutzer
     ohne Verbindungen (sie zeigen die Infrastruktur)."""
-    want = None
-    if sections:
-        want = {s.strip() for s in sections.split(",") if s.strip()}
-        if not want or not want <= set(word_export.SECTIONS):
-            raise HTTPException(
-                status_code=422, detail=L("unbekannter Abschnitt", "unknown section")
-            )
+    want = _sections(sections)
     app = _load(session, principal, application_id)
+    name, media, body = _export_one(session, factory, background, principal, app, want, format)
+    return Response(content=body, media_type=media,
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})  # fmt: skip
+
+
+def _sections(sections: str | None) -> set[str] | None:
+    if not sections:
+        return None
+    want = {s.strip() for s in sections.split(",") if s.strip()}
+    if not want or not want <= set(word_export.SECTIONS):
+        raise HTTPException(status_code=422, detail=L("unbekannter Abschnitt", "unknown section"))
+    return want
+
+
+@dataclass
+class Bulk:
+    """Gesamt-Export (1.21.0, ADR 0069): was fuer alle Applikationen eines Mandanten gleich
+    bleibt, einmal statt je Applikation - Aufloesung der Mitglieder, VMs, Standorte,
+    Fussabdruecke der Abhaengigkeiten (der grosse Teil der Zeit), Namen der Gegenstellen,
+    Quellsysteme und Mandant. Das Lesen protokolliert der Auftrag einmal. Nur fuer Betreuer und
+    Mandanten-Benutzer (Kunden-Benutzer exportieren einzeln)."""
+
+    resolver: store.Resolver
+    vms: store.VmCounter
+    site_index: sites.SiteIndex
+    footprints: store.Footprints
+    names: bool
+    sources: dict[int, str]
+    tenant: str | None
+
+
+def bulk(session: Session, tenant_id: int) -> Bulk:
+    tenant = session.get(Tenant, tenant_id)
+    sources = dict(session.execute(
+        select(SourceSystem.id, SourceSystem.name).where(SourceSystem.tenant_id == tenant_id)
+    ).all())  # fmt: skip
+    return Bulk(store.Resolver(session, tenant_id), store.VmCounter(session, tenant_id),
+                sites.SiteIndex(session, tenant_id), store.Footprints(session, tenant_id),
+                peer_names.enabled(session, tenant_id, False), sources,
+                tenant.name if tenant else None)  # fmt: skip
+
+
+def _export_one(session: Session, factory: sessionmaker, background: BackgroundTasks,
+                principal: Principal, app: Application, want: set[str] | None,
+                format: str) -> tuple[str, str, bytes]:  # noqa: A002  # fmt: skip
+    """Eine Applikation exportieren (Name, Medientyp, Inhalt) - Word, Markdown bzw. ZIP mit
+    Word und Netzwerkplan."""
+    base, files = export_files(session, factory, background, principal, app, want, format)
+    if format == "md":
+        return f"{base}.md", "text/markdown; charset=utf-8", files[0][1]
+    if format == "docx" or principal.is_customer:  # Kunden-Benutzer: ohne Plan nur Word
+        return f"{base}.docx", _DOCX, files[0][1]
+    return f"{base}.zip", "application/zip", word_export.bundle(files)
+
+
+def export_files(session: Session, factory: sessionmaker, background: BackgroundTasks,
+                 principal: Principal, app: Application, want: set[str] | None, format: str,
+                 ctx: Bulk | None = None) -> tuple[str, list[tuple[str, bytes]]]:  # noqa: A002  # fmt: skip
+    """Dateien des Exports einer Applikation (Basisname, [(Datei, Inhalt)]) - einzeln und im
+    Gesamt-Export (1.0.1; seit 1.21.0 mit `ctx` je Mandant einmal gerechnet und ohne den Umweg
+    ueber ein ZIP je Applikation)."""
     view = _visible(session, principal, app)  # Kunden-Benutzer: ihr Ausschnitt (ADR 0018)
     if principal.is_customer:  # ohne Infrastruktur: keine Verbindungen, kein Plan
         want = (set(word_export.SECTIONS) if want is None else want) - {"connections", "plan"}
         format = "docx" if format == "zip" else format
     with_plan = want is None or "plan" in want
-    reads.maybe_audit_read(session, principal, app.tenant_id, "applications")
-    names = peer_names.enabled(session, app.tenant_id, principal.is_customer)  # 0.95.0
+    if ctx is None:
+        reads.maybe_audit_read(session, principal, app.tenant_id, "applications")
+        names = peer_names.enabled(session, app.tenant_id, principal.is_customer)  # 0.95.0
+    else:
+        names = ctx.names
     # Stand der Doku (0.108.0): der aktuelle - ein alter wird hier neu gerechnet
     doc = _doc(session, factory, background, app, view_ids(session, view, "rule"), names,
                wait=True).data  # fmt: skip
     if want is None or "dependencies" in want:  # 0.88.0
         visible = _visible_apps(session, principal, app)
-        doc["dependencies"] = store.dependencies(session, app, doc, visible)
-    out = ApplicationDocOut(
-        application=_out(session, app, store.Resolver(session, app.tenant_id)), **doc
-    ).model_dump(mode="json")
+        doc["dependencies"] = store.dependencies(session, app, doc, visible,
+                                                 ctx.footprints if ctx else None)  # fmt: skip
+    row = (_out(session, app, ctx.resolver, ctx.vms, ctx.site_index) if ctx
+           else _out(session, app, store.Resolver(session, app.tenant_id)))  # fmt: skip
+    out = ApplicationDocOut(application=row, **doc).model_dump(mode="json")
     needs_paths = want is None or bool(want & {"connections", "plan"})
     conns = doc_snapshots.serve(session, factory, background, app, doc_snapshots.CONNECTIONS,
                                 wait=True).data if needs_paths else None  # fmt: skip
     when = datetime.now(UTC)
-    tenant = session.get(Tenant, app.tenant_id)
-    sources = dict(session.execute(
-        select(SourceSystem.id, SourceSystem.name).where(SourceSystem.tenant_id == app.tenant_id)
-    ).all())  # fmt: skip
+    if ctx is not None:
+        tenant, sources = ctx.tenant, ctx.sources
+    else:
+        found = session.get(Tenant, app.tenant_id)
+        tenant = found.name if found else None
+        sources = dict(session.execute(
+            select(SourceSystem.id, SourceSystem.name)
+            .where(SourceSystem.tenant_id == app.tenant_id)
+        ).all())  # fmt: skip
     if principal.is_customer:  # ohne Geraetenamen (0.58.0) - die Middleware sieht nur JSON
         aliases = customer_alias.Aliases(session, [app.tenant_id])
         out = aliases.clean(out)
@@ -1136,25 +1215,18 @@ def export_application(
     base = (f"{L('applikation', 'application')}-{word_export.slug(app.name, 'applikation')}"
             f"-{when:%Y-%m-%d}")  # fmt: skip
     plan_file = f"{base}-{L('netzwerkplan', 'network-diagram')}.drawio"
-    body = word_export.application(out, conns, sources, when, tenant.name if tenant else None,
+    body = word_export.application(out, conns, sources, when, tenant,
                                    plan_file if format == "zip" and with_plan else None,
                                    want, "md" if format == "md" else "docx")  # fmt: skip
     if format == "md":
-        media, name = "text/markdown; charset=utf-8", f"{base}.md"
-    elif format == "docx":
-        media, name = _DOCX, f"{base}.docx"
-    else:
-        files = [(f"{base}.docx", body)]
-        if with_plan and conns is not None:
-            plan = app_plan.drawio(app_plan.build(conns["connections"],
-                                                  members=conns["members"]),
-                                   f"{L('Netzwerkplan', 'Network diagram')} {app.name}",
-                                   when)  # fmt: skip
-            files.append((plan_file, plan))
-        body = word_export.bundle(files)
-        media, name = "application/zip", f"{base}.zip"
-    return Response(content=body, media_type=media,
-                    headers={"Content-Disposition": f'attachment; filename="{name}"'})  # fmt: skip
+        return base, [(f"{base}.md", body)]
+    files = [(f"{base}.docx", body)]
+    if format == "zip" and with_plan and conns is not None:
+        plan = app_plan.drawio(app_plan.build(conns["connections"], members=conns["members"]),
+                               f"{L('Netzwerkplan', 'Network diagram')} {app.name}",
+                               when)  # fmt: skip
+        files.append((plan_file, plan))
+    return base, files
 
 
 _DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"

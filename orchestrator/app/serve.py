@@ -11,6 +11,8 @@ import logging
 import sys
 import urllib.request
 
+from sot_gateway import trust
+
 from app import tls
 from app.config import get_settings
 
@@ -64,6 +66,8 @@ def main(argv: list[str] | None = None) -> int:
     import uvicorn
 
     logs()
+    # zusaetzliche CAs aus deploy/trust (1.10.0, ADR 0053), bevor ein Client entsteht
+    trust.zusaetzliche_cas()
     uvicorn.run("app.main:app", host="0.0.0.0", port=PORT, **options(settings))  # noqa: S104
     return 0
 

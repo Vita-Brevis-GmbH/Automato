@@ -64,6 +64,10 @@ class NormalizedEpg(BaseModel):
     endpoints: list[NormalizedEpgEndpoint] = Field(default_factory=list)  # fvCEp/fvIp (gelernt)
     selectors: list[str] = Field(default_factory=list)  # ESG: Selektoren (EPG, Tag, IP)
     pref_group: bool = False  # Mitglied der Preferred Group seiner VRF
+    # ADR 0071: Intra-EPG-Isolation (`pcEnfPref=enforced` an der EPG) und VRF ohne Contracts
+    # (`pcEnfPref=unenforced` an der VRF); None = nicht gelesen (aeltere Collectors)
+    isolated: bool | None = None
+    vrf_unenforced: bool | None = None
 
 
 class NormalizedNat(BaseModel):
@@ -171,6 +175,28 @@ class NormalizedNeighbor(BaseModel):
     remote_description: str | None = None
 
 
+class NormalizedTransceiver(BaseModel):
+    """Transceiver (SFP, SFP+, QSFP …) an einem Port eines Switches (1.19.0, nur lesend): Typ,
+    Hersteller und Teilenummer, soweit das Geraet sie nennt, und die Seriennummer."""
+
+    device: str
+    port: str  # Kurzform wie die Ports (Gi1/0/49, Eth1/1, xe-0/0/0, 1/1/49)
+    type: str | None = None  # z. B. SFP-10GBase-SR, 10Gbase-SR, SFP+SR
+    vendor: str | None = None
+    part: str | None = None  # Teilenummer (Cisco-PID bzw. Part Number)
+    serial: str | None = None
+
+
+class NormalizedTransceiverRead(BaseModel):
+    """Lesestatus der Transceiver je Switch (1.19.0): gelesen, nicht lesbar (Befehl gescheitert)
+    bzw. nicht unterstuetzt (Plattform bzw. Zugang SNMPv3) - gezaehlt statt still weggelassen."""
+
+    device: str
+    status: str = "read"  # read | unreadable | unsupported
+    count: int = 0
+    note: str | None = None
+
+
 class NormalizedMac(BaseModel):
     """Eintrag der MAC-Adress-Tabelle eines Switches (0.63.0): wo die MAC gelernt ist."""
 
@@ -217,6 +243,52 @@ class NormalizedSubnet(BaseModel):
     vdom: str | None = None  # FortiGate: VDOM des Interfaces
 
 
+class NormalizedStpPort(BaseModel):
+    """Port einer Spanning-Tree-Instanz (1.19.0): Rolle, Zustand, Kosten, Typ wie gemeldet."""
+
+    port: str  # Kurzform (Gi1/0/1, Eth1/3, Po10)
+    role: str | None = None  # root | designated | alternate | backup | master | disabled
+    state: str | None = None  # forwarding | blocking | learning | listening | disabled | broken
+    cost: int | None = None
+    priority: str | None = None  # Prio.Nbr, z. B. 128.48
+    type: str | None = None  # P2p, Shr, Edge, Bound(PVST), Peer(STP), (vPC peer-link) …
+    inconsistent: str | None = None  # ROOT_Inc, LOOP_Inc, BA_Inc, PVST_Inc, TYPE_Inc …
+
+
+class NormalizedStp(BaseModel):
+    """Spanning Tree eines Switches je VLAN bzw. MST-Instanz (1.19.0, nur lesend)."""
+
+    device: str
+    instance: str  # VLAN0010 | MST1
+    vlan: int | None = None  # PVST/Rapid-PVST
+    mst: int | None = None  # MST-Instanz
+    vlans: str | None = None  # MST: VLANs der Instanz als Bereiche
+    protocol: str | None = None  # ieee | rstp | mstp (wie gemeldet)
+    root_priority: int | None = None
+    root_mac: str | None = None
+    root_cost: int | None = None
+    root_port: str | None = None
+    is_root: bool = False
+    bridge_priority: int | None = None
+    bridge_mac: str | None = None
+    tc_count: int | None = None  # Topologieaenderungen seit dem Start der Instanz
+    tc_ago: int | None = None  # Sekunden seit der letzten Aenderung (beim Lesen)
+    tc_from: str | None = None  # Port, ueber den die letzte Aenderung kam
+    ports: list[NormalizedStpPort] = Field(default_factory=list)
+
+
+class NormalizedStpDevice(BaseModel):
+    """Spanning Tree je Switch (1.19.0): Modus, Lesestatus und err-disabled Ports."""
+
+    device: str
+    status: str = "read"  # read | off | unsupported | unreadable
+    mode: str | None = None  # pvst | rapid-pvst | mst
+    region: str | None = None  # MST-Region (Name)
+    revision: int | None = None
+    errdisabled: list[dict] = Field(default_factory=list)  # {port, reason, vlans}
+    note: str | None = None
+
+
 class NetworkInventory(BaseModel):
     devices: list[NormalizedDevice] = Field(default_factory=list)
     interfaces: list[NormalizedInterface] = Field(default_factory=list)
@@ -226,8 +298,16 @@ class NetworkInventory(BaseModel):
     # ACI-Route-Leaking zwischen VRFs (0.44.0): {vrf, prefix, to: [Tenant:VRF], external}
     vrf_leaks: list[dict] = Field(default_factory=list)
     neighbors: list[NormalizedNeighbor] = Field(default_factory=list)  # CDP/LLDP (0.62.0)
+    # Transceiver der Switches und Lesestatus je Switch (1.19.0); None = nicht geliefert (andere
+    # Quellen, aeltere Agenten)
+    transceivers: list[NormalizedTransceiver] | None = None
+    transceiver_reads: list[NormalizedTransceiverRead] | None = None
     macs: list[NormalizedMac] = Field(default_factory=list)  # MAC-Tabelle (0.63.0)
     arps: list[NormalizedArp] = Field(default_factory=list)  # ARP (0.63.0)
+    # Spanning Tree der Switches (1.19.0); None = nicht geliefert (andere Quellen, aeltere
+    # Agenten) - der gespeicherte Stand bleibt (`store/stp.replace`)
+    stp: list[NormalizedStp] | None = None
+    stp_devices: list[NormalizedStpDevice] | None = None
 
 
 class ReferenceBatch(BaseModel):
@@ -412,6 +492,9 @@ class NormalizedRoutingContext(BaseModel):
     context: str
     kind: str = "vdom"  # vdom | vrf | l3 (Router bzw. L3-Switch je VRF, ADR 0032)
     missing: list[str] = Field(default_factory=list)
+    # FortiGate (ADR 0070): Einstellungen des VDOMs, die den Weg bestimmen - `central_nat`,
+    # `asymroute`, `strict_src_check`, `src_check_off`, `central_snat`; leer = nicht gelesen
+    settings: dict[str, Any] = Field(default_factory=dict)
 
 
 class NormalizedBgpObject(BaseModel):
@@ -427,6 +510,36 @@ class NormalizedBgpObject(BaseModel):
     data: dict[str, Any] = Field(default_factory=dict)
 
 
+class NormalizedVpnPhase2(BaseModel):
+    """Phase 2 eines IPsec-Tunnels (ADR 0063): Selektoren lokal bzw. der Gegenstelle."""
+
+    name: str
+    src: list[str] = Field(default_factory=list)
+    dst: list[str] = Field(default_factory=list)
+    src_names: list[str] = Field(default_factory=list)
+    dst_names: list[str] = Field(default_factory=list)
+    unresolved: list[str] = Field(default_factory=list)
+    status: str | None = None
+    attrs: dict[str, Any] = Field(default_factory=dict)
+
+
+class NormalizedVpnTunnel(BaseModel):
+    """IPsec-Tunnel (Interface-Modus) einer FortiGate je VDOM (1.19.0, ADR 0063), nur lesend."""
+
+    node: str
+    context: str
+    name: str
+    kind: Literal["static", "dialup", "ddns"] = "static"
+    interface: str | None = None
+    remote_gw: str | None = None
+    local_gw: str | None = None
+    ike_version: int | None = None
+    status: str | None = None  # up | partial | down | idle; None = unbekannt
+    phase2: list[NormalizedVpnPhase2] = Field(default_factory=list)
+    instances: list[dict[str, Any]] = Field(default_factory=list)  # Dial-up: Gegenstellen
+    attrs: dict[str, Any] = Field(default_factory=dict)
+
+
 class RoutingInventory(BaseModel):
     """Routing, BGP, HA und L3Out eines Laufs (ADR 0019 Stufe 2) - je Quellsystem ersetzt."""
 
@@ -437,6 +550,7 @@ class RoutingInventory(BaseModel):
     policy_routes: list[NormalizedPolicyRoute] = Field(default_factory=list)
     l3outs: list[NormalizedL3Out] = Field(default_factory=list)
     bgp: list[NormalizedBgpObject] = Field(default_factory=list)  # BGP-Filter (0.113.0)
+    vpn: list[NormalizedVpnTunnel] = Field(default_factory=list)  # IPsec (1.19.0, ADR 0063)
 
 
 class CollectorResult(BaseModel):

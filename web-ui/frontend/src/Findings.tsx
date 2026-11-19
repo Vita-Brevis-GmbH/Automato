@@ -2,6 +2,7 @@
 // stimmt" + Hinweis, aufklappbar mit allen Angaben und Links auf die betroffenen Regeln.
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import {
+  exportFindings,
   fetchFindings,
   fetchFindingSummary,
   fetchSystems,
@@ -19,7 +20,7 @@ import Checks from "./modules/findings/Checks";
 import { NetAssignDialog } from "./modules/wege/NetAssign";
 import type { BgpWhy, BgpZoneChain } from "./api";
 import { FINDING_GROUPS, FINDING_HINT, FINDING_LABEL, findingLabel } from "./refs";
-import { Empty, ErrorBox, fmtTime, Icon, Loading, PageHead, SeverityBadge } from "./ui";
+import { download, Empty, ErrorBox, fmtTime, Icon, Loading, PageHead, SeverityBadge } from "./ui";
 import { L } from "./i18n";
 
 const PAGE = 500; // Findings je Seite
@@ -90,6 +91,13 @@ const DETAIL_LABEL: Record<string, string | null> = {
   // Wege uneinheitlich (0.73.0, vorher Regel ↔ Weg): Verbindungen stehen im Satz
   application: L("Applikation", "Application"),
   application_id: null,
+  // VPN-Tunnel (1.19.0): Tunnel, Gegenstelle und Netze stehen im Satz
+  tunnel: null,
+  ref: null,
+  remote_gw: null,
+  problem: null,
+  phase2_down: null,
+  selectors: L("Selektoren der Gegenstelle", "Selectors of the peer"),
   // Unvollständig geprüft (0.140.0): die Kürzungen stehen im Satz
   checked: L("geprüfte Verbindungen", "connections checked"),
   cuts: null,
@@ -252,10 +260,24 @@ function viewLinks(f: Finding): { label: string; view: View; params: ViewParams 
   if (f.type === "parallel_policy_route_mismatch")
     return [{ label: String(d.label ?? L("Policy-Route", "Policy route")), view: "routing",
               params: { tab: "policy", q: `${String(d.source ?? "")} ${String(d.name ?? d.seq ?? "")}`.trim() } }];
+  // 1.19.0: statische Route in der Ansicht „Statische Routen“ (Gerät bzw. Kontext, Präfix)
+  if (f.type.startsWith("static_") && d.node)
+    return [{ label: L(`Statische Routen ${String(d.label ?? "")}`, `Static routes ${String(d.label ?? "")}`), view: "statisch",
+              params: { context: String(d.node), ...(d.prefix && f.type !== "static_unchecked" ? { q: String(d.prefix) } : {}) } }];
   // 0.140.0: unvollständig geprüfte Applikation öffnen
   if (f.type === "app_coverage" && d.application_id != null)
     return [{ label: L(`Applikation ${String(d.application ?? "")} öffnen`, `Open application ${String(d.application ?? "")}`),
               view: "apps", params: { app: String(d.application_id) } }];
+  // 1.19.0: IPsec-Tunnel in „VPN-Tunnel“ öffnen (über seinen festen Schlüssel)
+  if (f.type.startsWith("vpn_") && d.ref)
+    return [{ label: L(`VPN ${String(d.tunnel ?? "")} öffnen`, `Open VPN ${String(d.tunnel ?? "")}`), view: "vpn",
+              params: { tunnel: String(d.ref) } }];
+  // 1.19.0: Kabel in NetBox bzw. Kabelnummer im Reiter „Kabelnummern“ der Verkabelung
+  if (f.type === "cable_neighbor_mismatch" || f.type === "cable_label_mismatch") {
+    const end = (d.a ?? {}) as { device?: string; port?: string };
+    return [{ label: L("In der Verkabelung öffnen", "Open in cabling"), view: "verkabelung",
+              params: { tab: "labels", q: String(end.port ?? end.device ?? "") } }];
+  }
   // 0.134.0: VIP ohne Ziel in NAT / VIPs öffnen
   if (f.type === "vip_target_missing" && d.name)
     return [{ label: L(`${String(d.name)} in NAT / VIPs`, `${String(d.name)} in NAT / VIPs`), view: "nat", params: { q: String(d.name) } }];
@@ -273,6 +295,30 @@ function viewLinks(f: Finding): { label: string; view: View; params: ViewParams 
   if (BGP_FINDING_TYPES.has(f.type) && d.l3out)
     return [{ label: L(`L3Out ${String(d.l3out)} öffnen`, `Open L3Out ${String(d.l3out)}`), view: "routing",
               params: { tab: "l3out", q: String(d.l3out) } }];
+  // Spanning Tree (1.19.0): Ansicht mit dem VLAN bzw. dem Switch öffnen
+  if (f.type.startsWith("stp_")) {
+    const vlan = String(d.vlans ?? d.instances ?? "").match(/\d+/)?.[0];
+    const q = String(d.device ?? "");
+    return [{ label: L("Spanning Tree öffnen", "Open Spanning Tree"), view: "spanningtree",
+              params: f.type === "stp_bpdu_guard" || f.type === "stp_topology_changes" ? { tab: "devices" }
+                : vlan ? { vlan } : q ? { q } : {} }];
+  }
+  // Wege vergleichen (1.19.0, ADR 0067): Abschnitt in der Ansicht „Wege vergleichen“ (Reiter „Alle Abschnitte“)
+  if (f.type.startsWith("path_"))
+    return [{ label: L("In „Wege vergleichen“ öffnen", "Open in “Compare paths”"), view: "vergleich",
+              params: { tab: "abschnitte", ...(d.section ? { q: String(d.section) } : { state: "unchecked" }) } }];
+  // Reservierungen (1.19.0, ADR 0066): Ansicht mit der Reservierung bzw. das AS im Routing
+  if (f.type.startsWith("reservation_") && d.reservation_id != null) {
+    const tab = d.kind === "asn" ? "asn" : "vlan";
+    const out: { label: string; view: View; params: ViewParams }[] = [
+      { label: L(`Reservierung ${String(d.label ?? "")} öffnen`, `Open reservation ${String(d.label ?? "")}`),
+        view: "reservierungen", params: { tab, id: String(d.reservation_id) } },
+    ];
+    if (d.kind === "asn" && f.type !== "reservation_overlap" && Array.isArray(d.numbers) && d.numbers.length)
+      out.push({ label: L(`AS ${String(d.numbers[0])} im Routing`, `AS ${String(d.numbers[0])} in routing`), view: "asn",
+                 params: { q: String(d.numbers[0]) } });
+    return out;
+  }
   // Datenqualität (ADR 0029): Läufe des Quellsystems, nicht lesbarer Routing-Kontext
   if ((f.type === "source_stale" || f.type === "source_partial") && sid != null) {
     const out: { label: string; view: View; params: ViewParams }[] = [
@@ -298,7 +344,7 @@ function ruleLinks(f: Finding): { label: string; params: ViewParams }[] {
     return [{ label: f.subject_id, params: { q: String(d.value ?? f.subject_id) } }];
   }
   if (f.type === "duplicate_value") return names("names").map((n) => ({ label: n, params: { object: n } }));
-  if (["rule_incomplete", "aci_scope_unpaired", "aci_contract_both_sides", "snat_pool_missing", "app_connection_mismatch", "app_contract_narrower", "app_rule_unused"].includes(f.type) && d.rule_id != null)
+  if (["rule_incomplete", "aci_scope_unpaired", "aci_contract_both_sides", "snat_pool_missing", "rule_shadowed", "app_connection_mismatch", "app_contract_narrower", "app_rule_unused"].includes(f.type) && d.rule_id != null)
     return [{ label: String(d.name ?? f.subject_id), params: { rule: String(d.rule_id) } }];
   if (f.subject_kind === "device_object" && f.type !== "unused_object")
     return [{ label: f.subject_id, params: { object: f.subject_id } }];
@@ -345,6 +391,7 @@ export default function Findings({
   const [q, setQ] = useState(initialQuery);
   const [open, setOpen] = useState<number | null>(null); // aufgeklappter Befund
   const [adding, setAdding] = useState(false); // Finding von Hand (0.109.0)
+  const [exporting, setExporting] = useState(false); // Excel-Export (1.0.1)
   const [assigning, setAssigning] = useState<string | null>(null); // grosses Netz zuordnen (0.111.0)
   const [tab, setTab] = useState(initialTab);
   // Mehrfachauswahl (0.117.0, Anwender: „Multi-Checkbox für das Ignorieren der Findings“)
@@ -451,24 +498,55 @@ export default function Findings({
   const loaded = findings?.length ?? 0;
 
   const canAdd = me.isOperator && !me.isCustomer && tenantId !== null;
+  // 1.0.1: globaler Export aller Findings (alle Mandanten, alle Status) als Excel nach Kategorie
+  const exportAll = async () => {
+    setExporting(true);
+    try {
+      const { blob, filename } = await exportFindings();
+      download(filename, blob);
+    } catch (e) {
+      setError(e);
+    } finally {
+      setExporting(false);
+    }
+  };
+  const exportButton = (
+    <button
+      className="btn btn-ghost btn-sm"
+      id="findings-export"
+      disabled={exporting}
+      onClick={exportAll}
+      title={L(
+        "Alle Findings aller Mandanten (alle Status) als Excel, nach Modul und Prüfung; Details als Kommentar an der Meldung",
+        "All findings of all tenants (every status) as Excel, by module and check; details as a comment on the message",
+      )}
+    >
+      {exporting ? L("Exportiere …", "Exporting …") : L("Excel-Export", "Excel export")}
+    </button>
+  );
   return (
     <>
       <PageHead
         title="Findings"
         actions={
-          canAdd && tab === "befunde" ? (
-            <button
-              className="btn btn-sm"
-              id="finding-add"
-              onClick={() => setAdding(true)}
-              title={L(
-                "Befund von Hand erfassen (Typ „Von Hand erfasst“): bleibt nach dem Abgleich bestehen, Triage wie jedes Finding",
-                "Capture a finding manually (type “Captured manually”): stays after the reconciliation, triage like any finding",
-              )}
-            >
-              + {L("Finding erfassen", "Capture finding")}
-            </button>
-          ) : undefined
+          tab !== "befunde" || me.isCustomer ? undefined : !canAdd ? (
+            exportButton
+          ) : (
+            <>
+              {exportButton}
+              <button
+                className="btn btn-sm"
+                id="finding-add"
+                onClick={() => setAdding(true)}
+                title={L(
+                  "Befund von Hand erfassen (Typ „Von Hand erfasst“): bleibt nach dem Abgleich bestehen, Triage wie jedes Finding",
+                  "Capture a finding manually (type “Captured manually”): stays after the reconciliation, triage like any finding",
+                )}
+              >
+                + {L("Finding erfassen", "Capture finding")}
+              </button>
+            </>
+          )
         }
       >
         {L(

@@ -16,11 +16,11 @@ test("Regelsuche findet Gruppenmitglieder und IPAM-Namen", async ({ page }) => {
 test("SNAT-Pool: Regel → NAT-Detail → zurück zu den Regeln", async ({ page }) => {
   await page.goto("/#regeln");
   await page.click("button.linkchip:has-text('IPP_inet01')");
-  await expect(page).toHaveURL(/#nat\?q=IPP_inet01/);
+  await expect(page).toHaveURL(/#l4-7\/nat\?q=IPP_inet01/);
   const drawer = page.locator(".drawer");
   await expect(drawer).toContainText("198.51.100.10-198.51.100.12");
   await drawer.locator("button:has-text('In Regeln anzeigen')").click();
-  await expect(page).toHaveURL(/#regeln\?nat=IPP_inet01/);
+  await expect(page).toHaveURL(/#l4-7\/regeln\?nat=IPP_inet01/);
   await expect(rows(page)).toHaveCount(1);
   await expect(rows(page).first()).toContainText("web-to-internet");
 });
@@ -42,8 +42,9 @@ test("VIP-Detail zeigt DNS-Namen beider Seiten und den Server", async ({ page })
 
 test("Findings: Übersicht, Satz mit Befund, Link auf die Regel", async ({ page }) => {
   await page.goto("/#findings");
-  // ADR 0029: dazu „Datenqualität“ (fw-05 nur teilweise gelesen); 0.113.0: „BGP-Filter“ (fw-05)
-  await expect(page.locator(".fgroup")).toHaveCount(11);
+  // ADR 0029: dazu „Datenqualität“ (fw-05 nur teilweise gelesen); 0.113.0: „BGP-Filter“ (fw-05);
+  // 1.19.0: „Spanning Tree“ (Root ohne Soll, unerwartet blockiert, BPDU-Guard)
+  await expect(page.locator(".fgroup")).toHaveCount(12);
   // seit 0.72.0: Policy-Route im Verbund „Süd“ je Firewall mit anderem Gateway
   await expect(page.locator(".fgroup", { hasText: "Parallele Firewalls" })).toContainText(
     "Parallele Policy-Route abweichend",
@@ -53,7 +54,9 @@ test("Findings: Übersicht, Satz mit Befund, Link auf die Regel", async ({ page 
   // seit 0.73.0: Wege uneinheitlich bei der Applikation Portal Süd (Verbund Süd: fw-09 erlaubt, fw-10 sperrt)
   await expect(page.locator(".fgroup", { hasText: "Applikationen" })).toContainText("Applikation: Wege uneinheitlich");
   // seit 0.50.0: Plausibilität der Topologie (statische Route ohne Wirkung in den Beispieldaten)
-  await expect(page.locator(".fgroup", { hasText: "Topologie" })).toContainText("Statische Route ohne Wirkung");
+  // (Kopf genau „Topologie“ – die Gruppe „Spanning Tree“ nennt Topologieänderungen, 1.19.0)
+  const topo = page.locator(".fgroup", { has: page.locator(".fgroup-head b", { hasText: /^Topologie$/ }) });
+  await expect(topo).toContainText("Statische Route ohne Wirkung");
   // seit 0.51.0: Regeln gegen die Absicht der Zonenmatrix (LAN -> DMZ gesperrt)
   await expect(page.locator(".fgroup", { hasText: "Zonen" })).toContainText("Zone: gegen die Absicht");
   await page.click(".fline:has-text('Nicht im IPAM')");
@@ -61,7 +64,7 @@ test("Findings: Übersicht, Satz mit Befund, Link auf die Regel", async ({ page 
   await expect(row).toContainText("Den Server db01.example.ch kennt das IPAM unter 10.30.0.9");
   await row.click();
   await page.click("tr.subrow button.linkchip:has-text('H_db01')");
-  await expect(page).toHaveURL(/#regeln\?object=H_db01/);
+  await expect(page).toHaveURL(/#l4-7\/regeln\?object=H_db01/);
   await expect(rows(page).first()).toContainText("to-db");
 });
 
@@ -95,7 +98,7 @@ test("Dienste: Attribute, Prüfung und Detail mit Regeln", async ({ page }) => {
   await expect(drawer).toContainText("Filter-Einträge (1)");
   await expect(drawer).toContainText("CT_db:SJ_1");
   await drawer.locator("button:has-text('In Regeln anzeigen')").click();
-  await expect(page).toHaveURL(/#regeln\?object=TE%2FFT_https|#regeln\?object=TE\/FT_https/);
+  await expect(page).toHaveURL(/#l4-7\/regeln\?object=TE%2FFT_https|#l4-7\/regeln\?object=TE\/FT_https/);
   await expect(rows(page)).toHaveCount(1);
 });
 
@@ -145,7 +148,7 @@ test("IPv4/IPv6: gleichnamige Objekte getrennt mit eigener Regel-Zahl", async ({
   await expect(v6).toHaveCount(1);
   await expect(v6).toContainText("2001:db8:10::5");
   await v6.locator("button.linkchip").last().click();
-  await expect(page).toHaveURL(/#regeln\?.*object_id=/);
+  await expect(page).toHaveURL(/#l4-7\/regeln\?.*object_id=/);
   await expect(rows(page)).toHaveCount(3);
   await expect(page.locator(".filterbar")).toContainText("Objekt H_web01 (IPv6)");
 });
@@ -205,7 +208,7 @@ test("Regeln je Subnetz: Link aus den Subnetzen, any ein-/ausblenden", async ({ 
   await page.goto("/#objekte");
   await page.click(".tabbar button:has-text('Subnetze')");
   await rows(page).filter({ hasText: "10.20.0.0/24" }).locator("button:has-text('Regeln im Subnetz')").click();
-  await expect(page).toHaveURL(/#regeln\?net=10\.20\.0\.0%2F24/);
+  await expect(page).toHaveURL(/#l4-7\/regeln\?net=10\.20\.0\.0%2F24/);
   await expect(page.locator(".filterbar")).toContainText("Subnetz 10.20.0.0/24");
   await expect(rows(page).filter({ hasText: "to-web-net" })).toHaveCount(1);
   const withAny = await rows(page).count();
@@ -225,7 +228,7 @@ test("VMware: VM mit Portgruppe → EPG, Regeln der VM", async ({ page }) => {
   await expect(rows(page).filter({ hasText: "TE|AP|EG_db" })).toContainText("TE/AP/EG_db");
   await page.click(".tabbar button:has-text('VMs')");
   await vm.locator("button:has-text('Regeln der VM')").click();
-  await expect(page).toHaveURL(/#regeln\?q=web01-007-ka/);
+  await expect(page).toHaveURL(/#l4-7\/regeln\?q=web01-007-ka/);
   await expect(rows(page).filter({ hasText: "dmz-to-web" })).toHaveCount(1);
 });
 
@@ -293,7 +296,7 @@ test("Portgruppe im Detail: EPG, Subnetz aus dem IPAM, VM mit IP und DNS", async
   await expect(vm).toContainText("10.10.10.5");
   await expect(vm).toContainText("web01.example.ch");
   await drawer.locator("button:has-text('Regeln im Subnetz')").click();
-  await expect(page).toHaveURL(/#regeln\?net=10\.10\.10\.0%2F24/);
+  await expect(page).toHaveURL(/#l4-7\/regeln\?net=10\.10\.10\.0%2F24/);
 });
 
 test("Läufe: alle Läufe mit Gesamtzahl, Filter Quellsystem und Status", async ({ page }) => {
@@ -390,7 +393,7 @@ test("NAT: Korrektheitsprüfung, nur Abweichungen, Objekt öffnen", async ({ pag
   const drawer = page.locator(".drawer");
   await expect(drawer).toContainText("Ziel nicht im IPAM");
   await drawer.locator("button:has-text('Objekt öffnen')").click();
-  await expect(page).toHaveURL(/#objekte\?object_id=\d+/);
+  await expect(page).toHaveURL(/#l4-7\/objekte\?object_id=\d+/);
   await expect(page.locator(".drawer h2")).toHaveText("V-EXT_shop.example.ch");
   // die Liste dahinter ist auf genau dieses Objekt gefiltert (0.36.0)
   await page.locator(".drawer button.close").click();
@@ -567,7 +570,7 @@ test.describe.serial("Verbund fw-06/fw-07", () => {
     const card = page.locator(".card", { hasText: "Weg 1" });
     await expect(card).toContainText("Weg endet");
     await card.locator("button", { hasText: "Als Anbindung erfassen" }).click();
-    await expect(page).toHaveURL(/#routing/); // im Routing, Reiter Anbindungen
+    await expect(page).toHaveURL(/#l3\/routing/); // im Routing, Reiter Anbindungen
     await expect(page.locator("#ex-hops")).toHaveValue("10.70.0.1");
     await page.locator("#ex-name").fill("MPLS Kunde A");
     await page.locator("#ex-kind").selectOption("mpls");
@@ -612,7 +615,7 @@ test("Parallele Firewalls: Policy-Routen im Verbund vergleichen, Befund öffnet 
   await expect(row).toContainText("Gateway: 10.89.0.253 ≠ 10.89.0.252");
   await row.click();
   await page.locator("button.linkchip", { hasText: "Policy-Route 1" }).click();
-  await expect(page).toHaveURL(/#routing/);
+  await expect(page).toHaveURL(/#l3\/routing/);
   await expect(page.locator(".tabbar button.on")).toHaveText("Policy-Routen & SD-WAN");
   await expect(page.locator(".card-body.viewport tbody tr")).toHaveCount(1);
   await expect(page.locator(".card-body.viewport tbody tr")).toContainText("10.89.0.253");
@@ -714,7 +717,7 @@ test.describe.serial("Kunde TE", () => {
     const sub = page.locator("tr.subrow");
     await sub.locator(".tabbar button", { hasText: "Regeln" }).click();
     await sub.locator("a").first().click();
-    await expect(page).toHaveURL(/#regeln\?rule=\d+/);
+    await expect(page).toHaveURL(/#l4-7\/regeln\?rule=\d+/);
     await expect(page.locator(".drawer")).toBeVisible();
   });
 
@@ -1561,8 +1564,10 @@ test("Verkabelung: Switches, Verbindungen mit Abweichungen, Ports und VLANs (0.6
   await expect(ports).toHaveCount(3);
   await expect(ports.filter({ hasText: "Eth1/2" })).toContainText("Native VLAN 1 ↔ 99");
 
-  // VLANs: DMZ als Access an sw-acc-01, in den Trunks beider Switches
-  await page.click(".tabbar button:has-text('VLANs')");
+  // VLANs: DMZ als Access an sw-acc-01, in den Trunks beider Switches – seit 1.19.0 (ADR 0067) eigene Ansicht in L2,
+  // die alte Adresse des Reiters leitet um
+  await page.goto("/#verkabelung?tab=vlans");
+  await expect(page).toHaveURL(/#l2\/vlans$/);
   const dmz = page.locator("#cabling-vlans tbody tr[data-vlan='30']");
   await expect(dmz).toContainText("DMZ");
   await expect(dmz).toContainText("sw-acc-01 · 2 · 2"); // seit 0.64.0 auch der DMZ-Webserver

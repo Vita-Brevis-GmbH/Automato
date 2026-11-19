@@ -19,13 +19,15 @@ Wirkung je Teil (`SCOPES`) - im Zweifel `all`:
 
 - Regeln: einzeln (`store/footprint.py` prueft je Applikation);
 - Objekte, VMs, EPGs: ueber ihre Adressen (alte und neue), EPGs auch ueber die DN;
-- NAT, Routen, Policy-Routen: das Geraet (Applikationen, deren Wege bzw. Regeln es nutzen), NAT
-  zusaetzlich ueber die Adressen;
+- NAT, Routen, Policy-Routen, Zustand der IPsec-Tunnel (1.19.0): das Geraet (Applikationen, deren
+  Wege bzw. Regeln es nutzen), NAT zusaetzlich ueber die Adressen;
 - angeschlossene Netze, Interfaces, Subnetze, VRFs, Kontexte, HA, L3Outs, BGP-Nachbarn und
-  -Filter, Portgruppen, Referenzquellen (IPAM/DNS): `all`;
+  -Filter, Konfiguration der IPsec-Tunnel, Portgruppen, Referenzquellen (IPAM/DNS): `all`;
 - MAC-/ARP-Tabellen und Nachbarn (CDP/LLDP) der Switches: keine (Doku und Wege nutzen sie nicht);
   ebenso die ESXi-Hosts eines vCenters mit vmnics und Nachbarn (1.8.0, `virtual.hosts`) - sie
-  dienen nur Netzinventar, Verkabelung und NetBox-Sync, die jeweils beim Abruf rechnen.
+  dienen nur Netzinventar, Verkabelung und NetBox-Sync, die jeweils beim Abruf rechnen; ebenso der
+  Spanning Tree der Switches (1.19.0, `inventory.stp`/`stp_devices`) - die blockierten VLANs am
+  Port fuer die L2-Wege stehen weiter in den Interfaces (`inventory.interfaces`).
 """
 
 import hashlib
@@ -52,10 +54,22 @@ SCOPES: dict[str, frozenset[str]] = {
     "virtual.vms": frozenset({IPS}),
     "routing.routes": frozenset({DEVICE}),
     "routing.policy_routes": frozenset({DEVICE}),
+    # IPsec-Tunnel (1.19.0, ADR 0063): der Zustand (up/down, verbundene Dial-up-Gegenstellen)
+    # wirkt ueber das Geraet; die Konfiguration (`routing.vpn`) ueberall - die Gegenstelle kann
+    # eine andere FortiGate sein, deren Tunnel erst den Weg weiterfuehrt
+    "routing.vpn_state": frozenset({DEVICE}),
     "inventory.neighbors": NONE,
+    # Verkabelung im Detail (1.19.0): Transceiver und ihr Lesestatus, Kabel der NetBox (Label und
+    # Enden) - nur Verkabelung, Befunde und NetBox-Sync, nicht Doku und Wege
+    "inventory.transceivers": NONE,
+    "inventory.transceiver_reads": NONE,
+    "reference.cables": NONE,
     "inventory.macs": NONE,
     "inventory.arps": NONE,
     "virtual.hosts": NONE,  # ESXi-Hosts (1.8.0): nur Inventar/Verkabelung, nicht Doku und Wege
+    # Spanning Tree (1.19.0): nur Ansicht und Befunde des Spanning Tree, nicht Doku und Wege
+    "inventory.stp": NONE,
+    "inventory.stp_devices": NONE,
 }
 # Teile, die Routing bzw. Inventar sind (Routing-Filter, `bgp_cache`)
 _NET_PREFIXES = ("routing.", "inventory.")
@@ -135,6 +149,19 @@ def _epg_ips(e) -> list[str]:
     return ranges([*e.subnets, *e.bd_subnets, *(p.ip for p in e.endpoints)])
 
 
+def _vpn_config(t) -> dict:
+    """IPsec-Tunnel ohne Zustand (Konfiguration: Phase 1 und 2)."""
+    out = t.model_dump(mode="json", exclude={"status", "instances"})
+    for p in out.get("phase2") or []:
+        p.pop("status", None)
+    return out
+
+
+def _vpn_state(t) -> list:
+    """Zustand eines IPsec-Tunnels: up/down je Phase 2, verbundene Dial-up-Gegenstellen."""
+    return [t.context, t.name, t.status, [[p.name, p.status] for p in t.phase2], t.instances]
+
+
 def _payload(result, platform: str) -> tuple[dict[str, str], dict[str, dict[str, list]]]:
     """Abdruecke der Teile, die der Lauf geliefert hat, und die Eintraege mit Adressen."""
     parts: dict[str, str] = {}
@@ -171,6 +198,9 @@ def _payload(result, platform: str) -> tuple[dict[str, str], dict[str, dict[str,
                 far = [r for r in entries if (r.protocol or "") not in ("connected", "local")]
                 parts["routing.connected"] = _list_digest(near)
                 parts["routing.routes"] = _list_digest(far)
+            elif field == "vpn":  # IPsec (1.19.0): Zustand getrennt von der Konfiguration
+                parts["routing.vpn"] = _list_digest([_vpn_config(t) for t in entries])
+                parts["routing.vpn_state"] = _list_digest([_vpn_state(t) for t in entries])
             else:
                 parts[f"routing.{field}"] = _list_digest(entries)
     return parts, items
@@ -310,7 +340,8 @@ def record(session: Session, run, result, rules: list) -> DataChange | None:
 
 def record_reference(session: Session, run) -> DataChange | None:
     """Nach dem Abschluss eines Laufs einer Referenzquelle (IPAM/DNS): ihr Inhalt als ein Teil -
-    Namen und Netze wirken in jeder Applikation."""
+    Namen und Netze wirken in jeder Applikation. Die Kabel einer NetBox (1.19.0) sind ein eigener
+    Teil ohne Wirkung auf Doku und Wege (`reference.cables`)."""
     if run.source_system_id is None or run.tenant_id is None:
         return None
     skip = ("id", "tenant_id", "source_system_id", "collector_run_id")
@@ -318,9 +349,12 @@ def record_reference(session: Session, run) -> DataChange | None:
     rows = session.execute(
         select(*cols).where(ReferenceRecordRow.collector_run_id == run.id)
     ).all()  # fmt: skip
-    digest = _h(sorted(_h(list(r)) for r in rows))
+    kind = [c.name for c in cols].index("kind")
+    cables = [r for r in rows if r[kind] == "cable"]
+    digest = _h(sorted(_h(list(r)) for r in rows if r[kind] != "cable"))
+    parts = {"reference": digest, "reference.cables": _h(sorted(_h(list(r)) for r in cables))}
     state = session.get(DataState, run.source_system_id)
-    return _store(session, run, state, {"reference": digest}, {}, None)
+    return _store(session, run, state, parts, {}, None)
 
 
 def describe(change: DataChange) -> dict:

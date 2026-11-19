@@ -524,16 +524,17 @@ Bei Internet-Betrieb hinter WAF (Schritt 12): Holt der Browser das Token, geht e
 
 ## 10. Betrieb
 
-- **Backup (täglich, DB ist der Zustand):**
-  ```bash
-  docker compose exec -T postgres pg_dump -U keycloak keycloak | \
-    gzip > /var/backups/kc-$(date +%F).sql.gz
-  ```
-  Per Cron sichern und off-site kopieren. Die Realm-Config lebt nach dem Import in der DB
-  (nicht mehr im Import-File) — DB-Backup genügt.
-- **Updates:** Image-Tag in `docker-compose.yml` anheben, `docker compose pull && docker
-  compose up -d`. DB-Volume bleibt. Vorher Backup. Keycloak-Release-Notes auf Breaking
-  Changes prüfen.
+- **Backup (täglich, DB ist der Zustand):** seit 1.17.0 verschlüsselt mit
+  `deploy/keycloak/betrieb.sh sichern` (Abschnitt 14; `pg_dump` → gzip → age, nie Klartext auf
+  der Platte) – per Cron (`/etc/cron.d/automato-keycloak`, legt das Playbook an) und off-site
+  kopieren. Die Realm-Config lebt nach dem Import in der DB (nicht mehr im Import-File) —
+  DB-Backup genügt. Alte unverschlüsselte Dumps (`/var/backups/kc-*.sql.gz`) löschen.
+- **Updates:** aus dem Cockpit (Seite Plattform, Abschnitt 14): Sicherung → neues Image → Health
+  → sonst selbst zurück (Image **und** Datenbank). Die Version steht dann in
+  `docker-compose.override.yml` (nicht von Hand ändern). Von Hand nur ohne Cockpit: Tag in
+  `docker-compose.yml` anheben, vorher sichern, `docker compose pull && docker compose up -d`.
+  Keycloak-Release-Notes auf Breaking Changes prüfen; zurück auf eine ältere Version geht nur mit
+  der Datenbank aus der Sicherung.
 - **TLS:** Kein ACME → **Erneuerung ist manuell/extern**. Beim Austausch das neue
   Zertifikat wieder als **Fullchain** (Leaf + Intermediate, siehe Schritt 4) nach `./pki`
   legen (gleiche Dateinamen) und Caddy neu laden:
@@ -875,6 +876,64 @@ Vor Startseite und Werkzeugen fragt der Front-Proxy die Anmeldung im Realm des K
 - Rollen: die Realm-Rollen `admin` und `operator` (AD-Gruppen über den Gruppen-Mapper, 13b) gelten
   im Portal und in NetBox; ohne Rolle liest man nur.
 - Die Anmeldeseite von Keycloak muss für alle Benutzer erreichbar sein, für Kunden also über die WAF.
+
+---
+
+## 14. Betrieb aus dem Cockpit (Host-Agent, 1.17.0, ADR 0062)
+
+Auf der Seite **Plattform** des Cockpits erscheint Keycloak als Produkt `keycloak` (Stand,
+Sichern, Aktualisieren, Zurück, Neu starten), sobald auf dieser VM der **Host-Agent des
+Cockpits** läuft. Er ruft nur `deploy/keycloak/betrieb.sh` in einem Automato-Checkout auf (Vertrag
+`betrieb/v1`; der Checkout liefert nur dieses Skript, der Stack bleibt in `/opt/automato-keycloak`).
+Das Ansible-Playbook richtet Schritte 1–3 ein (`kc_automato_repo`), von Hand:
+
+```bash
+# 1. Werkzeuge und Checkout (öffentliches Repo; nur lesen)
+sudo apt-get -y install git age python3
+sudo git clone <repo-url> /opt/automato-keycloak/automato
+cd /opt/automato-keycloak/automato && sudo git checkout main
+
+# 2. Sicherungsschlüssel (age) – die Identität bleibt auf der VM (Rückfall), Kopie in den Tresor
+sudo sh -c 'umask 077 && age-keygen -o /root/automato-keycloak-backup.agekey'
+sudo cat /root/automato-keycloak-backup.agekey      # in den Tresor
+
+# 3. Konfiguration (keine Geheimnisse)
+sudo install -d -m 700 /etc/automato
+sudo install -m 600 deploy/keycloak/keycloak-betrieb.conf.example /etc/automato/keycloak-betrieb.conf
+sudo nano /etc/automato/keycloak-betrieb.conf       # KC_DIR, ggf. AGE_RECIPIENT (sonst der der Identität)
+echo '23 2 * * * root cd /opt/automato-keycloak/automato && deploy/keycloak/betrieb.sh sichern >>/var/log/automato-keycloak-sicherung.log 2>&1' \
+  | sudo tee /etc/cron.d/automato-keycloak
+
+# 4. Prüfen
+sudo deploy/keycloak/betrieb.sh stand               # eine Zeile JSON: Version, Health
+sudo deploy/keycloak/betrieb.sh sichern
+```
+
+5. Im Cockpit → Hosts → „Host-Agent einrichten“ das Produkt `keycloak` mit dem Checkout
+   `/opt/automato-keycloak/automato` wählen und die angezeigte Befehlszeile hier ausführen.
+
+| Aktion | Wirkung |
+|---|---|
+| `stand` | Keycloak-Version (aus dem Container, sonst Tag/Image), Health: alle Dienste laufen und `/health/ready` auf dem Management-Port antwortet mit 200; ob `zurueck` geht |
+| `sichern` | `pg_dump` der Keycloak-Datenbank → gzip → age nach `BACKUP_DIR` (0600, nie Klartext); älter als `BACKUP_KEEP_DAYS` wird gelöscht, die Sicherung für `zurueck` bleibt |
+| `aktualisieren --version <X.Y.Z>` | nie älter; Image `quay.io/keycloak/keycloak:<X.Y.Z>` (bzw. euer Repository) holen und prüfen → Sicherung → Version mit Digest in `docker-compose.override.yml` → Keycloak neu → Health bis 5 min → sonst selbst zurück (Image und Datenbank) |
+| `zurueck` | einmal auf Image und Datenbank vor dem letzten Update (Daten seither gehen verloren) |
+| `neustart` | `docker compose restart` des Stacks + Health |
+
+- Ohne Stack (`KC_DIR/docker-compose.yml`) lehnt jede Aktion ab; ohne Identität auf der VM bzw.
+  wenn Keycloak schon vorher nicht gesund ist, lehnt `aktualisieren` ab (kein Rückfall der
+  Datenbank möglich bzw. erst richten), ein von Hand angelegtes `docker-compose.override.yml` wird
+  nie überschrieben.
+- Health braucht `KC_HEALTH_ENABLED: "true"` (Vorgabe der Compose-Datei oben) und HTTP auf dem
+  Management-Port (TLS endet bei Caddy) – ohne das meldet `stand` „nicht bereit“ und
+  `aktualisieren` lehnt ab.
+- Das Playbook dreht die Version nicht zurück: `kc_image` gilt nur ohne das Override (es weist
+  darauf hin). Den Checkout aktualisiert ihr bei Bedarf von Hand (`git pull`) – er ändert am Stack
+  nichts.
+- Scheitert auch der Rückfall (Exit 2): Sicherung von Hand einspielen
+  (`age -d -i /root/automato-keycloak-backup.agekey <datei> | gunzip | docker compose exec -T
+  postgres psql -U keycloak keycloak` nach `DROP SCHEMA public CASCADE; CREATE SCHEMA public;`),
+  Zustand in `/opt/automato-keycloak/.betrieb/stand`.
 
 ---
 

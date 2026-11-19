@@ -21,12 +21,16 @@ import {
   snatText,
 } from "./api";
 import { Fold, FoldTitle } from "./fold";
+import { UsedStatics } from "./modules/analyse/StaticRoutes";
+import { VpnChip } from "./modules/analyse/VpnChip";
 import { NetAssignChip, NetAssignDialog } from "./modules/wege/NetAssign";
 import PathExplainDrawer from "./PathExplain";
 import { ReturnLegs, Verdict, VERDICT } from "./Paths";
 import { Dash, download, Empty, ErrorBox, ExportLangSelect, Icon, Loading, Note } from "./ui";
 import { L } from "./i18n";
 import { SnapshotBar } from "./SnapshotBar";
+import { useModule } from "./moduleState";
+import { hashOf as placeHash } from "./places";
 
 type Go = (v: View, p?: ViewParams) => void;
 
@@ -36,6 +40,13 @@ const STATE: Record<AppConnState["state"], [string, string]> = {
   other: ["", L("greift nicht", "does not apply")],
   off_path: ["crit", L("nicht auf dem Weg", "not on the path")],
   unknown: ["na", L("nicht prüfbar", "not checkable")],
+};
+
+// ADR 0071: Kennzeichen der Regel-Zuordnung an den Regeln einer Verbindung
+const MARK: Record<NonNullable<AppConnState["marks"]>[number]["key"], [string, string]> = {
+  shadowed: ["warn", L("überdeckt", "shadowed")],
+  broad: ["", L("breit", "broad")],
+  path_unchecked: ["warn", L("Weg nicht geprüft", "path not checked")],
 };
 
 // Filter nach Art (0.80.0, Anwender): Urteil des Wegs, Aktion der Regeln, Regel auf dem Weg,
@@ -374,6 +385,7 @@ function HopChain({ hops }: { hops: AppConnHop[] }) {
 
 function ConnDetail({ c, onRule, onExplain }: { c: AppConnection; onRule: (id: number) => void; onExplain?: () => void }) {
   const params = { src: c.src.ip, dst: c.dst.ip, ...(c.service ? { service: c.service } : {}) };
+  const compareOn = useModule("vergleich");
   return (
     <div className="conn-detail">
       {c.mismatch.map((m) => (
@@ -482,6 +494,11 @@ function ConnDetail({ c, onRule, onExplain }: { c: AppConnection; onRule: (id: n
                       </div>
                     )}
                     {k?.leak && <div className="faint">→ VRF {k.leak.vrf}</div>}
+                    {j === 0 && h.vpn && (
+                      <div className="faint conn-vpn">
+                        <VpnChip v={h.vpn} sid={h.source_system_id} context={h.context} />
+                      </div>
+                    )}
                   </td>
                   <td>{k ? <Verdict v={k.verdict} title={k.text} /> : <Dash />}</td>
                   <td>
@@ -531,6 +548,11 @@ function ConnDetail({ c, onRule, onExplain }: { c: AppConnection; onRule: (id: n
           {c.rules.map((r) => (
             <li key={r.rule_id}>
               <span className={`chip ${STATE[r.state][0]}`}>{STATE[r.state][1]}</span>{" "}
+              {(r.marks ?? []).map((m) => (
+                <span key={m.key} className={`chip ${MARK[m.key][0]} conn-mark-${m.key}`} title={m.text}>
+                  {MARK[m.key][1]}
+                </span>
+              ))}{" "}
               <button className="linkbtn" onClick={() => onRule(r.rule_id)}>
                 {r.label}
               </button>{" "}
@@ -564,6 +586,24 @@ function ConnDetail({ c, onRule, onExplain }: { c: AppConnection; onRule: (id: n
         >
           <Icon name="route" size={14} /> {L("In der Weg-Suche öffnen", "Open in path search")} ↗
         </a>
+        {/* 1.19.0 (ADR 0067): den Weg dieser Verbindung gegen L1/L2 prüfen (VLAN, Kabel, Spanning Tree) */}
+        {compareOn && (
+          <a
+            className="btn btn-ghost btn-sm conn-compare"
+            href={placeHash("vergleich", {
+              src: c.trace?.src ?? c.src.ip,
+              dst: c.trace?.dst ?? c.dst.ip,
+              ...((c.trace?.service ?? c.service) ? { service: (c.trace?.service ?? c.service) as string } : {}),
+              connection: "1",
+              ...(c.trace?.starts?.length ? { starts: c.trace.starts.join(",") } : {}),
+            })}
+            target="_blank"
+            rel="noopener"
+            title={L("Wege vergleichen in einem neuen Tab", "Compare paths in a new tab")}
+          >
+            <Icon name="compare" size={14} /> {L("Gegen L1/L2 vergleichen", "Compare against L1/L2")} ↗
+          </a>
+        )}
       </div>
     </div>
   );
@@ -1092,6 +1132,17 @@ export default function ConnectionsCard({
                 {L(`${s.asymmetric} Rückweg über andere Firewall`, `${s.asymmetric} return via other firewall`)}
               </span>
             )}
+            {(s.vpn ?? 0) > 0 && (
+              <span
+                className="chip info"
+                id="conn-vpn"
+                title={(data?.vpn ?? [])
+                  .map((v) => `VPN ${v.name} (${v.device}${v.peer?.label ? ` ↔ ${v.peer.label}` : ` → ${v.remote_gw ?? "?"}`}, ${v.status ?? "?"}): ${v.connections}`)
+                  .join("\n")}
+              >
+                {L(`${s.vpn} über VPN`, `${s.vpn} via VPN`)}
+              </span>
+            )}
             {(s.zone_violations ?? 0) > 0 && (
               <span
                 className="chip crit"
@@ -1321,6 +1372,7 @@ export default function ConnectionsCard({
       </div>
       )}
       {data?.without && data.without.length > 0 && <WithoutList items={data.without} onRule={onRule} />}
+      {data?.statics && data.statics.length > 0 && <UsedStatics items={data.statics} />}
       </>
       )}
       {explain && tenantId != null && (

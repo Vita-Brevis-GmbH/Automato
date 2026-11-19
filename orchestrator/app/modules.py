@@ -83,11 +83,17 @@ MODULES: tuple[Module, ...] = (
             "system",
             "health",
             "portal",
+            "inventory",
+            "freigaben",
+            "netbox_host",
+            "kopplung",
         ),
         store=(
+            "abbau",
             "aci_direction",
             "aci_relevance",
             "aci_shared",
+            "cockpit_mandant",
             "connections",
             "customer_alias",
             "customer_infra",
@@ -98,8 +104,13 @@ MODULES: tuple[Module, ...] = (
             "epgs",
             "epg_locate",
             "external",
+            "freigaben",
             "health",
+            "inventory",
+            "ist_stand",
+            "kopplung",
             "nat",
+            "netbox_host",
             "objects",
             "parallel",
             "portal",
@@ -113,6 +124,7 @@ MODULES: tuple[Module, ...] = (
             "sites",
             "tenant_lock",
             "topology",
+            "verwaltung",
             "virtual",
         ),
         views=(
@@ -171,7 +183,7 @@ MODULES: tuple[Module, ...] = (
             "Referenzquellen lesen: IPAM/DNS (Infoblox, NetBox, AD-DNS) - nur lesend",
             "Reads reference sources: IPAM/DNS (Infoblox, NetBox, AD DNS) - read-only",
         ),
-        store=("references",),
+        store=("references", "ad_dns"),  # AD-DNS je IP: A, PTR, Zonen (1.19.0)
         packages=(
             "sot_gateway.adapters.dns_zone",
             "sot_gateway.adapters.infoblox",
@@ -183,17 +195,35 @@ MODULES: tuple[Module, ...] = (
         "analyse",
         ("Analyse", "Analysis"),
         (
-            "Routing, Verkabelung, Abgleich IPAM, Topologie, Datenqualität",
-            "Routing, cabling, IPAM reconciliation, topology, data quality",
+            "Routing, statische Routen, VPN-Tunnel, Verkabelung, Spanning Tree, Reservierungen, "
+            "AS-Nummern, Abgleich IPAM, Topologie, Datenqualität",
+            "Routing, static routes, VPN tunnels, cabling, Spanning Tree, reservations, "
+            "AS numbers, IPAM reconciliation, topology, data quality",
         ),
-        api=("routing", "bgp", "cabling", "reconcile", "topology", "data_quality"),
+        api=(
+            "routing",
+            "bgp",
+            "cabling",
+            "reconcile",
+            "topology",
+            "data_quality",
+            "vpn",
+            "static_routes",  # statische Routen (1.19.0)
+            "stp",  # Spanning Tree (1.19.0)
+            "cable_labels",  # Kabelnummern und Transceiver (1.19.0)
+            "reservations",  # Reservierungen VLAN/AS (1.19.0, ADR 0066)
+            "as_numbers",  # AS-Nummern einzeln (1.19.0, ADR 0066)
+        ),
         store=(
+            "as_numbers",  # AS-Nummern aus den BGP-Daten (1.19.0, ADR 0066)
             "bgp_cache",  # Routing-Filter vorab berechnet (0.131.0)
             "bgp_filters",  # BGP-Filter Soll/Ist (0.113.0, ADR 0041)
             "bgp_zones",  # Soll je Nachbar aus den Zonen dahinter (0.114.0, ADR 0041 Stufe 2)
             "boundary",
             "cabling",
+            "cable_labels",  # Kabelnummern, Kabel der NetBox, Transceiver (1.19.0)
             "data_quality",
+            "dns_checks",  # DNS aus dem AD: PTR, unbekannte IPs, nicht pruefbar (1.19.0)
             "exits",
             "l2",
             "l2_export",
@@ -202,11 +232,26 @@ MODULES: tuple[Module, ...] = (
             "net_lists",  # Netzlisten der Anbindungen (0.111.0)
             "parallel_net",
             "reconcile",
+            "reservations",  # Reservierungen VLAN/AS (1.19.0, ADR 0066)
+            "static_routes",  # statische Routen je Geraet und VRF (1.19.0)
+            "stp",  # Spanning Tree (1.19.0)
+            "stp_findings",
             "topo_changes",
             "topo_model",
             "version_refresh",  # Befunde nach einem Update neu (0.133.0)
+            "vpn",  # IPsec-Tunnel (1.19.0, ADR 0063)
         ),
-        views=("routing", "verkabelung", "abgleich"),
+        views=(
+            "routing",
+            "statisch",
+            "verkabelung",
+            "spanningtree",
+            "abgleich",
+            "vpn",
+            "reservierungen",
+            "asn",
+            "vlans",  # VLANs je Standort, eigene Ansicht in L2 (1.19.0, ADR 0067)
+        ),
     ),  # fmt: skip
     Module(
         "wege",
@@ -231,8 +276,24 @@ MODULES: tuple[Module, ...] = (
             "return_path",  # Rueckweg je Weg, symmetrisch (0.134.0)
             "path_service",  # Dienst je Stelle: Client, Load Balancer, Server (0.137.0)
             "path_store",  # Wege einmal je Mandant und Datenstand (0.140.0, ADR 0048)
+            "forwarding",  # Forwarding-Modell je Knoten und VRF (ADR 0070)
+            "path_stages",  # Stufen der Weg-Suche je Hersteller (ADR 0070)
         ),
         views=("wege",),
+    ),  # fmt: skip
+    Module(
+        "vergleich",
+        ("Wege vergleichen", "Compare paths"),
+        (
+            "L3-Wege gegen L1/L2: VLAN auf allen Trunks erlaubt, Kabel und Nachbarn, Spanning "
+            "Tree - je Abschnitt, Befunde je Abweichung (ADR 0067)",
+            "L3 paths against L1/L2: VLAN allowed on all trunks, cables and neighbors, Spanning "
+            "Tree - per section, findings per deviation (ADR 0067)",
+        ),
+        depends=("analyse", "wege"),
+        api=("path_compare",),
+        store=("path_compare",),
+        views=("vergleich",),
     ),  # fmt: skip
     Module(
         "findings",
@@ -242,7 +303,7 @@ MODULES: tuple[Module, ...] = (
             "Findings with triage; findings of the applications in the background",
         ),
         api=("findings", "checks"),  # Pruefungen je Mandant schaltbar (0.110.0, ADR 0039)
-        store=("findings", "finding_text"),
+        store=("findings", "finding_text", "findings_export"),  # Excel (1.0.1)
         views=("findings",),
     ),  # fmt: skip
     Module(
@@ -252,12 +313,13 @@ MODULES: tuple[Module, ...] = (
             "Applikationen und ihre Doku nach Kategorien, Export Word/Markdown",
             "Applications and their documentation by category, export Word/Markdown",
         ),
-        api=("applications",),
+        api=("applications", "app_exports"),  # Export im Hintergrund (1.21.0, ADR 0069)
         store=(
             "applications",
             "appdoc",
             "appdoc_filter",
             "appdoc_path",  # unspezifische Regeln nur auf dem Weg (0.113.2)
+            "rule_match",  # Zuordnung Regel <-> Applikation nach echtem Treffer (ADR 0071)
             "appdoc_zones",
             "peer_names",
             "app_import",
@@ -268,6 +330,8 @@ MODULES: tuple[Module, ...] = (
             "docx_writer",
             "md_writer",
             "word_export",
+            "secure_zip",  # Gesamt-Export, ZIP je Applikation mit Passwort (1.0.1)
+            "export_jobs",  # Export im Hintergrund, Passwort nur im Speicher (1.21.0, ADR 0069)
         ),
         views=("apps",),
     ),  # fmt: skip
@@ -304,7 +368,8 @@ MODULES: tuple[Module, ...] = (
         role=WRITE,
         depends=("gateway",),
         api=("netbox_sync",),
-        store=("netbox_sync",),
+        # Kabelnummern als Label, DNS-Namen aus dem AD, Reservierungen (1.19.0, ADR 0066)
+        store=("netbox_sync", "cable_label_sync", "netbox_sync_dns", "netbox_sync_reserv"),
         views=("netbox",),
         packages=("sot_gateway.adapters.netbox_writer",),
     ),  # fmt: skip

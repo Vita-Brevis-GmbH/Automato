@@ -5,6 +5,7 @@ Phase 1 - Mandant, Zonen, Adressobjekte, Services, Regeln, Findings.
 Die ACI-Tabellen (epg*) und nat_rule folgen mit ihrer Phase.
 """
 
+from app.models.abbau import AbbauAuftrag, IstMeldung
 from app.models.agent import Agent
 from app.models.agent_check import AgentCheck
 from app.models.application import (
@@ -17,7 +18,9 @@ from app.models.application import (
 )
 from app.models.audit import AuditLog
 from app.models.base import Base
+from app.models.cable_label import CableLabel
 from app.models.collector_run import CollectorRun, RunStatus
+from app.models.coupling import Coupling
 from app.models.customer import (
     CUSTOMER_USER_ORIGINS,
     CUSTOMER_USER_ROLES,
@@ -36,6 +39,7 @@ from app.models.device_object import (
 )
 from app.models.doc_snapshot import DocSnapshot
 from app.models.epg import Epg, EpgEndpoint, EpgSubnet
+from app.models.export_job import ExportJob
 from app.models.finding import Finding, FindingStatus, FindingType, Severity, SubjectKind
 from app.models.inventory import (
     INVENTORY_MODELS,
@@ -43,6 +47,7 @@ from app.models.inventory import (
     InvInterface,
     InvNeighbor,
     InvSubnet,
+    InvTransceiver,
     InvVlan,
     InvVrf,
 )
@@ -73,6 +78,7 @@ from app.models.network_object import (
 from app.models.parallel import ParallelRejection
 from app.models.portal import PortalCustomer
 from app.models.reference_record import ReferenceRecordRow
+from app.models.reservation import RESERVATION_KINDS, Reservation
 from app.models.rule import (
     EndpointKind,
     EndpointRole,
@@ -89,6 +95,7 @@ from app.models.service_object import Proto, ServiceObject
 from app.models.site import SITE_KINDS, Site, SiteLink
 from app.models.source_system import DNS_PLATFORMS, REFERENCE_PLATFORMS, Platform, SourceSystem
 from app.models.source_system import RefRole as ReferenceRole
+from app.models.stp import STP_MODELS, StpDevice, StpInstance, StpSetting, StpTarget
 from app.models.sync_plan import SyncPlan, SyncStatus
 from app.models.tenant import DnsType, IpamType, Tenant
 from app.models.tenant_check import TenantCheck
@@ -106,11 +113,14 @@ from app.models.topology import (
     TopoPeer,
     TopoPolicyRoute,
     TopoRoute,
+    TopoVpnTunnel,
 )
+from app.models.verwaltung import CockpitCustomer, CockpitTenant
 from app.models.virtual import Portgroup, Vm, VmIp, VmNic
 from app.models.zone import Zone
 
 __all__ = [
+    "AbbauAuftrag",
     "ADDRESS_CATEGORIES",
     "CRITICALITIES",
     "PURPOSES",
@@ -130,7 +140,12 @@ __all__ = [
     "ApplicationRuleHide",
     "AuditLog",
     "Base",
+    "CableLabel",
     "CollectorRun",
+    "CockpitCustomer",
+    "CockpitTenant",
+    "Coupling",
+    "IstMeldung",
     "DataChange",
     "DataState",
     "DeviceObject",
@@ -142,6 +157,7 @@ __all__ = [
     "EpgEndpoint",
     "EpgSubnet",
     "EndpointRole",
+    "ExportJob",
     "Family",
     "Finding",
     "FindingStatus",
@@ -149,6 +165,7 @@ __all__ = [
     "InvDevice",
     "InvInterface",
     "InvNeighbor",
+    "InvTransceiver",
     "InvSubnet",
     "InvVlan",
     "InvVrf",
@@ -173,6 +190,8 @@ __all__ = [
     "Rule",
     "RuleAction",
     "RuleDomain",
+    "RESERVATION_KINDS",
+    "Reservation",
     "RuleEndpoint",
     "RuleIndex",
     "RuleIpRange",
@@ -186,6 +205,11 @@ __all__ = [
     "Site",
     "SiteLink",
     "SourceOfRecord",
+    "STP_MODELS",
+    "StpDevice",
+    "StpInstance",
+    "StpSetting",
+    "StpTarget",
     "SourceSystem",
     "ParallelRejection",
     "PortalCustomer",
@@ -205,6 +229,7 @@ __all__ = [
     "TopoPeer",
     "TopoPolicyRoute",
     "TopoRoute",
+    "TopoVpnTunnel",
     "Vm",
     "VmIp",
     "VmNic",

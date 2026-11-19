@@ -14,6 +14,10 @@ Im Orchestrator-Container (Beispiele):
   automato db-roles       # App-Rolle ohne DDL einrichten (Dienst migrate, nach alembic)
   automato purge [--dry-run]   # alte Laeufe/Syncs/Audit nach Frist loeschen (0.48.0)
   automato tls-init --dir /pki [--name <vm>] [--renew]   # interne CA + Zertifikate (0.49.0)
+  automato cockpit-kopplung [--status|--verwerfen|--entkoppeln]   # Einmal-Code fuers Cockpit
+                          (1.13.0, ADR 0057; deploy/aufbau.sh cockpit-kopplung)
+  automato cockpit-kopplung --hinterlegen   # Code des Cockpits von stdin (1.16.0, ADR 0061;
+                          deploy/betrieb.sh installieren --kopplung)
 
 Sprache der Ausgaben (0.90.0, ADR 0028 Schritt 4): `--lang de|en` (vor oder nach dem Befehl)
 bzw. Umgebungsvariable `AUTOMATO_LANG`, Standard Deutsch. Was gespeichert wird (Laeufe, Audit),
@@ -23,11 +27,13 @@ bleibt deutsch (`@german_only`); `status` zeigt die gespeicherte Meldung ueberse
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import sys
 from pathlib import Path
 
+from sot_gateway import trust
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -380,6 +386,102 @@ def _cmd_tls_init(_session: Session, args: argparse.Namespace) -> int:
     return 0
 
 
+def _zeit(iso: str | None) -> str:
+    """Zeitpunkt (ISO) in der Zeitzone des Betriebs, auf die Minute."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    if not iso:
+        return "–"
+    zone = ZoneInfo(get_settings().scheduler_timezone)
+    return datetime.fromisoformat(iso).astimezone(zone).strftime("%Y-%m-%d %H:%M %Z")
+
+
+def _kopplung_stand(session: Session) -> None:
+    from app.store import kopplung
+
+    st = kopplung.status(session, kopplung.COCKPIT)
+    if st["coupled"]:
+        print(L(f"gekoppelt mit „{st['name']}“ seit {_zeit(st['coupled_at'])}, zuletzt benutzt "
+                f"{_zeit(st['last_used'])}",
+                f"paired with “{st['name']}” since {_zeit(st['coupled_at'])}, last used "
+                f"{_zeit(st['last_used'])}"))  # fmt: skip
+    else:
+        print(L("nicht gekoppelt", "not paired"))
+    if st["code"]:
+        print(L(f"Code offen bis {_zeit(st['code']['expires'])}",
+                f"code open until {_zeit(st['code']['expires'])}"))  # fmt: skip
+    if get_settings().cockpit_token:
+        print(L("Token aus .env (AUTOMATO_COCKPIT_TOKEN) gilt zusätzlich – nach dem Koppeln dort "
+                "leeren", "token from .env (AUTOMATO_COCKPIT_TOKEN) is also valid – clear it "
+                "after pairing"))  # fmt: skip
+
+
+def _cmd_cockpit_kopplung(session: Session, args: argparse.Namespace) -> int:
+    """Kopplung mit dem Cockpit (1.13.0, ADR 0057) - Notweg auf der VM, wie in der Oberflaeche
+    (Administration → Kunden-Portal → Cockpit): Einmal-Code erzeugen (nur jetzt angezeigt), Stand,
+    offenen Code verwerfen bzw. entkoppeln. Im Audit mit Akteur `cli:cockpit-kopplung`."""
+    from app.store import kopplung
+
+    actor, peer = "cli:cockpit-kopplung", kopplung.COCKPIT
+    if args.status:
+        _kopplung_stand(session)
+        return 0
+    if args.entkoppeln:
+        with german():  # Audit (gespeichert)
+            done = kopplung.uncouple(session, peer, actor)
+        session.commit()
+        # 1.14.0 (ADR 0058): Soll-Stand ohne `verwaltung: cockpit` (front.sh wieder frei)
+        from app.store import verwaltung
+
+        with contextlib.suppress(OSError):
+            verwaltung.soll_schreiben(session, get_settings(), only_if_changed=True)
+        print(L("OK     entkoppelt – das gekoppelte Token gilt nicht mehr",
+                "OK     unpaired – the paired token is no longer valid") if done
+              else L("INFO   nicht gekoppelt", "INFO   not paired"))  # fmt: skip
+        return 0
+    if args.hinterlegen:
+        # 1.16.0 (ADR 0061): Code aus dem Auftrag des Cockpits (betrieb.sh installieren) - von
+        # stdin, nie als Argument (Prozessliste); nie ausgegeben
+        try:
+            with german():
+                expires = kopplung.deposit_code(session, peer, sys.stdin.readline(),
+                                                "cli:betrieb-installieren")  # fmt: skip
+        except ValueError:
+            session.rollback()
+            _error("kein gültiger Einmal-Code (XXXX-XXXX-XXXX) auf stdin",
+                   "no valid pairing code (XXXX-XXXX-XXXX) on stdin")  # fmt: skip
+            return 2
+        session.commit()
+        bis = _zeit(expires.isoformat())
+        print(L(f"OK     Einmal-Code des Cockpits hinterlegt, gültig bis {bis}",
+                f"OK     pairing code of the cockpit stored, valid until {bis}"))  # fmt: skip
+        return 0
+    if args.verwerfen:
+        with german():
+            done = kopplung.withdraw_code(session, peer, actor)
+        session.commit()
+        print(L("OK     offenen Code verworfen", "OK     open code withdrawn") if done
+              else L("INFO   kein Code offen", "INFO   no open code"))  # fmt: skip
+        return 0
+    with german():
+        code, expires = kopplung.create_code(session, peer, actor)
+    session.commit()
+    bis = _zeit(expires.isoformat())
+    print(L("Einmal-Code für das Cockpit (nur jetzt angezeigt):",
+            "Pairing code for the cockpit (shown only now):"))  # fmt: skip
+    print(f"\n    {code}\n")
+    print(L(f"Gültig bis {bis}, einmal, höchstens {kopplung.MAX_FEHLVERSUCHE} Fehlversuche; ein "
+            "neuer Code ersetzt diesen.",
+            f"Valid until {bis}, once, at most {kopplung.MAX_FEHLVERSUCHE} failed attempts; a "
+            "new code replaces this one."))  # fmt: skip
+    print(L("Im Cockpit bei der Automato-Instanz unter „Koppeln“ eingeben – nur dort, nie in "
+            "Chat, Ticket oder Datei.",
+            "Enter it in the cockpit at the Automato instance under “Pair” – only there, never "
+            "in chat, ticket or file."))  # fmt: skip
+    return 0
+
+
 def _lang_option() -> argparse.ArgumentParser:
     """`--lang` vor oder nach dem Befehl (ohne Vorgabe: `AUTOMATO_LANG`, sonst Deutsch)."""
     common = argparse.ArgumentParser(add_help=False)
@@ -513,6 +615,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.set_defaults(func=_cmd_tls_init)
 
+    p = command("cockpit-kopplung", "Einmal-Code fuer die Kopplung mit dem Cockpit",
+                "pairing code for the cockpit")  # fmt: skip
+    q = p.add_mutually_exclusive_group()
+    q.add_argument("--status", action="store_true",
+                   help=L("nur den Stand zeigen", "only show the state"))  # fmt: skip
+    q.add_argument("--verwerfen", action="store_true",
+                   help=L("offenen Code verwerfen", "withdraw the open code"))  # fmt: skip
+    q.add_argument("--entkoppeln", action="store_true",
+                   help=L("gekoppeltes Token ungueltig machen",
+                          "invalidate the paired token"))  # fmt: skip
+    q.add_argument("--hinterlegen", action="store_true",
+                   help=L("Einmal-Code des Cockpits von stdin hinterlegen (eigene Instanz)",
+                          "store the cockpit's pairing code from stdin (own instance)"),
+                   )  # fmt: skip
+    p.set_defaults(func=_cmd_cockpit_kopplung)
+
     p = command("purge", "alte Laeufe, Sync-Vorschauen und Audit nach Frist loeschen",
                 "delete old runs, sync previews and audit after the retention period")  # fmt: skip
     p.add_argument(
@@ -538,6 +656,7 @@ def language(argv: list[str] | None) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
+    trust.zusaetzliche_cas()  # wie der Dienst: zusaetzliche CAs aus deploy/trust (1.10.0)
     with use(language(argv)):
         args = build_parser().parse_args(argv)
         session = get_sessionmaker()()

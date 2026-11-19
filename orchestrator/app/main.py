@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from app import __version__, modules, scheduler
 from app.api import (
     agents,
+    app_exports,
     applications,
     auth_config,
     bgp,
@@ -35,16 +36,27 @@ from app.api import (
     tenants,
     topology,
     virtual,
+    vpn,
     zones,
 )
+from app.api import as_numbers as as_numbers_api
+from app.api import cable_labels as cable_labels_api
+from app.api import freigaben as freigaben_api
+from app.api import inventory as inventory_api
+from app.api import kopplung as kopplung_api
 from app.api import modules as module_api
+from app.api import netbox_host as netbox_host_api
+from app.api import path_compare as path_compare_api
 from app.api import portal as portal_api
+from app.api import reservations as reservations_api
+from app.api import static_routes as static_routes_api
+from app.api import stp as stp_api
 from app.config import Settings, check_security_config, get_settings
 from app.db import get_sessionmaker
 from app.i18n import middleware as i18n_middleware
 from app.secrets import resolve_settings
-from app.store import customer_alias, version_refresh
-from app.store import portal as portal_store
+from app.store import customer_alias, export_jobs, version_refresh
+from app.store import verwaltung as verwaltung_store
 
 log = logging.getLogger(__name__)
 
@@ -64,10 +76,20 @@ def _lifespan(settings: Settings):
         if settings.front_state_dir:
             try:
                 with get_sessionmaker()() as session:
-                    if portal_store.write_desired(session, settings.front_state_dir, True):
+                    # 1.14.0 (ADR 0058): `verwaltung: cockpit`, solange ein Cockpit verbunden ist
+                    if verwaltung_store.soll_schreiben(session, settings, True):
                         log.info("Soll-Stand des Front-Proxys nachgefuehrt")
             except Exception:  # noqa: BLE001 - Ordner fehlt/nicht beschreibbar: Start geht vor
                 log.warning("Soll-Stand des Front-Proxys nicht geschrieben", exc_info=True)
+        # Exporte im Hintergrund (1.21.0, ADR 0069): mit dem alten Prozess gestorbene Auftraege
+        # als abgebrochen zeigen, Abgelaufenes loeschen, danach alle 10 Minuten aufraeumen
+        try:
+            export_jobs.abort_interrupted(get_sessionmaker())
+            with get_sessionmaker()() as session:
+                export_jobs.purge(session)
+        except Exception:  # noqa: BLE001 - Datenbank noch nicht migriert o. ae.: Start geht vor
+            log.exception("Exporte nicht bereinigt")
+        cleanup = export_jobs.start_cleanup(get_sessionmaker())
         if settings.scheduler_enabled:  # zeitgesteuerte Laeufe je Quellsystem
             stop = scheduler.start(
                 get_sessionmaker(),
@@ -77,6 +99,7 @@ def _lifespan(settings: Settings):
             # 0.133.0: nach einem Update die Befunde je Mandant einmal mit der neuen Version
             version_refresh.start(get_sessionmaker(), stop)
         yield
+        cleanup.set()
         if stop is not None:
             stop.set()
 
@@ -133,6 +156,8 @@ def create_app() -> FastAPI:
     app.include_router(systems.router)
     app.include_router(tenants.router)
     app.include_router(nat.router)
+    # Export im Hintergrund (1.21.0) vor den Applikationen: `/applications/exports` vor `/{id}`
+    app.include_router(app_exports.router, dependencies=[Depends(modules.guard("doku"))])
     app.include_router(applications.router, dependencies=[Depends(modules.guard("doku"))])
     app.include_router(naming_profiles.router)
     app.include_router(reconcile.router, dependencies=[Depends(modules.guard("analyse"))])
@@ -143,14 +168,33 @@ def create_app() -> FastAPI:
     # vor dem Routing: /routing/net-assignments gehoert zum Wegsucher (0.111.0)
     app.include_router(net_assign.router, dependencies=[Depends(modules.guard("wege"))])
     app.include_router(bgp.router, dependencies=[Depends(modules.guard("analyse"))])  # 0.113.0
+    # AS-Nummern einzeln (1.19.0, ADR 0066) - vor dem Routing (gleiches Praefix)
+    app.include_router(as_numbers_api.router, dependencies=[Depends(modules.guard("analyse"))])
     app.include_router(routing.router, dependencies=[Depends(modules.guard(None))])
     app.include_router(topology.router, dependencies=[Depends(modules.guard("analyse"))])
+    app.include_router(
+        static_routes_api.router,  # statische Routen (1.19.0)
+        dependencies=[Depends(modules.guard("analyse"))],
+    )
     app.include_router(customers.router)
     app.include_router(customer_users.router)
     app.include_router(portal_api.router)  # Kunden-Portal (1.3.0, ADR 0050)
+    app.include_router(inventory_api.router)  # Inventar fuers Cockpit (1.10.0, ADR 0053)
+    app.include_router(freigaben_api.router)  # Freigaben aus dem Cockpit (1.11.0, ADR 0054)
+    app.include_router(netbox_host_api.router)  # Kunden fuer den NetBox-Host (1.11.0, ADR 0054)
+    app.include_router(kopplung_api.router)  # Kopplung mit dem Cockpit (1.13.0, ADR 0057)
     app.include_router(zones.router, dependencies=[Depends(modules.guard("design"))])
     app.include_router(cabling.router, dependencies=[Depends(modules.guard("analyse"))])
+    app.include_router(cable_labels_api.router,  # Kabelnummern, Transceiver (1.19.0)
+                       dependencies=[Depends(modules.guard("analyse"))])  # fmt: skip
     app.include_router(data_quality.router, dependencies=[Depends(modules.guard("analyse"))])
+    app.include_router(vpn.router, dependencies=[Depends(modules.guard("analyse"))])  # 1.19.0
+    app.include_router(stp_api.router, dependencies=[Depends(modules.guard("analyse"))])  # 1.19.0
+    app.include_router(  # Reservierungen VLAN/AS (1.19.0, ADR 0066)
+        reservations_api.router, dependencies=[Depends(modules.guard("analyse"))]
+    )
+    app.include_router(path_compare_api.router,  # Wege vergleichen (1.19.0, ADR 0067)
+                       dependencies=[Depends(modules.guard("vergleich"))])  # fmt: skip
     app.include_router(module_api.router)
     return app
 

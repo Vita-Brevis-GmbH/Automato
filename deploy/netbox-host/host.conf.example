@@ -14,14 +14,29 @@ ALLOW="10.0.30.5/32 10.0.10.0/24"
 # Adresse des Benutzers statt die des Front-Proxys (leer = nicht übernehmen)
 FRONT="10.0.30.5/32"
 
+# Port des Proxys auf dieser VM (1.9.1). 443, ausser hier läuft schon ein Dienst auf 443 (z. B. in
+# Dev auf der Magister-VM): dann z. B. 8444, in .env des Front-Proxys AUTOMATO_FRONT_NETBOX=<ip>:8444
+# und die Firewall für diesen Port öffnen. Nach einer Änderung: netbox-host.sh init
+# PORT=443
+
 # Anmeldung über das Anmelde-Tor des Front-Proxys (1.4.0, ADR 0051): NetBox übernimmt den Benutzer
 # aus den Kopfzeilen des Front-Proxys (nur von FRONT); Rechte aus den Realm-Rollen (role:admin =
 # Superuser, role:operator = bearbeiten, sonst lesen). Einrichten bzw. nachführen: sso alle
 SSO=an
 
-# Version: netbox-docker-Tag und passendes Image (gleich wie source-of-truth/netbox/setup.sh)
-NETBOX_DOCKER_TAG=5.0.2
-NETBOX_VERSION=v4.6.10-5.0.2
+# Agent (1.11.0, ADR 0054): legt die NetBox je Kunde selbst an – aus den Kunden mit dem Werkzeug
+# NetBox in Automato. Einrichten: netbox-host.sh agent https://<oberfläche von automato> (setzt
+# AUTOMATO_URL, das Token liegt in automato.token, nur root). AUTOMATO_CA: CA des Zertifikats der
+# Oberfläche, wenn sie nicht im System hinterlegt ist (PEM, z. B. /opt/netbox-host/automato-ca.pem).
+# AUTOMATO_URL=
+# AUTOMATO_CA=
+
+# Version aller Instanzen: netbox-docker-Tag und passendes Image. Die Vorgabe kommt mit dem
+# Werkzeug (deploy/netbox-host/netbox-version.conf); ein Update aus dem Cockpit
+# (deploy/netbox-host/betrieb.sh aktualisieren, ADR 0062) übernimmt sie in alle Instanzen. Nur
+# setzen, um eine Version festzuhalten – dann bleibt die NetBox bei einem Update aus dem Cockpit.
+# NETBOX_DOCKER_TAG=<tag von netbox-docker>
+# NETBOX_VERSION=v<netbox>-<tag von netbox-docker>
 
 TIME_ZONE=Europe/Zurich
 

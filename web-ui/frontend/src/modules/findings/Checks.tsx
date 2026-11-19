@@ -3,7 +3,7 @@
 // beim nächsten Abgleich weg. Ist das Modul der Prüfung aus, läuft sie auch nicht.
 import { useCallback, useEffect, useState } from "react";
 import { CheckInfo, fetchChecks, runReconcile, switchCheck } from "../../api";
-import type { Me } from "../../auth";
+import { canManage, type Me } from "../../auth";
 import { L } from "../../i18n";
 import { useModule } from "../../moduleState";
 import { findingLabel } from "../../refs";
@@ -13,6 +13,7 @@ const STEP: Record<string, string> = {
   zonen: L("auch beim Speichern einer Zone", "also when a zone is saved"),
   quellen: L("auch im Zeitplan (Stand der Quellsysteme)", "also on schedule (state of the source systems)"),
   applikationen: L("im Hintergrund nach dem Abgleich", "in the background after the reconciliation"),
+  reservierungen: L("auch beim Speichern einer Reservierung", "also when a reservation is saved"), // 1.19.0
 };
 
 export default function Checks({
@@ -135,7 +136,7 @@ export default function Checks({
                         <span className="chip na" title={L("Das Modul der Prüfung ist aus", "The module of the check is off")}>
                           {L("Modul aus", "module off")}
                         </span>
-                      ) : me.isAdmin ? (
+                      ) : canManage(me) ? (
                         <button
                           className={`btn btn-sm ${c.enabled ? "" : "btn-primary"}`}
                           disabled={busy !== null}

@@ -1,5 +1,6 @@
 # Proxy des NetBox-Hosts (netbox-host.sh, ADR 0044). Je Kunde ein Eintrag in sites/:
 #   <kunde>-nb.<domain>  NetBox des Kunden (Container nb-<kunde> im Netz netbox-front)
+#   _unbekannt.caddy     alle übrigen Namen: 404 „Keine NetBox für diesen Namen“ (1.10.0)
 # Seit 1.1.0 ein Backend: Kunden kommen über den Front-Proxy der Automato-VM (Startseiten,
 # Portal, WAF davor). ALLOW (.env aus host.conf): Front-Proxy und Management-Netz.
 # FRONT: dem Front-Proxy wird X-Forwarded-For geglaubt (Adresse des Benutzers im Protokoll).

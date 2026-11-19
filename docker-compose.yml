@@ -75,6 +75,10 @@ services:
   # (`automato db-roles`, idempotent). Der Orchestrator startet erst, wenn sie fertig ist.
   # App-Rolle einmal einrichten: deploy/aufbau.sh db-rollen (AUTOMATO_DB_USER/_PASSWORD in .env).
   migrate:
+    # Images (1.15.0, ADR 0060): nach einem Update aus dem signierten Manifest (deploy/betrieb.sh)
+    # per Digest aus GHCR (AUTOMATO_IMAGE_<DIENST> aus .automato-images.env ueber deploy/env.sh),
+    # sonst wie bisher der lokal gebaute Stand <projekt>-<dienst> (deploy/update.sh)
+    image: ${AUTOMATO_IMAGE_MIGRATE:-${COMPOSE_PROJECT_NAME:-automato}-migrate}
     build:
       context: .
       dockerfile: orchestrator/Dockerfile
@@ -99,6 +103,7 @@ services:
     command: ["sh", "-c", "alembic upgrade head && automato db-roles"]
 
   orchestrator:
+    image: ${AUTOMATO_IMAGE_ORCHESTRATOR:-${COMPOSE_PROJECT_NAME:-automato}-orchestrator}
     build:
       context: .
       dockerfile: orchestrator/Dockerfile
@@ -134,6 +139,10 @@ services:
       # Domain der Kunden-Adressen (Anzeige)
       AUTOMATO_FRONT_STATE_DIR: /var/lib/automato-front
       AUTOMATO_FRONT_DOMAIN: ${AUTOMATO_FRONT_DOMAIN:-}
+      # Inventar fuers Cockpit (1.10.0, ADR 0053): GET /api/inventory nur mit diesem Token
+      # (deploy/aufbau.sh cockpit-token); leer = aus
+      AUTOMATO_COCKPIT_TOKEN: ${AUTOMATO_COCKPIT_TOKEN:-}
+      AUTOMATO_NETBOX_HOST_TOKEN: ${AUTOMATO_NETBOX_HOST_TOKEN:-}
       AUTOMATO_OIDC_CLOCK_SKEW_SECONDS: ${AUTOMATO_OIDC_CLOCK_SKEW_SECONDS:-60}
       # Schluessel der Geraete-Zugangsdaten (ADR 0009). Leer = Schluesseldatei im Volume
       # orchestrator-data (beim ersten Start erzeugt, mitsichern!); produktiv besser als
@@ -168,6 +177,12 @@ services:
       AUTOMATO_APP_FINDINGS_TRACES: ${AUTOMATO_APP_FINDINGS_TRACES:-120}
       # Wege je Mandant im Speicher (0.140.0, ADR 0048): MB, darueber werden die aeltesten neu gerechnet
       AUTOMATO_PATH_STORE_MB: ${AUTOMATO_PATH_STORE_MB:-256}
+      # Export der Applikations-Doku im Hintergrund (1.21.0, ADR 0069): fertige Exporte im Volume
+      # orchestrator-data (/var/lib/automato/exports) so viele Stunden abrufbar, hoechstens so viele
+      # MB je Export, so viele rechnen gleichzeitig; das Export-Passwort lebt nur im Speicher
+      AUTOMATO_EXPORT_HOURS: ${AUTOMATO_EXPORT_HOURS:-24}
+      AUTOMATO_EXPORT_MAX_MB: ${AUTOMATO_EXPORT_MAX_MB:-2048}
+      AUTOMATO_EXPORT_PARALLEL: ${AUTOMATO_EXPORT_PARALLEL:-2}
       # Agent-Kanal nur ueber das mTLS-Agent-Gateway (Profil agent-gateway): off | require | bind
       AUTOMATO_INTERNAL_MTLS_MODE: ${AUTOMATO_INTERNAL_MTLS_MODE:-off}
       AUTOMATO_AGENT_GATEWAY_SECRET: ${AUTOMATO_AGENT_GATEWAY_SECRET:-}
@@ -187,6 +202,9 @@ services:
       # Agent-CA (1.6.0, ADR 0052): Zugang mit Zertifikat aus dem Web-UI. Lesbar ist nur, was
       # `make-certs.sh oberflaeche` freigibt (CA-Zertifikat + -Schluessel, Besitzer uid 1001)
       - ./deploy/agent-gateway/pki:/etc/automato/agent-ca:ro
+      # Zusaetzliche CAs (1.10.0, ADR 0053): jede *.crt/*.pem/*.cer hier gilt zusaetzlich, z. B.
+      # die interne CA hinter der NetBox eines Kunden (sot_gateway.trust)
+      - ./deploy/trust:/etc/automato/trust:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     # produktiv nur lokal (AUTOMATO_API_BIND=127.0.0.1): Zugang ueber Proxy bzw. Agent-Gateway
@@ -199,6 +217,7 @@ services:
       retries: 10
 
   collector:
+    image: ${AUTOMATO_IMAGE_COLLECTOR:-${COMPOSE_PROJECT_NAME:-automato}-collector}
     build:
       context: .
       dockerfile: collectors/Dockerfile
@@ -219,6 +238,7 @@ services:
       AUTOMATO_INTERNAL_TLS: ${AUTOMATO_INTERNAL_TLS:-off}
     volumes:
       - ./deploy/tls/pki/client:/etc/automato/tls:ro
+      - ./deploy/trust:/etc/automato/trust:ro  # zusaetzliche CAs wie im Orchestrator (1.10.0)
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
@@ -226,6 +246,7 @@ services:
   # /api an den Orchestrator weiter (web-ui/frontend/deploy/Caddyfile). Vite-Server nur mit
   # AUTOMATO_UI_TARGET=dev (.env, z. B. im Labor).
   web-ui:
+    image: ${AUTOMATO_IMAGE_WEB_UI:-${COMPOSE_PROJECT_NAME:-automato}-web-ui}
     build:
       context: web-ui/frontend
       target: ${AUTOMATO_UI_TARGET:-prod}
@@ -287,6 +308,9 @@ services:
       # Anmelde-Tor (1.4.0, ADR 0051): deploy/front/front.sh startet je Realm einen oauth2-proxy
       # (Projekt automato-tor) in diesem Netz; der Proxy fragt ihn vor jeder Kunden-Adresse
       - front-tor
+      # Eigene Automato-Instanzen je Kunde (1.16.0, ADR 0061): ihr Anschluss hängt in diesem Netz
+      # (deploy/instanz/compose.yml); front.sh leitet <kunde>-doc dorthin
+      - front-instanzen
     depends_on:
       - web-ui
 
@@ -355,3 +379,8 @@ networks:
   # Anmelde-Tor (1.4.0): eigenes Netz zwischen Proxy und den Containern des Tors
   front-tor:
     name: automato-front-tor
+  # Eigene Automato-Instanzen (1.16.0, ADR 0061): nur der Proxy und je Instanz ihr Anschluss, ohne
+  # Weg nach aussen; gehört diesem Projekt wie front-tor (eine Instanz nimmt es als external)
+  front-instanzen:
+    name: automato-front-instanzen
+    internal: true

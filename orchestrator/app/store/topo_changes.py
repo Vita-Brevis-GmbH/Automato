@@ -84,6 +84,13 @@ _MISSING = {
     "Policy-Routen IPv4": ("policy_route", "policy", None),
     "Policy-Routen IPv6": ("policy_route", "policy", None),
     "SD-WAN": ("policy_route", "sdwan", None),
+    # IPsec (1.19.0, ADR 0063): nicht im Verlauf - sperrt keinen Vergleich der Routen
+    "IPsec Phase 1": ("vpn", None, None),
+    "IPsec Phase 2": ("vpn", None, None),
+    "IPsec-Zustand": ("vpn", None, None),
+    # ADR 0070: Einstellungen des VDOMs und Central SNAT - sperren keinen Vergleich der Routen
+    "VDOM-Einstellungen": ("settings", None, None),
+    "Central SNAT": ("settings", None, None),
 }
 _ALL = ("*", None, None)
 

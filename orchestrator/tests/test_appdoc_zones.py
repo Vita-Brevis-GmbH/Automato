@@ -26,13 +26,18 @@ def _rule(pid, name, src, dst, **kw):
 FW4 = {
     "status": "completed",
     "rules": [
+        # je Regel ein eigener Dienst (ADR 0071): mit demselben Dienst entschiede die erste
+        # passende Policy - `group-to-web` waere von `clients-to-web` ueberdeckt, `remote-to-web`
+        # und `mgmt-to-web` von `wide-to-web` (nur noch Treffer, die breite an ihrer Stelle)
         _rule(51, "clients-to-web", ["10.70.0.0/15"], ["10.20.0.5"]),  # Bereich ueber Clients
         _rule(52, "group-to-web", ["10.70.0.0/16", "10.71.0.0/16"], ["10.20.0.5"],
-              source_refs=["G_clients"]),  # fmt: skip
+              source_refs=["G_clients"], services=["tcp/8052"]),  # fmt: skip
         _rule(53, "wide-to-web", ["10.64.0.0/10"], ["10.20.0.5"]),  # mehrere Bereiche
-        _rule(54, "remote-to-web", ["10.77.5.0/24"], ["10.20.0.5"]),  # in Remote Access
+        _rule(54, "remote-to-web", ["10.77.5.0/24"], ["10.20.0.5"],
+              services=["tcp/8054"]),  # in Remote Access  # fmt: skip
         _rule(55, "web-to-clients", ["10.20.0.5"], ["10.71.0.0/16"]),  # ausgehend
-        _rule(56, "mgmt-to-web", ["10.79.1.0/24"], ["10.20.0.5"]),  # aus dem DC Management
+        _rule(56, "mgmt-to-web", ["10.79.1.0/24"], ["10.20.0.5"],
+              services=["tcp/8056"]),  # aus dem DC Management  # fmt: skip
         # ausgehend nur ueber eine breite Quelle (0.103.0): kein Zugriff der Applikation
         _rule(57, "wide-out", ["10.0.0.0/8"], ["10.78.0.0/16"], src_zone="srv", dst_zone="lan"),
     ],

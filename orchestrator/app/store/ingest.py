@@ -42,6 +42,7 @@ from app.models import (
     InvInterface,
     InvNeighbor,
     InvSubnet,
+    InvTransceiver,
     InvVlan,
     InvVrf,
     MatchStatus,
@@ -78,6 +79,7 @@ from app.store import (
     reconcile,
     rule_index,
     stable_ids,
+    stp,
     tenant_lock,
     topology,
     virtual,
@@ -169,6 +171,8 @@ def persist_result(session: Session, run, result: CollectorResult, sot) -> None:
         _replace_inventory(session, run, result.inventory)
         if result.inventory.macs or result.inventory.arps:  # Switches: gesammelt (0.63.0)
             l2.merge(session, run, result.inventory)
+        if result.inventory.stp_devices is not None:  # Spanning Tree (1.19.0)
+            stp.replace(session, run, result.inventory)
     if result.host_keys:  # Switches: SSH-Host-Schluessel beim ersten Kontakt festhalten
         _pin_host_keys(session, run, result.host_keys)
     if result.virtual is not None:  # vCenter: VMs und Portgruppen (ADR 0017)
@@ -383,6 +387,7 @@ def _apply_epgs(session: Session, run, epgs) -> None:
         epg.vrf_tenant = e.vrf_tenant  # aufgeloester Tenant der VRF (0.44.0)
         epg.selectors = e.selectors or None
         epg.pref_group = e.pref_group
+        epg.isolated, epg.vrf_unenforced = e.isolated, e.vrf_unenforced  # ADR 0071
         epg.source_system_id = run.source_system_id
         session.flush()
         seen.add(epg.id)
@@ -558,8 +563,27 @@ def _replace_inventory(session: Session, run, inv: NetworkInventory) -> None:
         InvNeighbor(**base, **{**n.model_dump(), "remote_caps": n.remote_caps or None})
         for n in inv.neighbors
     ]
+    rows += _transceivers(base, inv, rows)  # Transceiver der Switches (1.19.0)
     session.add_all(rows)
     session.flush()
+
+
+def _transceivers(base: dict, inv: NetworkInventory, rows: list) -> list:
+    """Transceiver je Port (1.19.0) und Lesestatus am Geraet (`inv_device.transceivers`); ohne
+    Lieferung (andere Quellen, aeltere Agenten) bleibt der Status leer. Laengen wie die Spalten."""
+    status = {r.device: r.status for r in inv.transceiver_reads or []}
+    for row in rows:
+        if isinstance(row, InvDevice) and row.name in status:
+            row.transceivers = _cut(status[row.name], 16)
+    out, seen = [], set()
+    for t in inv.transceivers or []:
+        if (t.device, t.port) in seen:
+            continue
+        seen.add((t.device, t.port))
+        out.append(InvTransceiver(**base, device=_cut(t.device, 200), port=_cut(t.port, 200),
+                                  type=_cut(t.type, 100), vendor=_cut(t.vendor, 100),
+                                  part=_cut(t.part, 100), serial=_cut(t.serial, 100)))  # fmt: skip
+    return out
 
 
 ESXI = "esxi"  # Rolle der ESXi-Hosts im Netzinventar (1.8.0)

@@ -13,8 +13,12 @@ Rollen (aufsteigend, jede schliesst die vorherige ein):
 - `editor` - zusaetzlich eigene Applikationen pflegen: Stammdaten, Regeln zuordnen bzw.
   ausschliessen, Regeln je Kategorie ausblenden (mit Begruendung) - nur Applikationen, die
   ganz zum Kunden gehoeren,
+- `customer_operator` (ADR 0068) - im gemeinsamen Mandanten nur lesen wie `viewer`
+  (bewusst ohne triage/editor: „nur das Einlesen anstossen“); im **eigenen Mandanten** alles lesen
+  und Einlesen anstossen (Mandanten-Rolle, `TENANT_ROLE_CAPABILITIES`),
 - `customer_admin` (Kunden-Admin) - zusaetzlich die Kunden-Benutzer des eigenen Kunden zuordnen
-  und entfernen (nie das eigene Konto, nie ueber die eigene Rolle hinaus, nie andere Kunden).
+  und entfernen (nie das eigene Konto, nie ueber die eigene Rolle hinaus, nie andere Kunden); im
+  eigenen Mandanten alles anpassen (ADR 0068).
 
 Der Kunden-Admin heisst bewusst nicht `admin`: der Wert bleibt dem globalen Admin vorbehalten
 und wird fuer Kunden-Benutzer weiter abgelehnt (Zuordnung: 422; Claim: unbekannt = viewer).
@@ -41,10 +45,12 @@ CAPABILITIES = (READ, TRIAGE, APPS_EDIT, USERS_MANAGE)
 VIEWER = "viewer"
 TRIAGE_ROLE = "triage"
 EDITOR = "editor"
+CUSTOMER_OPERATOR = "customer_operator"  # ADR 0068: sieht im eigenen Mandanten alles
 CUSTOMER_ADMIN = "customer_admin"  # nie `admin` (globaler Admin)
 
-# Kunden-Rollen aufsteigend
-CUSTOMER_ROLES: tuple[str, ...] = (VIEWER, TRIAGE_ROLE, EDITOR, CUSTOMER_ADMIN)
+# Kunden-Rollen aufsteigend (Rang: wer sieht mehr) - `customer_operator` schliesst triage/editor
+# bewusst nicht ein (ADR 0068)
+CUSTOMER_ROLES: tuple[str, ...] = (VIEWER, TRIAGE_ROLE, EDITOR, CUSTOMER_OPERATOR, CUSTOMER_ADMIN)
 # frueher gespeicherte Werte (0.53.0) -> Rolle; bleiben gueltig und werden so angezeigt
 LEGACY_ROLES: dict[str, str] = {"operator": TRIAGE_ROLE}
 
@@ -52,7 +58,26 @@ ROLE_CAPABILITIES: dict[str, frozenset[str]] = {
     VIEWER: frozenset({READ}),
     TRIAGE_ROLE: frozenset({READ, TRIAGE}),
     EDITOR: frozenset({READ, TRIAGE, APPS_EDIT}),
+    CUSTOMER_OPERATOR: frozenset({READ}),  # gemeinsamer Mandant: nur lesen
     CUSTOMER_ADMIN: frozenset({READ, TRIAGE, APPS_EDIT, USERS_MANAGE}),
+}
+
+# Rechte im eigenen Mandanten (ADR 0068): Benutzer eines Kunden-Realms mit diesen Rollen
+# im Mandanten, den Automato fuer ihren Portal-Kunden angelegt hat (`cockpit_tenant`), sind
+# Mandanten-Benutzer - Betreuer-Sicht ohne Kunden-Filter, nur dieser Mandant, Endpunkte nur nach
+# der Positivliste `auth/tenant_routes.py`
+TENANT_READ = "mandant.read"  # alles des Mandanten lesen (L1-L7, Laeufe, Quellsysteme ...)
+TENANT_COLLECT = "mandant.collect"  # Einlesen anstossen (Laeufe starten)
+TENANT_MANAGE = "mandant.manage"  # im Mandanten anpassen (was ein Betreuer fuer ihn tut)
+TENANT_CAPABILITIES = (TENANT_READ, TENANT_COLLECT, TENANT_MANAGE)
+TENANT_ROLE_CAPABILITIES: dict[str, frozenset[str]] = {
+    CUSTOMER_OPERATOR: frozenset({TENANT_READ, TENANT_COLLECT}),
+    CUSTOMER_ADMIN: frozenset({TENANT_READ, TENANT_COLLECT, TENANT_MANAGE}),
+}
+# was die Oberflaeche zur Anzeige dazu bekommt (Doku-Rechte wie ein Betreuer dieser Stufe)
+TENANT_DOC_CAPABILITIES: dict[str, frozenset[str]] = {
+    CUSTOMER_OPERATOR: frozenset({READ}),
+    CUSTOMER_ADMIN: frozenset({READ, TRIAGE, APPS_EDIT}),
 }
 
 # Nur zur Anzeige (`GET /auth/me`): was Betreuer mit ihren Rollen entsprechend duerfen - sie
@@ -95,6 +120,11 @@ def highest(roles: Iterable[str | None]) -> str | None:
 
 def capabilities(role: str | None) -> frozenset[str]:
     return frozenset() if role is None else ROLE_CAPABILITIES[normalize(role)]
+
+
+def tenant_capabilities(role: str | None) -> frozenset[str]:
+    """Rechte einer Mandanten-Rolle (leer = keine Mandanten-Rolle)."""
+    return TENANT_ROLE_CAPABILITIES.get(role or "", frozenset())
 
 
 def staff_capabilities(roles: Iterable[str]) -> frozenset[str]:

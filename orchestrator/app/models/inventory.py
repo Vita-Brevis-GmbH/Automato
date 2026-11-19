@@ -32,6 +32,9 @@ class InvDevice(_InventoryRow, Base):
     version: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # Hersteller (1.8.0, Migration 0080): Hardware der ESXi-Hosts - fuer den NetBox-Sync
     vendor: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # Transceiver gelesen (1.19.0, Migration 0092): read | unreadable | unsupported (Switches);
+    # None = nicht geliefert (andere Quellen, aeltere Agenten)
+    transceivers: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
 
 class InvInterface(_InventoryRow, Base):
@@ -119,4 +122,19 @@ class InvNeighbor(_InventoryRow, Base):
     remote_description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
-INVENTORY_MODELS = (InvDevice, InvInterface, InvVlan, InvSubnet, InvVrf, InvNeighbor)
+class InvTransceiver(_InventoryRow, Base):
+    """Transceiver an einem Port eines Switches (1.19.0, „Verkabelung im Detail“): Typ, Hersteller
+    und Teilenummer, soweit das Geraet sie nennt, und Seriennummer - je Lauf ersetzt."""
+
+    __tablename__ = "inv_transceiver"
+
+    device: Mapped[str] = mapped_column(String(200))
+    port: Mapped[str] = mapped_column(String(200))
+    type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    vendor: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    part: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    serial: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
+
+INVENTORY_MODELS = (InvDevice, InvInterface, InvVlan, InvSubnet, InvVrf, InvNeighbor,
+                    InvTransceiver)  # fmt: skip

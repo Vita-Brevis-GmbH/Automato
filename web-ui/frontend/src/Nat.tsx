@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { fetchAllNat, fetchNat, fetchNatDetail, IpInfo, Nat, NatChain, NatDetail, NatServer, NatTarget } from "./api";
 import type { View, ViewParams } from "./App";
 import { L } from "./i18n";
+import { replaceHash } from "./places";
 import { findingLabel, IssueChips, useVdomShown, VdomChip, VmSection } from "./refs";
 import { ActionBadge, Dash, download, Drawer, Empty, ErrorBox, Icon, Loading, PageHead } from "./ui";
 
@@ -586,7 +587,12 @@ export default function NatTable({
   const [total, setTotal] = useState(0);
   const [more, setMore] = useState(false);
   const [error, setError] = useState<unknown>(null);
-  const [type, setType] = useState("");
+  // 1.19.0 (ADR 0067): Typ aus der Adresse – „Load Balancer“ ist eine eigene Stelle in L4–7 (`type=lb`)
+  const [type, setTypeRaw] = useState(params.type ?? "");
+  const setType = (t: string) => {
+    setTypeRaw(t);
+    replaceHash("nat", { ...(t ? { type: t } : {}), ...(params.q ? { q: params.q } : {}) });
+  };
   const [q, setQ] = useState(params.q ?? "");
   const [issuesOnly, setIssuesOnly] = useState(false);
   const [selected, setSelected] = useState<number | null>(null);
@@ -673,10 +679,11 @@ export default function NatTable({
             onChange={(e) => setQ(e.target.value)}
           />
         </div>
-        <select className="sel" value={type} onChange={(e) => setType(e.target.value)}>
+        <select className="sel" id="nat-type" aria-label={L("Typ", "Type")} value={type} onChange={(e) => setType(e.target.value)}>
           <option value="">{L("Typ: alle", "Type: all")}</option>
           <option value="dnat_vip">{L("VIP / DNAT (inkl. Virtual Server)", "VIP / DNAT (incl. Virtual Server)")}</option>
           <option value="snat_pool">{L("SNAT-Pool", "SNAT pool")}</option>
+          <option value="lb">{L("Load Balancer (NSX ALB, Virtual Server)", "Load balancer (NSX ALB, Virtual Server)")}</option>
         </select>
         <button
           className={`toggle ${issuesOnly ? "on" : ""}`}

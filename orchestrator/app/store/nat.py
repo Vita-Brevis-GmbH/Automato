@@ -3,12 +3,13 @@
 import ipaddress
 from dataclasses import dataclass
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.i18n import L
-from app.models import DeviceObject, NatRule, ObjectCategory, SourceSystem
+from app.models import DeviceObject, NatRule, ObjectCategory, Platform, SourceSystem
 
+LB = "lb"  # Filter: alle Load Balancer (Virtual Server der FortiGate, Virtual Services des NSX ALB)
 # Praefixe, hinter denen die Konvention den externen Namen fuehrt (V-EXT_<fqdn>, IPP_<fqdn>)
 _NAME_PREFIXES = ("V-EXT_", "VIP_", "IPP_")
 # Einstellungen aus dem Rohdatensatz, die das Detail zusaetzlich zeigt (FortiGate)
@@ -31,7 +32,10 @@ def _filtered(stmt, tenant_id, nat_type, only=None):
         stmt = stmt.where(NatRule.id.in_(only))
     if tenant_id is not None:
         stmt = stmt.where(NatRule.tenant_id == tenant_id)
-    if nat_type:
+    if nat_type == LB:  # Load Balancer (1.19.0, ADR 0067): NSX ALB und FortiGate Virtual Server
+        avi = select(SourceSystem.id).where(SourceSystem.platform == Platform.AVI)
+        stmt = stmt.where(or_(NatRule.vip_type == SLB, NatRule.source_system_id.in_(avi)))
+    elif nat_type:
         stmt = stmt.where(NatRule.nat_type == nat_type)
     return stmt
 

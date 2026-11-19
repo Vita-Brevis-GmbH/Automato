@@ -1,8 +1,9 @@
 // NetBox-Sync (ADR 0010): einziger Schreibweg der Plattform. Vorschau berechnen (liest NetBox nur),
 // prüfen, per Klick übernehmen (admin). Automato ändert/löscht nur Objekte mit Tag „automato“;
 // von Hand gepflegte Objekte bleiben unverändert (Konflikt wird angezeigt). Verkabelung und
-// Applikationen (ADR 0031) sind neue Abschnitte, standardmässig aus.
-import { ReactNode, useCallback, useEffect, useState } from "react";
+// Applikationen (ADR 0031) sind neue Abschnitte, standardmässig aus; ebenso die DNS-Namen aus dem
+// AD (1.19.0) – abweichende Namen nur nach Bestätigung je Eintrag (`modules/schreibpfad/SyncDns`).
+import { lazy, ReactNode, Suspense, useCallback, useEffect, useState } from "react";
 import {
   applySyncPlan,
   cancelSyncPlan,
@@ -19,9 +20,18 @@ import {
   SyncVerification,
 } from "./api";
 import type { View } from "./App";
+import { CableLabelConfirm } from "./modules/schreibpfad/CableLabelConfirm";
 import { L } from "./i18n";
+import {
+  RESERVATION_KINDS,
+  RESERVATION_SECTION,
+  ReservationConfirm,
+  ReservationNote,
+} from "./modules/schreibpfad/reservationsSync";
 import { REF_ROLE_LABEL } from "./refs";
 import { Dash, Empty, ErrorBox, fmtTime, Icon, Loading, Modal, Note, PageHead } from "./ui";
+
+const SyncDns = lazy(() => import("./modules/schreibpfad/SyncDns"));
 
 const KIND_LABEL: Record<string, string> = {
   tag: "Tag",
@@ -42,11 +52,14 @@ const KIND_LABEL: Record<string, string> = {
   device: L("Gerät", "Device"),
   interface: "Port",
   cable: L("Kabel", "Cable"),
+  cable_label: L("Kabelnummer", "Cable number"), // 1.19.0: Label bestehender Kabel, je Kabel bestätigt
   virtual_machine: "VM",
   vm_interface: L("VM-Interface", "VM interface"),
   ip_address: L("IP-Adresse", "IP address"),
   app_tag_vm: L("Applikations-Tag an VM", "Application tag on VM"),
   app_tag_ip: L("Applikations-Tag an IP-Adresse", "Application tag on IP address"),
+  ...RESERVATION_KINDS,
+  dns_name: L("DNS-Name an IP-Adresse", "DNS name on IP address"),
 };
 const ACTION: Record<string, [string, string]> = {
   create: ["ok", L("anlegen", "create")],
@@ -55,8 +68,10 @@ const ACTION: Record<string, [string, string]> = {
   conflict: ["warn", L("Konflikt (manuell)", "Conflict (manual)")],
   delete: ["crit", L("löschen", "delete")],
   obsolete: ["na", L("veraltet", "obsolete")],
+  ambiguous: ["na", L("mehrdeutig", "ambiguous")], // DNS-Namen aus dem AD (1.19.0): kein Vorschlag
 };
-const COLUMNS = ["create", "update", "unchanged", "conflict", "delete", "obsolete"];
+const COLUMNS = ["create", "update", "unchanged", "conflict", "delete", "obsolete", "ambiguous"];
+const OPTIONAL = ["ambiguous"]; // nur, wenn die Vorschau solche Einträge hat
 const STATUS: Record<string, [string, string]> = {
   planning: ["info", L("Vorschau läuft…", "Preview running…")],
   ready: ["ok", L("Vorschau bereit", "Preview ready")],
@@ -155,6 +170,31 @@ const SECTIONS: { key: SyncSection; label: string; hint: string; more?: ReactNod
     ),
   },
   {
+    // 1.19.0 (Anwender 2026-11-17: „DNS aus AD“, ADR 0045 Nachtrag)
+    key: "dns",
+    label: L("DNS-Namen aus dem AD", "DNS names from the AD"),
+    hint: L(
+      "DNS-Name der bestehenden IP-Adressen aus den A-Records der gelesenen AD-DNS-Zonen – wenn diese NetBox das IPAM ist",
+      "DNS name of the existing IP addresses from the A records of the collected AD DNS zones – if this NetBox is the IPAM",
+    ),
+    more: L(
+      <>
+        Nur das Feld <code>dns_name</code> bestehender IP-Adressen, auch von Hand gepflegter – keine neuen IP-Adressen
+        (A-Records auf unbekannte IPs zählt der Hinweis). Ein A-Record: sein Name; mehrere: der PTR entscheidet, sonst
+        „mehrdeutig“ ohne Vorschlag. <b>Leer</b> in NetBox: wird gesetzt. <b>Abweichend</b>: die Vorschau zeigt beide
+        Werte, übernommen wird nur, was Sie dort je Eintrag bestätigen. Aliase (CNAME) zählen nicht. Nur wenn diese NetBox
+        das führende IPAM ist; nicht gelesene Zonen nennt der Hinweis.
+      </>,
+      <>
+        Only the field <code>dns_name</code> of existing IP addresses, also of those maintained by hand – no new IP
+        addresses (the hint counts A records pointing to unknown IPs). One A record: its name; several: the PTR decides,
+        otherwise “ambiguous” without proposal. <b>Empty</b> in NetBox: is set. <b>Differing</b>: the preview shows both
+        values, only what you confirm there per entry is applied. Aliases (CNAME) do not count. Only if this NetBox is the
+        primary IPAM; the hint names zones not collected.
+      </>,
+    ),
+  },
+  {
     key: "applications",
     label: L("Applikationen", "Applications"),
     hint: L(
@@ -180,6 +220,7 @@ const SECTIONS: { key: SyncSection; label: string; hint: string; more?: ReactNod
       </>,
     ),
   },
+  RESERVATION_SECTION, // 1.19.0, ADR 0066
 ];
 const PAGE = 200;
 
@@ -213,6 +254,24 @@ export default function NetBoxSync({
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState(false);
+  const [labels, setLabels] = useState<string[]>([]); // bestätigte Kabelnummern (1.19.0)
+  // bestätigte abweichende DNS-Namen (IPs) und wie viele zur Bestätigung anstehen (1.19.0)
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [dnsAsked, setDnsAsked] = useState(0);
+  // bestätigte Änderungen an Reservierungen und wie viele anstehen (1.19.0, ADR 0066)
+  const [reserved, setReserved] = useState<string[]>([]);
+  const [reservedAsked, setReservedAsked] = useState(0);
+  const planId = plan?.id;
+  useEffect(() => {
+    setLabels([]);
+    setPicked(new Set());
+    setDnsAsked(0);
+    setReserved([]);
+    setReservedAsked(0);
+  }, [planId]);
+  // ohne Bestätigung schreibt die Übernahme die Kabelnummern, abweichenden DNS-Namen bzw. geänderten Reservierungen nicht
+  const unconfirmed =
+    (plan?.summary?.cable_label?.update ?? 0) - labels.length + dnsAsked - picked.size + reservedAsked - reserved.length;
 
   const loadPlans = useCallback(() => {
     if (tenantId === null) return;
@@ -300,7 +359,7 @@ export default function NetBoxSync({
     setConfirm(false);
     setError(null);
     try {
-      setPlan(await applySyncPlan(plan.id));
+      setPlan(await applySyncPlan(plan.id, [...labels, ...picked, ...reserved]));
     } catch (e) {
       setError(e);
     }
@@ -448,9 +507,19 @@ export default function NetBoxSync({
       {plan && (
         <PlanView
           plan={plan}
+          picked={picked}
+          onPick={setPicked}
+          onAsked={setDnsAsked}
+          unconfirmed={unconfirmed}
           onApply={() => setConfirm(true)}
           onCancel={() => cancelSyncPlan(plan.id).then((p) => (setPlan(p), loadPlans()), setError)}
         />
+      )}
+      {plan?.status === "ready" && (plan.summary?.cable_label?.update ?? 0) > 0 && (
+        <CableLabelConfirm plan={plan} value={labels} onChange={setLabels} />
+      )}
+      {plan && plan.status === "ready" && (plan.options.sections ?? []).includes("reservations") && (
+        <ReservationConfirm plan={plan} value={reserved} onChange={setReserved} onAsked={setReservedAsked} />
       )}
 
       {plans.length > 0 && (
@@ -532,12 +601,54 @@ export default function NetBoxSync({
               </>,
             )}
           </p>
+          {(plan.summary?.cable_label?.update ?? 0) > 0 && (
+            <Note>
+              {L(
+                <>
+                  Kabelnummern: {labels.length} von {plan.summary?.cable_label?.update} bestätigt – nur diese werden geschrieben.
+                </>,
+                <>
+                  Cable numbers: {labels.length} of {plan.summary?.cable_label?.update} confirmed – only these are written.
+                </>,
+              )}
+            </Note>
+          )}
           {plan.totals.conflict > 0 && (
             <Note>
               {L(
                 <>{plan.totals.conflict} von Hand gepflegte Objekte weichen ab und bleiben unverändert.</>,
                 <>{plan.totals.conflict} objects maintained by hand differ and stay unchanged.</>,
               )}
+            </Note>
+          )}
+          {reservedAsked > 0 && (
+            <Note>
+              <span id="sync-confirm-reservations">
+                {L(
+                  <>
+                    <b>{reserved.length}</b> von {reservedAsked} geänderten Reservierungen bestätigt – nur diese werden geschrieben.
+                  </>,
+                  <>
+                    <b>{reserved.length}</b> of {reservedAsked} changed reservations confirmed – only these are written.
+                  </>,
+                )}
+              </span>
+            </Note>
+          )}
+          {dnsAsked > 0 && (
+            <Note>
+              <span id="sync-confirm-dns">
+                {L(
+                  <>
+                    <b>{picked.size}</b> von {dnsAsked} abweichenden DNS-Namen bestätigt – sie werden überschrieben; die
+                    übrigen bleiben in NetBox, wie sie sind.
+                  </>,
+                  <>
+                    <b>{picked.size}</b> of {dnsAsked} differing DNS names confirmed – they are overwritten; the others stay
+                    in NetBox as they are.
+                  </>,
+                )}
+              </span>
             </Note>
           )}
           <Note>
@@ -558,9 +669,29 @@ export default function NetBoxSync({
   );
 }
 
-function PlanView({ plan, onApply, onCancel }: { plan: SyncPlan; onApply: () => void; onCancel: () => void }) {
+function PlanView({
+  plan,
+  picked,
+  onPick,
+  onAsked,
+  unconfirmed,
+  onApply,
+  onCancel,
+}: {
+  plan: SyncPlan;
+  picked: Set<string>;
+  onPick: (keys: Set<string>) => void;
+  onAsked: (n: number) => void;
+  unconfirmed: number; // Kabelnummern bzw. DNS-Namen ohne Bestätigung (werden nicht geschrieben)
+  onApply: () => void;
+  onCancel: () => void;
+}) {
   const running = ["planning", "applying"].includes(plan.status);
   const kinds = Object.keys(KIND_LABEL).filter((k) => plan.summary?.[k]);
+  const columns = COLUMNS.filter((c) => !OPTIONAL.includes(c) || plan.totals[c]);
+  const writes = plan.totals.create + plan.totals.update + plan.totals.delete;
+  // 1.19.0: nur unbestätigte Kabelnummern bzw. DNS-Namen -> nichts zu übernehmen
+  const canApply = plan.can_apply && writes - unconfirmed > 0;
   const notes =
     running ||
     !!plan.message ||
@@ -582,7 +713,7 @@ function PlanView({ plan, onApply, onCancel }: { plan: SyncPlan; onApply: () => 
         </span>
         <div className="spacer" />
         {plan.status === "ready" && (
-          <button className="btn btn-primary" disabled={!plan.can_apply} onClick={onApply}>
+          <button className="btn btn-primary" disabled={!canApply} onClick={onApply}>
             <Icon name="play" size={14} /> {L("Übernehmen", "Apply")}
           </button>
         )}
@@ -616,7 +747,7 @@ function PlanView({ plan, onApply, onCancel }: { plan: SyncPlan; onApply: () => 
           ))}
           {plan.status === "ready" && !plan.can_apply && (
             <Note>
-              {plan.totals.create + plan.totals.update + plan.totals.delete === 0
+              {writes === 0
                 ? L(
                     "NetBox ist auf dem Stand von Automato – nichts zu schreiben.",
                     "NetBox is up to date with Automato – nothing to write.",
@@ -647,7 +778,7 @@ function PlanView({ plan, onApply, onCancel }: { plan: SyncPlan; onApply: () => 
             <thead>
               <tr>
                 <th>{L("Art", "Type")}</th>
-                {COLUMNS.map((c) => (
+                {columns.map((c) => (
                   <th key={c} className="num">
                     {ACTION[c][1]}
                   </th>
@@ -658,7 +789,7 @@ function PlanView({ plan, onApply, onCancel }: { plan: SyncPlan; onApply: () => 
               {kinds.map((k) => (
                 <tr key={k}>
                   <td>{KIND_LABEL[k]}</td>
-                  {COLUMNS.map((c) => (
+                  {columns.map((c) => (
                     <td key={c} className="num">
                       {plan.summary?.[k]?.[c] ? <b>{plan.summary[k][c]}</b> : <span className="faint">0</span>}
                     </td>
@@ -668,6 +799,11 @@ function PlanView({ plan, onApply, onCancel }: { plan: SyncPlan; onApply: () => 
             </tbody>
           </table>
         </div>
+      )}
+      {!running && plan.summary?.dns_name && (
+        <Suspense fallback={<Loading />}>
+          <SyncDns plan={plan} picked={picked} onPick={onPick} onAsked={onAsked} />
+        </Suspense>
       )}
       {!running && plan.summary && <Items plan={plan} kinds={kinds} />}
     </div>
@@ -761,7 +897,10 @@ function Verification({ v }: { v: SyncVerification }) {
 }
 
 function Items({ plan, kinds }: { plan: SyncPlan; kinds: string[] }) {
-  const [action, setAction] = useState("create,update,conflict,delete");
+  const extra = OPTIONAL.filter((c) => plan.totals[c]); // DNS-Namen (1.19.0)
+  const all = ["create", "update", "conflict", "delete", ...extra].join(",");
+  const [action, setAction] = useState(all);
+  useEffect(() => setAction(all), [all]); // andere Vorschau mit bzw. ohne DNS-Namen
   const [kind, setKind] = useState("");
   const [q, setQ] = useState("");
   const [query, setQuery] = useState("");
@@ -786,12 +925,13 @@ function Items({ plan, kinds }: { plan: SyncPlan; kinds: string[] }) {
   }, [plan.id, action, kind, query, offset]);
 
   const filters: [string, string][] = [
-    ["create,update,conflict,delete", L("alle Änderungen", "all changes")],
+    [all, L("alle Änderungen", "all changes")],
     ["create", L("anlegen", "create")],
     ["update", L("ändern", "update")],
     ["conflict", L("Konflikte", "Conflicts")],
     ["delete", L("löschen", "delete")],
     ["obsolete", L("veraltet", "obsolete")],
+    ...extra.map((c): [string, string] => [c, ACTION[c][1]]),
   ];
   return (
     <>
@@ -849,6 +989,7 @@ function Items({ plan, kinds }: { plan: SyncPlan; kinds: string[] }) {
                   <td className="nowrap">{KIND_LABEL[i.kind] ?? i.kind}</td>
                   <td className="mono">{i.label}</td>
                   <td className="muted" style={{ fontSize: 12 }}>
+                    <ReservationNote item={i} />
                     {i.changes?.length ? (
                       i.changes.map((c) => (
                         <div key={c.field}>

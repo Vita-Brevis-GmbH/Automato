@@ -160,6 +160,7 @@ def test_lauf(monkeypatch):
     result = tasks.collect_once("run-cx", target)
     assert result.status == "completed"
     # 1.9.0: Dauer des Laufs, ueber die begrenzte Sitzung gelesen
-    assert re.fullmatch(r"Switches: 1 gelesen \(Aruba CX \(AOS-CX\)\) · Dauer \d+ s \(Sitzung\)",
+    assert re.fullmatch(r"Switches: 1 gelesen \(Aruba CX \(AOS-CX\)\) · Transceiver: 1 an 1 "
+                        r"Switches · Dauer \d+ s \(Sitzung\)",
                         result.message)  # fmt: skip
     assert {i.name for i in result.inventory.interfaces} >= {"1/1/1", "lag1"}

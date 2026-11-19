@@ -248,6 +248,101 @@ def _static(subject: str, d: dict) -> tuple[str, str]:
     )
 
 
+def _static_at(d: dict) -> tuple[str, str, str]:
+    """Statische Route eines Befunds (1.19.0): Ziel, Weg und Ort (Geraet, VRF)."""
+    vrf = d.get("vrf")
+    where = str(d.get("label") or "?") + (f" · VRF {vrf}" if vrf not in (None, 0) else "")
+    return str(d.get("prefix") or "?"), str(d.get("via") or "?"), where
+
+
+def _static_nexthop(subject: str, d: dict) -> tuple[str, str]:
+    prefix, via, where = _static_at(d)
+    backup = d.get("state") == "backup"
+    return (
+        L(
+            f"Die statische Route {prefix} über {via} auf {where} erreicht ihren Next-Hop nicht: "
+            f"{d.get('nexthop') or '?'}."
+            + (" Sie ist eine Backup-Route – im Ernstfall greift sie nicht." if backup else ""),
+            f"The static route {prefix} via {via} on {where} does not reach its next-hop: "
+            f"{d.get('nexthop') or '?'}."
+            + (" It is a backup route – it will not take over when needed." if backup else ""),
+        ),
+        L(
+            "Next-Hop prüfen: liegt er in einem angeschlossenen Netz des Interfaces bzw. führt "
+            "eine Route im selben VRF dorthin? Sonst die Route korrigieren oder entfernen.",
+            "Check the next-hop: is it in a connected network of the interface, or does a route in "
+            "the same VRF lead there? Otherwise correct or remove the route.",
+        ),
+    )
+
+
+def _static_shadowed(subject: str, d: dict) -> tuple[str, str]:
+    prefix, via, where = _static_at(d)
+    return (
+        L(f"Die statische Route {prefix} über {via} auf {where} wird nie aktiv: "
+          f"{d.get('reason') or '?'}.",
+          f"The static route {prefix} via {via} on {where} never becomes active: "
+          f"{d.get('reason') or '?'}."),
+        L(
+            "Nicht gebrauchte Route entfernen – oder, wenn sie als Backup gedacht ist, ihre "
+            "Distanz bewusst über den Standard setzen (FortiGate 10, Junos 5, Cisco und ACI 1) "
+            "und einen anderen Weg als die wirksame Route nehmen.",
+            "Remove the unused route – or, if it is meant as a backup, set its distance "
+            "deliberately above the default (FortiGate 10, Junos 5, Cisco and ACI 1) and use "
+            "another path than the effective route.",
+        ),
+    )  # fmt: skip
+
+
+def _static_duplicate(subject: str, d: dict) -> tuple[str, str]:
+    prefix, via, where = _static_at(d)
+    seqs = [str(e.get("seq") or e.get("l3out")) for e in d.get("entries") or []
+            if e.get("seq") or e.get("l3out")]  # fmt: skip
+    which = f" ({_list(seqs)})" if seqs else ""
+    n = d.get("count") or len(d.get("entries") or []) or 2
+    return (
+        L(f"Die statische Route {prefix} über {via} steht {n}-mal eingeschaltet in der "
+          f"Konfiguration von {where}{which}.",
+          f"The static route {prefix} via {via} is enabled {n} times in the configuration of "
+          f"{where}{which}."),
+        L("Doppelte Einträge entfernen – nur einer wirkt, die anderen führen bei Änderungen in "
+          "die Irre.",
+          "Remove the duplicate entries – only one takes effect, the others mislead on changes."),
+    )  # fmt: skip
+
+
+def _static_blackhole(subject: str, d: dict) -> tuple[str, str]:
+    prefix, _via, where = _static_at(d)
+    dist = d.get("distance")
+    at = L(f" (Distanz {dist})", f" (distance {dist})") if dist is not None else ""
+    return (
+        L(f"Blackhole-Route {prefix} auf {where}{at}: Verkehr in dieses Netz wird verworfen.",
+          f"Blackhole route {prefix} on {where}{at}: traffic to this network is dropped."),
+        L("Hinweis – oft gewollt (z. B. gegen Schleifen bei VPN-Ausfall bzw. für "
+          "zusammengefasste Netze). Prüfen, ob das Netz bewusst verworfen wird.",
+          "Note – often intended (e.g. against loops when a VPN fails or for summarized "
+          "networks). Check that the network is dropped deliberately."),
+    )  # fmt: skip
+
+
+def _static_unchecked(subject: str, d: dict) -> tuple[str, str]:
+    from app.store.static_routes import unchecked_text  # spaet: nur fuer diesen Befund
+
+    counts = d.get("counts") or {}
+    why = "; ".join(f"{unchecked_text(k)} ({v})" for k, v in counts.items())
+    n = d.get("total") or sum(counts.values())
+    return (
+        L(f"{n} statische Routen auf {d.get('label') or subject} nicht (ganz) geprüft: {why}.",
+          f"{n} static routes on {d.get('label') or subject} not (fully) checked: {why}."),
+        L("Grenze der Prüfung, kein Fehler: Routing-Tabelle lesbar machen (Leserechte) bzw. Ziel "
+          "und Next-Hop dieser Routen von Hand prüfen (Adressobjekt, SD-WAN-Zone, dynamisches "
+          "Gateway, Interface).",
+          "Limit of the check, not an error: make the routing table readable (read permissions) "
+          "or check destination and next-hop of these routes manually (address object, SD-WAN "
+          "zone, dynamic gateway, interface)."),
+    )  # fmt: skip
+
+
 def _bgp(subject: str, d: dict) -> tuple[str, str]:
     name = f" ({_list(d.get('peer_names') or [], 1)})" if d.get("peer_names") else ""
     asn = f", AS {d['remote_as']}" if d.get("remote_as") else ""
@@ -398,15 +493,42 @@ def _app_coverage(subject: str, d: dict) -> tuple[str, str]:
     cuts = d.get("cuts") or {}
     parts = "; ".join(cut_text(k, v) for k, v in cuts.items() if isinstance(v, dict))
     app = _q(d.get("application") or subject)
+    hint = L(
+        "Für den nicht geprüften Teil fehlen Befunde (Abweichungen, Regeln nie gebraucht). "
+        "Grenze erhöhen (z. B. AUTOMATO_APP_TRACES_MAX, 0 = ohne Grenze) bzw. die "
+        "Applikation kleiner schneiden; danach rechnet sie neu.",
+        "Findings for the part not checked are missing (deviations, rules never needed). "
+        "Raise the limit (e.g. AUTOMATO_APP_TRACES_MAX, 0 = no limit) or split the "
+        "application; it is computed again afterwards.",
+    )
+    if "vpn" in cuts:  # 1.19.0 (ADR 0063): Weg endet an einer fremden VPN-Gegenstelle
+        vpn = L(
+            "VPN-Gegenstelle ohne gelesenes Gerät: die FortiGate dort einlesen (dann geht der "
+            "Weg weiter) bzw. den Tunnel als Anbindung erfassen (bewusste Grenze).",
+            "VPN peer without a device read: collect the FortiGate there (the path then "
+            "continues) or capture the tunnel as an exit (deliberate boundary).",
+        )
+        hint = vpn if set(cuts) == {"vpn"} else f"{hint} {vpn}"
+    # ADR 0070: Stellen der Wege, die nicht sicher entschieden sind (gezaehlt statt still)
+    ways = set(cuts) & {"start", "start_part", "rpf", "nat", "default", "onlink", "policy_route",
+                        "sdwan", "truncated", "return", "no_policy"}  # fmt: skip
+    if ways:
+        way = L(
+            "Nicht geprüfte Stellen der Wege (Start unbekannt, Default-Route, Reverse Path, NAT, "
+            "Policy-Route …): das Gerät dahinter einlesen bzw. als Anbindung mit seinen Netzen "
+            "erfassen, Firewalls neu einlesen (Einstellungen des VDOMs); Einzelheiten je "
+            "Verbindung unter „Verbindungen“.",
+            "Places of the paths that are not checked (start unknown, default route, reverse "
+            "path, NAT, policy route …): collect the device behind them or capture it as an exit "
+            "with its networks, collect firewalls again (settings of the VDOM); details per "
+            "connection under “Connections”.",
+        )
+        only = set(cuts) <= ways | {"vpn"}
+        hint = (f"{vpn} {way}" if "vpn" in cuts else way) if only else f"{hint} {way}"
     return (
         L(f"Applikation {app} nicht vollständig geprüft: {parts}.",
           f"Application {app} not completely checked: {parts}."),
-        L("Für den nicht geprüften Teil fehlen Befunde (Abweichungen, Regeln nie gebraucht). "
-          "Grenze erhöhen (z. B. AUTOMATO_APP_TRACES_MAX, 0 = ohne Grenze) bzw. die Applikation "
-          "kleiner schneiden; danach rechnet sie neu.",
-          "Findings for the part not checked are missing (deviations, rules never needed). Raise "
-          "the limit (e.g. AUTOMATO_APP_TRACES_MAX, 0 = no limit) or split the application; it "
-          "is computed again afterwards."),
+        hint,
     )  # fmt: skip
 
 
@@ -554,6 +676,56 @@ def _link_one_sided(subject: str, d: dict) -> tuple[str, str]:
             "where the other side reports it.",
         ),
     )
+
+
+def _cable_neighbor(subject: str, d: dict) -> tuple[str, str]:
+    """Verkabelung im Detail (1.19.0): CDP/LLDP meldet am Port eines Kabels in NetBox eine andere
+    Gegenstelle."""
+    nb = d.get("netbox") or "NetBox"
+    label = f" ({d['label']})" if d.get("label") else ""
+    seen = "; ".join(
+        f"{_end(w.get('at'))}: " + ", ".join(_end(s) for s in w.get("seen") or [])
+        for w in d.get("wrong") or []
+    )
+    return (
+        L(f"Kabel{label} {_end(d.get('a'))} ↔ {_end(d.get('b'))} in NetBox „{nb}“ – CDP/LLDP "
+          f"meldet andere Gegenstellen ({seen}).",
+          f"Cable{label} {_end(d.get('a'))} ↔ {_end(d.get('b'))} in NetBox “{nb}” – CDP/LLDP "
+          f"reports other peers ({seen})."),
+        L("Prüfen, wo das Kabel wirklich steckt: NetBox nachführen (bzw. mit dem Abschnitt "
+          "Verkabelung des NetBox-Syncs) oder das Kabel umstecken.",
+          "Check where the cable is really plugged in: update NetBox (or use the cabling "
+          "section of the NetBox sync) or re-plug the cable."),
+    )  # fmt: skip
+
+
+def _cable_label(subject: str, d: dict) -> tuple[str, str]:
+    """Verkabelung im Detail (1.19.0): Kabelnummer in NetBox und Automato verschieden."""
+    nb = d.get("netbox") or "NetBox"
+    ends = f"{_end(d.get('a'))} ↔ {_end(d.get('b'))}"
+    return (
+        L(f"Kabelnummer {ends}: in NetBox „{nb}“ „{d.get('netbox_label')}“, in Automato "
+          f"„{d.get('automato_label')}“.",
+          f"Cable number {ends}: in NetBox “{nb}” “{d.get('netbox_label')}”, in Automato "
+          f"“{d.get('automato_label')}”."),
+        L("Richtige Nummer festlegen: in Automato ändern bzw. mit dem NetBox-Sync (Abschnitt "
+          "Verkabelung, Kabelnummer bestätigen) nach NetBox schreiben.",
+          "Decide on the right number: change it in Automato or write it to NetBox with the "
+          "NetBox sync (cabling section, confirm the cable number)."),
+    )  # fmt: skip
+
+
+def _link_half(subject: str, d: dict) -> tuple[str, str]:
+    """Verkabelung im Detail (1.19.0): Duplex nicht voll (beide Enden gelesen)."""
+    half = ", ".join(d.get("half") or [])
+    ends = f"{_end(d.get('a'))} ↔ {_end(d.get('b'))}"
+    return (
+        L(f"Verbindung {ends}: Duplex halb auf {half}.", f"Link {ends}: half duplex on {half}."),
+        L("Beide Ports auf Vollduplex (bzw. beide auf Auto) stellen und das Kabel prüfen – "
+          "Halbduplex bremst und führt zu Kollisionen.",
+          "Set both ports to full duplex (or both to auto) and check the cable – half duplex "
+          "slows down and leads to collisions."),
+    )  # fmt: skip
 
 
 def _uplink_vlan(subject: str, d: dict) -> tuple[str, str]:
@@ -966,7 +1138,64 @@ def _netbox_sync(subject: str, d: dict) -> tuple[str, str]:
     return text, hint
 
 
+def _vpn_where(d: dict) -> str:
+    vdom = f" (VDOM {d['vdom']})" if d.get("vdom") not in (None, "root") else ""
+    return L(f"VPN {_q(d.get('tunnel'))} auf {d.get('source')}{vdom}",
+             f"VPN {_q(d.get('tunnel'))} on {d.get('source')}{vdom}")  # fmt: skip
+
+
+def _vpn_down(subject: str, d: dict) -> tuple[str, str]:
+    """IPsec-Tunnel bzw. Phase 2 down (1.19.0, ADR 0063)."""
+    gw = L(f" zur Gegenstelle {d['remote_gw']}", f" to the peer {d['remote_gw']}") \
+        if d.get("remote_gw") else ""  # fmt: skip
+    down = d.get("phase2_down") or []
+    if d.get("status") == "partial":
+        text = L(
+            f"{_vpn_where(d)}{gw} ist nur teilweise up – Phase 2 down: {_list(down)}.",
+            f"{_vpn_where(d)}{gw} is only partially up – phase 2 down: {_list(down)}.",
+        )
+    else:
+        text = L(f"{_vpn_where(d)}{gw} ist down.", f"{_vpn_where(d)}{gw} is down.")
+    hint = L(
+        "Tunnel auf beiden Seiten prüfen (Gegenstelle erreichbar, Phase 1/2 passend, "
+        "Proposals, Selektoren); Wege über den Tunnel tragen derzeit nicht.",
+        "Check the tunnel on both sides (peer reachable, phase 1/2 matching, proposals, "
+        "selectors); paths via the tunnel do not carry traffic at the moment.",
+    )
+    return text, hint
+
+
+def _vpn_selector(subject: str, d: dict) -> tuple[str, str]:
+    """Route ueber den Tunnel, die ein Phase-2-Selektor nur teilweise bzw. gar nicht deckt."""
+    nets = _list(d.get("prefixes") or [], 4)
+    sel = _list(d.get("selectors") or [], 4) or "–"
+    if d.get("problem") == "partial":
+        text = L(
+            f"{_vpn_where(d)}: die Phase-2-Selektoren ({sel}) decken die Route(n) über den "
+            f"Tunnel nur teilweise: {nets}.",
+            f"{_vpn_where(d)}: the phase 2 selectors ({sel}) cover the route(s) via the "
+            f"tunnel only partly: {nets}.",
+        )
+    else:
+        text = L(
+            f"{_vpn_where(d)}: Route(n) über den Tunnel ohne passenden Phase-2-Selektor "
+            f"({sel}): {nets}.",
+            f"{_vpn_where(d)}: route(s) via the tunnel without a matching phase 2 selector "
+            f"({sel}): {nets}.",
+        )
+    hint = L(
+        "Verkehr in diese Netze geht nicht (bzw. nur teilweise) durch den Tunnel: Selektor "
+        "der Phase 2 erweitern (auf beiden Seiten) bzw. die Route korrigieren.",
+        "Traffic to these networks does not (or only partly) pass the tunnel: widen the "
+        "phase 2 selector (on both sides) or correct the route.",
+    )
+    return text, hint
+
+
 _TOPO_TEXT = {
+    "vpn_tunnel_down": _vpn_down,
+    "vpn_selector_partial": _vpn_selector,
+    "vpn_route_no_selector": _vpn_selector,
     "netbox_sync_mismatch": _netbox_sync,
     "bgp_zone_out_mismatch": _bgp_zones_out,
     "aci_import_zone_mismatch": _aci_import_zones,
@@ -980,6 +1209,11 @@ _TOPO_TEXT = {
     "topo_mask_mismatch": _mask,
     "topo_route_loop": _loop,
     "topo_static_unused": _static,
+    "static_nexthop_unreachable": _static_nexthop,  # statische Routen (1.19.0)
+    "static_shadowed": _static_shadowed,
+    "static_duplicate": _static_duplicate,
+    "static_blackhole": _static_blackhole,
+    "static_unchecked": _static_unchecked,
     "topo_bgp_down": _bgp,
     "zone_policy_violation": _zone_violation,
     "zone_overlap": _zone_overlap,
@@ -994,6 +1228,9 @@ _TOPO_TEXT = {
     "link_vlan_mismatch": _link,
     "link_lag_mismatch": _link,
     "link_one_sided": _link_one_sided,
+    "cable_neighbor_mismatch": _cable_neighbor,  # 1.19.0: Verkabelung im Detail
+    "cable_label_mismatch": _cable_label,
+    "link_half_duplex": _link_half,
     "uplink_vlan_missing": _uplink_vlan,
     **{t: (lambda s, d, t=t: _l2(s, d, t)) for t in _L2_HINT},
 }
@@ -1023,6 +1260,22 @@ def explain(ftype: str, subject: str, detail: dict | None) -> tuple[str, str]:
         return _PARALLEL_TEXT[ftype](subject, d, on)
     if ftype in _SOURCE_TEXT:
         return _SOURCE_TEXT[ftype](subject, d)
+    if ftype.startswith("reservation_"):  # Reservierungen (1.19.0, ADR 0066)
+        from app.store import reservations
+
+        return reservations.explain(ftype, subject, d)
+    if ftype.startswith("stp_"):  # Spanning Tree (1.19.0)
+        from app.store import stp_findings
+
+        return stp_findings.explain(ftype, subject, d)
+    if ftype.startswith("dns_"):  # DNS aus dem AD (1.19.0)
+        from app.store import dns_checks
+
+        return dns_checks.explain(ftype, subject, d)
+    if ftype.startswith("path_"):  # Wege vergleichen (1.19.0, ADR 0067)
+        from app.store import path_compare
+
+        return path_compare.explain(ftype, subject, d)
     return subject, ""
 
 
@@ -1170,6 +1423,39 @@ def _snat_pool(subject: str, d: dict, on: str) -> tuple[str, str]:
     )
 
 
+def _rule_shadowed(subject: str, d: dict, on: str) -> tuple[str, str]:
+    """Regel überdeckt durch Policy X (ADR 0071)."""
+    vdom = f" (VDOM {d['vdom']})" if d.get("vdom") else ""
+    where = f"{d.get('source') or L('der Firewall', 'the firewall')}{vdom}"
+    policy = f"{d.get('external_id') or '?'} {_q(d.get('name') or subject)}"
+    by = d.get("by") or []
+    names = ", ".join(f"Policy {b.get('external_id')} {_q(b.get('name') or '')}".strip()
+                      for b in by[:3])  # fmt: skip
+    more = int(d.get("by_count") or len(by)) - min(len(by), 3)
+    names += f" +{more}" if more > 0 else ""
+    blocks = any(b.get("action") != d.get("action") for b in by)
+    return (
+        L(
+            f"Policy {policy} auf {where} trifft nie Verkehr: überdeckt durch {names} – die "
+            "früheren Policies entscheiden ihren ganzen Verkehr.",
+            f"Policy {policy} on {where} never matches traffic: shadowed by {names} – the "
+            "earlier policies decide all of its traffic.",
+        ),
+        L(
+            "Reihenfolge auf der Firewall prüfen: die überdeckende Policy entscheidet anders – "
+            "soll die Regel wirken, gehört sie davor."
+            if blocks
+            else "Die Regel ist doppelt bzw. wirkungslos – auf der Firewall aufräumen oder vor die "
+            "überdeckende Policy stellen.",
+            "Check the order on the firewall: the shadowing policy decides differently – if the "
+            "rule is meant to apply, it belongs before it."
+            if blocks
+            else "The rule is redundant or without effect – clean up on the firewall or move it "
+            "before the shadowing policy.",
+        ),
+    )
+
+
 def _name_type(subject: str, d: dict, on: str) -> tuple[str, str]:
     expected = _pick(_CLASS, d.get("expected"), d.get("expected"))
     host = d.get("expected") == "host"
@@ -1224,6 +1510,7 @@ _OBJECT_TEXT = {
     "service_mismatch": _service_mismatch,
     "predefined_service_used": _predefined,
     "snat_pool_missing": _snat_pool,
+    "rule_shadowed": _rule_shadowed,
     "name_type_mismatch": _name_type,
     "duplicate_value": _duplicate,
     "unused_object": _unused,

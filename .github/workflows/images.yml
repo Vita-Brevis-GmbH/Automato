@@ -1,0 +1,314 @@
+# Images und signiertes Manifest je Kanal (1.15.0, ADR 0060, Vertrag vitabrevis-manifest/v1).
+#
+# Nur nach gruener CI desselben Commits:
+#   - Push auf main bzw. den Entwicklungs-Branch: als Job `images` am Ende von ci.yml (needs auf
+#     alle Jobs - ein roter Stand bekommt kein Manifest)
+#   - Kanal stable ohne Tag (1.18.1): als Job `stable` am Ende von ci.yml, wenn kanal-stable die
+#     Version aus deploy/release/stable noch nicht hat - erst, wenn ein CI-Lauf des freigegebenen
+#     Commits erfolgreich war
+#   - Tag v<X.Y.Z> und von Hand: erst, wenn ein CI-Lauf dieses Commits erfolgreich war
+#
+#   main                                   -> Kanal latest, Version <VERSION>-latest.<n>.<sha7>
+#   claude/projekt-roadmap-planung-0mk5v0  -> Kanal dev,    Version <VERSION>-dev.<n>.<sha7>
+#   deploy/release/stable (X.Y.Z <commit>) -> Kanal stable, Version X.Y.Z aus genau diesem Commit
+#                                             (Vorfahre des Stands, VERSION dort = X.Y.Z), ohne Tag
+#   Tag v<X.Y.Z> (= VERSION)               -> Kanal stable, Version X.Y.Z, dazu Release v<X.Y.Z>
+#   von Hand (workflow_dispatch)           -> gewaehlter Kanal; stable auf dem Tag v<VERSION>, ohne
+#                                             Tag aus deploy/release/stable
+#   n = git rev-list --count <commit> - waechst mit jedem Commit derselben Linie (1.18.1)
+#
+# Eigene Images (Dienste mit build: in docker-compose.yml, Liste aus `docker compose config`)
+# nach ghcr.io/<owner>/automato-<dienst>:<version> und :<kanal>; manifest.json (Digests) und
+# manifest.sig (Ed25519 mit dem Secret MANIFEST_SIGNING_KEY) im Release kanal-<kanal>. Ohne
+# Secret ohne manifest.sig und mit Warnung - Hosts lehnen das ab. Einrichten:
+# deploy/release/README.md.
+name: images
+
+on:
+  workflow_call:
+    inputs:
+      aus_ci:
+        description: "Aufruf aus ci.yml nach gruener CI dieses Commits"
+        type: boolean
+        default: false
+      stable_freigabe:
+        description: "Kanal stable aus deploy/release/stable (Commit der Datei, ohne Tag)"
+        type: boolean
+        default: false
+    secrets:
+      MANIFEST_SIGNING_KEY:
+        required: false
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      kanal:
+        description: "Kanal"
+        type: choice
+        options: [dev, latest, stable]
+        required: true
+
+permissions: {}
+
+jobs:
+  veroeffentlichen:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Releases kanal-<kanal> bzw. v<X.Y.Z>
+      packages: write # GHCR
+      actions: read # CI-Lauf dieses Commits pruefen (Tag, von Hand)
+    # je Branch nacheinander, stable (Tag, Freigabe-Datei, von Hand) immer nacheinander - ein
+    # spaeterer Lauf ersetzt den Stand des frueheren
+    concurrency:
+      group: >-
+        images-${{ (inputs.stable_freigabe || startsWith(github.ref, 'refs/tags/v') ||
+        github.event.inputs.kanal == 'stable') && 'stable' || github.ref }}
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      KANAL_EINGABE: ${{ github.event.inputs.kanal }}
+      STABLE_FREIGABE: ${{ inputs.stable_freigabe == true }}
+      DEV_BRANCH: claude/projekt-roadmap-planung-0mk5v0
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Tags und Vorfahren (ist der veroeffentlichte Stand neuer?)
+
+      - name: Kanal, Version und Commit
+        id: plan
+        run: |
+          set -euo pipefail
+          basis=$(tr -d '[:space:]' < VERSION)
+          kanal="" aus_datei=0 commit=$GITHUB_SHA
+          if [ "$STABLE_FREIGABE" = true ]; then
+            kanal=stable aus_datei=1
+          elif [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            kanal=$KANAL_EINGABE
+          elif [[ $GITHUB_REF == refs/tags/v* ]]; then
+            kanal=stable
+          elif [ "$GITHUB_REF" = refs/heads/main ]; then
+            kanal=latest
+          elif [ "$GITHUB_REF" = "refs/heads/$DEV_BRANCH" ]; then
+            kanal=dev
+          fi
+          if [ -z "$kanal" ]; then
+            echo "::notice::Kein Kanal fuer $GITHUB_REF - nichts veroeffentlicht"
+            echo "kanal=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # stable mit Tag v<VERSION> auf genau diesem Commit; von Hand ohne Tag aus der Datei
+          if [ "$kanal" = stable ] && [ "$aus_datei" = 0 ] &&
+            ! git tag --points-at "$GITHUB_SHA" | grep -qxF "v$basis"; then
+            if [ "$GITHUB_EVENT_NAME" != workflow_dispatch ]; then
+              echo "::error::stable nur mit Tag v$basis (= VERSION) auf $GITHUB_SHA"
+              exit 1
+            fi
+            aus_datei=1
+          fi
+          if [ "$aus_datei" = 1 ]; then
+            # Kanal stable ohne Tag (1.18.1): Version und Commit aus deploy/release/stable - der
+            # Commit ist im Repo, Vorfahre dieses Stands und hat VERSION = Version
+            if ! python3 scripts/release_manifest.py freigabe --datei deploy/release/stable \
+              --repo . --stand "$GITHUB_SHA" > "$RUNNER_TEMP/freigabe.txt"; then
+              echo "::error::deploy/release/stable ungueltig bzw. passt nicht zu $GITHUB_SHA (Grund oben)"
+              exit 1
+            fi
+            basis=$(sed -n 's/^version=//p' "$RUNNER_TEMP/freigabe.txt")
+            commit=$(sed -n 's/^commit=//p' "$RUNNER_TEMP/freigabe.txt")
+          fi
+          if [ "$kanal" = stable ]; then
+            version=$basis
+          else
+            # monoton: n = Anzahl Commits bis hier (fetch-depth 0), dann sha7
+            n=$(git rev-list --count "$commit")
+            version="$basis-$kanal.$n.${commit:0:7}"
+          fi
+          if ! [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]{1,40})?$ ]]; then
+            echo "::error::Version ungueltig: $version"
+            exit 1
+          fi
+          if ! [[ $commit =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Commit ungueltig: $commit"
+            exit 1
+          fi
+          {
+            echo "kanal=$kanal"
+            echo "version=$version"
+            echo "commit=$commit"
+            echo "aus_datei=$aus_datei"
+            echo "owner=${GITHUB_REPOSITORY_OWNER,,}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Kanal $kanal, Version $version, Commit $commit"
+
+      - name: CI dieses Commits gruen? (Tag, Freigabe-Datei, von Hand)
+        if: >-
+          steps.plan.outputs.kanal != '' &&
+          (inputs.aus_ci != true || steps.plan.outputs.commit != github.sha)
+        env:
+          COMMIT: ${{ steps.plan.outputs.commit }}
+        run: |
+          set -euo pipefail
+          n=$(gh api -X GET "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs" \
+            -f head_sha="$COMMIT" -f status=success --jq '.total_count')
+          if [ "${n:-0}" -lt 1 ]; then
+            echo "::error::Kein erfolgreicher CI-Lauf fuer $COMMIT - erst CI, dann Images"
+            exit 1
+          fi
+
+      - uses: docker/setup-buildx-action@v3
+        if: steps.plan.outputs.kanal != ''
+
+      - uses: docker/login-action@v3
+        if: steps.plan.outputs.kanal != ''
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Images bauen und nach GHCR
+        if: steps.plan.outputs.kanal != ''
+        env:
+          KANAL: ${{ steps.plan.outputs.kanal }}
+          VERSION_NEU: ${{ steps.plan.outputs.version }}
+          COMMIT: ${{ steps.plan.outputs.commit }}
+          OWNER: ${{ steps.plan.outputs.owner }}
+        run: |
+          set -euo pipefail
+          quelle=.
+          if [ "$COMMIT" != "$GITHUB_SHA" ]; then
+            # stable aus der Freigabe-Datei: gebaut wird genau der freigegebene Commit (eigener
+            # Arbeitsbaum); Werkzeuge (release_manifest.py) aus dem gepushten Stand
+            quelle="$RUNNER_TEMP/quelle"
+            git worktree add --detach "$quelle" "$COMMIT"
+          fi
+          # eigene Dienste aus docker-compose.yml (build:), alle Profile, Vorgaben ohne .env
+          profile=()
+          while IFS= read -r p; do profile+=(--profile "$p"); done < <(cd "$quelle" && docker compose config --profiles)
+          (cd "$quelle" && docker compose "${profile[@]}" config --format json) > "$RUNNER_TEMP/compose.json"
+          python3 scripts/release_manifest.py dienste --compose "$RUNNER_TEMP/compose.json" \
+            --wurzel "$quelle" > "$RUNNER_TEMP/dienste.tsv"
+          : > "$RUNNER_TEMP/images.txt"
+          herkunft="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          while IFS=$'\t' read -r dienst kontext dockerfile ziel; do
+            repo="ghcr.io/$OWNER/automato-$dienst"
+            ziel_args=()
+            if [ "$ziel" != "-" ]; then ziel_args=(--target "$ziel"); fi
+            echo "::group::$dienst -> $repo:$VERSION_NEU"
+            docker buildx build --push --provenance=false --sbom=false \
+              --file "$quelle/$dockerfile" "${ziel_args[@]}" \
+              --label "org.opencontainers.image.source=$herkunft" \
+              --label "org.opencontainers.image.revision=$COMMIT" \
+              --label "org.opencontainers.image.version=$VERSION_NEU" \
+              --tag "$repo:$VERSION_NEU" --tag "$repo:$KANAL" \
+              --metadata-file "$RUNNER_TEMP/meta-$dienst.json" "$quelle/$kontext"
+            digest=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["containerimage.digest"])' \
+              "$RUNNER_TEMP/meta-$dienst.json")
+            echo "$dienst=$repo@$digest" >> "$RUNNER_TEMP/images.txt"
+            echo "::endgroup::"
+          done < "$RUNNER_TEMP/dienste.tsv"
+          cat "$RUNNER_TEMP/images.txt"
+
+      - name: Manifest erstellen und signieren
+        if: steps.plan.outputs.kanal != ''
+        env:
+          KANAL: ${{ steps.plan.outputs.kanal }}
+          VERSION_NEU: ${{ steps.plan.outputs.version }}
+          COMMIT: ${{ steps.plan.outputs.commit }}
+          MANIFEST_SIGNING_KEY: ${{ secrets.MANIFEST_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          aus="$RUNNER_TEMP/release"
+          mkdir -p "$aus"
+          rm -f "$aus/manifest.sig"
+          args=()
+          while IFS= read -r zeile; do args+=(--image "$zeile"); done < "$RUNNER_TEMP/images.txt"
+          python3 scripts/release_manifest.py erstellen --kanal "$KANAL" --version "$VERSION_NEU" \
+            --commit "$COMMIT" "${args[@]}" > "$aus/manifest.json"
+          python3 scripts/release_manifest.py pruefen --manifest "$aus/manifest.json" \
+            --ohne-signatur --version "$VERSION_NEU" > /dev/null
+          cat "$aus/manifest.json"
+          if [ -z "${MANIFEST_SIGNING_KEY:-}" ]; then
+            echo "::warning title=Manifest nicht signiert::Secret MANIFEST_SIGNING_KEY fehlt - Images und manifest.json werden veroeffentlicht, Hosts lehnen sie ohne manifest.sig ab (deploy/release/README.md)"
+            exit 0
+          fi
+          # Schluessel nur in einer Datei 0600 unter RUNNER_TEMP, nie in Ausgabe oder Argumenten
+          schluessel="$RUNNER_TEMP/manifest-signing.pem"
+          pub="$RUNNER_TEMP/herausgeber-ci.pub"
+          trap 'rm -f "$schluessel" "$pub"' EXIT
+          (umask 077 && printf '%s\n' "$MANIFEST_SIGNING_KEY" > "$schluessel")
+          unset MANIFEST_SIGNING_KEY
+          python3 scripts/release_manifest.py signieren --schluessel "$schluessel" \
+            --manifest "$aus/manifest.json" > "$aus/manifest.sig"
+          openssl pkey -in "$schluessel" -pubout -out "$pub"
+          rm -f "$schluessel"
+          python3 scripts/release_manifest.py pruefen --manifest "$aus/manifest.json" \
+            --signatur "$aus/manifest.sig" --schluessel "$pub" --version "$VERSION_NEU" > /dev/null
+          # passt das Secret zum Schluessel im Repo? Sonst lehnten die Hosts jedes Manifest ab
+          if [ -f deploy/release/herausgeber.pub ] && ! python3 scripts/release_manifest.py pruefen \
+            --manifest "$aus/manifest.json" --signatur "$aus/manifest.sig" \
+            --schluessel deploy/release/herausgeber.pub > /dev/null; then
+            echo "::error::MANIFEST_SIGNING_KEY passt nicht zu deploy/release/herausgeber.pub"
+            exit 1
+          fi
+          echo "signiert: $(cat "$aus/manifest.sig")"
+
+      - name: Release kanal-${{ steps.plan.outputs.kanal }}
+        if: steps.plan.outputs.kanal != ''
+        env:
+          KANAL: ${{ steps.plan.outputs.kanal }}
+          VERSION_NEU: ${{ steps.plan.outputs.version }}
+          COMMIT: ${{ steps.plan.outputs.commit }}
+          AUS_DATEI: ${{ steps.plan.outputs.aus_datei }}
+        run: |
+          set -euo pipefail
+          aus="$RUNNER_TEMP/release"
+          dateien=("$aus/manifest.json")
+          if [ -f "$aus/manifest.sig" ]; then dateien+=("$aus/manifest.sig"); fi
+          notes="Automato $VERSION_NEU, Kanal $KANAL, Commit $COMMIT. manifest.json: Images per Digest; manifest.sig: Ed25519-Signatur (Vertrag vitabrevis-manifest/v1, ADR 0060)."
+
+          veroeffentlichen() { # $1 Release, $2 Titel, $3 Vorabversion, $4 neustes Release (true|false)
+            if gh release view "$1" > /dev/null 2>&1; then
+              gh release edit "$1" --title "$2" --notes "$notes" --prerelease="$3"
+            else
+              # Die Release ist nur der Behälter für manifest.json/.sig (der veröffentlichte Commit
+              # steht im Manifest): angelegt am Stand dieses Laufs. Am freigegebenen älteren Commit
+              # verweigert GitHub dem GITHUB_TOKEN das Anlegen (HTTP 403, andere Workflow-Dateien).
+              gh release create "$1" --target "$GITHUB_SHA" --title "$2" --notes "$notes" \
+                --prerelease="$3" --latest="$4"
+            fi
+            gh release upload "$1" "${dateien[@]}" --clobber
+            # ohne neue Signatur keine alte neben dem neuen Manifest
+            if [ ! -f "$aus/manifest.sig" ]; then
+              gh release delete-asset "$1" manifest.sig --yes 2> /dev/null || true
+            fi
+          }
+
+          # ein langsamerer Lauf eines aelteren Commits ersetzt nie einen neueren Stand
+          tag="kanal-$KANAL"
+          ersetzen=1
+          if gh release download "$tag" -p manifest.json -O "$RUNNER_TEMP/bisher.json" 2> /dev/null; then
+            feld() { python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get(sys.argv[2], ""))' "$RUNNER_TEMP/bisher.json" "$1" 2> /dev/null || true; }
+            bisher_version=$(feld version)
+            bisher_commit=$(feld commit)
+            if [ -n "$bisher_version" ] && [ "$bisher_commit" != "$COMMIT" ]; then
+              vergleich=$(python3 scripts/release_manifest.py vergleichen "$VERSION_NEU" "$COMMIT" \
+                "$bisher_version" "$bisher_commit" || echo neuer)
+              if [ "$vergleich" = aelter ] || git merge-base --is-ancestor "$COMMIT" "$bisher_commit" 2> /dev/null; then
+                echo "::notice::$tag hat schon den neueren Stand $bisher_version - nicht ersetzt"
+                ersetzen=0
+              elif [ "$KANAL" = stable ] && [ "$bisher_version" = "$VERSION_NEU" ]; then
+                # eine stable-Version gehoert zu genau einem Commit
+                echo "::warning::$tag hat $VERSION_NEU schon mit Commit $bisher_commit - nicht ersetzt"
+                ersetzen=0
+              fi
+            fi
+          fi
+          vorab=true
+          if [ "$KANAL" = stable ]; then vorab=false; fi
+          if [ "$ersetzen" = 1 ]; then
+            veroeffentlichen "$tag" "Automato - Kanal $KANAL" "$vorab" false
+          fi
+          # Release v<X.Y.Z> nur zum Tag - die Freigabe-Datei legt keinen Tag an
+          if [ "$KANAL" = stable ] && [ "$AUS_DATEI" != 1 ]; then
+            veroeffentlichen "v$VERSION_NEU" "Automato $VERSION_NEU" false true
+          fi

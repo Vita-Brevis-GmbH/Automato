@@ -219,3 +219,52 @@ def test_infoblox_export_komplett_mit_paging():
     container = by_value[(ReferenceKind.PREFIX, "10.20.0.0/16")]  # Network Container (0.74.1)
     assert (container.status, container.description) == ("container", "RZ")
     assert net.status is None
+
+
+def _port(pid, name, device):
+    return {"object_type": "dcim.interface", "object_id": pid,
+            "object": {"id": pid, "name": name, "device": {"id": 1, "name": device}}}  # fmt: skip
+
+
+def test_netbox_kabel_mit_label_und_enden():
+    """1.19.0: Kabel mit Label (Kabelnummer) und je einem Port an beiden Enden; andere Enden
+    gezaehlt (Hinweis); ohne Leserecht auf Kabel geht der Lauf weiter (Hinweis)."""
+    cables = [
+        {"id": 41, "label": "K-0815", "status": {"value": "connected"}, "type": "smf",
+         "length": 3, "length_unit": {"value": "m"}, "color": "ffeb3b",
+         "url": "https://nb/api/dcim/cables/41/",
+         "a_terminations": [_port(7, "GigabitEthernet1/0/47", "sw-acc-01")],
+         "b_terminations": [_port(8, "Ethernet1/1", "sw-core-01")]},
+        {"id": 42, "label": "", "a_terminations": [_port(9, "Gi1/0/5", "sw-acc-01")],
+         "b_terminations": [{"object_type": "dcim.frontport", "object_id": 3, "object": {}}]},
+    ]  # fmt: skip
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        if request.url.path == "/api/dcim/cables/":
+            return httpx.Response(200, json={"count": len(cables), "results": cables})
+        return httpx.Response(200, json={"count": 0, "results": []})
+
+    nb = NetBoxAdapter(
+        "https://nb", "t", client=httpx.Client(transport=httpx.MockTransport(handler))
+    )
+    (cable,) = (r for r in nb.export() if r.kind is ReferenceKind.CABLE)
+    assert (cable.value, cable.name, cable.status, cable.ref_id) == ("41", "K-0815", "connected",
+                                                                     "41")  # fmt: skip
+    assert cable.attrs == {"a_device": "sw-acc-01", "a_port": "GigabitEthernet1/0/47",
+                           "b_device": "sw-core-01", "b_port": "Ethernet1/1", "type": "smf",
+                           "color": "ffeb3b", "length": "3 m"}  # fmt: skip
+    assert cable.url == "https://nb/dcim/cables/41/"
+    assert nb.notes == ["1 Kabel mit anderen Enden (Patchpanel, Circuit, mehrere Ports) nicht "
+                        "übernommen"]  # fmt: skip
+
+    def denied(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/dcim/cables/":
+            return httpx.Response(403, json={"detail": "no permission"})
+        return httpx.Response(200, json={"count": 0, "results": []})
+
+    nb = NetBoxAdapter(
+        "https://nb", "t", client=httpx.Client(transport=httpx.MockTransport(denied))
+    )
+    assert [r for r in nb.export() if r.kind is ReferenceKind.CABLE] == []
+    assert nb.notes == ["Kabel nicht gelesen (HTTP 403)"]

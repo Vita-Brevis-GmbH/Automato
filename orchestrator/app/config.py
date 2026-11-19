@@ -85,6 +85,17 @@ class Settings(BaseSettings):
     # Domain der Kunden-Adressen (wie AUTOMATO_FRONT_DOMAIN im Front-Proxy) - nur fuer die
     # Anzeige der Adressen und Keycloak-Eintraege in der Oberflaeche
     front_domain: str = ""
+    # Eigene Automato-Instanz (1.16.0, ADR 0061): Kurzname des Kunden und Domain der Kunden-Adressen
+    # aus der .env der Instanz (schreibt `deploy/betrieb.sh installieren`; in der Hauptinstanz
+    # leer) - fuer den Ruecklink zur Startseite des Kunden-Portals (1.17.0)
+    instanz_kunde: str = ""
+    instanz_domain: str = ""
+    # Inventar fuers Cockpit (1.10.0, ADR 0053): GET /inventory nur mit diesem Token (Bearer),
+    # erzeugt mit `deploy/aufbau.sh cockpit-token`. Leer = der Endpunkt gibt es nicht (404).
+    cockpit_token: str = ""
+    # Kunden fuer den NetBox-Host (1.11.0, ADR 0054): GET /netbox-host nur mit diesem Token,
+    # erzeugt mit `deploy/aufbau.sh netbox-host-token`. Leer = der Endpunkt gibt es nicht (404).
+    netbox_host_token: str = ""
 
     # Zeitgesteuerte Laeufe je Quellsystem (Cron am Quellsystem). Aus = keine Hintergrund-
     # Schleife (Tests, Werkzeuge); docker-compose schaltet ihn fuer den Orchestrator ein.
@@ -127,6 +138,14 @@ class Settings(BaseSettings):
     # die Pruefung
     path_store_mb: int = 256
     app_findings_traces: int = 120
+    # Export der Applikations-Doku im Hintergrund (1.21.0, ADR 0069): fertige Exporte liegen in
+    # `export_dir` (Volume orchestrator-data) und sind `export_hours` abrufbar, danach geloescht;
+    # hoechstens `export_max_mb` je Export, `export_parallel` Exporte rechnen gleichzeitig (weitere
+    # warten). Das Export-Passwort lebt nur im Speicher des Auftrags.
+    export_dir: str = "/var/lib/automato/exports"
+    export_hours: int = 24
+    export_max_mb: int = 2048
+    export_parallel: int = 2
     # IPAM im Speicher (0.107.0, Anwender: „es braucht enorm lange, dann sind die Namen da“): so
     # viele Indizes der Referenzquellen (je Quelle und Lauf) bleiben je Prozess geladen statt je
     # Anfrage neu gelesen (0 = aus); ein neuer IPAM-Lauf ersetzt sie

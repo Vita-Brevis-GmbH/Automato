@@ -99,6 +99,7 @@ const ICONS: Record<string, ReactNode> = {
   play: <path d="M7 4v16l13-8z" />,
   chevron: <path d="m6 9 6 6 6-6" />,
   external: <path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" />,
+  back: <path d="M19 12H5m0 0 6-6m-6 6 6 6" />,
   plus: <path d="M12 5v14M5 12h14" />,
   objects: (
     <>
@@ -115,6 +116,14 @@ const ICONS: Record<string, ReactNode> = {
     </>
   ),
   upload: <path d="M12 16V4m0 0-4 4m4-4 4 4M5 20h14" />,
+  // VPN-Tunnel (1.19.0): Schloss zwischen zwei Enden
+  vpn: (
+    <>
+      <path d="M2 12h5M17 12h5" />
+      <rect x="8" y="10" width="8" height="7" rx="1" />
+      <path d="M10 10V8a2 2 0 0 1 4 0v2" />
+    </>
+  ),
   cable: (
     <>
       <rect x="3" y="4" width="6" height="5" rx="1" />
@@ -122,11 +131,67 @@ const ICONS: Record<string, ReactNode> = {
       <path d="M6 9v3a3 3 0 0 0 3 3h6a3 3 0 0 1 3 3" />
     </>
   ),
+  // Spanning Tree (1.19.0): Root oben, zwei Zweige, einer blockiert
+  stp: (
+    <>
+      <rect x="9" y="2" width="6" height="5" rx="1" />
+      <rect x="2" y="17" width="6" height="5" rx="1" />
+      <rect x="16" y="17" width="6" height="5" rx="1" />
+      <path d="M12 7v7M5 17v-3h7M15 14h4v3" />
+    </>
+  ),
+  // Reservierungen (1.19.0): Lesezeichen; AS-Nummern: AS mit drei Nachbarn
+  reserve: <path d="M6 3h12v18l-6-4-6 4z" />,
+  asn: (
+    <>
+      <circle cx="12" cy="12" r="3" />
+      <circle cx="4" cy="5" r="2" />
+      <circle cx="20" cy="5" r="2" />
+      <circle cx="12" cy="21" r="2" />
+      <path d="M5.5 6.5l4.3 3.8M18.5 6.5l-4.3 3.8M12 15v4" />
+    </>
+  ),
   path: (
     <>
       <circle cx="5" cy="19" r="2" />
       <path d="M7 19h6a3 3 0 0 0 0-6h-2a3 3 0 0 1 0-6h6" />
       <path d="M19 3v8M19 3l3 2-3 2" />
+    </>
+  ),
+  // Schichten (1.19.0, ADR 0067): Wege vergleichen (L3 über L1/L2), Port, Transceiver, VLAN, Netz, Load Balancer
+  compare: (
+    <>
+      <path d="M3 7h13l-3-3m3 3-3 3" />
+      <path d="M3 17h18" strokeDasharray="2 3" />
+      <circle cx="19" cy="7" r="2" />
+    </>
+  ),
+  port: (
+    <>
+      <rect x="4" y="6" width="16" height="12" rx="1" />
+      <path d="M8 18v-4h8v4M10 10h4" />
+    </>
+  ),
+  sfp: (
+    <>
+      <rect x="3" y="8" width="12" height="8" rx="1" />
+      <path d="M15 10h4l2 2-2 2h-4M7 12h4" />
+    </>
+  ),
+  vlan: <path d="M3 6h18M3 12h18M3 18h18M8 4v4M14 10v4M10 16v4" />,
+  net: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" />
+    </>
+  ),
+  lb: (
+    <>
+      <circle cx="5" cy="12" r="2" />
+      <path d="M7 12h4M11 12l6-6M11 12h6M11 12l6 6" />
+      <circle cx="19" cy="6" r="2" />
+      <circle cx="19" cy="12" r="2" />
+      <circle cx="19" cy="18" r="2" />
     </>
   ),
 };

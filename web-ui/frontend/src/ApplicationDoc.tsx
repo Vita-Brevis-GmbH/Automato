@@ -38,7 +38,7 @@ import type { View, ViewParams } from "./App";
 import ConnectionsCard from "./AppConnections";
 import { useModule } from "./moduleState";
 import { DocRow, DocTableView } from "./DocTable";
-import type { Me } from "./auth";
+import { canCollect, type Me } from "./auth";
 import { EpgCard } from "./EpgCard";
 import { Fold, FoldTitle, readStored, useFolds, writeJson } from "./fold";
 import { ObjectDrawer } from "./Objects";
@@ -424,7 +424,7 @@ export default function ApplicationDocView({
             {L("Bearbeiten", "Edit")}
           </button>
         )}
-        {me.isOperator && !me.isCustomer && (
+        {canCollect(me) && !me.isCustomer && (
           <button
             className="btn btn-ghost btn-sm"
             id="app-read-rules"
@@ -630,11 +630,23 @@ export default function ApplicationDocView({
               className="chip warn"
               id="app-path-unchecked"
               title={L(
-                "Für diese Regeln hat eine Grenze den Weg nicht (ganz) geprüft – sie stehen in der Doku, auch wenn ihre Firewall vielleicht nicht auf dem Weg liegt",
-                "A limit did not (fully) check the path of these rules – they stay in the documentation even if their firewall may not be on the path",
+                "Für diese Regeln ist der Weg zwischen Gegenstelle und System nicht bekannt bzw. eine Grenze hat ihn nicht (ganz) geprüft – sie stehen in der Doku, auch wenn ihre Firewall vielleicht nicht auf dem Weg liegt",
+                "For these rules the path between counterpart and system is not known or a limit did not (fully) check it – they stay in the documentation even if their firewall may not be on the path",
               )}
             >
               {L(`${s.path_unchecked} Regeln: Weg nicht geprüft`, `${s.path_unchecked} rules: path not checked`)}
+            </span>
+          )}
+          {(s.shadowed ?? 0) > 0 && (
+            <span
+              className="chip warn"
+              id="app-shadowed"
+              title={L(
+                "Frühere Policies der Firewall entscheiden allen Verkehr der Systeme, den diese Regeln treffen – kein Zugriff, nur noch unter „Regeln & Contracts“ (überdeckt durch Policy X)",
+                "Earlier policies of the firewall decide all traffic of the systems these rules match – no access, only under “rules & contracts” (shadowed by policy X)",
+              )}
+            >
+              {L(`${s.shadowed} Regeln überdeckt`, `${s.shadowed} rules shadowed`)}
             </span>
           )}
           {s.ruleset && (
@@ -1085,6 +1097,17 @@ function catLabel(titles: CatNames, index: number): string {
 
 // Kategorien, in denen die Zugriffe nach der Auswahl spezifisch/unspezifisch nicht stehen (0.125.0) - nur, wo kein
 // anderer Treffer derselben Kategorie gezeigt wird
+// ADR 0071 (Regel-Zuordnung nach echtem Treffer): Kennzeichen der Treffer einer Regel mit ihren Texten
+function matchMarks(hits: AppDocHit[]): { key: string; cls: string; label: string; texts: string[] }[] {
+  const texts = (pick: (h: AppDocHit) => string | undefined) => [...new Set(hits.map(pick).filter((t): t is string => !!t))];
+  const out = [
+    { key: "shadowed", cls: "warn", label: L("überdeckt", "shadowed"), texts: texts((h) => h._shadowed) },
+    { key: "broad", cls: "", label: L("breit", "broad"), texts: texts((h) => h._broad) },
+    { key: "path-unchecked", cls: "warn", label: L("Weg nicht geprüft", "path not checked"), texts: texts((h) => h._path_unchecked) },
+  ];
+  return out.filter((m) => m.texts.length > 0);
+}
+
 function hiddenIn(hits: AppDocHit[]): number[] {
   const shown = new Set(hits.filter((h) => !h.category_hidden).map((h) => h.table));
   return [...new Set(hits.filter((h) => h.category_hidden && !shown.has(h.table)).map((h) => h.table))];
@@ -1228,6 +1251,14 @@ function RuleRow({
             </span>
           </div>
         )}
+        {/* ADR 0071: Regel-Zuordnung nach echtem Treffer – überdeckt, breit, Weg nicht geprüft */}
+        {matchMarks(hits).map((m) => (
+          <div key={m.key}>
+            <span className={`chip ${m.cls} match-${m.key}`} title={m.texts.join("\n")}>
+              {m.label}
+            </span>
+          </div>
+        ))}
         {/* ADR 0034: Contract zur externen EPG ohne Firewall dahinter bzw. Hilfs-Contracts der Firewall-Regel */}
         {notes.length > 0 && (
           <div>
@@ -1363,6 +1394,13 @@ function WhyBlock({
                     {L("Nicht gezeigt in Kategorie", "Not shown in category")} {hiddenIn(g.hits).map((t) => catLabel(titles, t)).join(", ")}
                     {L(" – die Kategorie zeigt diese Zugriffe nicht (spezifisch/unspezifisch im Namensprofil)", " – the category does not show these accesses (specific/unspecific in the naming profile)")}
                   </div>
+                )}
+                {matchMarks(g.hits).flatMap((m) =>
+                  m.texts.map((t) => (
+                    <div key={`${m.key}-${t}`}>
+                      <span className={`chip ${m.cls}`}>{m.label}</span> <span className="faint">{t}</span>
+                    </div>
+                  )),
                 )}
                 {[...new Set(g.hits.filter((h) => h.relevance === "impossible").map((h) => h.relevance_text))].map((t) => (
                   <div key={t}>

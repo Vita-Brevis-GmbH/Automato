@@ -297,8 +297,9 @@ def load_index(session: Session, source: SourceSystem) -> ReferenceIndex:
             _INDEXES.move_to_end(key)
     if idx is None:
         rows = session.execute(
-            select(*_COLUMNS).where(ReferenceRecordRow.collector_run_id == source.reference_run_id)
-        ).all()
+            select(*_COLUMNS).where(ReferenceRecordRow.collector_run_id == source.reference_run_id,
+                                    ReferenceRecordRow.kind != "cable")  # Kabel: kein IPAM (1.19.0)
+        ).all()  # fmt: skip
         idx = ReferenceIndex(source, [Ref(*row) for row in rows])
         if size and source.reference_run_id:
             with _INDEX_LOCK:

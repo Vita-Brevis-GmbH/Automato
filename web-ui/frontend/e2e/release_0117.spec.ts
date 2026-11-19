@@ -29,7 +29,7 @@ test("Übersicht: Bereiche an- und abwählen, verschieben, Vorgabe (0.117.0)", a
   await expect(grid.locator("[data-widget='quick']")).toHaveCount(1);
   // Schnellansicht: VIPs nach Präfix der Namenskonvention
   await page.click("#dash-quick button[data-quick='vips']");
-  await expect(page).toHaveURL(/#objekte\?.*prefix=V-EXT_/);
+  await expect(page).toHaveURL(/#l4-7\/objekte\?.*prefix=V-EXT_/);
 });
 
 test("Findings: mehrere auswählen und ignorieren, dann wieder öffnen (0.117.0)", async ({ page }) => {

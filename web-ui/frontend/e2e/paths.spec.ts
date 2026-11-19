@@ -26,14 +26,14 @@ test("Weg-Suche: Details im Seitenpanel, neuer Tab, je Hop „mehr“ und Suche 
   await expect(page.locator(".drawer")).toHaveCount(0);
 
   // „↗“ daneben: dieselbe Hash-URL in einem neuen Tab; Ctrl-Klick auf den Link ebenso
-  const arrow = card.locator("a.newtab[href^='#regeln?rule=']").first();
+  const arrow = card.locator("a.newtab[href^='#l4-7/regeln?rule=']").first();
   await expect(arrow).toHaveAttribute("target", "_blank");
   const [tab] = await Promise.all([
     page.context().waitForEvent("page"),
     card.locator("a", { hasText: "Policy 1" }).click({ modifiers: ["Control"] }),
   ]);
   await tab.waitForLoadState();
-  await expect(tab).toHaveURL(/#regeln\?rule=\d+/);
+  await expect(tab).toHaveURL(/#l4-7\/regeln\?rule=\d+/);
   await expect(tab.locator(".drawer")).toContainText("lan-to-dmz-web");
   await tab.close();
   await expect(page.locator(".drawer")).toHaveCount(0); // hier nichts geöffnet

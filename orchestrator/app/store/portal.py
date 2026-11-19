@@ -8,6 +8,11 @@ schreibt nur diese eine Datei; `front.sh` prueft alles noch einmal (Vertrauensgr
 
 Die Pruefungen entsprechen `front.sh` (Kurzname als DNS-Label, reservierte Namen und Endungen,
 Kacheln nur mit https://) - so meldet die Oberflaeche einen Fehler sofort statt erst der Agent.
+
+Kacheln aus dem Cockpit (1.13.0, ADR 0054 zweiter Nachtrag): eine Kachel prueft `check_tile` -
+dieselbe Pruefung fuer die Oberflaeche und `PUT /freigaben` (Grenzen wie im Vertrag mit dem
+Cockpit: Titel 1-60 Zeichen, Adresse mit https:// hoechstens 500 Zeichen ohne Leerraum, Text
+hoechstens 200 Zeichen, nirgends Steuerzeichen; hoechstens 20 Kacheln).
 """
 
 import hashlib
@@ -16,6 +21,8 @@ import json
 import os
 import re
 import tempfile
+import unicodedata
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -26,17 +33,27 @@ from sqlalchemy.orm import Session
 from app.auth import capabilities as caps
 from app.i18n import L
 from app.models import Customer, PortalCustomer, Tenant
+from app.store import cockpit_mandant
 
 SHORT_NAME = re.compile(r"^[a-z0-9]([a-z0-9-]{0,40}[a-z0-9])?$")
-RESERVED = frozenset({"start", "www", "proxy", "alle", "konfig", "mgmt"})
+# wie front.sh (seit 1.10.0 auch konsole und connect: Namen der Plattform dahinter)
+RESERVED = frozenset({"start", "www", "proxy", "alle", "konfig", "mgmt", "konsole", "connect"})
 SUFFIXES = ("-nb", "-doc", "-um", "-cmdb")
 REALM = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
-URL = re.compile(r"^https://[^\s\t\"<>]{1,500}$")
-MAX_LINKS = 20
+# Kacheln (1.13.0: Grenzen wie im Vertrag mit dem Cockpit, ADR 0054 zweiter Nachtrag)
+MAX_LINKS, MAX_TILE_TITLE, MAX_TILE_URL, MAX_TILE_TEXT = 20, 60, 500, 200
 SOLL, STATUS = "soll.json", "status.json"
 # Zugriff je Kunde (1.5.0): von wo die Adressen des Kunden erreichbar sind
 ACCESS = ("ueberall", "intern", "netze")
 MAX_NETS = 50
+# Herkunft je Kunde (1.11.0, ADR 0054): in Automato angelegt bzw. vom Kundenregister des Cockpits
+SOURCE_UI, SOURCE_COCKPIT = "oberflaeche", "cockpit"
+# wer Mandant, Kunden und Standard-Rolle setzt (1.13.0, ADR 0054 Nachtrag) - dieselben Werte fuer
+# die Kacheln (`links_source`, ADR 0054 zweiter Nachtrag)
+SCOPE_AUTOMATO, SCOPE_COCKPIT = "automato", "cockpit"
+# eigene Automato-Instanz je Kunde (1.16.0, ADR 0061): Name wie im Vertrag mit dem Cockpit
+# (Compose-Projekt automato-<instanz>, Ordner <basisordner>/<instanz>) - wie deploy/lib-instanz.sh
+INSTANZ = re.compile(r"^[a-z][a-z0-9-]{1,30}$")
 
 
 class PortalError(ValueError):
@@ -52,6 +69,20 @@ class RealmScope:
     tenant_id: int | None
     customer_ids: tuple[int, ...]
     default_role: str
+    name: str = ""  # Anzeigename (Meldung bei fehlender Zuordnung, 1.13.0)
+    # 1.14.0 (ADR 0058): Kunde aus dem Cockpit - die Rolle aus dem Token zaehlt nicht
+    from_cockpit: bool = False
+    # 1.14.0: Benutzername -> Rolle aus dem Cockpit (`benutzer`); None = keine Aussage, gesetzt
+    # haben nur diese Benutzer Rechte
+    users: dict[str, str] | None = None
+    # ADR 0068: der Mandant der Zuordnung ist der, den Automato fuer genau diesen Portal-Kunden
+    # angelegt hat (`cockpit_tenant`, 1.19.2) - dort sind Operator und Admin Mandanten-Benutzer
+    own_tenant: bool = False
+
+    @property
+    def assigned(self) -> bool:
+        """Mandant und mindestens ein Kunde - sonst hat ein Benutzer des Realms keine Rechte."""
+        return self.tenant_id is not None and bool(self.customer_ids)
 
 
 def check_short_name(name: str) -> str:
@@ -87,30 +118,51 @@ def check_realm(realm: str | None) -> str | None:
     return realm
 
 
+def _control(value: str) -> bool:
+    """Enthaelt Steuerzeichen (Tabulator, Umbruch, C0/C1, DEL)?"""
+    return any(unicodedata.category(c) == "Cc" for c in value)
+
+
+def check_tile(title: str, url: str, text: str = "") -> dict:
+    """Eine Kachel pruefen - dieselbe Pruefung fuer die Oberflaeche und die Kacheln aus dem
+    Cockpit (1.13.0): Titel 1-60 Zeichen, Adresse beginnt mit https:// (hoechstens 500 Zeichen,
+    ohne Leerraum), Text hoechstens 200 Zeichen, nirgends Steuerzeichen. Leerraum am Rand faellt
+    weg."""
+    title, url, text = title.strip(), url.strip(), text.strip()
+    if not title or len(title) > MAX_TILE_TITLE or _control(title):
+        raise PortalError(L(
+            f"Kachel ohne Titel bzw. Titel länger als {MAX_TILE_TITLE} Zeichen oder mit "
+            "Steuerzeichen",
+            f"Tile without a title or title longer than {MAX_TILE_TITLE} characters or with "
+            "control characters",
+        ))  # fmt: skip
+    if (not url.startswith("https://") or len(url) == len("https://") or len(url) > MAX_TILE_URL
+            or _control(url) or any(c.isspace() for c in url)):  # fmt: skip
+        raise PortalError(L(
+            f"Kachel „{title}“: Adresse muss mit https:// beginnen (höchstens {MAX_TILE_URL} "
+            "Zeichen, ohne Leerzeichen)",
+            f"Tile “{title}”: the address must start with https:// (at most {MAX_TILE_URL} "
+            "characters, no spaces)",
+        ))  # fmt: skip
+    if len(text) > MAX_TILE_TEXT or _control(text):
+        raise PortalError(L(
+            f"Kachel „{title}“: Beschreibung höchstens {MAX_TILE_TEXT} Zeichen, ohne "
+            "Tabulatoren/Zeilenumbrüche",
+            f"Tile “{title}”: description at most {MAX_TILE_TEXT} characters, no tabs/line "
+            "breaks",
+        ))  # fmt: skip
+    return {"title": title, "url": url, "text": text}
+
+
 def check_links(links: list[dict] | None) -> list[dict]:
+    """Kacheln aus der Oberflaeche: ganz leere Zeilen fallen weg, jede andere wie `check_tile`."""
     out: list[dict] = []
     for item in links or []:
-        title = str(item.get("title") or "").strip()
-        url = str(item.get("url") or "").strip()
-        text = str(item.get("text") or "").strip()
-        if not title and not url:
+        title = str(item.get("title") or "")
+        url = str(item.get("url") or "")
+        if not title.strip() and not url.strip():
             continue
-        if not title or len(title) > 80:
-            raise PortalError(L("Kachel ohne Titel (bzw. länger als 80 Zeichen)",
-                                "Tile without a title (or longer than 80 characters)"))  # fmt: skip
-        if not URL.match(url):
-            raise PortalError(
-                L(
-                    f"Kachel „{title}“: Adresse muss mit https:// beginnen",
-                    f"Tile “{title}”: the address must start with https://",
-                )
-            )
-        if any("\t" in v or "\n" in v for v in (title, url, text)) or len(text) > 200:
-            raise PortalError(L(f"Kachel „{title}“: keine Tabulatoren/Zeilenumbrüche, "
-                                "Beschreibung höchstens 200 Zeichen",
-                                f"Tile “{title}”: no tabs/line breaks, description at most "
-                                "200 characters"))  # fmt: skip
-        out.append({"title": title, "url": url, "text": text})
+        out.append(check_tile(title, url, str(item.get("text") or "")))
     if len(out) > MAX_LINKS:
         raise PortalError(L(f"höchstens {MAX_LINKS} Kacheln", f"at most {MAX_LINKS} tiles"))
     return out
@@ -192,21 +244,91 @@ def realm_of(issuer: str) -> tuple[str, str] | None:
     return (head, realm) if sep and head and realm and "/" not in realm else None
 
 
+def live_customers(session: Session, tenant_ids: Iterable[int | None]) -> dict[int, set[int]]:
+    """Kunden, die es in Automato gibt, je Mandant (1.13.0, Fund aus der Kette mit dem Cockpit):
+    eine Zuordnung zaehlt nur sie. Ein geloeschter Kunde bleibt in `customer_ids` stehen (wie
+    bisher; das Cockpit meldet die Abweichung, ADR 0054 Nachtrag), gibt aber keine Rechte und
+    zaehlt nicht als zugeordnet - sonst saehe ein Benutzer des Realms ein leeres Automato statt
+    der Meldung „noch kein Mandant zugeordnet“."""
+    ids = {int(t) for t in tenant_ids if t is not None}
+    out: dict[int, set[int]] = {t: set() for t in ids}
+    if ids:
+        rows = session.execute(
+            select(Customer.tenant_id, Customer.id).where(Customer.tenant_id.in_(ids))
+        )
+        for tid, cid in rows:
+            out[tid].add(cid)
+    return out
+
+
+def live_ids(pc: PortalCustomer, live: dict[int, set[int]] | None = None) -> list[int]:
+    """Kunden der Zuordnung (sortiert) - mit `live` (`live_customers`) nur die, die es im
+    Mandanten noch gibt; ohne Mandant keine."""
+    ids = sorted({int(c) for c in pc.customer_ids or []})
+    if live is None:
+        return ids
+    vorhanden = live.get(pc.tenant_id, set()) if pc.tenant_id is not None else set()
+    return [c for c in ids if c in vorhanden]
+
+
 def realm_scopes(session: Session, main_realm: str | None) -> dict[str, RealmScope]:
     """Realm -> Ausschnitt fuer alle Kunden mit eigenem Realm (ohne den Realm von Automato
-    selbst: dessen Benutzer melden sich wie bisher an)."""
+    selbst: dessen Benutzer melden sich wie bisher an). Nur Kunden, die es noch gibt
+    (`live_customers`)."""
     out: dict[str, RealmScope] = {}
-    for pc in session.scalars(select(PortalCustomer).where(PortalCustomer.realm.is_not(None))):
-        if not pc.realm or pc.realm == main_realm:
-            continue
+    # gesperrt (1.14.0, ADR 0059, zum Entfernen vorgemerkt): der Realm gibt in Automato keine
+    # Rechte mehr
+    kunden = [pc for pc in session.scalars(
+        select(PortalCustomer).where(PortalCustomer.realm.is_not(None))
+    ) if pc.realm and pc.realm != main_realm and not pc.gesperrt]  # fmt: skip
+    live = live_customers(session, (pc.tenant_id for pc in kunden))
+    # ADR 0068: eigener Mandant = fuer diesen Portal-Kunden angelegt (nie aus dem Token)
+    eigen = cockpit_mandant.angelegt_je_kunde(session, [pc.short_name for pc in kunden])
+    for pc in kunden:
         out[pc.realm] = RealmScope(
             realm=pc.realm,
             short_name=pc.short_name,
             tenant_id=pc.tenant_id,
-            customer_ids=tuple(int(c) for c in pc.customer_ids or ()),
+            customer_ids=tuple(live_ids(pc, live)),
             default_role=caps.normalize(pc.default_role),
+            name=pc.name or pc.short_name,
+            from_cockpit=pc.source == SOURCE_COCKPIT,
+            users=users_of(pc.users),
+            own_tenant=pc.tenant_id is not None and eigen.get(pc.short_name) == pc.tenant_id,
         )
     return out
+
+
+def users_of(users: list | None) -> dict[str, str] | None:
+    """Benutzer aus dem Cockpit (1.14.0, ADR 0058): gespeicherte Liste -> Benutzername ->
+    Kunden-Rolle (unbekannte Rolle = viewer, nie admin); None = keine Aussage."""
+    if users is None:
+        return None
+    out: dict[str, str] = {}
+    for e in users:
+        if isinstance(e, dict) and isinstance(e.get("benutzer"), str):
+            out[e["benutzer"].strip().lower()] = caps.normalize(e.get("rolle"))
+    return out
+
+
+def assigned(pc: PortalCustomer, live: dict[int, set[int]] | None = None) -> bool | None:
+    """Hat der Kunde in Automato einen Ausschnitt (Mandant und mindestens ein Kunde - mit `live`
+    einer, den es noch gibt)? None = ohne Werkzeug Doku (seine Benutzer melden sich nicht in
+    Automato an)."""
+    if not pc.doc:
+        return None
+    return pc.tenant_id is not None and bool(live_ids(pc, live))
+
+
+def scope_of(pc: PortalCustomer, live: dict[int, set[int]] | None = None) -> dict:
+    """Zuordnung im Kunden-Portal (Inventar, 1.13.0): Mandant, Kunden (mit `live` nur die, die es
+    noch gibt - der neue Stand nach dem Loeschen), Rolle und wer sie setzt."""
+    return {
+        "mandant": pc.tenant_id,
+        "kunden": live_ids(pc, live),
+        "rolle": pc.default_role or caps.VIEWER,
+        "von": pc.scope_source or SCOPE_AUTOMATO,
+    }
 
 
 def realm_for_host(session: Session, host: str | None) -> str | None:
@@ -220,19 +342,56 @@ def realm_for_host(session: Session, host: str | None) -> str | None:
     return pc.realm if pc is not None and pc.doc and pc.realm else None
 
 
-def out(pc: PortalCustomer, domain: str = "") -> dict:
+# Domain der Kunden-Adressen (Ruecklink, 1.17.0): Labels wie im DNS, mindestens zwei
+_LABEL = r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?"
+DOMAIN = re.compile(rf"^(?=.{{1,253}}$)({_LABEL}\.)+{_LABEL}$")
+
+
+def _start(host: str | None, domain: str) -> tuple[str, str] | None:
+    """Kurzname und Startseite zur Adresse der Oberflaeche `<kurzname>-doc.<domain>` (None = eine
+    andere Adresse bzw. keine gueltige Domain)."""
+    name = (host or "").strip().lower().split(":")[0].rstrip(".")
+    domain = (domain or "").strip().lower().strip(".")
+    suffix = f"-doc.{domain}"
+    if not DOMAIN.match(domain) or not name.endswith(suffix):
+        return None
+    short = name[: -len(suffix)]
+    return (short, f"https://{short}.{domain}") if SHORT_NAME.match(short) else None
+
+
+def start_for_host(session: Session, host: str | None, domain: str) -> str:
+    """Startseite des Kunden-Portals zur Adresse der Oberflaeche (1.17.0, Ruecklink in der
+    Kopfzeile): unter `<kurzname>-doc.<domain>` die eines Kunden des Portals mit Doku, sonst leer -
+    nie aus dem Namen allein geraten."""
+    found = _start(host, domain)
+    if found is None:
+        return ""
+    pc = session.scalar(select(PortalCustomer).where(PortalCustomer.short_name == found[0]))
+    return found[1] if pc is not None and pc.doc else ""
+
+
+def instance_start(host: str | None, short_name: str, domain: str) -> str:
+    """Startseite des Kunden einer eigenen Instanz (ADR 0061, Kunde und Domain aus ihrer .env) -
+    nur unter seiner Adresse `<kurzname>-doc.<domain>`, sonst leer."""
+    found = _start(host, domain)
+    return found[1] if found is not None and found[0] == short_name.strip().lower() else ""
+
+
+def out(pc: PortalCustomer, domain: str = "", live: dict[int, set[int]] | None = None) -> dict:
     addresses = {}
     if domain:
-        addresses = {"start": f"https://{pc.short_name}.{domain}",
-                     "netbox": f"https://{pc.short_name}-nb.{domain}"}  # fmt: skip
-        for tool, on in (("doc", pc.doc), ("um", pc.um), ("cmdb", pc.cmdb)):
+        addresses = {"start": f"https://{pc.short_name}.{domain}"}
+        # NetBox seit 1.11.0 waehlbar (`nb`, Vorgabe an)
+        for key, tool, on in (("netbox", "nb", pc.nb), ("doc", "doc", pc.doc),
+                              ("um", "um", pc.um), ("cmdb", "cmdb", pc.cmdb)):  # fmt: skip
             if on:
-                addresses[tool] = f"https://{pc.short_name}-{tool}.{domain}"
+                addresses[key] = f"https://{pc.short_name}-{tool}.{domain}"
     return {
         "id": pc.id,
         "short_name": pc.short_name,
         "name": pc.name,
         "doc": pc.doc,
+        "nb": pc.nb,
         "um": pc.um,
         "cmdb": pc.cmdb,
         "links": list(pc.links or []),
@@ -242,6 +401,19 @@ def out(pc: PortalCustomer, domain: str = "") -> dict:
         "default_role": pc.default_role,
         "access": pc.access or "ueberall",
         "access_nets": list(pc.access_nets or []),
+        "source": pc.source or SOURCE_UI,
+        # 1.13.0: Mandant, Kunden und Rolle aus dem Cockpit (dann nur lesbar), Ausschnitt vorhanden
+        "scope_source": pc.scope_source or SCOPE_AUTOMATO,
+        # 1.13.0: Kacheln aus dem Cockpit (dann nur lesbar)
+        "links_source": pc.links_source or SCOPE_AUTOMATO,
+        # 1.14.0 (ADR 0058): Benutzer des Realms mit Rolle aus dem Cockpit (None = alle mit der
+        # Standard-Rolle)
+        "users": list(pc.users) if pc.users is not None else None,
+        # 1.14.0 (ADR 0059): vom Cockpit zum Entfernen vorgemerkt - Front-Proxy sperrt alle Adressen
+        "gesperrt": bool(pc.gesperrt),
+        # 1.16.0 (ADR 0061): eigene Automato-Instanz aus dem Cockpit (None = gemeinsame)
+        "automato_instanz": pc.automato_instanz,
+        "assigned": assigned(pc, live),
         "addresses": addresses,
         "updated_by": pc.updated_by,
         "updated_at": pc.updated_at,
@@ -256,20 +428,51 @@ def listing(session: Session) -> list[PortalCustomer]:
     )
 
 
-def desired(session: Session) -> dict:
+def desired(session: Session, cockpit: bool = False) -> dict:
     """Soll-Stand fuer den Front-Proxy (nur, was front.sh braucht - kein Mandant). Seit 1.4.0
     mit dem Realm: das Anmelde-Tor fragt je Kunde in dessen Realm (ADR 0051); ohne Realm
-    gesperrt. Seit 1.5.0 mit dem Zugriff je Kunde (`zugriff`, `netze`)."""
-    return {
+    gesperrt. Seit 1.5.0 mit dem Zugriff je Kunde (`zugriff`, `netze`), seit 1.11.0 mit NetBox
+    als Werkzeug (`nb`) und der Herkunft (`quelle`: oberflaeche | cockpit, ADR 0054). Seit 1.13.0
+    (ADR 0055) mit den versiegelten Client-Secrets des Anmelde-Tors aus dem Cockpit
+    (`tor_geheimnisse`, nur Chiffrat; nur, wenn es welche gibt). Seit 1.14.0 (ADR 0058) mit
+    `verwaltung: cockpit`, wenn ein Cockpit verbunden ist (`cockpit`) - dann aendert `front.sh`
+    Kunden von Hand nur noch mit `--trotzdem`. Ebenfalls seit 1.14.0 (ADR 0059) je Kunde
+    `gesperrt` (nur, wenn gesperrt) und die Tor-Geheimnisse, die `front.sh sync` auf Auftrag des
+    Cockpits entfernt (`tor_entfernen`, nur, wenn es welche gibt). Seit 1.16.0 (ADR 0061) je Kunde
+    `automato_instanz` (nur, wenn gesetzt): `<kunde>-doc` an die eigene Automato-Instanz."""
+    from app.store import abbau  # spaet: abbau nutzt portal
+
+    kunden = listing(session)
+    data = {
         "version": 1,
         "erzeugt": datetime.now(UTC).isoformat(timespec="seconds"),
         "kunden": [
-            {"kurzname": pc.short_name, "name": pc.name, "doc": pc.doc, "um": pc.um,
-             "cmdb": pc.cmdb, "realm": pc.realm or "", "zugriff": pc.access or "ueberall",
-             "netze": list(pc.access_nets or []), "links": list(pc.links or [])}
-            for pc in listing(session)
+            {"kurzname": pc.short_name, "name": pc.name, "doc": pc.doc, "nb": pc.nb,
+             "um": pc.um, "cmdb": pc.cmdb, "realm": pc.realm or "",
+             "zugriff": pc.access or "ueberall", "netze": list(pc.access_nets or []),
+             "links": list(pc.links or []), "quelle": pc.source or SOURCE_UI,
+             **({"gesperrt": True} if pc.gesperrt else {}),
+             **({"automato_instanz": pc.automato_instanz} if pc.automato_instanz else {})}
+            for pc in kunden
         ],
     }  # fmt: skip
+    tor = sorted(
+        (
+            {k: pc.tor_secret.get(k) for k in ("realm", "kennung", "versiegelt")}
+            for pc in kunden
+            if pc.realm and pc.source == SOURCE_COCKPIT and isinstance(pc.tor_secret, dict)
+            and pc.tor_secret.get("realm") == pc.realm
+        ),
+        key=lambda e: e["realm"],
+    )  # fmt: skip
+    if tor:
+        data["tor_geheimnisse"] = tor
+    entfernen = abbau.tor_entfernen(session)
+    if entfernen:
+        data["tor_entfernen"] = entfernen
+    if cockpit:
+        data["verwaltung"] = "cockpit"
+    return data
 
 
 def _content(data: dict) -> dict:
@@ -277,7 +480,8 @@ def _content(data: dict) -> dict:
     return {k: v for k, v in data.items() if k != "erzeugt"}
 
 
-def write_desired(session: Session, state_dir: str, only_if_changed: bool = False) -> str | None:
+def write_desired(session: Session, state_dir: str, only_if_changed: bool = False,
+                  cockpit: bool = False) -> str | None:  # fmt: skip
     """`soll.json` atomar schreiben; ohne Ordner (nicht eingerichtet) nichts. Wirft OSError.
 
     `only_if_changed` (beim Start, 1.5.0): nur schreiben, wenn sich der Inhalt gegenueber der
@@ -286,7 +490,7 @@ def write_desired(session: Session, state_dir: str, only_if_changed: bool = Fals
     if not state_dir:
         return None
     folder = Path(state_dir)
-    soll = desired(session)
+    soll = desired(session, cockpit)
     if only_if_changed:
         try:
             current = json.loads((folder / SOLL).read_text(encoding="utf-8"))

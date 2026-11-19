@@ -140,6 +140,12 @@ a { color: var(--accent); }
 .https { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; white-space: nowrap; }
 .https.ok { color: var(--good); }
 .https.bad { color: var(--warn); }
+/* Rücklink zur Startseite des Kunden-Portals (1.17.0) */
+.portal-link { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; white-space: nowrap;
+  color: var(--accent); text-decoration: none; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface-2); }
+.portal-link:hover, .portal-link:focus-visible { border-color: var(--accent); }
+@media (max-width: 560px) { .portal-link span { display: none; } }
 .usermenu { position: relative; }
 .usermenu-btn { display: flex; align-items: center; gap: 9px; padding: 4px 10px 4px 4px; border-radius: 20px; border: 1px solid var(--border);
   background: var(--surface-2); cursor: pointer; color: var(--fg); text-align: left; }
@@ -837,3 +843,11 @@ tbody tr.group-row td {
 .drawer-body td, .modal-body td, .drawer-body dd, .modal-body dd { overflow-wrap: anywhere; }
 .drawer-body .chip, .modal-body .chip { max-width: 100%; overflow-wrap: anywhere; white-space: normal; }
 .modal-head .size + .iconbtn { margin-left: 0; }
+/* Meine Exporte (1.21.0, ADR 0069): Fortschritt der Exporte im Hintergrund */
+.my-exports { width: 100%; }
+.my-exports td { vertical-align: top; }
+.export-progress-line { margin-top: 4px; font-size: 12.5px; }
+.export-progress { width: 220px; max-width: 45%; height: 10px; vertical-align: middle; accent-color: var(--accent); }
+.export-message { margin-top: 3px; font-size: 12.5px; }
+.export-errors { margin-top: 4px; }
+.export-error-list { margin: 4px 0 0 18px; padding: 0; font-size: 12px; }

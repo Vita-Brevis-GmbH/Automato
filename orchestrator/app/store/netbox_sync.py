@@ -13,8 +13,15 @@ Einziger Schreibweg der Plattform. Ablauf:
    - Verkabelung (Abschnitt `cabling`, ADR 0031): gelesene Switches/Router mit Ports und Kabel
      zwischen zwei Ports, die beide Seiten per CDP/LLDP melden;
    - Applikationen (Abschnitt `applications`, ADR 0031): je Applikation ein Tag mit Praefix
-     `automato-app-` an den VMs und IP-Adressen ihrer Systeme.
-   Die beiden letzten nur, wenn ausdruecklich gewaehlt (`DEFAULT_SECTIONS`).
+     `automato-app-` an den VMs und IP-Adressen ihrer Systeme;
+   - DNS-Namen aus dem AD (Abschnitt `dns`, 1.19.0, ADR 0045 Nachtrag): `dns_name` bestehender
+     IP-Adressen aus den A-Records der AD-DNS-Zonen - erst nach dem Lesen von NetBox
+     (`store/netbox_sync_dns.py`), Abweichungen nur nach Bestaetigung je Eintrag (`confirm`
+     wie bei den Kabelnummern);
+   - Reservierungen (Abschnitt `reservations`, 1.19.0, ADR 0066, `netbox_sync_reserv`): in
+     Automato reservierte VLANs mit Status `reserved` und AS-Nummern als ASN-Objekte - Aendern
+     bestehender reservierter Objekte nur nach Bestaetigung (`confirm`).
+   Die letzten nur, wenn ausdruecklich gewaehlt (`DEFAULT_SECTIONS`).
 2. **Ist** (`read_state`): NetBox lesen (nur GET); danach `resolve_after_read` (VLANs der
    Switch-Ports, Kabel und Tags nur an Objekten, die es in NetBox gibt bzw. die der Sync anlegt).
 3. **Vorschau** (`diff`): je Objekt anlegen | aendern | unveraendert | Konflikt | loeschen.
@@ -61,13 +68,15 @@ from app.models import (
     Vm,
 )
 from app.store import cabling as cabling_store
+from app.store import netbox_sync_reserv as reserv
 from app.store import references
 from app.store import sites as site_store
 from app.store import virtual as virtual_store
 from app.store.epgs import inventory_label
 
 TAG = "automato"
-SECTIONS = ("inventory", "mirror", "virtualization", "cabling", "firewall_objects", "applications")
+SECTIONS = ("inventory", "mirror", "virtualization", "cabling", "firewall_objects", "applications",
+            "dns", reserv.SECTION)  # fmt: skip
 # ohne Angabe die bisherigen Abschnitte; Verkabelung/Applikationen nur ausdruecklich (ADR 0031),
 # Firewall-Objekte (1.8.0) waehlt die Oberflaeche vor, wenn die Ziel-NetBox das IPAM ist
 DEFAULT_SECTIONS = ("inventory", "mirror", "virtualization")
@@ -85,7 +94,8 @@ HOST_ROLE = "esxi"
 # Automato - nur solche Tags setzt bzw. entfernt der Sync, fremde Tags bleiben
 APP_TAG_PREFIX = "automato-app-"
 WRITE_ACTIONS = ("create", "update", "delete")
-ACTIONS = ("create", "update", "unchanged", "conflict", "delete", "obsolete")
+# DNS-Namen (1.19.0): `ambiguous` = mehrdeutig, kein Vorschlag (nie geschrieben)
+ACTIONS = ("create", "update", "unchanged", "conflict", "delete", "obsolete", "ambiguous")
 
 
 @dataclass(frozen=True)
@@ -104,6 +114,9 @@ class Kind:
 KINDS = (
     Kind("tag", "extras/tags", "Tag", (), "app", owned=("name", "color", "description")),
     Kind("tenant", "tenancy/tenants", "Tenant", ("name",)),
+    # Reservierungen (1.19.0, ADR 0066): RIR nur gelesen (nie angelegt), ASN mit RIR und Mandant
+    Kind("rir", "ipam/rirs", "RIR", ()),
+    Kind("asn", "ipam/asns", "ASN", (), "tenant", owned=("rir", "tenant", "description")),
     Kind("site_group", "dcim/site-groups", "Standort-Gruppe", ("name", "description")),
     Kind("site", "dcim/sites", "Standort", ("name",), owned=("group", "comments")),
     Kind("manufacturer", "dcim/manufacturers", "Hersteller", ()),
@@ -169,6 +182,8 @@ KINDS = (
     ),
     # Kabel zwischen zwei Ports (Abschnitt Verkabelung, ADR 0031); Schluessel = beide Enden
     Kind("cable", "dcim/cables", "Kabel", ("status",), "tenant", owned=("tenant", "description")),
+    # Kabelnummer (1.19.0, `cable_label_sync`): Label eines bestehenden Kabels, nur bestaetigt
+    Kind("cable_label", "dcim/cables", "Kabelnummer", ("label",)),
     Kind(
         "virtual_machine",
         "virtualization/virtual-machines",
@@ -196,6 +211,9 @@ KINDS = (
     # eigenes NetBox-Objekt, sondern die Tags des Ziels (PATCH) - zuletzt, wenn alles angelegt ist
     Kind("app_tag_vm", "virtualization/virtual-machines", "Applikations-Tag an VM", ("tags",)),
     Kind("app_tag_ip", "ipam/ip-addresses", "Applikations-Tag an IP-Adresse", ("tags",)),
+    # DNS-Name aus dem AD an einer bestehenden IP (1.19.0): nur das Feld (PATCH), Eintraege aus
+    # `netbox_sync_dns.section_items` - zuletzt
+    Kind("dns_name", "ipam/ip-addresses", "DNS-Name", ("dns_name",)),
 )
 KIND = {k.name: k for k in KINDS}
 # nur gelesen/geloescht, wenn der Abschnitt gewaehlt ist (sonst waeren alle VMs "veraltet")
@@ -211,11 +229,13 @@ KIND_SECTIONS = {
     "prefix": frozenset({"inventory", "mirror"}),
     "ip_range": frozenset({"mirror"}),
     "ip_address": frozenset({"inventory", "mirror", "virtualization"}),
+    "asn": frozenset({reserv.SECTION}),
 }
 FW_KINDS = frozenset({"prefix", "ip_range", "ip_address"})  # Arten des Abschnitts Firewall-Objekte
 TERMINATIONS = ("a_terminations", "b_terminations")  # Enden eines Kabels (je ein Port)
 
 Ref = tuple[str, str]  # (Art, Schluessel)
+LABEL = "cable_label"  # Kabelnummer am Kabel (1.19.0, `cable_label_sync`)
 
 
 @dataclass
@@ -345,6 +365,8 @@ class Wants:
     switch_vlans: list[SwitchVlans] = field(default_factory=list)  # Verkabelung (1.7.0)
     prefix_vlans: list[PrefixVlan] = field(default_factory=list)  # Native VLAN (1.9.0)
     cable_ends: set[str] = field(default_factory=set)  # Geraete an Kabeln: Ports in NetBox lesen
+    reserved: Any = None  # Reservierungen (1.19.0): Gruppe bzw. RIR nach dem Lesen
+    reserved_notes: list[dict] = field(default_factory=list)  # nur angezeigte Nummern
 
     def add(self, want: Want) -> Want:
         return self.items.setdefault((want.kind, want.key), want)
@@ -424,6 +446,8 @@ def build_wants(
         _firewall_object_wants(session, w, tenant, target, tenant_ref)
     if "applications" in sections:
         _application_wants(session, w, tenant)
+    if reserv.SECTION in sections:  # Gruppe bzw. RIR erst nach dem Lesen (`reserv.after_read`)
+        reserv.wants(session, w, tenant, sites, tenant_ref, tslug)
     return w
 
 
@@ -715,7 +739,8 @@ def _inventory_wants(
                         {
                             "address": iface.with_prefixlen,
                             "status": "active",
-                            "dns_name": "",
+                            # kein dns_name: das Geraet kennt keinen - ein Name aus dem
+                            # DDI-Spiegel bzw. dem AD (1.19.0) bleibt stehen
                             "description": _cut(f"Interface {i.name} ({i.device})", 200),
                             "assigned_object_type": "dcim.interface",
                         },
@@ -1339,6 +1364,13 @@ def _cabling_wants(
             if need is not None:
                 w.ports.append(need)
     _cable_wants(session, w, tenant, tenant_ref)
+    _label_sync().add_wants(session, w, tenant)  # Kabelnummern (1.19.0)
+
+
+def _label_sync():
+    from app.store import cable_label_sync  # spaet: das Modul nutzt dieses
+
+    return cable_label_sync
 
 
 def _cable_wants(session: Session, w: Wants, tenant: Tenant, tenant_ref: Ref) -> None:
@@ -1503,6 +1535,7 @@ def _key_of(kind: str, obj: dict) -> str | None:
     if kind in (
         "tag",
         "tenant",
+        "rir",
         "site_group",
         "site",
         "manufacturer",
@@ -1536,6 +1569,8 @@ def _key_of(kind: str, obj: dict) -> str | None:
         return _ip(obj.get("address"))
     if kind == "cable":
         return _cable_key(obj)
+    if kind == "asn":
+        return str(obj["asn"]) if obj.get("asn") else None
     return None
 
 
@@ -1575,6 +1610,7 @@ def read_state(
     (Besitz der Applikations-Tags, `app_tag_owner`)."""
     state: State = {k.name: {} for k in KINDS}
     state["vlan_ref"] = {}  # Verkabelung: alle VLANs in NetBox (nur zum Referenzieren)
+    state["ip_dup"] = {}  # dieselbe Adresse mehrfach (VRFs): `<IP> #<ID>` (DNS-Namen, 1.19.0)
     chosen = set(SECTIONS if sections is None else sections)
     virtual = "virtualization" in chosen
     apps = "applications" in chosen
@@ -1585,12 +1621,18 @@ def read_state(
             key = _key_of(kind, obj)
             if key is not None and key not in state[kind]:
                 state[kind][key] = Have(obj["id"], key, obj, _tagged(obj))
+            elif key is not None and kind == "ip_address":
+                state["ip_dup"][f"{key} #{obj['id']}"] = Have(obj["id"], key, obj, _tagged(obj))
 
     for k in KINDS:
-        if k.name in ("vlan", "interface", "vm_interface", "cable") or k.name in ASSIGN:
+        if k.name in ("vlan", "interface", "vm_interface", "cable", LABEL, "dns_name") or (
+            k.name in ASSIGN
+        ):
             continue
         # VMs auch fuer die Applikations-Tags - geloescht bzw. veraltet nur mit `virtualization`
         if k.name in VIRTUAL_KINDS and not virtual and not (apps and k.name == "virtual_machine"):
+            continue
+        if k.name in reserv.KINDS and reserv.SECTION not in chosen:
             continue
         # alle Tags nur mit den Applikationen (Namen muessen in NetBox eindeutig sein)
         params = {"slug": TAG} if k.name == "tag" and not apps else {}
@@ -1717,6 +1759,8 @@ def _vlan_candidates(wants: Wants, state: State) -> dict[int, list[tuple]]:
     known: set[str] = set()
     for key, have in state["vlan_ref"].items():
         o = have.obj
+        if reserv.owned_vlan(o):
+            continue  # reserviert (1.19.0): kein VLAN fuer Ports und Netze
         group = (o.get("group") or {}).get("slug")
         site = (o.get("site") or {}).get("slug")
         gkey = f"{group}/{o.get('vid')}" if group else None
@@ -2155,8 +2199,8 @@ def diff(
     }
     items: list[dict] = []
     for want in wants.ordered():
-        if want.kind in ASSIGN:
-            continue  # Tags an VMs/IPs: `_assignments`
+        if want.kind in ASSIGN or want.kind == LABEL:
+            continue  # Tags an VMs/IPs: `_assignments`; Kabelnummern: `cable_label_sync`
         have = state[want.kind].get(want.key)
         if have is None:
             busy = _occupied(want, state, removed_cables) if want.kind == "cable" else []
@@ -2199,6 +2243,8 @@ def diff(
         for key, have in sorted(state[kind.name].items()):
             if key in wanted or not _in_scope(kind, have, state, tslug, gprefix, foreign, groups):
                 continue
+            if reserv.owned(kind.name, have.obj):
+                continue  # reservierte VLANs und ihre Gruppen: nur ihr Abschnitt (`reserv.items`)
             # Werte der Firewall-Objekte gehoeren nur ihrem Abschnitt, die uebrigen den anderen
             # (1.8.0): so fuehrt auch ein Sync nur mit „Firewall-Objekte“ entfernte Objekte
             if not (fw_kind if _fw_owned(have) else all_sections):
@@ -2212,6 +2258,9 @@ def diff(
                     id=have.id,
                 )
             )
+    if "cabling" in chosen:  # Kabelnummern (1.19.0): aendern nur mit Bestaetigung
+        items += _label_sync().items(wants, state)
+    items += reserv.items(wants, state, tslug, allow_delete, chosen, items)  # Reservierungen
     if "applications" in chosen:
         gone = {(i["kind"], i["key"]) for i in items if i["action"] == "delete"}
         items += _assignments(wants, state, gone)
@@ -2337,6 +2386,12 @@ def compute(
     tenants = [tenant_slug(t) for t in session.scalars(select(Tenant))]
     state = read_state(writer, wants, tslug, gprefix, sections, tenants)
     resolve_after_read(wants, state)
+    reserv.after_read(writer, wants, state, sections)  # Reservierungen (1.19.0, ADR 0066)
+    dns: list[dict] = []
+    if "dns" in sections:  # DNS-Namen aus dem AD (1.19.0): braucht das Ist von NetBox
+        from app.store import netbox_sync_dns  # spaet: nutzt dieses Modul
+
+        dns = netbox_sync_dns.section_items(session, tenant, target, wants, state, tenants)
     unique_names(wants, state, tenant.name)
     platforms = dict(
         session.execute(
@@ -2346,25 +2401,30 @@ def compute(
         ).all()
     )
     items = diff(wants, state, tslug, gprefix, allow_delete, sections, platforms)
+    gone = {i["key"] for i in items if i["kind"] == "ip_address" and i["action"] == "delete"}
+    items += [i for i in dns if i["key"] not in gone]
     return Plan(wants, state, items, fingerprint(items))
 
 
 # -- Uebernehmen --------------------------------------------------------------------
 
 
-def apply(writer, plan: Plan, progress=None) -> dict[str, dict[str, int]]:
+def apply(writer, plan: Plan, progress=None,
+          confirm: frozenset[str] = frozenset()) -> dict[str, dict[str, int]]:  # fmt: skip
     """Schreib-Aktionen des (frisch berechneten) Plans ausfuehren; Rueckgabe: Anzahlen.
 
     Bricht beim ersten Fehler ab (Teilstand bleibt - der naechste Plan setzt dort an).
     `progress(kind)` vor jeder Objektart: Lebenszeichen; darf abbrechen (Exception).
+    `confirm` = Kabelnummern, die der Betreiber bestaetigt hat (1.19.0) - die uebrigen bleiben.
     """
     ids: dict[tuple[str, str], int] = {
         (kind, key): h.id for kind, haves in plan.state.items() for key, h in haves.items()
     }
     done: dict[str, dict[str, int]] = defaultdict(lambda: {"create": 0, "update": 0, "delete": 0})
     by_kind: dict[str, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
+    skip = _label_sync().unconfirmed(plan.items, set(confirm))
     for i in plan.items:
-        if i["action"] in WRITE_ACTIONS:
+        if i["action"] in WRITE_ACTIONS and (i["kind"], i["key"]) not in skip:
             by_kind[i["kind"]][i["action"]].append(i)
 
     def value(ref: Ref | list[Ref] | None) -> Any:
@@ -2376,6 +2436,14 @@ def apply(writer, plan: Plan, progress=None) -> dict[str, dict[str, int]]:
         actions = by_kind.get(kind.name, {})
         if progress is not None and actions:
             progress(kind.name)
+        if kind.name == "dns_name":  # DNS-Namen (1.19.0): nur das Feld, nie Tags
+            from app.store import netbox_sync_dns
+
+            patches = netbox_sync_dns.patches(actions.get("update", []))
+            if patches:
+                writer.update(kind.endpoint, patches)
+                done[kind.name]["update"] += len(patches)
+            continue
         if kind.name in ASSIGN:  # Applikations-Tags: Tags des Ziels setzen (fremde bleiben)
             mine = _mine(plan.wants, plan.state)
             patches = [_tag_patch(plan, kind.name, i, ids, mine) for i in actions.get("update", [])]
@@ -2560,10 +2628,12 @@ KIND_EN = {
     "prefix": "Network",
     "device": "Device",
     "cable": "Cable",
+    "cable_label": "Cable number",
     "vm_interface": "VM interface",
     "ip_address": "IP address",
     "app_tag_vm": "Application tag on VM",
     "app_tag_ip": "Application tag on IP address",
+    "dns_name": "DNS name",
 }
 _SITE_KIND_EN = {"virtuell": "virtual", "physisch": "physical"}
 
@@ -2646,13 +2716,24 @@ WARNINGS_EN = (
         "Cabling: {n} cables not applied – port not in NetBox (device without site or model, or "
         "section network inventory not chosen), e.g. {examples}.",
     ),
+    # Kabelnummern (1.19.0)
+    (
+        "Kabelnummern: {n} ohne Kabel in NetBox nicht übernommen (z. B. {examples}) – Kabel "
+        "entsteht nur aus beidseitig gemeldeten Verbindungen.",
+        "Cable numbers: {n} without a cable in NetBox not applied (e.g. {examples}) – a cable is "
+        "only created from links reported by both sides.",
+    ),
+    (
+        "Kabelnummern: {n} nur in NetBox – bleiben, wie sie sind.",
+        "Cable numbers: {n} only in NetBox – stay as they are.",
+    ),
     (
         "Applikationen: {vms} VMs und {ips} IP-Adressen nicht in NetBox – ohne Applikations-Tag "
         "(Abschnitte Virtualisierung bzw. DDI-Spiegel synchronisieren), z. B. {examples}.",
         "Applications: {vms} VMs and {ips} IP addresses not in NetBox – without application tag "
         "(synchronize the sections virtualization or DDI mirror), e.g. {examples}.",
     ),
-)
+) + reserv.WARNINGS_EN  # Reservierungen (1.19.0)
 
 
 def kind_label(name: str) -> str:
@@ -2706,4 +2787,6 @@ def shown(text: str | None, table, values=None) -> str | None:
 
 
 def show_warning(text: str) -> str:
-    return shown(text, WARNINGS_EN) or text
+    from app.store import netbox_sync_dns  # spaet: Abschnitt DNS-Namen (1.19.0)
+
+    return shown(text, WARNINGS_EN + netbox_sync_dns.WARNINGS_EN) or text

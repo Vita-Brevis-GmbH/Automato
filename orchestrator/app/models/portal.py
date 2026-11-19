@@ -13,11 +13,36 @@ mit dem Realm von Automato selbst gilt die bisherige Anmeldung.
 Zugriff je Kunde (1.5.0): `access` = von wo die Adressen des Kunden erreichbar sind – `ueberall`
 (Vorgabe, über WAF/FortiGate aus dem Internet), `intern` (nur Management-Netz) oder `netze` (nur
 aus `access_nets`). Der Front-Proxy antwortet allen anderen wie bei einer unbekannten Adresse.
+
+Herkunft (1.11.0, ADR 0054): `source` = `oberflaeche` (in Automato angelegt) oder `cockpit` (vom
+Kundenregister des Cockpits mit `PUT /freigaben`). Bei Kunden aus dem Cockpit sind Kurzname, Name,
+Werkzeuge, Zugriff und Realm nur dort aenderbar; Mandant, Kunden, Rolle und Kacheln pflegt
+Automato. `nb` = NetBox (`-nb`) ist seit 1.11.0 ein waehlbares Werkzeug (Vorgabe an).
+
+Client-Secret des Anmelde-Tors aus dem Cockpit (1.13.0, ADR 0055): `tor_secret` =
+`{"realm", "kennung", "versiegelt"}` - nur das Chiffrat, versiegelt mit dem Empfangsschluessel der
+VM (`kennung`); entschluesseln kann es nur `front.sh sync` als root. Gilt nur, solange `realm`
+der Realm dieses Kunden ist.
+
+Zuordnung aus dem Cockpit (1.13.0, ADR 0054 Nachtrag): `scope_source` = `automato` (Mandant, Kunden
+und Standard-Rolle pflegt Automato) oder `cockpit` (das Cockpit hat sie mit den Freigaben gesetzt
+- in Automato dann nur lesbar).
+
+Kacheln aus dem Cockpit (1.13.0, ADR 0054 zweiter Nachtrag): `links_source` = `automato` (die
+weiteren Kacheln pflegt Automato) oder `cockpit` (das Cockpit hat sie mit den Freigaben gesetzt -
+in Automato dann nur lesbar).
+
+Benutzer und Rollen aus dem Cockpit (1.14.0, ADR 0058): `users` = Keycloak-Benutzernamen des
+Kunden-Realms mit ihrer Kunden-Rolle; gesetzt haben nur diese Benutzer Rechte (`auth/oidc.py`).
+
+Gesperrt (1.14.0, ADR 0059): `gesperrt` = das Cockpit hat den Kunden zum Entfernen vorgemerkt
+(Frist des Cockpits) - der Front-Proxy sperrt alle seine Adressen („Zugang gesperrt“), Benutzer
+seines Realms bekommen in Automato keine Rechte; Daten und Einstellungen bleiben unveraendert.
 """
 
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, false
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, false, true
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -30,6 +55,8 @@ class PortalCustomer(Base):
     short_name: Mapped[str] = mapped_column(String(42), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(200))
     doc: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    # NetBox (-nb) als Werkzeug (1.11.0): Vorgabe an - bestehende Kunden behalten ihre NetBox
+    nb: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
     um: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     cmdb: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     # weitere Kacheln: [{"title", "url", "text"}]
@@ -40,10 +67,33 @@ class PortalCustomer(Base):
     )
     customer_ids: Mapped[list] = mapped_column(JSON, default=list)
     # Kunden-Rolle fuer Benutzer des Realms ohne eigene Rolle im Token (viewer, triage, …)
-    default_role: Mapped[str] = mapped_column(String(16), default="viewer")
+    default_role: Mapped[str] = mapped_column(String(32), default="viewer")  # 0095: 32 Zeichen
     access: Mapped[str] = mapped_column(String(16), default="ueberall", server_default="ueberall")
     access_nets: Mapped[list | None] = mapped_column(JSON, nullable=True, default=list)
     position: Mapped[int] = mapped_column(Integer, default=0)
+    # Herkunft (1.11.0, ADR 0054): oberflaeche | cockpit
+    source: Mapped[str] = mapped_column(
+        String(16), default="oberflaeche", server_default="oberflaeche"
+    )
+    # versiegeltes Client-Secret des Anmelde-Tors aus dem Cockpit (1.13.0, ADR 0055), nur Chiffrat
+    tor_secret: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # wer Mandant, Kunden und Standard-Rolle setzt (1.13.0): automato | cockpit
+    scope_source: Mapped[str] = mapped_column(
+        String(16), default="automato", server_default="automato"
+    )
+    # wer die weiteren Kacheln setzt (1.13.0, ADR 0054 zweiter Nachtrag): automato | cockpit
+    links_source: Mapped[str] = mapped_column(
+        String(16), default="automato", server_default="automato"
+    )
+    # Benutzer des Kunden-Realms mit Rolle aus dem Cockpit (1.14.0, ADR 0058):
+    # [{"benutzer", "rolle"}] - None = keine Aussage (alle Benutzer des Realms mit der
+    # Standard-Rolle); gesetzt, auch leer: nur diese Benutzer haben Rechte
+    users: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # zum Entfernen vorgemerkt (Cockpit, ADR 0059): Front-Proxy sperrt alle Adressen, Daten bleiben
+    gesperrt: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    # eigene Automato-Instanz des Kunden aus dem Cockpit (1.16.0, ADR 0061): <kunde>-doc geht an
+    # automato-<instanz> statt an die Hauptinstanz; None = gemeinsame Instanz (wie bisher)
+    automato_instanz: Mapped[str | None] = mapped_column(String(31), nullable=True)
     updated_by: Mapped[str | None] = mapped_column(String(200), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)

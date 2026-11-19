@@ -132,3 +132,7 @@ OTP-Pflicht + Passwort-Policy aus dem Realm):
 - **Manuelles Runbook (Paketinstallation + Konfiguration Schritt für Schritt):**
   `deploy/keycloak/PROD-INSTALL.md` — am Beispiel `auth.example.ch`.
 - **Ansible (ein Befehl):** `deploy/keycloak/ansible/README.md`.
+- **Betrieb aus dem Cockpit** (1.17.0, ADR 0062): `deploy/keycloak/betrieb.sh` (Produkt `keycloak`
+  des Host-Agenten, Checkout z. B. `/opt/automato-keycloak/automato`, Konfiguration
+  `/etc/automato/keycloak-betrieb.conf`) – Stand, verschlüsselte Sicherung, Update der
+  Keycloak-Version mit Rückfall, Neustart: `PROD-INSTALL.md` Abschnitt 14.

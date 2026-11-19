@@ -314,12 +314,15 @@ def tor(tmp_path_factory):  # noqa: C901 - ein Aufbau, Schritt für Schritt
         else:
             logs = _run("docker", "logs", f"{PROJEKT}-front", check=False)
             pytest.fail("Front-Proxy antwortet nicht: " + logs.stdout + logs.stderr)
+        idp.front, idp.dir = front, d  # 1.13.0: Client-Secret über sync (eigener Test)
         yield idp
     finally:
         socket.getaddrinfo = echt
         for c in namen:
             _run("docker", "rm", "-f", c, check=False)
-        _run("docker", "compose", "-p", PROJEKT, "-f", str(compose), "down", check=False)
+        # --remove-orphans: Container von Realms, die ein Test per sync schon herausnahm
+        _run("docker", "compose", "-p", PROJEKT, "-f", str(compose), "down", "--remove-orphans",
+             check=False)  # fmt: skip
         if netz_neu:
             _run("docker", "network", "rm", NETZ, check=False)
         idp.server.shutdown()
@@ -349,7 +352,7 @@ def test_ohne_anmeldung_zu_keycloak_und_zurueck(tor):
         )
         assert "code_challenge_method=S256" in r.headers["location"]
         r, weg = _folgen(c, "https://vb.mgmt.example.ch/")
-        assert r.status_code == 200 and "Eigene Firma" in r.text and "/oauth2/sign_out" in r.text
+        assert r.status_code == 200 and "Eigene Firma" in r.text and "/oauth2/abmelden" in r.text
         assert any(u.startswith("https://vb.mgmt.example.ch/oauth2/callback") for u in weg)
 
 
@@ -448,7 +451,198 @@ def test_abmelden_beendet_auch_keycloak(tor):
         r, _ = _folgen(c, "https://vb.mgmt.example.ch/")
         assert r.status_code == 200
         vorher = len(tor.logouts)
-        r = c.get("https://vb.mgmt.example.ch/oauth2/sign_out")
-        assert r.status_code == 302
+        # 1.12.2: der Link der Startseite; das Tor beendet die Keycloak-Sitzung selbst und zeigt
+        # die Seite „Abgemeldet“ ausserhalb des Tors (Fund aus dem Dev-Test: Browser blieb stehen)
+        link = r.text.split('href="')[-1].split('"')[0]
+        assert link == "/oauth2/abmelden"
+        r, weg = _folgen(c, "https://vb.mgmt.example.ch" + link)
+        assert weg[-1] == "https://vb.mgmt.example.ch/abgemeldet"
+        assert r.status_code == 200 and "Abgemeldet" in r.text
         assert len(tor.logouts) == vorher + 1 and tor.logouts[-1].get("id_token_hint")
         assert c.get("https://vb.mgmt.example.ch/").status_code == 302  # wieder abgemeldet
+
+
+# Adressen von vb hinter dem Tor (Startseite, NetBox, Automato, Magister)
+VB = [f"https://vb{w}.mgmt.example.ch/" for w in ("", "-nb", "-doc", "-um")]
+
+
+@pytest.mark.parametrize(
+    "klick",
+    [
+        "https://vb.mgmt.example.ch/oauth2/abmelden",  # Startseite
+        "https://vb-nb.mgmt.example.ch/logout/",  # NetBox
+        "https://vb-doc.mgmt.example.ch/oauth2/abmelden",  # Automato (Oberfläche, auth.ts)
+        "https://vb-um.mgmt.example.ch/oauth2/abmelden",
+    ],
+)
+def test_ein_klick_meldet_auf_allen_adressen_ab(tor, klick):
+    """1.20.0 (Anwender 2026-11-18: „Das Logout bei den Kundenportalen geht noch nicht, ich komme
+    immer wieder rein, auch, wenn ich nicht neu einlogge“): das Cookie des Tors gilt je Adresse.
+    Bis 1.19.2 löschte „Abmelden“ nur das der Adresse, auf der geklickt wurde; NetBox, Automato und
+    Magister liessen bis zur nächsten Erneuerung (5 min) ohne Anmeldung herein. Jetzt: ein Klick,
+    gleich wo, und keine Adresse des Kunden kommt ohne Anmeldung durch."""
+    with _browser() as c:
+        for url in VB:  # überall angemeldet (je Adresse ein Cookie des Tors)
+            r, _ = _folgen(c, url)
+            assert r.status_code == 200, url
+        assert {k.domain for k in c.cookies.jar if k.name.startswith("_automato_tor")} == {
+            u.split("/")[2] for u in VB
+        }
+        vorher = len(tor.logouts)
+        r, weg = _folgen(c, klick)
+        assert weg[-1] == "https://vb.mgmt.example.ch/abgemeldet", weg
+        assert r.status_code == 200 and "Abgemeldet" in r.text
+        assert len(weg) <= 12, weg  # Browser folgen höchstens 20 Weiterleitungen
+        # die Sitzung in Keycloak beendet das Tor (Backend-Logout mit dem ID-Token)
+        assert len(tor.logouts) > vorher and tor.logouts[vorher].get("id_token_hint")
+        assert not [k for k in c.cookies.jar if k.name.startswith("_automato_tor")]
+        for url in VB:  # nirgends mehr ohne Anmeldung
+            r = c.get(url)
+            assert r.status_code == 302, (url, r.status_code, r.text[:200])
+            assert r.headers["location"].startswith(f"{tor.base}/realms/vb/"), url
+
+
+def test_abmelden_ohne_sitzung_und_nur_eigene_adressen(tor):
+    """Der Einstieg liegt vor dem Tor: ohne Sitzung (z. B. ein zweiter Klick) geht er trotzdem bis
+    „Abgemeldet“; ein Kunde meldet nur bei seinen eigenen Adressen ab (eigenes Ende)."""
+    with _browser() as c:
+        r = c.get("https://vb-doc.mgmt.example.ch/oauth2/abmelden")
+        assert r.status_code == 302  # die Oberfläche erkennt daran das Tor (auth.ts)
+        r, weg = _folgen(c, "https://vb-doc.mgmt.example.ch/oauth2/abmelden")
+        assert weg[-1] == "https://vb.mgmt.example.ch/abgemeldet" and "Abgemeldet" in r.text
+        r, weg = _folgen(c, "https://kunde-a.mgmt.example.ch/oauth2/abmelden")
+        assert weg[-1] == "https://kunde-a.mgmt.example.ch/abgemeldet", weg
+        assert all("kunde-a" in u for u in weg), weg
+
+
+def test_client_secret_versiegelt_aus_dem_cockpit(tor):
+    """1.13.0 (ADR 0055): das Client-Secret eines neuen Realms kommt versiegelt über den Soll-Stand
+    (front.sh sync) statt über front.sh tor - danach geht die Anmeldung in diesem Realm."""
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import padding
+
+    geheim = "geheim-kd-0123456789"
+    pub_pem = (tor.dir / "front" / "tor" / "empfang.pub").read_bytes()
+    pub = serialization.load_pem_public_key(pub_pem)
+    der = pub.public_bytes(serialization.Encoding.DER,
+                           serialization.PublicFormat.SubjectPublicKeyInfo)  # fmt: skip
+    klar = json.dumps({"realm": "kunde-d", "client": "automato-front", "secret": geheim},
+                      separators=(",", ":")).encode()  # fmt: skip
+    oaep = padding.OAEP(mgf=padding.MGF1(hashes.SHA256()), algorithm=hashes.SHA256(), label=None)
+    state = tor.dir / "front" / "state"
+    state.mkdir(exist_ok=True)
+    (state / "soll.json").write_text(json.dumps({
+        "version": 1,
+        "kunden": [{"kurzname": "kunde-d", "name": "Kunde D", "realm": "kunde-d",
+                    "quelle": "cockpit", "links": []}],
+        "tor_geheimnisse": [{"realm": "kunde-d", "kennung": hashlib.sha256(der).hexdigest(),
+                             "versiegelt": base64.b64encode(pub.encrypt(klar, oaep)).decode()}],
+    }))  # fmt: skip
+    tor.front("sync")
+    assert geheim in (tor.dir / "front" / "tor" / "kunde-d.env").read_text()
+    SECRETS["kunde-d"], tor.user["kunde-d"] = geheim, "alice"
+    try:
+        compose = tor.dir / "front" / "generated" / "tor" / "compose.yml"
+        _run("docker", "compose", "-p", PROJEKT, "-f", str(compose), "up", "-d")
+        _run("docker", "exec", f"{PROJEKT}-front", "caddy", "reload", "--config",
+             "/etc/caddy/Caddyfile")  # fmt: skip
+        for _ in range(30):
+            with _browser() as c:
+                try:
+                    r = c.get("https://kunde-d.mgmt.example.ch/")
+                    if r.status_code == 302 and "/realms/kunde-d/" in r.headers["location"]:
+                        break
+                except httpx.HTTPError:
+                    pass
+            time.sleep(1)
+        with _browser() as c:
+            r, _ = _folgen(c, "https://kunde-d.mgmt.example.ch/")
+            assert r.status_code == 200 and "Kunde D" in r.text  # Token mit dem Secret geholt
+    finally:
+        SECRETS.pop("kunde-d", None)
+
+
+def test_gesperrt_alle_adressen_auch_api_mit_token(tor):
+    """ADR 0059: ein zum Entfernen vorgemerkter Kunde (gesperrt aus dem Cockpit) - jede Adresse
+    antwortet „Zugang gesperrt“, auch die NetBox-API mit Token; rückgängig wieder mit Tor."""
+    state = tor.dir / "front" / "state"
+    state.mkdir(exist_ok=True)
+    kunde = {"kurzname": "kunde-e", "name": "Kunde E", "doc": True, "realm": "kunde-a",
+             "quelle": "cockpit", "links": []}  # fmt: skip
+
+    def anwenden(**mehr) -> None:
+        (state / "soll.json").write_text(json.dumps({"version": 1, "kunden": [{**kunde, **mehr}]}))
+        tor.front("sync", "--immer")
+        _run("docker", "exec", f"{PROJEKT}-front", "caddy", "reload", "--config",
+             "/etc/caddy/Caddyfile")  # fmt: skip
+
+    anwenden(gesperrt=True)
+    with _browser() as c:
+        for url in ("https://kunde-e.mgmt.example.ch/", "https://kunde-e-doc.mgmt.example.ch/",
+                    "https://kunde-e-nb.mgmt.example.ch/dcim/"):  # fmt: skip
+            r = c.get(url)
+            assert r.status_code == 403 and "Zugang gesperrt" in r.text, url
+        r = c.get("https://kunde-e-nb.mgmt.example.ch/api/x", headers={"Authorization": "Token t"})
+        assert r.status_code == 403 and "Zugang gesperrt" in r.text
+        assert "auth=" not in r.text  # nie bis zur NetBox
+        # die übrigen Kunden unverändert
+        assert c.get("https://kunde-a.mgmt.example.ch/").status_code == 302
+    anwenden()  # rückgängig (Frist nicht abgelaufen): wieder hinter dem Tor
+    with _browser() as c:
+        r = c.get("https://kunde-e.mgmt.example.ch/")
+        assert r.status_code == 302 and "/realms/kunde-a/" in r.headers["location"]
+
+
+def test_eigene_automato_instanz_hinter_dem_tor(tor):
+    """1.16.0 (ADR 0061): ein Kunde mit eigener Automato-Instanz - <kunde>-doc geht hinter dem Tor
+    an deren Anschluss (automato-<n>-web-ui:5173) statt an die Hauptinstanz, die API ohne Tor (sie
+    prüft das Token selbst); läuft der Anschluss nicht, antwortet die Adresse 503. Der Anschluss ist
+    hier ein Echo im Netz des Tors (im Betrieb: Netz automato-front-instanzen)."""
+    state = tor.dir / "front" / "state"
+    state.mkdir(exist_ok=True)
+    stub, da = tor.dir / "docker", tor.dir / "instanz-da"
+    alt = stub.read_text()
+    stub.write_text(
+        '#!/usr/bin/env bash\ncase "$*" in\n  *"ps --status running"*) echo proxy ;;\n'
+        '  *"label=com.docker.compose.service=anschluss"*)\n'
+        f'    [ ! -f "{da}" ] || echo automato-e2e ;;\n'
+        "esac\n"
+    )
+    conf = tor.dir / "instanz.caddy"
+    conf.write_text(':5173 {\n\trespond "instanz user={http.request.header.X-Automato-User} '
+                    'path={uri}"\n}\n')  # fmt: skip
+    name = f"{PROJEKT}-instanz-e2e"
+    kunde = {"kurzname": "kunde-f", "name": "Kunde F", "doc": True, "realm": "kunde-a",
+             "quelle": "cockpit", "links": [], "automato_instanz": "e2e"}  # fmt: skip
+
+    def anwenden() -> None:
+        (state / "soll.json").write_text(json.dumps({"version": 1, "kunden": [kunde]}))
+        tor.front("sync")
+        _run("docker", "exec", f"{PROJEKT}-front", "caddy", "reload", "--config",
+             "/etc/caddy/Caddyfile")  # fmt: skip
+
+    try:
+        _run("docker", "run", "-d", "--name", name, "--network", NETZ, "--network-alias",
+             "automato-e2e-web-ui", "-v", f"{conf}:/etc/caddy/Caddyfile:ro", CADDY)  # fmt: skip
+        da.write_text("")
+        anwenden()
+        with _browser() as c:
+            r = c.get("https://kunde-f-doc.mgmt.example.ch/api/auth/config")
+            assert r.status_code == 200 and "instanz user= path=/api/auth/config" in r.text
+            assert "doc user=" not in r.text  # nie die Hauptinstanz
+            assert c.get("https://kunde-f-doc.mgmt.example.ch/api/internal/x").status_code == 404
+            r = c.get("https://kunde-f-doc.mgmt.example.ch/")
+            assert r.status_code == 302 and "/realms/kunde-a/" in r.headers["location"]
+            r, _ = _folgen(c, "https://kunde-f-doc.mgmt.example.ch/regeln?x=1")
+            assert r.status_code == 200 and "instanz user= path=/regeln?x=1" in r.text
+        # Anschluss weg: der nächste sync (Timer) erzeugt neu - 503, nie die Hauptinstanz
+        da.unlink()
+        _run("docker", "rm", "-f", name)
+        anwenden()
+        with _browser() as c:
+            r = c.get("https://kunde-f-doc.mgmt.example.ch/api/auth/config")
+            assert r.status_code == 503 and "Automato-Instanz nicht erreichbar" in r.text
+    finally:
+        _run("docker", "rm", "-f", name, check=False)
+        da.unlink(missing_ok=True)
+        stub.write_text(alt)

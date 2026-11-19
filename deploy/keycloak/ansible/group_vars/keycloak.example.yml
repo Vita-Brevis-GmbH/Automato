@@ -14,6 +14,12 @@ kc_tls_internal: false               # true nur im Lab ohne oeffentliches DNS (S
 # kc_tls_cert: files/auth.example.com.crt   # Kette: Leaf + Intermediates (PEM)
 # kc_tls_key:  files/auth.example.com.key   # privater Schluessel (PEM, ohne Passphrase)
 
+# Betrieb aus dem Cockpit (1.17.0, ADR 0062): Automato-Checkout fuer den Host-Agenten
+# (Produkt keycloak) und /etc/automato/keycloak-betrieb.conf. Leer = kein Checkout.
+# kc_automato_repo: <repo-url>                  # z. B. https://github.com/<owner>/<repo>.git
+# kc_automato_ref: main
+# kc_backup_age_recipient: ""                   # leer = Schluessel auf der VM erzeugen (Tresor!)
+
 # --- GEHEIM: in group_vars/vault.yml und VERSCHLUESSELN ---
 # ansible-vault encrypt group_vars/vault.yml
 # kc_bootstrap_admin_password: "<min. 12 Zeichen, zufaellig>"   # openssl rand -base64 24

@@ -77,7 +77,17 @@ def gather(target: Target | None = None) -> dict:
         "interfaces": _sample("sample_interfaces.json"),
         "zones": _sample("sample_zones.json"),
         "system": _sample("sample_system.json"),
+        "routing": _sample_vpn(),  # IPsec im Labor (1.19.0, ADR 0063) - sonst kein Routing
     }
+
+
+def _sample_vpn() -> dict:
+    """Beispiel-Tunnel (statisch, zu einer Gegenstelle ohne gelesenes Geraet, Dial-up) als
+    Rohtabellen des Routings - wie `FortiGateClient.routing_tables`."""
+    vpn = _sample("sample_vpn.json")
+    vpn = vpn if isinstance(vpn, dict) else {}
+    return {"missing": [], "ipsec_phase1": vpn.get("phase1"), "ipsec_phase2": vpn.get("phase2"),
+            "ipsec_status": vpn.get("status")}  # fmt: skip
 
 
 def _sample_rules() -> dict:
@@ -233,8 +243,13 @@ def collect_once(
                 nat_rules=nat_rules,
                 objects=objects,
                 inventory=inventory,
+                # Beispieldaten (flach): Routing nur mit Tabellen (IPsec im Labor, 1.19.0)
                 routing=routing.normalize(
-                    d.get("vdoms") or [], d.get("ha"), node, d.get("interfaces")
+                    d.get("vdoms") or ([d] if d.get("routing") else []),
+                    d.get("ha"),
+                    node,
+                    d.get("interfaces"),
+                    d.get("system"),
                 ),
                 message=_vdom_message(d),
             )

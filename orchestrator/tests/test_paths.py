@@ -305,7 +305,10 @@ def test_weg_ab_gewaehltem_startpunkt(client):
     # VDOM ohne Route zum Ziel, unbekannter Startpunkt, ohne Quelle und Start
     kunde = next(n for n in nodes if n["label"] == "fw-01 · VDOM kunde-a")
     other = _trace(client, tid, start=kunde["key"], dst="10.20.0.5")
-    assert other["paths"][0]["end"]["kind"] == "external"  # Default ohne gelesenen Nachbarn
+    # ADR 0070: privates Ziel ueber die Default-Route an ein nicht gelesenes Geraet = nicht
+    # geprueft (bis 1.20 „extern“ und damit erreicht)
+    assert other["paths"][0]["end"]["kind"] == "unchecked"
+    assert other["uncertain"] == {"default": 1}
     assert _trace(client, tid, start="999|root", dst="10.20.0.5")["notes"] == [
         "Startpunkt unbekannt – neu einlesen bzw. einen anderen wählen"
     ]
@@ -464,6 +467,8 @@ FWS = _fw(
     [
         _r("fw-s", "root", "10.77.0.0/30", [{"interface": "to-fwr"}], "connected"),
         _r("fw-s", "root", "0.0.0.0/0", [{"ip": "192.0.2.1", "interface": "wan"}]),
+        # ADR 0070 (Reverse Path): ohne Route zur Quelle ueber den Eingang verwirft fw-s
+        _r("fw-s", "root", "10.10.0.0/24", [{"ip": "10.77.0.1", "interface": "to-fwr"}]),
     ],
     [_if("fw-s", "to-fwr", "10.77.0.2/30")],
 )
@@ -472,7 +477,11 @@ FWS = _fw(
 def _par(name: str, ip: str, allow: bool = False) -> dict:
     result = _fw(
         name,
-        [_r(name, "root", "10.88.0.0/24", [{"interface": "lan"}], "connected")],
+        [
+            _r(name, "root", "10.88.0.0/24", [{"interface": "lan"}], "connected"),
+            # ADR 0070 (Reverse Path): Route zur Quelle ueber den Eingang
+            _r(name, "root", "10.10.0.0/24", [{"ip": "10.66.0.1", "interface": "to-fwr"}]),
+        ],
         [_if(name, "to-fwr", ip)],
     )
     if allow:  # nur auf einer Firewall des Verbunds: die Regeln weichen ab
@@ -801,7 +810,10 @@ def test_weg_ueber_inter_vdom_links(client):
 
     (phys,) = _trace(client, tid, src="10.10.0.5", dst="10.42.0.5")["paths"]
     assert _labels(phys) == ["fw-v · VDOM root"]
-    assert phys["end"]["text"] == "Ziel angeschlossen an fw-v · VDOM root (port10)"
+    # ADR 0070: Route nur mit Interface ist nicht „angeschlossen“ - die Firewall sucht das Ziel
+    # direkt am Interface (ARP); ob es dort ist, ist nicht belegt
+    assert phys["end"]["kind"] == "unchecked"
+    assert phys["end"]["text"].startswith("nicht geprüft: Route nur mit Interface port10")
 
 
 def test_verbund_mit_verschiedenen_urteilen():

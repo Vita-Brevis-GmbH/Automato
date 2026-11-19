@@ -1,7 +1,8 @@
 // 1.3.0 (Anwender 2026-11-10: „Ich möchte das Erstellen und Verwalten von Kunden im Cockpit haben“ und „für das
 // Login jeweils einen eigenen Realm“): Kunden-Portal unter Administration – Kunde mit Werkzeugen, Realm und Kachel
 // anlegen, Einrichtungs-Befehle (NetBox, Keycloak-Realm) sehen, ändern und entfernen.
-import { expect, test } from "./fixtures";
+// seit 1.14.0 (ADR 0058) ohne Cockpit – mit verbundenem Cockpit ist das Kunden-Portal nur lesbar
+import { expect, testOhneCockpit as test } from "./cockpit";
 
 test("Kunden-Portal: anlegen, Einrichtung, ändern, entfernen (1.3.0)", async ({ page, problems }) => {
   await page.goto("/#kundenportal");

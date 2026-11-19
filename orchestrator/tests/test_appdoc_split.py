@@ -22,11 +22,21 @@ SPLIT = {
     "rules": [
         *FW4["rules"],
         # eingehend aus zwei Zonen: vorher eine Zeile in „unspezifisch“ (mehrere Zonentypen)
-        _rule(61, "many-to-web", ["10.70.1.1", "10.77.1.1"], ["10.20.0.5"]),
+        # eigene Dienste (ADR 0071): mit tcp/443 waeren beide von `wide-to-web` (10.64.0.0/10)
+        # ueberdeckt - nur noch Treffer, die breite Policy an ihrer Stelle
+        _rule(
+            61, "many-to-web", ["10.70.1.1", "10.77.1.1"], ["10.20.0.5"], services=["tcp/8061"]
+        ),  # fmt: skip
         # ausgehend in drei Zonen: Clients, Remote Access, Partner (anderes DC)
         _rule(62, "web-to-many", ["10.20.0.5"], ["10.71.1.10", "10.77.5.5", "10.78.1.1"]),
         # eingehend aus dem Partner-DC und einem Netz ueber alle Zonen (unspezifisch)
-        _rule(63, "partner-to-web", ["10.78.2.2", "10.64.0.0/10"], ["10.20.0.5"]),
+        _rule(
+            63,
+            "partner-to-web",
+            ["10.78.2.2", "10.64.0.0/10"],
+            ["10.20.0.5"],
+            services=["tcp/8063"],
+        ),  # fmt: skip
     ],
 }
 

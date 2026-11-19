@@ -7,6 +7,740 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 1.22.0 – 2026-11-19
+
+Version 2 Nr. 20 „Wege erkennen verbessern“. Anwender (2026-11-18): „Es soll absolut der Wahrheit
+entsprechen, wie das Netzwerk in Echt funktioniert.“ – „Direkt korrigieren oder noch besser, wenn es
+schneller geht, einen neuen Algorithmus schreiben“ – „Ich bin für ersetzen, da das alte Verhalten
+nicht immer richtig lag“. Ablauf: zwei unabhängige Prüfungen gegen Herstellerdoku und die drei
+Stichproben des Anwenders (als anonymisierte Muster), Neubau in zwei Teilen, unabhängige
+Gegenprüfung, Korrekturrunde. ADR 0070 und 0071 (neu), Nachträge zu ADR 0048 und 0063. Migrationen
+`0097_kontext_einstellungen`, `0098_epg_durchsetzung`.
+
+### Weg-Suche nach echtem Geräteverhalten (ADR 0070)
+
+- **Ersetzt (kein Umschalter):** je Hop entscheidet ein Forwarding-Modell des Geräts
+  (`store/forwarding.py`: längster Präfix, Distanz, Priorität, ECMP, rekursiver Next-Hop) und die
+  Stufen des Herstellers (`store/path_stages.py`).
+- **Start nur, wo Verkehr ankommt:** kein Start mehr auf dem Gerät einer passenden Regel (Ursache
+  der Stichproben 1 und 2); Start an der angeschlossenen Quelle, nach dem Rückweg, am Rand oder in
+  der ACI-VRF der Quell-EPG; eine Quelle als Netz, das grösser ist als das angeschlossene, beginnt
+  am angeschlossenen Teil (Rest gezählt); Gegenstelle any → öffentliche VIP beginnt an der Firewall
+  der VIP, nie an einem Rand, an dem der Verkehr nur wieder hinausginge; sonst „Start unbekannt“.
+- **Verworfen statt erreicht:** Null-/Blackhole-Routen, Reverse Path der FortiGate (keine Route zur
+  Quelle über den Eingang; „feasible“ auch über Routen gleicher Distanz mit höherer Priorität, IPv6
+  nach `asymroute6`), IPsec-Tunnel down bzw. ohne Phase 2 für Quelle und Ziel, abgeschalteter Virtual
+  Service am Load Balancer.
+- **Nicht geprüft statt behauptet:** privates Ziel nur über die Default-Route an ein nicht gelesenes
+  Gerät, Route nur mit Interface (auf Ethernet, auch /30), Reverse Path ohne gelesene Einstellungen.
+- **FortiGate:** VIP mit Port-Weiterleitung nur für ihren Dienst, nur in einer eingeschalteten
+  Policy bzw. mit Central NAT, nur mit ihrem `src-filter`/`srcintf-filter`; **Central NAT erkannt**
+  (je VDOM) und Central SNAT aus der Tabelle (erste passende Zeile; nicht lesbar = „NAT nicht
+  geprüft“); Policy-Routen in der Reihenfolge der Liste mit Protokoll, Port und `deny`; SD-WAN-Regeln
+  nur mit Route über ein Mitglied.
+- **Router:** HSRP/VRRP auf IOS/IOS-XE (den Verkehr nimmt der aktive Router).
+- **Load Balancer:** alle Virtual Services je VIP (SNI), Weg zu jedem Server des Pools (Server mit
+  eigener EPG bzw. eigenem Urteil als eigener Weg, Ursache Stichprobe 3), Pool Group nur mit dem Pool
+  höchster Priorität (übrige als Backup-Weg), Umleitung HTTP → HTTPS endet am Load Balancer.
+- **Rückweg:** mit ECMP symmetrisch nur, wenn alle Rückwege es sind.
+- **Gezählt statt still** (ADR 0048 Nachtrag): Kürzung bei 16 Wegen, Rückweg nur für 8, mögliche
+  Policy-Routen, SD-WAN-Mitglied, NAT, Selektoren, Default-Route, Route nur mit Interface, Start,
+  Teilstart – als Hinweis am Weg und im Befund „Applikation: unvollständig geprüft“. Neue Enden
+  „verworfen“, „nicht geprüft“, „Umleitung am Load Balancer“.
+
+### Regel-Zuordnung nach echtem Treffer (ADR 0071)
+
+- **Ersetzt:** die Applikations-Doku zeigt eine Firewall-Regel bei einem System, wenn sie dessen
+  Verkehr trifft – nicht mehr, wenn sie seine Adresse nur nennt. Gilt für jedes Regelwerk; die
+  Profile entscheiden weiter nur, was gezeigt wird (Bedingungen und Reihenfolge unverändert).
+- **Nicht auf dem Weg:** Regeln von Firewalls abseits des Wegs stehen nicht mehr in der Doku, auch
+  wenn sie das System nennen (gezählt; Befund „Regel nie gebraucht“ bleibt). Endet der Weg an einer
+  nicht gelesenen Grenze (z. B. MPLS-Übergang), zählt sein belegter Teil.
+- **Überdeckt:** eine Regel, deren Verkehr frühere Policies schon entscheiden, ist kein Zugriff mehr
+  (nur Treffer, „überdeckt durch Policy X“); an ihrer Stelle steht die real treffende breite Policy
+  („breit“). Neuer Befund **„Regel überdeckt“** (`rule_shadowed`).
+- **Weg nicht geprüft:** ist der Weg nicht bekannt, bleibt die Regel – markiert und gezählt.
+- **Abgleich je Hop wie das Gerät:** Negation als Komplement, FQDN über das IPAM, VIP-Policy nur für
+  umgeschriebenen Verkehr, Adressobjekte nach dem DNAT, `all` zur VIP ohne Central NAT nur
+  „möglich“, `internet-service-negate`, `action ipsec`, Gruppen ganz aufgelöst; Verkehr ohne Policy
+  bei `intrazone allow` der Zone und `allow-traffic-redirect` am selben Interface (nicht gelesen =
+  „nicht geprüft“, gezählt).
+- **ACI:** Vorrang nach der Priorität der Zoning-Rules (EPG–EPG schlägt eine vzAny-Sperre), Filter
+  mit `deny`, Filter ohne EtherType (`unspecified/any`) getrennt von EtherType `ip`, Preferred Group
+  sperrt Nichtmitglieder, VRF „unenforced“, Intra-EPG-Isolation.
+- **Schneller:** Zuordnung im Speicher je Datenstand statt Abfrage je Adresse (4000 Regeln: 18,5 ms
+  → 2,2 ms je Adresse).
+
+### Nach dem Update
+
+- **Neu einlesen:** FortiGates, APIC, Switches & Router und NSX ALB – erst dann wirken Reverse Path,
+  Central NAT, Priorität, HSRP/VRRP und die Umleitung am Load Balancer; bis dahin enden betroffene
+  Wege als „nicht geprüft“.
+- **Neue Leserechte:** FortiGate `system/settings` und `firewall/central-snat-map`; Switches & Router
+  `show standby brief` und `show vrrp brief`.
+- **Sichtbar anders:** mehr Wege „verworfen“ bzw. „nicht geprüft“, Verbindungen ohne lesbaren Start
+  mit „Start unbekannt“, mehr Applikationen „unvollständig geprüft“, Regeln mit „Weg nicht geprüft“
+  dort, wo das Routing nicht gelesen ist. Jeder Stand der Doku rechnet einmal neu.
+- **Laufzeit** (gemessen): Weg je Verbindung unverändert (rund 2,9 ms mit Regeln); Doku für 800
+  Applikationen hochgerechnet 4–10 min in einem Prozess, Verbindungen 0,2–1,5 min.
+- **Grenzen** (gezählt bzw. in ADR 0070/0071): gleiche Adresse in mehreren VRFs, SD-WAN-Zustand,
+  Pools über HTTP-Policies, Proxy-ARP, Punkt-zu-Punkt-Interfaces mit freiem Namen, Dienst-Filter
+  einer VIP. Belege der Herstellerdoku teils nur über Suchtreffer (Seiten von Fortinet/Cisco in der
+  Umgebung gesperrt).
+- Tests: `test_fable_wege.py`, `test_fable_regeln.py`, `test_fable_pruefung.py`,
+  `test_fable_korrektur_regeln.py`, `test_rule_match.py` (Orchestrator und Collectors).
+
+## 1.21.0 – 2026-11-18
+
+Rückmeldung des Anwenders (2026-11-18): „Ich habe eine Funktion bei Automato v1.0.1 einbauen lassen, kannst du mir diese hier auch einbringen und mergen lassen? Weiter wäre es noch super, wenn ich eine Auswahl treffen könnte, welche Applikationen ich herunterladen möchte. Zudem geht es sehr lange, bis der Export steht, könnte man dies als Hintergrunddienst laufen lassen?“ Migration `0096_export_auftrag`, ADR 0069.
+
+- **Exporte aus 1.0.1 übernommen** (Merge des Branches `claude/gifted-planck-at3ufl`, dort als 1.0.1 bzw. 1.10.0 – hier Teil von 1.21.0):
+  - **Applikationen – Doku als ZIP je Applikation mit Export-Passwort:** je Applikation ein ZIP mit Word und Netzwerkplan (draw.io) wie „Für Confluence“, jedes mit dem Export-Passwort AES-256-verschlüsselt (öffnen mit 7-Zip/WinRAR); eine fehlgeschlagene Applikation steht in `FEHLER.txt`, die übrigen kommen trotzdem (`store/secure_zip.py`).
+  - **Findings – Excel-Export:** alle Findings der sichtbaren Mandanten, alle Status, nach Modul → Prüfung → Typ (Blatt „Übersicht“ mit Zählern, je Modul ein Blatt mit Autofilter), Details als Kommentar an der Meldung, Werte aus Geräten nie als Formel (`store/findings_export.py`). Neu: ohne Mandanten mit ausgeschaltetem Modul Findings; schneller ohne Stil je Zelle (5000 Findings 2,4 → 1,7 s); bleibt ein direkter Download.
+  - Neue Abhängigkeiten (Open Source, MIT): `pyzipper`, `openpyxl`.
+- **Auswahl der Applikationen:** im Export-Dialog die Applikationen des Mandanten bzw. Kunden mit Suche und „alle“/„keine“; exportiert werden nur die gewählten. Jede gewählte Applikation muss sichtbar sein – sonst Fehler mit den Ids, nie still ausgelassen.
+- **Export im Hintergrund:** der Export läuft als Auftrag im Orchestrator; „Meine Exporte“ (im Dialog und über der Liste der Applikationen) zeigt Fortschritt (n von m, aktuelle Applikation), Fehler je Applikation, Herunterladen, Abbrechen und Entfernen – auch nach dem Neuladen. Nur der Auftraggeber sieht und lädt seinen Export; abrufbar 24 h (`AUTOMATO_EXPORT_HOURS`), höchstens 2048 MB je Export (`AUTOMATO_EXPORT_MAX_MB`), zwei gleichzeitig (`AUTOMATO_EXPORT_PARALLEL`), einer je Benutzer. Das Export-Passwort lebt nur im Speicher des Auftrags – nie in Datenbank, Protokoll, Audit oder Datei; ein Neustart des Orchestrators bricht laufende Exporte sichtbar ab. Ablage im Volume `orchestrator-data` (`/var/lib/automato/exports`).
+- **Schneller:** die Abhängigkeiten rechnet der Export je Applikation einmal statt je Paar, Gemeinsames je Mandant einmal (51 Applikationen mit vorgerechneten Ständen: 68 s → 7 s; ohne Stände 212 s → 160 s).
+- **Rechte:** Betreuer ab Viewer und Mandanten-Benutzer im eigenen Mandanten (ADR 0068); nicht für Kunden-Benutzer in gemeinsamen Mandanten (sie exportieren ihre Applikationen einzeln). API: `POST /applications/export` (202, `ids`), `GET /applications/exports`, `GET …/exports/{id}`, `POST …/{id}/cancel`, `DELETE …/{id}`, `GET …/{id}/download`; `GET /findings/export`.
+- Tests: `orchestrator/tests/test_export_all.py`, UI `e2e/release_1210.spec.ts`, `e2e/release_101.spec.ts`.
+
+## 1.20.0 – 2026-11-18
+
+Rückmeldung des Anwenders 2026-11-18 zum Test von 1.19.2: Abmelden und Rechte im Menü. Neue
+Migration `0095_rolle_operator`; ADR 0068 (neu), Nachtrag zu ADR 0051, Nachträge zu ADR 0007,
+0018, 0050 und 0058. Gegenstück im Cockpit: 0.9.0.
+
+### Rechte je Rolle im eigenen Mandanten, Betreiber (ADR 0068)
+
+Anwender: „Admins alles sehen, und anpassen können in ihrem Mandanten, Operatoren sollen alles sehen
+und nur das einlesen anstossen können. Viewer sollen nur das sehen, wo heute der Admin sieht.“ und
+„Der Betreiber soll alles sehen und anpassen können und auch einen Link zu der ganzen Plattform
+erhalten, dies wenn es nicht eine eigene Instanz ist, sondern nur ein Mandanten.“
+
+- **Neue Kunden-Rolle Operator** (`customer_operator`): im eigenen Mandanten (für den Portal-Kunden
+  angelegt, `cockpit_tenant`) alles sehen – L1–L7, Wege, Wege vergleichen, Abgleich, Läufe,
+  Quellsysteme ohne Geheimnisse, Zeitplan, Standorte – und nur das Einlesen anstossen.
+- **Admin im eigenen Mandanten** (`customer_admin`): alles im Mandanten anpassen – Applikationen,
+  Findings, Prüfungen, Module, Zonen, Wege, Standorte, Quellsysteme (nur mit einem Collector-Agenten
+  des Mandanten), Läufe abbrechen, NetBox-Sync; nie Plattform-Funktionen (System, Kunden-Portal,
+  Mandanten, Benutzer und Rollen, Kunden, Namensprofile, Agenten) oder andere Mandanten. Viewer,
+  Triage und Editor sowie gemeinsame Mandanten wie bisher.
+- **Prüfung auf dem Server:** Positivliste je Endpunkt (`auth/tenant_routes.py`: lesen, einlesen,
+  anpassen), Plattform-Endpunkte ausdrücklich gesperrt, ein Test verlangt jeden Endpunkt in genau
+  einer Liste; fremde `tenant_id` abgewiesen; Lesezugriffe dieser Benutzer immer im Audit.
+- **Betreiber:** Anzeige „Betreiber“ und Link „Ganze Plattform“ zur internen Oberfläche (nicht bei
+  einer eigenen Instanz); dort globaler Admin über den Identity Provider `betrieb` im Realm von
+  Automato, dessen Mapper das Cockpit setzt (ab Cockpit 0.9.0; einmal den Zugang `cockpit` im Realm
+  von Automato einrichten).
+- **Oberfläche:** Navigation und Knöpfe nach Rolle, Rollenanzeige „Kunde · Operator“/„Kunde ·
+  Admin“; ohne `/auth/me` keine Sicht mehr aus dem Token („Rechte nicht lesbar“ statt vollem Menü).
+
+### Abmelden (ADR 0051 Nachtrag 1.20.0)
+
+Anwender: „Das Logout bei den Kundenportalen geht noch nicht, ich komme immer wieder rein, auch,
+wenn ich nicht neu einlogge.“ und „Auch aus dem Automato heraus abmelden muss ich mehrfach auf
+Abmelden klicken, damit ich zum Keycloak zurückkehre“.
+
+- **Abmelden auf allen Adressen des Kunden:** das Cookie des Anmelde-Tors gilt je Adresse; bisher
+  löschte „Abmelden“ nur das der Adresse, auf der geklickt wurde – NetBox, Automato und Magister
+  liessen bis zu 5 min ohne Anmeldung herein. Jetzt führt `/oauth2/abmelden` (Startseite, NetBox
+  `/logout/`, Oberfläche, Magister, CMDB) der Reihe nach über das Abmelden des Tors jeder Adresse
+  des Kunden, beendet die Sitzung in Keycloak und zeigt „Abgemeldet“; danach verlangt jede Adresse
+  die Anmeldung. Betreiber („Anmelden als Betreiber“) sind damit auch im Realm der Betreiber
+  abgemeldet (Cockpit 0.9.0, ADR 0017 Nachtrag).
+- **Abmelden in Automato mit einem Klick:** hinter dem Anmelde-Tor über das Tor, sonst über Keycloak
+  mit `id_token_hint`; keine stille Neuanmeldung während des Abmeldens und kein „Anmeldung nicht
+  möglich“ mehr, wenn kurz nach der Anmeldung abgemeldet wird.
+- **Front-Proxy nach Updates ohne Handgriff:** `status.json` hält die Fassung von `front.sh` fest
+  (`erzeugt_mit`); weicht sie ab, erzeugt `front.sh sync` (Timer) die Konfiguration neu.
+- **Tests:** ein Klick meldet auf allen Adressen ab (Caddy + oauth2-proxy gegen Test-IdP und
+  Keycloak 26.4), `e2e/abmelden.spec.ts`, `sync` nach einem Update, `test_tenant_roles.py`,
+  `e2e/rechte_mandant.spec.ts`.
+
+## 1.19.2 – 2026-11-18
+
+Korrektur (Anwender 2026-11-18: „alle zusätzlich erstellten werden dann dem ersten zugewiesen … Es
+sollte gemäss mir einen neuen Mandanten angelegt und mit dem Account verknüpft werden, sowie die
+anderen Mandanten nicht sichtbar machen.“; ADR 0058 Nachtrag, Migration `0094_cockpit_mandant`).
+
+- **Eigener Mandant aus dem Cockpit:** `PUT /freigaben` mit `zuordnung.mandant_anlegen` (optional
+  `mandant_name`) legt für den Portal-Kunden einen eigenen Mandanten mit einem Kunden darin an und
+  ordnet beides zu – einmal je Kurzname, Name belegt → „<Name> (<Kurzname>)“, nie still übernommen;
+  Audit `tenant.created` mit Akteur `cockpit`. Benutzer des Kunden-Realms sehen nur diesen Mandanten.
+- **Umzug:** wechselt ein Kunde so aus einem gemeinsamen Mandanten, entfernt Automato den dort für
+  ihn angelegten Kunden nur ohne Daten; sonst bleibt er und wird gemeldet (Antwort `umzug`, Audit,
+  Ist-Stand). Quellsysteme bleiben im alten Mandanten. Den neuen Mandanten löscht Automato nie selbst.
+- **Inventar und Oberfläche:** `automato.funktionen`, `mandanten[].portal_kunde`,
+  `zuordnung.mandant_angelegt`; Kunden-Portal „für das Cockpit angelegt“ beim Mandanten. Gewählt
+  wird im Cockpit ab 0.8.2 („Neuer Mandant“).
+
+## 1.19.1 – 2026-11-18
+
+Korrektur (Anwender 2026-11-18: „sync-user.sh in welchem Pfad muss ich es ausführen?“): Das
+Skript erzeugte bei jedem Aufruf einen **neuen** Schreib-Token – danach schlug der NetBox-Sync
+fehl, bis der Token in Automato nachgetragen war.
+
+- **Rechte ohne neuen Token:** `source-of-truth/netbox/sync-user.sh` kennt `NUR_RECHTE=1` – nur
+  die Objekttypen des Syncs nachführen (z. B. ASN für die Reservierungen, ADR 0066), Token bleibt.
+- **NetBox je Kunde ohne Handgriff:** der Agent des NetBox-Hosts (`netbox-host.sh sync`) führt bei
+  jeder Instanz, deren Zugang Automato schon hat, die Rechte selbst nach – nur, wenn sich die
+  Liste geändert hat (Marke `.sync-rechte` je Kunde). Nichts von Hand auszuführen.
+
+## 1.19.0 – 2026-11-18
+
+Prioritäten des Anwenders 2026-11-17 („Folgende Prio umsetzen im Automato: 1. VPN integrieren
+2. statisches Routing 3. Modul nach Netzwerkschichten 4. Verkabelung im Detail 5. Spanningtree
+6. Reservierungen 7. DNS aus AD“; „Nur am Ende eine Meldung alles zusammen in der Version“).
+Neue Migrationen `0089_vpn`, `0091_stp`, `0092_kabel`, `0093_reservierungen`; ADR 0063 (VPN), 0066
+(Reservierungen), 0067 (Schichten), Nachträge zu ADR 0025 (Spanning Tree), 0031 (Kabel-Label), 0045
+(DNS-Namen). Das REST-API-Profil der FortiGate braucht `vpngrp read`; der NetBox-Sync-Benutzer das
+Recht `ipam.asn` (`sync-user.sh` erneut ausführen).
+
+#### VPN (ADR 0063)
+
+- VPN (IPsec) integriert (ADR 0063): Die FortiGate liest Phase 1 (Interface-Modus), Phase 2 mit aufgelösten Selektoren und den Zustand je Tunnel bzw. Phase 2 – nur lesend, ohne Pre-Shared-Keys; Dial-up-Tunnel mit ihren verbundenen Gegenstellen. SSL-VPN wird nicht gelesen.
+- Weg-Suche: Der Tunnel ist ein Schritt mit Gegenstelle. Gehört die Gegenstelle einer gelesenen FortiGate, geht der Weg dort weiter (Eingang ist ihr Tunnel). Sonst endet er sichtbar an der Gegenstelle und wird in den Verbindungen gezählt („unvollständig geprüft“).
+- Neue Ansicht „VPN-Tunnel“ (Analyse): Zustand, Gegenstelle, Phase 2, Routen über den Tunnel mit „gedeckt / teilweise / kein Selektor“, Netze dahinter.
+- Verbindungen, Netzwerkplan (Tunnel-Knoten), Word-Export und „Warum dieser Weg?“ zeigen den Tunnel; „Als Anbindung erfassen“ geht auch am Tunnel.
+- Neue Befunde: VPN-Tunnel down, Selektor deckt Route nicht, Route ohne Selektor.
+- Das REST-API-Profil braucht `vpngrp read` (Migration `0089_vpn`).
+
+#### Statisches Routing
+
+- **Statische Routen** je Gerät und VRF (Ansicht „Statische Routen“, `GET /static-routes`): FortiGate und Junos aus der Konfiguration (auch deaktivierte und schwebende), Cisco und Arista aus der Routing-Tabelle, ACI aus den L3Outs. Je Route der Zustand gegen die Routing-Tabelle – aktiv, Backup, überdeckt, nicht installiert, deaktiviert – mit Begründung und Next-Hop.
+- **Backup oder überdeckt:** eine bewusste Backup-Route hat eine Distanz über dem Standard des Geräts (FortiGate 10, Junos 5, Cisco/ACI 1) oder eine höhere FortiGate-Priorität. Überdeckt ist eine Route, die nie aktiv wird.
+- **Befunde:** Next-Hop nicht erreichbar (auch für Backup-Routen), überdeckt, doppelt, Blackhole (Hinweis), nicht geprüft je Gerät (keine stillen Grenzen).
+- **Doku der Applikation:** die statischen Routen auf den Wegen ihrer Verbindungen (aktiv bzw. Backup-Weg) mit Seq, Kommentar und Anzahl der Verbindungen, auch im Word-/Markdown-Export.
+
+#### Spanning Tree (ADR 0025 Nachtrag)
+
+- **Spanning Tree** (Modul Analyse, `#spanningtree`): Die Switches (Cisco IOS/IOS-XE, NX-OS) liefern je VLAN bzw. MST-Instanz Root, eigene Bridge, Root-Port, Ports mit Rolle und Zustand, Modus, Topologieänderungen und err-disabled Ports. Andere Plattformen werden gezählt.
+- Ansicht je VLAN bzw. Standort: Root, Soll und ein einfacher Baum mit hervorgehobenen blockierten Ports (Reserve bzw. unerwartet), dazu Reiter Soll-Root und Switches.
+- **Soll-Root** je VLAN-Bereich und/oder Standort wird in der App gepflegt (operator, Audit), ebenso die Schwelle der Topologieänderungen (Vorgabe 10 je 24 h).
+- Neue Befunde: Root nicht am Soll bzw. ohne Soll nur gemeldet, unerwartet blockierter Port (Schutzfunktion, Backup-Rolle, vPC-Peer-Link, Edge-Port, Gegenstelle kein Switch), BPDU-Guard, gemischte Modi im L2-Bereich, viele Topologieänderungen.
+- Migration `0091_stp`; die Spanning-Tree-Daten wirken nicht auf Doku und Wege.
+
+#### Verkabelung im Detail (ADR 0031 Nachtrag 1.19.0)
+
+- Verkabelung im Detail: Die Switches liefern je Port den Transceiver (Typ, Teilenummer, Hersteller, Seriennummer), nur mit `show`-Befehlen der Plattform; je Switch ein Lesestatus (gelesen, nicht lesbar, nicht unterstützt bei SNMPv3).
+- Die Kabelnummer kommt aus NetBox (Label der Kabel, über die Referenzquelle) und lässt sich in Automato je Port-Paar erfassen; die Ansicht zeigt sie mit Herkunft (Reiter „Kabelnummern“ mit Dialog).
+- Der NetBox-Sync (Abschnitt Verkabelung) schreibt die erfasste Nummer als Label: neue Kabel gleich mit, bestehende nur nach Bestätigung je Kabel; was nur in NetBox steht, bleibt (Migration `0092_kabel`).
+- Neue Befunde: LLDP/CDP-Nachbar passt nicht zum Kabel in NetBox, Kabelnummer in NetBox und Automato verschieden, Duplex nicht voll (beide Enden gelesen).
+
+#### DNS aus dem AD (ADR 0045 Nachtrag 1.19.0)
+
+- **DNS aus dem AD nach NetBox**: Neuer Abschnitt *DNS-Namen aus dem AD* im NetBox-Sync. Er setzt `dns_name` bestehender IP-Adressen aus den A-Records der AD-DNS-Zonen, nur dieses Feld und keine neuen IPs. Mehrere A-Records: der PTR entscheidet, sonst „mehrdeutig“ ohne Vorschlag. Leere Namen werden gesetzt; abweichende zeigt die Vorschau mit beiden Werten, übernommen nur nach Bestätigung je Eintrag (wie die Kabelnummern). Nur, wenn NetBox das führende IPAM ist.
+- Befunde *DNS: PTR widerspricht A-Record*, *DNS: IP nicht in NetBox* (nur gezählt) und *DNS: nicht geprüft* (Zonen, Rückwärtszone, NetBox nicht gelesen).
+- Das Netzinventar löscht DNS-Namen an Interface-IPs nicht mehr.
+
+#### Reservierungen (ADR 0066)
+
+- Reservierungen: VLAN- und AS-Nummern in Automato reservieren, ändern und freigeben – VLANs je Standort bzw. für alle Standorte, mit Zweck und wer/wann.
+- Befunde: Hinweis „jetzt belegt“ (beim Reservieren frei, jetzt gelesen in Gebrauch), Konflikt (schon beim Reservieren belegt) und „doppelt reserviert“.
+- Ansicht „AS-Nummern“: je AS die Firewalls und Router sowie die BGP-Nachbarn mit Zustand, eBGP/iBGP und IPAM-Namen, eigen/fremd und privat.
+- NetBox-Sync, Abschnitt „Reservierungen“: VLANs mit Status `reserved` in der passenden VLAN-Gruppe, AS-Nummern als ASN-Objekte mit der RIR aus NetBox. Was in NetBox schon steht, wird nur angezeigt; Änderungen nur nach Bestätigung (Recht `ipam.asn`: `sync-user.sh` erneut ausführen). Migration `0093_reservierungen`.
+
+#### Module nach Netzwerkschichten und „Wege vergleichen“ (ADR 0067)
+
+- Oberfläche nach Netzwerkschichten: Navigation mit **L1 · Physik** (Verkabelung, Ports, Transceiver, Kabelnummern), **L2 · Switching** (VLANs, Spanning Tree, VLAN-Reservierungen), **L3 · Routing** (Netze, VRF, Routing, statische Routen, BGP, AS-Nummern, AS-Reservierungen) und **L4–7 · Firewall & Dienste** (Regeln, Objekte, NAT/VIPs, Load Balancer, VPN-Tunnel); Übergreifendes bleibt.
+- Neue Adressen `#<schicht>/<stelle>`, alte Adressen und Links leiten um; Module, Schalter je Mandant, Prüfungen, Rechte und API unverändert.
+- VLANs als eigene Ansicht in L2, Reiter „Transceiver“ in der Verkabelung, NAT/VIPs mit Filter „Load Balancer“.
+- Neues Modul **„Wege vergleichen“**: ein L3-Weg (Weg-Suche bzw. Verbindungen einer Applikation) gegen L1/L2 – VLAN auf allen Trunks erlaubt, Kabel und Nachbarn (NetBox, Verkabelung), Spanning Tree; je Abschnitt mit Ports und Geräten.
+- Befunde `path_vlan_missing`, `path_cable_mismatch`, `path_stp_blocked` über alle L3-Abschnitte; Nicht-Prüfbares je Grund als Hinweis `path_l2_unchecked` (keine stillen Grenzen).
+
+#### Nicht am echten Gerät geprüft bzw. offen
+
+- Feldnamen des Monitors am echten Gerät bestätigen; Policy-basierte Tunnel nicht gelesen; fremde Gegenstellen machen Applikationen „unvollständig geprüft“ (bis erfasst).
+- Kontexte nur mit Routing-Tabelle (IOS/NX-OS/Arista) – überdeckt/doppelt dort nicht prüfbar, ausgewiesen ohne Befund.
+- am echten Gerät prüfen (`show spanning-tree detail` kann gross sein; NX-OS err-disabled-Befehl aus der Doku).
+- Parser am echten Gerät prüfen (Aruba CX, Catalyst 1300 angenommen); Transceiver nicht nach NetBox.
+- nicht gegen echtes AD/NetBox geprüft.
+- lokales AS des ACI-Fabrics nicht gelesen; VLANs der vCenter-Portgruppen zählen nicht als belegt.
+
+## 1.18.2 – 2026-11-17
+
+Korrektur: Das Cockpit bot einem Host auf einem Entwicklungs-Branch `main` (eine andere Linie)
+als Update an; erst der Rückfall hat es abgefangen. ADR 0062 Nachtrag 1.18.2.
+
+- **NetBox-Host nur Nachfahren:** `deploy/netbox-host/betrieb.sh aktualisieren --ref` (mit und ohne
+  Bundle) lehnt ein Ziel ab, das kein Nachfahre des laufenden Commits ist – Exit 3 „Abgelehnt: <ref>
+  liegt auf einer anderen Linie als der laufende Stand <version> (<branch>) – nichts geändert“, auch
+  mit neuerer Version, vor der Sicherung, nur mit Objekten im Repo (`nachfahre` in
+  `deploy/lib-betrieb.sh`), nie origin. Ältere Stände wie bisher abgelehnt.
+- **`stand.herkunft` bei NetBox-Host und Keycloak** (rückwärts verträglich, wie `deploy/betrieb.sh`
+  seit 1.18.1, ohne Kanal): `{"branch": <Branch des Checkouts>|null, "losgeloest": bool}`
+  (`herkunft_json`); das Cockpit nimmt den Branch als Vorgabe seiner Quelle.
+
+## 1.18.1 – 2026-11-17
+
+Korrektur: Update aus dem Cockpit scheiterte mit „Kein Manifest unter …/kanal-stable/manifest.json
+(HTTP 404)“ – `stable` entstand nur aus Tags, und es gab keinen (Anwender 2026-11-17: „es muss
+einfach funktionieren, das ist der einzige Wunsch“). ADR 0060 Nachtrag „stable ohne Tag:
+Freigabe-Datei“.
+
+- **Kanal `stable` ohne Tag:** `deploy/release/stable` nennt die abgenommene Version und ihren
+  Commit (`1.17.0 315b05f…`). Nach jedem Push auf `main` bzw. den Entwicklungs-Branch prüft der
+  Job `stable-pruefen` in `ci.yml` (nach den übrigen Jobs, auch bei Pushes nur mit Doku), ob
+  `kanal-stable` diese Version hat; fehlt sie bzw. ist dort eine ältere, baut `images.yml` genau
+  diesen Commit und veröffentlicht Images `:X.Y.Z`/`:stable`, Manifest und Signatur – nur, wenn
+  der Commit ein Vorfahre des Stands ist, `VERSION` dort passt, sein CI-Lauf grün war und die
+  Version nie älter als die veröffentlichte ist. Ohne Tag; der Weg über Tags `v<X.Y.Z>` bleibt.
+  Prüfung in `scripts/release_manifest.py freigabe`.
+- **Monotone Versionen** in `dev` und `latest`: `<VERSION>-dev.<n>.<sha7>` bzw.
+  `-latest.<n>.<sha7>` (n = Anzahl Commits); `vergleichen` nimmt im selben Kanal n.
+- **Nie älter, auch bei gleichem Kern:** `betrieb.sh aktualisieren` prüft bei gleichem
+  Versionskern die git-Abstammung (Checkout bzw. Bundle, nie origin): Vorfahre des laufenden
+  Stands → Exit 3 („zurück nur über zurueck“), getrennte Linien → Exit 3, Commit nicht da → wie
+  bisher.
+- **`stand` meldet die Herkunft:** `stand.herkunft` mit `branch` (bzw. `null`), `losgeloest`,
+  `kanal` (`dev`/`latest`/`stable`/`unbekannt`) und `aus` (`manifest`/`version`/`branch`/`tag`) –
+  das Cockpit wählt damit den Kanal ohne Zutun; rückwärts verträglich.
+- Abnahme: bei jeder Abnahme `deploy/release/stable` auf die abgenommene Version setzen
+  (`CLAUDE.md`).
+
+## 1.18.0 – 2026-11-17
+
+Alles privat (Anwender 2026-11-17: „alle auf Privat umstellen“; Cockpit ADR 0019): nur das
+Cockpit hat einen GitHub-Zugang. ADR 0060 und ADR 0062 je Nachtrag.
+
+- **Code als git-Bundle aus dem Cockpit:** `deploy/betrieb.sh aktualisieren … --bundle <datei>`
+  holt den Commit des Manifests aus dem Bundle statt von origin (`git bundle verify`, Commit muss
+  zum Bundle gehören, vor der Sicherung; defekt bzw. ohne Commit → abgelehnt, nichts geändert) –
+  origin wird nie kontaktiert. NetBox-Host: `aktualisieren --ref <ref> --bundle <datei> --commit
+  <sha>` (Branch lokal ohne Upstream, sonst losgelöst). Gemeinsam `deploy/lib-bundle.sh`. Ohne
+  Bundle wie bisher.
+- **Private Images:** den Pull-Zugang gibt der Agent als `DOCKER_CONFIG` mit; die Skripte setzen
+  und nennen ihn nie.
+- **`deploy/update.sh`** holt den Code vor der Sicherung; ohne origin, ohne Zugang (Repo privat)
+  bzw. nicht erreichbar bricht es mit klarer Meldung ab (Exit 2, nichts geändert) – weiter mit dem
+  Update aus dem Cockpit bzw. einem eigenen Lese-Zugang.
+- `stand`, `zurueck`, `neustart` brauchen kein origin (auch in einem Checkout aus dem Bundle).
+- Reihenfolge: zuerst jeden Host auf 1.18.0 und den Host-Agenten neu einrichten (Agent 1.3.0), dann
+  Repos und Pakete auf privat stellen.
+
+## 1.17.0 – 2026-11-17
+
+Rückmeldungen nach dem Einspielen von P3–P5 (Anwender 2026-11-17). ADR 0062, R31 neu.
+
+- **Update und Neustart für NetBox-Host und Keycloak aus dem Cockpit** („Update und Neustart soll
+  für alle eingesetzt werden können, hier in Plattform“):
+  - **`deploy/netbox-host/betrieb.sh`** (Host-Agent, Produkt `netbox-host`, Vertrag `betrieb/v1`):
+    `stand`, `sichern` (alle Instanzen), `aktualisieren --ref` (Sicherung aller Instanzen →
+    Checkout → `init` → neue NetBox je Instanz mit `update` → Health → sonst zurück mit Checkout
+    und Datenbanken), `zurueck` (einmal), `neustart` (Proxy und Instanzen); nie eine ältere NetBox
+    als eine Instanz, der Abgleich des Agenten ruht währenddessen.
+  - **NetBox-Version mit dem Werkzeug:** `deploy/netbox-host/netbox-version.conf`; in `host.conf`
+    nur noch zum Festhalten – die Zeilen `NETBOX_DOCKER_TAG`/`NETBOX_VERSION` aus der Vorlage bis
+    1.16.0 entfernen.
+  - **`deploy/keycloak/betrieb.sh`** (Produkt `keycloak`, Konfiguration
+    `/etc/automato/keycloak-betrieb.conf`): Version aus dem Container, Health `/health/ready`,
+    Sicherung `pg_dump` nur mit age verschlüsselt, `aktualisieren --version` (Image geprüft,
+    Version mit Digest in `docker-compose.override.yml`, sonst zurück mit Datenbank), `zurueck`,
+    `neustart`; das Ansible-Playbook legt Checkout, Konfiguration, age-Schlüssel und tägliche
+    Sicherung an (ersetzt den Klartext-Dump aus PROD-INSTALL §10).
+  - Gemeinsam: `deploy/lib-betrieb.sh` (Antwort, Sperre, Eingaben).
+- **Zurück zum Kunden-Portal, NetBox in einem neuen Tab** („Ein Shortcut wäre schön, wenn ich
+  einfach wieder zu dem Kundenportal gelangen könnte.“, „Netbox soll vom Kundenportal aus als neuer
+  Tab öffnen“):
+  - Startseite eines Kunden (`front.sh`): die Kachel NetBox öffnet in einem neuen Tab.
+  - Automato: unter `<kunde>-doc.<domain>` zeigt die Kopfzeile „Kundenportal“ (`portal_url` aus
+    `GET /api/auth/config`; Hauptinstanz nur für Kunden des Kunden-Portals mit Doku, eigene Instanz
+    aus `AUTOMATO_INSTANZ_KUNDE`/`_DOMAIN`), sonst kein Link.
+  - NetBox (`netbox-host.sh`): je Instanz der Banner „← Kundenportal“ (`BANNER_TOP`), beim
+    Anlegen und im vollen Abgleich nachgeführt; nach dem Update startet jede Instanz einmal neu.
+  - Magister: „Kundenportal“ in der Kopfzeile unter `<kunde>-um.<domain>` (eigenes Repo).
+
+## 1.16.0 – 2026-11-16
+
+Eigene Automato-Instanz je Kunde aus dem Cockpit (Anwender 2026-11-16: „Bitte weiter bis P5“,
+Cockpit-Roadmap P4 „Ausrollen“; Cockpit ADR 0016). ADR 0061, R30 neu.
+
+- **`deploy/betrieb.sh installieren`** (Host-Agent, frischer Checkout `<basisordner>/<instanz>`
+  auf dem Commit des Manifests): Signatur wie `aktualisieren`, `.env` mit neuen Geheimnissen auf
+  dem Host, Projekt `automato-<instanz>` ohne Ports (`deploy/instanz/compose.yml`), OIDC auf den
+  Realm des Kunden, Images per Digest, Health im Container, Einmal-Code der Kopplung nur als Hash
+  (`automato cockpit-kopplung --hinterlegen`); scheitert ein Schritt, räumt es selbst auf. In der
+  Instanz gehen `stand`, `sichern`, `aktualisieren`, `zurueck`, `neustart` wie gewohnt.
+- **`deploy/betrieb.sh entfernen --ja`:** nur in einer Instanz, nur nach gelungener Sicherung;
+  Container und Volumes weg, Ordner nach `<basisordner>/archiv/<instanz>-<zeit>`.
+- **Front-Proxy:** neues internes Netz `automato-front-instanzen` (Proxy der Hauptinstanz und je
+  Instanz ein gehärteter Anschluss `automato-<instanz>-web-ui`); mit `automato_instanz` in den
+  Freigaben geht `<kunde>-doc` hinter dem Tor an die Instanz, ohne laufenden Anschluss 503;
+  `front.sh sync` erzeugt neu, sobald Instanzen kommen oder gehen, `pruefen` zeigt sie.
+- **Freigaben und Inventar:** `automato_instanz` je Kunde (Migration `0088_automato_instanz`),
+  `ist.front.instanzen`.
+- Nur auf der VM des Front-Proxys (bis zum Proxmox-Adapter); Proxy einmal mit 1.16.0 starten.
+- **NetBox-Host schneller** (Rückmeldung 2026-11-16: „weshalb dies notwendig ist, ist zu
+  komplex“): der Agent fragt Automato jede Minute (`sync --takt`) und gleicht bei geänderter
+  Antwort sofort, sonst spätestens alle 5 Minuten voll ab; Units einer älteren Version führt der
+  Abgleich selbst nach.
+
+## 1.15.0 – 2026-11-16
+
+Update aus dem Cockpit mit fertigen, signierten Images (Anwender 2026-11-16: „Bitte weiter bis P5“,
+Cockpit-Roadmap P3 „Aktualisieren“; Cockpit ADR 0002 E4). ADR 0060, R29 neu.
+
+- **Images in GHCR je Kanal:** Job `images` (`images.yml`) baut nach grüner CI desselben Commits
+  die eigenen Dienste (aus `docker compose config`) nach
+  `ghcr.io/<owner>/automato-<dienst>:<version>` und `:<kanal>`; `stable` (Tag `v<X.Y.Z>`), `latest`
+  (`main`, `<VERSION>-latest.<sha7>`), `dev` (Entwicklungs-Branch, `<VERSION>-dev.<sha7>`), von Hand
+  wählbar; reine Doku-Stände bauen keine Images.
+- **Signiertes Manifest:** `manifest.json` (`vitabrevis-manifest/v1`, Images nur per Digest) und
+  `manifest.sig` (Ed25519, Secret `MANIFEST_SIGNING_KEY`) im Release `kanal-<kanal>` (bei `stable`
+  auch `v<X.Y.Z>`); ohne Secret ohne Signatur mit Warnung. `scripts/release_manifest.py`.
+- **`deploy/betrieb.sh`** für den Host-Agenten des Cockpits (Vertrag `betrieb/v1`): `stand`,
+  `sichern`, `aktualisieren`, `zurueck`, `neustart`; eine Zeile JSON, Exit 0–4, Sperre je Checkout.
+  `aktualisieren` prüft die Signatur (`/etc/automato/herausgeber.pub` bzw. Schlüssel des bisherigen
+  Checkouts), lehnt ältere Versionen ab, sichert, holt Commit und Images per Digest (kein Bau),
+  prüft `/health` bis 5 Minuten und fällt sonst selbst zurück (Code, Images, Datenbank).
+- **Gepinnte Images** in `.automato-images.env` (`AUTOMATO_IMAGE_<DIENST>` in
+  `docker-compose.yml`, sonst der lokal gebaute Stand); `docker compose up -d` von Hand nimmt
+  dieselben.
+- **`deploy/update.sh`** baut weiter aus git und entfernt die gepinnten Images; `--rollback` stellt
+  auch Images wieder her; gemeinsame Sperre und Stand (`deploy/lib-update.sh`).
+- Einrichten einmal: `deploy/release/README.md`.
+
+## 1.14.1 – 2026-11-16
+
+Korrektur aus dem Test des Abbaus (Anwender 2026-11-16: „Löschauftrag: test-a (abgelehnt) …
+nicht_vom_cockpit“):
+
+- **Verwaiste NetBox-Instanzen** (auf dem NetBox-Host, ohne Kunden in Automato) entfernt Automato
+  jetzt auf Auftrag des Cockpits (Seite Aufräumen → Abbau planen): nur der Teil NetBox, wie immer
+  mit Sicherung durch den Agenten des NetBox-Hosts und je Auftrag einmal; Teile `automato_kunde`
+  und `tor` für solche Namen weiter abgelehnt. Ohne Meldung des NetBox-Hosts bzw. für Kunden aus
+  der Oberfläche unverändert nie (ADR 0059 Nachtrag 1.14.1).
+- `netbox-host.sh sync`: der Hinweis zu Instanzen ohne Freigabe nennt die Seite Aufräumen.
+
+## 1.14.0 – 2026-11-16
+
+Kunden, Portale, Benutzer und Rollen nur aus dem Cockpit (Anwender 2026-11-16: „die Rollen und User
+… sollen nur noch im Cockpit sein. Die Kunden sollen dies nicht machen können“, „nicht ein Mix wie
+heute“). ADR 0058, R26 ergänzt.
+
+- **Kunden-Portal nur lesbar mit verbundenem Cockpit** (gekoppelt bzw. Token): Anlegen, Ändern,
+  Entfernen `409`, Oberfläche „Ansehen“, Kunden aus der Oberfläche „im Cockpit übernehmen“;
+  `front.sh kunde|link|entfernen` nur noch mit `--trotzdem` (Warnung); ohne Cockpit wie bisher.
+- **Kunde in Automato aus dem Cockpit:** `zuordnung.kunde_anlegen` legt ihn im Mandanten an
+  (idempotent, Audit `customer.created`, Name belegt → „<Name> (<Kurzname>)“), Inventar
+  `zuordnung.kunde_angelegt`.
+- **Benutzer und Rollen aus dem Cockpit:** `benutzer` je Kunde (Keycloak-Benutzername → Rolle);
+  dann haben nur diese Benutzer des Realms Rechte, alle anderen sehen „Für Sie ist in Automato
+  keine Rolle vergeben“; Inventar `benutzer`.
+- **Kunden vergeben keine Rechte mehr bei Kunden aus dem Cockpit:** kein Zuordnen durch den
+  Kunden-Admin (`409`, Seite ausgeblendet), seine früheren Zuordnungen wirken nicht, keine Rolle
+  aus dem Token des Realms; globaler Admin bleibt Notzugang.
+- Migration `0086_cockpit_verwaltung`.
+
+Abbau aus dem Cockpit (Anwender 2026-11-16 zum Abbau mit Frist: „Einstellbar, aber sonst ok, Dann
+sollten wir auch noch die Instanzen auslesen, damit wir sehen können, ob wir altlasten haben“).
+ADR 0059, R28 neu.
+
+- **Sperre während der Frist:** `gesperrt` je Kunde sperrt alle Adressen („Zugang gesperrt“),
+  Daten bleiben, das Kunden-Portal markiert ihn.
+- **Löschauftrag nach der Frist:** `entfernen` nur für Kunden, die das Cockpit selbst entfernt hat
+  – die NetBox löscht der Agent des NetBox-Hosts (immer mit Sicherung, je Auftrag einmal), das
+  Tor-Geheimnis `front.sh sync` (nur ohne Kunden, nie der Realm von Automato), den Kunden in
+  Automato nur ohne Daten. Gemeint ist der Kunde, den `zuordnung.kunde_anlegen` für diesen
+  Portal-Kunden angelegt hat (auch in einem früheren Mandanten); mit Daten bleibt er (`hat_daten`).
+- **Ist-Stand der Instanzen im Inventar** (`ist`): Front-Proxy, NetBox-Host über
+  `PUT /netbox-host/stand`, Kunden mit `hat_daten` (und `von_cockpit` für die angelegten), Stand
+  der Aufträge; verwaiste Tor-Dateien nur gemeldet.
+- **Werkzeug abwählen entfernt auch die Instanz** (Anwender 2026-11-16: „dass das Cockpit alles
+  orchestriert, also die Tools zufügt aber auch entfernt“; ADR 0059 Nachtrag): `entfernen` gilt
+  jetzt auch für Kunden, die in `kunden[]` bleiben – nur für Teile, deren Werkzeug aus ist (NetBox
+  ohne `nb`: der Agent des NetBox-Hosts löscht sie mit Sicherung; Automato ohne `doc`: der
+  angelegte Kunde, nur ohne Daten; Tor des früheren Realms nach einem Wechsel). Ein noch gewähltes
+  Werkzeug lehnt Automato ab (`aktiv`, je Teil), vor der Ausführung wieder gewählt endet der Teil
+  (`aufgehoben`, die Instanz bleibt); Stand je Teil in `ist.entfernen`. Der Grund `in_kunden`
+  entfällt.
+- Migration `0087` (nach `0086_cockpit_verwaltung`).
+
+## 1.13.0 – 2026-11-16
+
+Client-Secret des Anmelde-Tors aus dem Cockpit (Anwender 2026-11-16: „Bitte auch einbauen, dass
+das Geheimnis auch erneuert werden kann … dass alles korrigiert werden kann“; auf den Vorschlag,
+das Geheimnis versiegelt an die VM zu liefern: „go der Vorschlag“). ADR 0055, R25.
+
+- **Empfangsschlüssel der VM:** `front.sh` legt mit dem Anmelde-Tor einen RSA-Schlüssel (3072 Bit,
+  privat nur root) unter `deploy/front/tor/` an; `front.sh tor-empfang` zeigt Kennung (SHA-256 über
+  den öffentlichen Schlüssel) und je Realm „von Hand“ bzw. „aus dem Cockpit“, `tor-empfang neu`
+  ersetzt ihn. Das Inventar (`GET /inventory`) nennt ihn als `front.tor_empfang` (nur ein
+  öffentlicher RSA-Schlüssel mit passender Kennung) und je Realm den Stand des Secrets
+  (`front.tor_realms`: bereit, ohne Secret, aus dem Cockpit).
+- **Freigaben mit versiegeltem Secret:** `PUT /freigaben` nimmt optional `tor_geheimnisse` (Realm,
+  Kennung, Chiffrat) für Realms von Kunden derselben Anfrage an – Form und Realm alles oder nichts
+  (`422`), eine veraltete Kennung lehnt nur diesen Eintrag ab (Antwort `tor_geheimnisse.abgelehnt`).
+  Automato hält nur das Chiffrat (Datenbank, `soll.json`); Audit `portal.tor_secret.updated` nur
+  bei neuem Chiffrat, mit Realm und Kennung.
+- **`front.sh sync` öffnet das Siegel** (openssl, nur root): prüft Realm eines Kunden aus dem
+  Cockpit, Client `automato-front` und Form, schreibt `tor/<realm>.env` (600) nur bei neuem Secret,
+  behält das Cookie-Secret und startet nur den Container dieses Realms neu. Das Secret erscheint
+  nie in Ausgabe, Log oder `status.json` (auch nicht mit `bash -x`); Verworfenes steht mit Grund
+  in `status.json`, `front.sh pruefen` und im Kunden-Portal.
+- **Von Hand bleibt:** `front.sh tor <realm>` gilt, bis das Cockpit ein anderes Secret schickt;
+  es startet jetzt ausdrücklich den Container des Realms neu. `front.sh erzeugen` führt den Stand
+  des Tors in `status.json` nach (auch nach Handgriffen).
+
+Zuordnung in Automato aus dem Cockpit (Fund aus dem Test 2026-11-16: neuer Kunde aus dem Cockpit
+meldet sich an, Automato zeigt „Mandanten laden: Keine Berechtigung (insufficient role)“; zum
+Vorschlag, Mandant und Kunden im Cockpit zu wählen: „Ja gerne“). ADR 0054 Nachtrag, R26.
+
+- **Klare Meldung statt „insufficient role“:** Benutzer eines Kunden-Realms, dessen Kunde im
+  Kunden-Portal noch keinen Mandanten bzw. keine Kunden hat, sehen nach der Anmeldung eine eigene
+  Seite („Für Kunde A (kunde-a) ist in Automato noch kein Mandant zugeordnet …“); `/auth/me`
+  meldet `zuordnung_fehlt`, alle übrigen Endpunkte antworten 403 mit derselben Meldung. Rechte
+  gibt es weiterhin keine. Das Kunden-Portal markiert solche Kunden aus dem Cockpit („noch kein
+  Mandant – Benutzer haben keine Rechte“).
+- **Mandant, Kunden und Rolle aus dem Cockpit:** `PUT /freigaben` nimmt je Kunde optional
+  `zuordnung` (`mandant`, `kunden`, `rolle`) an – geprüft wie in der Oberfläche (sonst 422, alles
+  oder nichts), danach im Kunden-Portal nur lesbar („aus dem Cockpit“, 409 beim Ändern). Ohne
+  `zuordnung` bleibt der Stand und ist in Automato wieder änderbar.
+- **Inventar:** `automato.mandanten` (Mandanten mit ihren Kunden, nur Id und Name),
+  `automato.rollen` und je Kunde `automato_zugeordnet` und `zuordnung` – die Auswahl und der
+  Stand für das Cockpit.
+- **Gelöschte Kunden zählen nicht** (Fund aus der Kette mit dem Cockpit,
+  `api/tests/test_kette_automato.py` dort): ein in Automato gelöschter Kunde bleibt in der
+  Zuordnung stehen (das Cockpit meldet die Abweichung), gibt aber keine Rechte mehr – das Inventar
+  nennt in `zuordnung.kunden` nur bestehende Kunden und `automato_zugeordnet` erst mit einem davon;
+  ohne verbliebenen Kunden bekommen Benutzer des Realms die Meldung „noch kein Mandant zugeordnet“
+  statt eines leeren Automato, das Kunden-Portal markiert den Kunden.
+
+Kacheln der Startseite aus dem Cockpit (Anwender 2026-11-16: „alles solche Dinge in das globale
+Cockpit holen“, Cockpit ADR 0011 Stufe B). ADR 0054 zweiter Nachtrag.
+
+- **Freigaben mit Kacheln:** `PUT /freigaben` nimmt je Kunde optional `kacheln` (`titel`,
+  `adresse`, `text`) an. Gesetzt (auch leer) ersetzt Automato die weiteren Kacheln des Kunden in
+  der gesendeten Reihenfolge; im Kunden-Portal sind sie dann nur lesbar („Kacheln aus dem
+  Cockpit“, 409 beim Ändern über die API). Ohne `kacheln` bleibt der letzte Stand und ist in
+  Automato wieder änderbar. Audit nur mit der Anzahl, nie mit Titeln oder Adressen
+  (`portal_customer.links_source`, Migration 0085).
+- **Eine Prüfung für Oberfläche und Cockpit:** höchstens 20 Kacheln, Titel 1–60 Zeichen, Adresse
+  mit `https://` (höchstens 500 Zeichen, ohne Leerraum), Text höchstens 200 Zeichen, nirgends
+  Steuerzeichen – ungültig → 422 (alles oder nichts). In der Oberfläche vorher Titel bis 80
+  Zeichen.
+- **Inventar:** je Kunde `kacheln` und `kacheln_von` (`cockpit` | `automato`) – das Cockpit
+  übernimmt bestehende Kacheln, ohne sie zu verlieren.
+
+NetBox ohne Handgriffe und Kopplung mit dem Cockpit (Anwender 2026-11-16: „alles solche Dinge in das
+globale Cockpit holen“, Cockpit ADR 0011 Stufen B und C; „go für die nächsten 4-5 Punkte“).
+ADR 0056, 0057, R27.
+
+- **NetBox ohne Handgriffe** (ADR 0056): der Agent des NetBox-Hosts (`netbox-host.sh sync`) macht
+  eine NetBox fertig. **Anmeldung über das Tor:** bei `SSO=an` richtet er sie bei jeder Instanz
+  ein, der sie fehlt oder deren Einstellungen veraltet sind, und startet nur dann neu (Stand je
+  Instanz `sso-stand`; nie, solange der Proxy gefälschte Anmelde-Kopfzeilen nicht entfernt).
+  **Zugang für Automato:** `GET /netbox-host` nennt je Kunde `zugang` (`fehlt`, `vorhanden`,
+  `kein_mandant`, `andere_adresse`, `keine_adresse`); nur bei `fehlt` legt der Agent
+  `automato-collector` und `automato-sync` mit neuen Tokens an und liefert sie mit
+  `PUT /netbox-host/zugang` (Token des NetBox-Hosts). Automato speichert sie verschlüsselt wie von
+  Hand am Quellsystem NetBox beim Mandanten des Portal-Kunden (`https://<kunde>-nb.<domain>`, neu
+  „NetBox“ bzw. ein vorhandenes ohne Tokens) – vorhandene Zugangsdaten bleiben immer, ohne
+  Mandant entstehen keine Tokens. Audit `source.netbox_host_access` nur mit Kunde, Quellsystem und
+  Herkunft; Tokens nie in Befehlszeile, Datei, Ausgabe, Antwort oder Log (auch `token` übergibt
+  sie jetzt über die Umgebung). `pruefen` zeigt Anmeldung eingerichtet, Zugang übergeben, ohne
+  Mandant, von Hand klären. Erneuern: in Automato „Alle hinterlegten Tokens entfernen“.
+  `netbox-host.sh token` bleibt Notweg; Kunden-Portal → Einrichtung nennt den Agenten.
+- **Kopplung mit dem Cockpit über einen Einmal-Code** (ADR 0057): im Kunden-Portal erzeugt die
+  Karte „Cockpit“ (nur Admin) einen Einmal-Code (`XXXX-XXXX-XXXX`, 15 Minuten, einmal, höchstens
+  5 Fehlversuche, ein offener Code), nur einmal angezeigt und nur als Hash gespeichert. Das
+  Cockpit löst ihn mit `POST /api/kopplung` ein und bekommt einmal ein neues Token (nur als Hash,
+  Tabelle `coupling`, Migration `0084`). Jeder Fehlschlag ergibt dieselbe Antwort, höchstens 10
+  Versuche je Minute (`429`). Inventar und Freigaben nehmen das gekoppelte Token oder wie bisher
+  `AUTOMATO_COCKPIT_TOKEN` (künftig leer lassen). „Entkoppeln“ macht es ungültig, ein neues
+  Koppeln ersetzt es; die Karte zeigt, mit welchem Cockpit gekoppelt ist und wann es zuletzt kam.
+  Ohne Oberfläche: `sudo deploy/aufbau.sh cockpit-kopplung [status|verwerfen|entkoppeln]`. Im
+  Audit `cockpit.kopplung.*` ohne Code und Token. Vertrag fürs Cockpit: `docs/vertraege/kopplung.md`
+  im Cockpit (v1).
+
+- **Realm-Vorlage:** `automato-admin` hat Vor- und Nachname („Automato Admin“) – Keycloak 26
+  fragt beim ersten Anmelden nicht mehr danach (Fund aus dem Test gegen echten Keycloak); die
+  Beschreibung von `automato-front` nennt die versiegelte Lieferung aus dem Cockpit (ADR 0055).
+
+## 1.12.2 – 2026-11-14
+
+Korrektur aus dem Test des Anmelde-Tors (Anwender 2026-11-14: „Wenn ich mich im Portal ein Logout
+mache, bleibe ich auf der Seite … Will ich weiter klicken muss ich mich zwar neu einloggen, aber es
+ist nicht schön“).
+
+- **Abmelden zeigt die Seite „Abgemeldet“:** „Abmelden“ auf der Startseite, im Portal und in NetBox
+  (`/logout/`) löscht das Cookie des Tors, das Tor beendet die Sitzung in Keycloak selbst
+  (`--backend-logout-url`), danach zeigt `https://<kunde>.<domain>/abgemeldet` bzw.
+  `https://start.<intern>/abgemeldet` „Abgemeldet“ mit „Wieder anmelden“. Die Seite liegt vor dem
+  Tor (nach der Sperre nach Absender und dem Zugriff je Kunde). Der Umweg des Browsers über die
+  Abmeldeseite von Keycloak aus 1.12.1 entfällt, und mit ihm Keycloak als erlaubtes Ziel des Tors.
+  Geprüft mit Caddy, dem oauth2-proxy des Tors und Keycloak 26: „Wieder anmelden“ verlangt die
+  Anmeldung neu.
+
+## 1.12.1 – 2026-11-13
+
+Korrekturen aus dem Test des Anmelde-Tors (Anwender 2026-11-13).
+
+- **Abmelden beendet die Keycloak-Sitzung wirklich:** „Abmelden“ auf der Startseite, im Portal und
+  in NetBox (`/logout/`) schickt den Browser nach dem Löschen des Cookies des Tors über die
+  Abmeldeseite von Keycloak (`client_id=automato-front`, `post_logout_redirect_uri` = Startseite
+  bzw. Portal) zurück. Bisher endete nur die Sitzung des Tors; der nächste Aufruf meldete still
+  wieder an („Abmelde-Button geht nicht“). Das Tor erlaubt Keycloak als Ziel nach dem Abmelden.
+- **`front.sh tor`** nennt je Realm auch die *Valid post logout redirect URIs* von
+  `automato-front` (Startseiten der Kunden, Portal); das Cockpit trägt sie selbst ein (ADR 0006).
+
+## 1.12.0 – 2026-11-13
+
+Magister unter `<kunde>-um` (Anwender 2026-11-13: „die Magister Plattformen sollen alle umbenannt
+werden nach kunde-um … das Login soll erst auf Keycloak geändert werden, wenn sie mit einem Kunden
+verknüpft wurden“).
+
+- **`<kunde>-um` immer zu Magister:** wie die übrigen Namen mit Name und SNI des Aufrufs (Magister
+  findet daran den Mandanten), Ziel `AUTOMATO_FRONT_MAGISTER` bzw. – leer – das der übrigen Namen
+  (`AUTOMATO_FRONT_UEBRIGE`), CA `AUTOMATO_FRONT_MAGISTER_CA` (neu) bzw. die der übrigen Namen.
+  Bisher ging `-um` nur mit `AUTOMATO_FRONT_MAGISTER` und ohne Name und SNI an Magister; im Dev
+  fehlte die Kachel deshalb trotz gewähltem Werkzeug.
+- **Kachel „Magister“** auf der Startseite (statt „Benutzerverwaltung“), in `adressen`, `liste`, der
+  Topologie und den Callbacks des Anmelde-Tors, sobald es ein Ziel gibt.
+- **CI:** der Test der zusätzlichen CAs (1.10.0) baut seine Test-CA jetzt mit Schlüsselverwendung
+  und Kennungen – Python ab 3.13 prüft Zertifikate streng (`VERIFY_X509_STRICT`), die CI (3.14)
+  lehnte die alte Test-CA ab. Eine echte interne CA braucht dieselben Erweiterungen.
+- **Anmeldung:** ein Mandant, der im Kundenregister mit einem Kunden verknüpft ist (Werkzeug
+  Magister), liegt unter `<kunde>-um` hinter dem Anmelde-Tor; ein nicht verknüpfter erreicht man
+  weiter als übrigen Namen ohne Tor, mit der Anmeldung von Magister.
+
+## 1.11.0 – 2026-11-13
+
+Freigaben aus dem Cockpit (Anwender 2026-11-13: „starte mal P2“ nach dem Vorschlag „Ein Ort für
+Kunden: im Cockpit Kunden anlegen und Werkzeuge wählen; Automato übernimmt“). ADR 0054.
+
+- **`PUT /freigaben`** (über die Oberfläche `/api/freigaben`): das Kundenregister des Cockpits
+  schickt den ganzen Stand seiner Kunden (Kurzname, Name, Werkzeuge, Zugriff, Netze, Realm), mit
+  demselben Token wie das Inventar (`AUTOMATO_COCKPIT_TOKEN`; ohne Token 404, falsch 401).
+  Automato führt sein Kunden-Portal nach: idempotent (dieselbe Anfrage zweimal = keine Änderung,
+  kein Audit, `soll.json` bleibt), alles oder nichts (`422` mit `fehler[]`), vorhandene Kunden
+  aus der Oberfläche werden übernommen (Mandant, Kunden, Rolle und Kacheln bleiben), entfernt
+  werden nur Kunden aus dem Cockpit. Audit `portal.customer.*` mit Akteur `cockpit` und
+  `quelle: cockpit`; die Antwort nennt angelegt/geändert/übernommen/entfernt und ob der
+  Front-Proxy den Stand schon übernommen hat. Token-Prüfung gemeinsam in `auth/cockpit.py`.
+- **Kunden aus dem Cockpit im Kunden-Portal:** Kennzeichen „aus dem Cockpit“; Kurzname, Name,
+  Werkzeuge, Zugriff und Realm nur lesbar, Entfernen nur im Cockpit (`409`). Hier pflegt man nur
+  Mandant, Kunden, Standard-Rolle und Kacheln. Migration `0081`: `portal_customer.source`
+  (`oberflaeche` | `cockpit`) und `nb`.
+- **NetBox als Werkzeug:** im Kunden-Portal „NetBox (-nb)“ (Vorgabe an), im Soll-Stand `nb`, in
+  `kunden/<k>.conf` `NB=ja|nein` (fehlt der Wert: ja), `front.sh kunde … --ohne-nb`. Ohne NetBox
+  keine `-nb`-Adresse, keine Kachel, keine Prüfung in `pruefen`/`adressen` und kein Callback des
+  Anmelde-Tors. Bestehende Kunden behalten ihre NetBox.
+- **Inventar mit Herkunft:** `front.sh erzeugen` schreibt je Kunde auch Herkunft (`quelle`:
+  `oberflaeche`, `cockpit`, `befehl`), gewählte Werkzeuge, Zugriff, Netze und Realm nach
+  `topologie.json`; `GET /inventory` gibt sie geprüft heraus (unbekannte Werte null bzw. leer).
+  Vertrag bleibt v1. `front.sh sync` übernimmt `nb` und `quelle` aus `soll.json`; Kunden mit
+  `QUELLE=cockpit` gelten wie Kunden aus der Oberfläche (nicht per Befehl änderbar, `liste` zeigt
+  „Cockpit“).
+- **NetBox je Kunde aus Automato** (Cockpit P2, Vorschlag „die NetBox je Kunde legt der Host-Agent
+  dort an, statt `netbox-host.sh neu` von Hand“): `netbox-host.sh agent <adresse>` richtet auf dem
+  NetBox-Host einen systemd-Timer ein, der alle 5 Minuten `netbox-host.sh sync` aufruft. Der holt
+  `GET /api/netbox-host` (Kunden mit NetBox, nur Kurzname und Name, dazu die Domain) mit einem
+  eigenen Token (`deploy/aufbau.sh netbox-host-token`, `AUTOMATO_NETBOX_HOST_TOKEN` – nicht das
+  des Cockpits) und legt fehlende Instanzen mit `neu` an; das Admin-Passwort liegt dann nur für
+  root in `kunden/<k>/admin-passwort`. Nie selbst entfernt: eine NetBox ohne Freigabe meldet
+  `pruefen`. Token in `automato.token` (nur root), an curl als Kopfzeile aus einer Datei; eine
+  andere Domain als in `host.conf` gibt eine Warnung. Anleitung `docs/INSTALLATION-NETBOX-HOST.md`
+  4a.
+- **Reservierte Kurznamen** im Kunden-Portal wie in `front.sh`: auch `konsole` und `connect`; auf
+  dem NetBox-Host ebenso.
+- **Eine Meldung statt zwei:** fehlt die NetBox eines Kunden auf dem NetBox-Host, prüft
+  `front.sh pruefen` den Weg aus dem Orchestrator nicht mehr zusätzlich (dort erschien dieselbe
+  Meldung „keine NetBox für <kunde>“ ein zweites Mal).
+- **Audit des Kunden-Portals mit Inhalt:** die Aktionen `portal.customer.*` hatten keinen Eintrag
+  in der Allowlist (nur `_dropped`); jetzt bleiben die geänderten Felder ohne die Kacheln.
+
+## 1.10.0 – 2026-11-13
+
+Ein Eingang für alles (Anwender 2026-11-13: „Die Magister Webseiten sollten doch über den Front
+Proxy reinkommen. Ich schlage vor, dass wir das System nun erweitern, damit wir einen schlauen
+Stand haben und dann umstellen und testen“; gewählt: übrige Namen an Magister, eine Prüfung für
+alles, Cockpit erfasst selbst). ADR 0053.
+
+- **Übrige Namen an die Plattform dahinter** (`deploy/front/front.sh`): mit
+  `AUTOMATO_FRONT_UEBRIGE=<ip>[:port]` (CA in `AUTOMATO_FRONT_UEBRIGE_CA`) leitet der Auffang
+  `*.<domain>` jeden Namen, den der Front-Proxy nicht selbst bedient, an z. B. Magister weiter
+  statt „Unbekannte Adresse“. Name und SNI bleiben, die Sperre nach Absender gilt, Kopfzeilen der
+  Anmeldung werden entfernt, die Antwort behält die Kopfzeilen der Plattform. Der Wildcard der
+  Domain zeigt dann auf den Front-Proxy; Magister trägt ihn als `PLATTFORM_WAF`.
+- **Prüfung:** `front.sh pruefen` meldet das Ziel (erreichbar, Zertifikat vertraut) und nimmt den
+  Wildcard auf diese VM als gewollt, wenn übrige Namen weitergehen.
+- **Inventar fürs Cockpit:** `front.sh erzeugen` schreibt `topologie.json` (VM, Oberfläche,
+  Portal, Kunden mit Adressen, NetBox-Host, Ziele) in den Ordner des Host-Agenten; der Orchestrator
+  gibt sie unter `GET /inventory` (über die Oberfläche `/api/inventory`) mit Version, Umgebung und
+  Keycloak-Issuer heraus – nur mit eigenem Token `AUTOMATO_COCKPIT_TOKEN` (Bearer), ohne Token
+  404. Neu: `deploy/aufbau.sh cockpit-token` (neues Token in `.env`, Orchestrator neu, einmal
+  angezeigt). Das Cockpit übernimmt daraus Hosts und Instanzen (vitabrevis-cockpit ADR 0004).
+- **Automato an die NetBox seiner Kunden über den Front-Proxy** (Anwender 2026-11-13: „das
+  Konstrukt bitte weiter bauen“): ohne WAF kommen Orchestrator und Worker über den Hairpin mit
+  einer Adresse ihrer Docker-Netze am Front-Proxy an und wurden bisher wie Fremde gesperrt. Jetzt
+  lässt `-nb` diese Netze (von `front.sh erzeugen` aus den laufenden Containern ermittelt) für die
+  API mit Token an die NetBox durch – vor der Sperre und dem Zugriff je Kunde, ohne Kopfzeilen der
+  Anmeldung. `front.sh pruefen` geht je Kunde den Weg des NetBox-Syncs aus dem Orchestrator bis
+  zur NetBox (Zertifikat, Weg, gesperrt).
+- **Portal unter der Domain der Kunden** (Anwender 2026-11-13: „start.dev-start-int… sollte
+  eigentlich start.dev-mgmt.int… sein“): `AUTOMATO_FRONT_DOMAIN_INT` darf gleich
+  `AUTOMATO_FRONT_DOMAIN` sein – dann nur das Portal `start.<domain>`, keine „Verwaltung“ auf der
+  Domain selbst und kein zweiter Auffang-Eintrag; `konsole` und `connect` als Kurznamen reserviert.
+- **Namen, die nicht über den Front-Proxy gehen:** zeigt der Wildcard auf diese VM und gehen die
+  übrigen Namen an Magister, meldet `pruefen`, wenn `konsole.<domain>` (Port 4444) bzw.
+  `connect.<domain>` (Connector, Port 46200) ebenfalls hier landen – sie brauchen einen eigenen
+  A-Eintrag auf die Magister-VM (Fund aus dem Test: `connect` zeigte auf die Automato-VM).
+- **CA-Dateien geprüft** (Fund aus dem Test: eine abgebrochene Eingabe hinterliess eine leere
+  `magister-root.pem`): `front.sh erzeugen` ändert nichts, solange eine CA aus
+  `AUTOMATO_FRONT_NETBOX_CA`, `_UEBRIGE_CA` bzw. (mit Tor) `_KEYCLOAK_CA` fehlt, leer oder kein
+  PEM-Zertifikat ist; `pruefen` nennt „fehlt oder ist leer“. Die Adressen der VM ohne Docker-Brücken.
+- **NetBox, die es nicht gibt, als Fehler** (Fund aus dem Test: Kunde im Portal unter einem anderen
+  Kurznamen als auf dem NetBox-Host – `pruefen` meldete „erreichbar“, die Seite blieb leer): Caddy
+  beantwortete einen Namen ohne Eintrag mit einer leeren 200. Der NetBox-Host hat jetzt einen
+  Auffang `_unbekannt.caddy` (404 „Keine NetBox für diesen Namen“, von `init` und `sso`
+  geschrieben; `init` lädt einen laufenden Proxy jetzt auch neu). `front.sh pruefen` fragt je
+  Kunde `/api/status/` mit absichtlich ungültigem Token wie das Cockpit – nur NetBox selbst
+  antwortet mit JSON-403 – und nennt sonst „keine NetBox für <kunde> – dort: `netbox-host.sh neu
+  <kunde>`“, auch auf dem Weg aus dem Orchestrator.
+- **Zusätzliche CAs ohne Override-Datei:** jede CA in `deploy/trust/` (PEM oder DER) vertrauen
+  Orchestrator und zentraler Worker zusätzlich (`sot_gateway/trust.py`: Bündel in `/tmp`,
+  `SSL_CERT_FILE`, auch für die CLI); ohne Dateien ändert sich nichts.
+- `.env.example` (Abschnitte Front-Proxy und „Inventar fürs Cockpit“), Anleitung
+  `docs/INSTALLATION-FRONT.md` (Abschnitte 5a, 8 und 10), `deploy/trust/README.md`, `docs/STAND.md`.
+
+## 1.9.2 – 2026-11-13
+
+Dev-Aufbau (Anwender 2026-11-13: Kundenseiten von Magister zeigen „Unbekannte Adresse“, „Bitte den
+Front Proxy mit einem Script prüfen, dass alle Adressen da sind und auch einen Check einbinden, dass
+er alles erreicht“).
+
+- **`front.sh pruefen` prüft die Adressen** (`deploy/front/front.sh`, neuer Abschnitt): jede
+  Adresse, die der Proxy bedient – Oberfläche, Portal, je Kunde Startseite, `-nb`, `-doc`, `-um`,
+  `-cmdb` –, ob sie im erzeugten Proxy steht, ob das Zertifikat sie abdeckt und ob sie im DNS auf
+  diese VM zeigt (mit WAF: Hinweis auf WAF bzw. VIP).
+- **Wildcard der Domain:** zeigt `*.<domain>` auf diese VM, meldet `pruefen` eine Warnung – jeder
+  andere Name der Domain landet dann hier und bekommt „Unbekannte Adresse“. Genau das traf die
+  Kundenseiten von Magister im Dev, die unter derselben Domain liegen.
+- **Ziele vom Proxy aus:** der Proxy-Container fragt Automato (`web-ui`, `/api/health`), Magister
+  (`-um`) und die CMDB ab; Serverfehler, kein Weg und ein Proxy, in dem `docker exec` nicht mehr
+  geht, je mit eigener Meldung. NetBox und Keycloak wie bisher unter „Kunden“ bzw. „Anmelde-Tor“.
+- **`front.sh adressen`:** nur die Adressen, ohne die übrigen Prüfungen.
+- `deploy/env.sh` liest `AUTOMATO_UI_HOST` und `AUTOMATO_UI_TLS` aus `.env` (Oberfläche als
+  Adresse des Proxys; `aufbau.sh tls-intern` nimmt den Namen damit auch ohne Umgebungsvariable).
+- Anleitung `docs/INSTALLATION-FRONT.md` (Abschnitt 7).
+
+## 1.9.1 – 2026-11-12
+
+Dev-Aufbau mit zwei VMs (Anwender 2026-11-12: „Netbox muss entweder auf dem Magister VM oder auf
+die Automato VM, keine dritte VM“). Auf beiden VMs belegt schon ein Dienst Port 443.
+
+- **NetBox-Host mit eigenem Port** (`deploy/netbox-host/netbox-host.sh`): `PORT` in `host.conf`
+  (Vorgabe 443). Der Proxy veröffentlicht ihn auf dem Host, im Container bleibt 443; `pruefen` fragt
+  den Proxy auf diesem Port. Der Front-Proxy kannte `AUTOMATO_FRONT_NETBOX=<ip>:<port>` schon.
+- **Zertifikat des NetBox-Hosts geprüft** (Fund aus der Einrichtung: in `wildcard.crt` stand nur das
+  Zertifikat der CA, Caddy startete endlos neu, `pruefen` zeigte nur das Ablaufdatum der CA):
+  - `init` und `pruefen` vergleichen Zertifikat und Schlüssel und prüfen den Namen `*.<DOMAIN>`;
+  - passt es nicht, startet `init` den Proxy nicht und nennt, was in der Datei steht;
+  - `pruefen` meldet einen Proxy, der ständig neu startet, als Fehler statt „läuft“.
+  - `init` holt einen Proxy aus der Neustart-Schleife (Neustart statt Warten auf Docker).
+- Anleitung `docs/INSTALLATION-NETBOX-HOST.md` (Abschnitt 3, `PORT`), `host.conf.example`.
+
 ## 1.9.0 – 2026-11-11
 
 Rückmeldung zum Test von 1.8.x (Anwender 2026-11-11). Ein Teil ging zuerst ohne die Collector-

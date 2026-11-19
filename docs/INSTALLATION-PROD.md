@@ -750,6 +750,9 @@ services:
 EOF
 ```
 
+**Seit 1.10.0 einfacher:** das Stammzertifikat nach `deploy/trust/` legen (`deploy/trust/README.md`) –
+Orchestrator und Worker vertrauen ihm dann zusätzlich, ohne Override-Datei.
+
 TLS zwischen den Containern (interne CA, 6.4) bleibt davon unberührt. Nach jeder Änderung an den
 CAs: `sudo update-ca-certificates` und `sudo docker compose up -d --force-recreate orchestrator
 collector` – die eingebundene Datei liest ein laufender Container sonst nicht neu.
@@ -926,6 +929,19 @@ VM mit Tang/vTPM bzw. der Passphrase.
   sichert vorher, baut, startet, prüft `/health`;
   bei Problemen `sudo deploy/update.sh --rollback` (BETRIEB, Abschnitt 4b). Mit
   `AUTOMATO_DOCKER_UPDATE=1` kommt Docker dabei mit.
+- **Update aus dem Cockpit** (1.15.0, ADR 0060): öffentlichen Herausgeber-Schlüssel nach
+  `/etc/automato/herausgeber.pub` legen und die GHCR-Pakete öffentlich stellen (bzw. `docker
+  login ghcr.io`) – Anleitung `deploy/release/README.md`. Dann aktualisiert der Host-Agent des
+  Cockpits über `deploy/betrieb.sh` mit fertigen, signierten Images; `deploy/update.sh` bleibt der
+  Bau von Hand (BETRIEB, Abschnitt 4b).
+- **Eigene Automato-Instanzen je Kunde** (1.16.0, ADR 0061): nur auf der VM des Front-Proxys. Der
+  Host-Agent des Cockpits braucht dafür beim Einrichten die Vorlage `automato-instanz` mit einem
+  Basisordner (z. B. `sudo install -d -m 750 /opt/automato/instanzen`) und die git-Adresse des
+  Repos; der Proxy muss mit ≥ 1.16.0 laufen (`docker compose up -d proxy` legt das Netz
+  `automato-front-instanzen` an), Docker Compose ≥ 2.24. Die Instanzen nutzen die age-Identität
+  des Hosts (`/root/automato-backup.agekey`, wie `aufbau.sh backup-schluessel`) – zusätzlich
+  getrennt aufbewahren. Speicher: je Instanz eine eigene Datenbank und eigene Container (BETRIEB,
+  Abschnitt 4b).
 - **Neustart der VM:** Variante A braucht die Passphrase an der Konsole; danach starten alle
   Container von selbst (`restart: unless-stopped`), Kontrolle mit `sudo deploy/aufbau.sh status`.
 - **Zertifikate:** Oberfläche (eigene CA) vor Ablauf ersetzen und `docker compose … restart

@@ -492,6 +492,8 @@ export interface AuthConfig {
   client_id: string;
   scope: string;
   admin_console_url: string; // Keycloak-Benutzerverwaltung (leer = unbekannt)
+  // Startseite des Kunden-Portals unter <kurzname>-doc.<domain> (1.17.0; vom Server, leer = kein Link)
+  portal_url?: string;
 }
 
 export interface AgentSystem {
@@ -845,6 +847,11 @@ export interface AppDocHit {
   helpers?: { l3out: string; rule_ids: number[]; names: string[]; missing: string[] }[];
   l3out_note?: string;
   category_hidden?: boolean; // 0.125.0: nicht in der Kategorie (Auswahl spezifisch/unspezifisch im Namensprofil)
+  // Regel-Zuordnung nach echtem Treffer (ADR 0071), je mit Text: für das System ganz überdeckt
+  // („überdeckt durch Policy X“), breite Regel, die real vor einer konkreten trifft, Weg nicht geprüft
+  _shadowed?: string;
+  _broad?: string;
+  _path_unchecked?: string;
 }
 export interface AppDocFinding {
   id: number;
@@ -880,7 +887,9 @@ export interface ApplicationDoc {
     helpers?: number; // Hilfs-Contracts über L3Outs, an den Firewall-Regeln (ADR 0034)
     outbound_broad?: number; // 0.103.0: ausgehende Firewall-Regeln mit breiter Quelle, nicht in der Doku
     to_internet?: number; // 0.114.1: Freigaben ins Internet, die das System nur über „all“ erfassen
-    path_unchecked?: number; // 0.140.0: Regeln, deren Weg eine Grenze nicht prüfen liess (bleiben stehen)
+    path_unchecked?: number; // 0.140.0: Regeln, deren Weg eine Grenze nicht prüfen liess (bleiben stehen); ADR 0071: auch Weg nicht bekannt
+    shadowed?: number; // ADR 0071: für ihre Systeme ganz überdeckte Regeln (nur Treffer)
+    broad_hits?: number; // ADR 0071: breite Regeln, die real vor einer konkreten treffen
     ruleset?: { key: string; title: string; description?: string } | null; // 0.118.0: aktives Regelwerk
     filtered?: { key: string; title: string; count: number }[]; // 0.118.0: je Bedingung gezählt
   };
@@ -1091,7 +1100,15 @@ export interface IpamCompare extends Paged<IpamRow> {
 
 // NetBox-Sync (ADR 0010): Vorschau -> Übernahme per Klick (admin)
 // Abschnitte; Verkabelung und Applikationen (ADR 0031) nur ausdrücklich gewählt
-export type SyncSection = "inventory" | "mirror" | "virtualization" | "cabling" | "firewall_objects" | "applications";
+export type SyncSection =
+  | "inventory"
+  | "mirror"
+  | "virtualization"
+  | "cabling"
+  | "firewall_objects"
+  | "applications"
+  | "dns" // DNS-Namen aus dem AD (1.19.0)
+  | "reservations"; // 1.19.0, ADR 0066
 export interface SyncTarget {
   id: number;
   name: string;
@@ -1109,11 +1126,23 @@ export interface SyncItem {
   kind: string;
   key: string;
   label: string;
-  action: string; // create | update | conflict | delete | obsolete
+  action: string; // create | update | conflict | delete | obsolete | ambiguous (DNS-Namen, 1.19.0)
   id?: number | null; // null: Ziel wird im selben Sync angelegt (Applikations-Tags)
   manual?: boolean;
+  confirm?: boolean; // 1.19.0: Kabelnummer bzw. abweichender DNS-Name – nur übernommen, wenn bestätigt
   changes?: SyncChange[];
   fields?: Record<string, unknown>;
+  note?: string; // Reservierungen (1.19.0): „exists“ = in NetBox schon vorhanden, nur angezeigt
+  reservation?: string;
+  dns?: SyncDns; // DNS-Namen aus dem AD (1.19.0)
+}
+// DNS-Name einer IP aus dem AD (1.19.0): A-Records, PTR, wer entschieden hat bzw. warum mehrdeutig
+export interface SyncDns {
+  names: string[];
+  ptr: string[];
+  by?: "a" | "ptr";
+  why?: "no_ptr" | "ptr_other" | "ptr_several" | "no_reverse" | "netbox_several" | "invalid";
+  vrf?: string;
 }
 // Nachkontrolle des NetBox-Syncs (0.115.0, ADR 0042): NetBox nach dem Schreiben rein lesend neu
 // gelesen, je geschriebenem Objekt verglichen
@@ -1142,7 +1171,7 @@ export interface SyncPlan {
   target: string;
   target_url: string;
   status: string; // planning | ready | applying | applied | failed | superseded
-  options: { sections?: SyncSection[]; allow_delete?: boolean };
+  options: { sections?: SyncSection[]; allow_delete?: boolean; confirm?: string[] }; // confirm: 1.19.0
   summary: Record<string, Record<string, number>> | null;
   totals: Record<string, number>;
   warnings: string[];
@@ -1232,6 +1261,9 @@ function detailText(body: unknown): string {
 // Im dev-Modus kein Token -> der Orchestrator nimmt den Standard-Admin an.
 async function authHeaders(): Promise<Record<string, string>> {
   if (!auth.isOidc()) return auth.devHeaders(); // dev-Modus: ggf. vorgeführter Kunden-Benutzer
+  // Seite wechselt zu Keycloak bzw. zum Abmelden (1.20.0): keine Anfrage ohne Token (sonst 401 und
+  // eine Fehlermeldung, kurz bevor die Seite geht)
+  if (auth.isLeaving()) return new Promise<Record<string, string>>(() => {});
   const token = await auth.accessToken();
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
@@ -1293,10 +1325,10 @@ async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
   return (response.status === 204 ? undefined : await response.json()) as T;
 }
 
-const getJSON = <T>(url: string) => request<T>(url);
+export const getJSON = <T>(url: string) => request<T>(url);
 
-// Schreib-Helfer (POST/PATCH/DELETE). 204 -> kein Body.
-const sendJSON = <T>(url: string, method: string, body?: unknown) =>
+// Schreib-Helfer (POST/PATCH/DELETE). 204 -> kein Body. Exportiert für die API-Dateien der Module (1.19.0)
+export const sendJSON = <T>(url: string, method: string, body?: unknown) =>
   request<T>(url, {
     method,
     headers: { "Content-Type": "application/json" },
@@ -1314,7 +1346,7 @@ function cq(params: Record<string, string | number | null | undefined>): string 
   return qs({ ...params, customer_id: customerFilter });
 }
 
-function qs(params: Record<string, string | number | null | undefined>): string {
+export function qs(params: Record<string, string | number | null | undefined>): string {
   const p = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
     if (v !== null && v !== undefined && v !== "") p.set(k, String(v));
@@ -1337,7 +1369,18 @@ export const fetchTenants = () => getJSON<Tenant[]>("/api/tenants");
 export const createTenant = (body: { name: string; code?: string | null }) =>
   sendJSON<Tenant>("/api/tenants", "POST", body);
 // Module je Mandant (0.107.0, ADR 0036): Kern und Einstellungen immer an; `effective` mit den Abhängigkeiten
-export type ModuleKey = "kern" | "einstellungen" | "worker" | "gateway" | "analyse" | "wege" | "findings" | "doku" | "design" | "schreibpfad";
+export type ModuleKey =
+  | "kern"
+  | "einstellungen"
+  | "worker"
+  | "gateway"
+  | "analyse"
+  | "wege"
+  | "vergleich" // Wege vergleichen (1.19.0, ADR 0067)
+  | "findings"
+  | "doku"
+  | "design"
+  | "schreibpfad";
 export interface ModuleInfo {
   key: ModuleKey;
   title: string;
@@ -1679,7 +1722,8 @@ export const editZoneSchema = (profileId: number, body: { zones: SchemaZoneEdit[
 function withLang(url: string): string {
   return `${url}${url.includes("?") ? "&" : "?"}lang=${exportLang()}`;
 }
-async function fileOf(url: string, fallback: string): Promise<{ blob: Blob; filename: string }> {
+// exportiert für die API-Dateien der Module (1.21.0: Export im Hintergrund)
+export async function fileOf(url: string, fallback: string): Promise<{ blob: Blob; filename: string }> {
   const response = await fetchChecked(withLang(url));
   const match = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") ?? "");
   return { blob: await response.blob(), filename: match?.[1] ?? fallback };
@@ -1691,6 +1735,9 @@ export const exportApplication = (id: number, format: "docx" | "zip" | "md", sec
     `/api/applications/${id}/export${qs({ format, sections: sections?.length ? sections.join(",") : undefined })}`,
     `applikation.${format}`,
   );
+// Findings als Excel nach Kategorie (1.0.1): ohne Mandant alle, die der Benutzer sieht
+export const exportFindings = (tenantId?: number | null) =>
+  fileOf(`/api/findings/export${qs({ tenant_id: tenantId ?? undefined })}`, "findings.xlsx");
 export const zoneSchemaDrawing = (profileId: number) => fileOf(`/api/naming-profiles/${profileId}/zone-schema/drawing`, "zonenschema.drawio");
 // Vorlage: ohne Mandant Beispiel-Zonen, mit Mandant dessen Zonen und Absichten als Ausgangspunkt
 export const zoneSchemaTemplate = (tenantId?: number) =>
@@ -2068,6 +2115,7 @@ export interface AppConnHop {
   verdict: string | null;
   checks: AppConnCheck[];
   lb?: TraceHop["lb"]; // NSX ALB: vom Load Balancer weiter zum Server (0.77.0)
+  vpn?: Omit<TraceVpn, "underlay" | "ike" | "phase2_status">; // IPsec-Tunnel am Ausgang (1.19.0)
 }
 export interface AppConnState {
   rule_id: number;
@@ -2076,6 +2124,8 @@ export interface AppConnState {
   device: string;
   state: "decides" | "possible" | "other" | "off_path" | "unknown";
   text: string;
+  // Regel-Zuordnung nach echtem Treffer (ADR 0071): Kennzeichen der Doku mit Text
+  marks?: { key: "shadowed" | "broad" | "path_unchecked"; text: string }[];
 }
 export interface AppConnection {
   key: string;
@@ -2109,6 +2159,7 @@ export interface AppConnection {
   // Eingaben des Wegs für „Warum dieser Weg?“ (0.109.0)
   trace?: { src: string; dst: string; service: string | null; starts: string[] };
   assign?: NetAssignState | null; // Netz grösser als die Routen (0.111.0, ADR 0040)
+  statics?: string[]; // 1.19.0: Schlüssel der statischen Routen auf den Wegen (AppConnections.statics)
 }
 export interface AppConnZones {
   src: string[];
@@ -2200,11 +2251,14 @@ export interface AppConnections {
   connections: AppConnection[];
   notes: string[];
   without?: AppConnWithout[];
-  summary: { total: number; allow: number; blocked: number; open: number; mismatch: number; inconsistent?: number; zone_violations?: number; asymmetric?: number; unused?: number };
+  summary: { total: number; allow: number; blocked: number; open: number; mismatch: number; inconsistent?: number; zone_violations?: number; asymmetric?: number; unused?: number; vpn?: number };
+  // 1.19.0 (ADR 0063): IPsec-Tunnel auf den Wegen, je Tunnel die Verbindungen
+  vpn?: (NonNullable<AppConnHop["vpn"]> & { device: string; connections: number })[];
   plan?: AppPlan;
   snapshot?: DocSnapshot; // 0.108.0
   // 0.140.0: vollständig geprüft? sonst je Art, was eine Grenze ausgelassen hat (Befund app_coverage)
   coverage?: { complete: boolean; checked: number; total: number; cuts: Record<string, { rules: number; missing: number }> };
+  statics?: AppStaticRoute[]; // 1.19.0: statische Routen auf den Wegen
   // 0.132.1: Dauer je Teil (Sekunden) und die langsamsten Wege
   timing?: {
     doc: number;
@@ -2428,7 +2482,9 @@ export const fetchSyncItems = (
   id: number,
   params: { action?: string; kind?: string; q?: string; limit?: number; offset?: number } = {},
 ) => getJSON<Paged<SyncItem>>(`/api/netbox-sync/plans/${id}/items${qs({ ...params, q: params.q?.trim() })}`);
-export const applySyncPlan = (id: number) => sendJSON<SyncPlan>(`/api/netbox-sync/plans/${id}/apply`, "POST");
+// 1.19.0: `confirm` = bestätigte Kabelnummern (Schlüssel der Aktionen `cable_label`) bzw. abweichende DNS-Namen (IPs)
+export const applySyncPlan = (id: number, confirm?: string[]) =>
+  sendJSON<SyncPlan>(`/api/netbox-sync/plans/${id}/apply`, "POST", confirm?.length ? { confirm } : undefined);
 // Laufende Vorschau/Übernahme beenden (hängt z. B. nach einem Neustart des Orchestrators)
 export const cancelSyncPlan = (id: number) => sendJSON<SyncPlan>(`/api/netbox-sync/plans/${id}/cancel`, "POST");
 
@@ -2572,6 +2628,23 @@ export interface TracePort extends Resolved {
   zone?: string;
   next_hop?: string | null;
   exit?: { id: number; name: string; kind: string }; // Anbindung nach aussen (0.18.0)
+  vpn?: TraceVpn; // IPsec-Tunnel am Ausgang (1.19.0, ADR 0063)
+}
+// IPsec-Tunnel als Schritt des Wegs (1.19.0, ADR 0063): Gegenstelle, Zustand, ob das Ziel in den
+// Netzen der Gegenstelle (Phase 2) liegt, und die gelesene FortiGate dort (sonst endet der Weg)
+export interface TraceVpn {
+  id: string;
+  name: string;
+  kind: "static" | "dialup" | "ddns";
+  status?: string | null; // up | partial | down | idle
+  remote_gw?: string;
+  underlay?: string;
+  ike?: number;
+  instance?: string; // Dial-up: verbundene Gegenstelle
+  covered?: "full" | "partial" | "none";
+  phase2?: string;
+  phase2_status?: string;
+  peer?: { key: string; source_system_id: number; context: string; label: string | null; tunnel: string | null; how: "gw" | "reverse" };
 }
 // Ziel-Server einer VIP bzw. eines Pools in der Weg-Suche (0.114.1)
 export interface VipServer {
@@ -2810,7 +2883,11 @@ export interface TracePath {
   zones?: TraceZoneStep[]; // Zonen auf dem Weg (0.57.0)
   l2_src?: L2Segment; // vom Anschluss der Quelle zum ersten Hop (0.64.0)
   end: {
-    kind: "connected" | "fabric" | "exit" | "external" | "unknown" | "no_route" | "loop" | "max_hops";
+    // ADR 0070: dropped = das Gerät verwirft, unchecked = nicht geprüft (gezählt), redirect = der
+    // Load Balancer antwortet selbst (Umleitung)
+    kind:
+      | "connected" | "fabric" | "exit" | "external" | "vpn" | "unknown" | "no_route" | "loop" | "max_hops"
+      | "dropped" | "unchecked" | "redirect";
     text: string;
     also?: string[]; // Ende über die anderen Firewalls eines Verbunds (0.29.0)
   };
@@ -2819,6 +2896,8 @@ export interface TraceResult {
   start: (RoutingNode & { via: string })[];
   paths: TracePath[];
   notes: string[];
+  // ADR 0070: was am Weg nicht sicher entschieden ist, je Art gezählt (Text dazu in `notes`)
+  uncertain?: Record<string, number>;
   slack?: number; // Backup-Wege mit höchstens so vielen Hops mehr als der kürzeste aktive
   service?: string | null; // geprüfter Dienst (z. B. tcp/443)
   service_name?: string; // angegebenes Service-Objekt bzw. ACI-Filter (FT_https)
@@ -3094,6 +3173,95 @@ export const fetchRoutes = (opts: {
   getPage<TopoRoute>(
     `/api/routing/routes${cq({ tenant_id: opts.tenantId, source_system_id: opts.sourceId, context: opts.context || undefined, table: opts.table || undefined, vrf: opts.vrf || undefined, ip: opts.ip?.trim() || undefined, q: opts.q?.trim() || undefined, limit: opts.limit, offset: opts.offset })}`,
   );
+// Statische Routen je Gerät und VRF (1.19.0): Zustand, Next-Hop, Befunde je Route und was nicht prüfbar war
+export type StaticState = "active" | "backup" | "shadowed" | "not_installed" | "disabled" | "unknown";
+export interface StaticRouteRow {
+  key: string;
+  source_system_id: number;
+  source: string;
+  node: string;
+  context: string;
+  node_key: string; // <Quellsystem>|<Kontext> wie die Knoten der Weg-Suche
+  display: ContextKind;
+  label: string;
+  vrf: number | string;
+  family: number;
+  prefix: string;
+  next_hop: string | null;
+  interface: string | null;
+  zone?: string | null;
+  resolved_next_hop?: Resolved;
+  distance: number | null;
+  priority: number | null;
+  enabled: boolean;
+  origin: "config" | "rib" | "l3out";
+  blackhole: boolean;
+  target: { kind: "object" | "sdwan" | "dynamic"; name?: string } | null;
+  seq: string | null;
+  comment: string | null;
+  l3out: string | null;
+  state: StaticState;
+  state_text: string;
+  reason: string | null;
+  winner: { prefix: string; protocol: string | null; distance: number | null; via: string } | null;
+  covered_by: string[];
+  covered_total: number;
+  nexthop: { state: "ok" | "unreachable" | "unchecked"; text: string; owner?: string; remote?: boolean } | null;
+  unchecked: { reason: string; text: string }[];
+  duplicate: number;
+  resolved: string[];
+  issues: string[];
+  shared?: boolean;
+}
+export interface StaticRoutes {
+  rows: StaticRouteRow[];
+  total: number;
+  summary: {
+    total: number;
+    states: Partial<Record<StaticState, number>>;
+    issues: Record<string, number>;
+    unchecked: { reason: string; text: string; count: number }[];
+    remote: number; // Next-Hop bei einem nicht gelesenen Gerät: nur bis ins angeschlossene Netz geprüft
+    rib_only: { node_key: string; label: string; reason: string; text: string }[];
+  };
+  contexts: { key: string; label: string }[];
+  vrfs: string[];
+}
+export const fetchStaticRoutes = (opts: {
+  tenantId: number;
+  q?: string;
+  ip?: string;
+  context?: string;
+  vrf?: string;
+  state?: string;
+  issues?: boolean;
+  limit?: number;
+  offset?: number;
+}) =>
+  getJSON<StaticRoutes>(
+    `/api/static-routes${cq({ tenant_id: opts.tenantId, q: opts.q?.trim() || undefined, ip: opts.ip?.trim() || undefined, context: opts.context || undefined, vrf: opts.vrf || undefined, state: opts.state || undefined, issues: opts.issues ? "true" : undefined, limit: opts.limit, offset: opts.offset })}`,
+  );
+// Doku der Applikation (1.19.0): statische Routen auf den Wegen
+export interface AppStaticRoute {
+  key: string;
+  source_system_id: number;
+  node_key: string;
+  label: string;
+  context: string;
+  vrf: number | string;
+  prefix: string;
+  next_hop: string | null;
+  interface: string | null;
+  distance: number | null;
+  priority?: number | null;
+  origin: "config" | "rib" | "l3out";
+  seq?: string | null;
+  comment?: string | null;
+  l3out?: string | null;
+  use: "active" | "backup";
+  connections: string[];
+  count: number;
+}
 export const lookupRoute = (tenantId: number, ip: string) =>
   getJSON<RouteLookup[]>(`/api/routing/lookup${cq({ tenant_id: tenantId, ip: ip.trim() })}`);
 // Weg Hop für Hop: ab der Quelle (dort angeschlossen) bzw. dem Startpunkt (RoutingNode.key)
@@ -3552,6 +3720,7 @@ export interface PortalCustomer {
   short_name: string;
   name: string;
   doc: boolean;
+  nb: boolean; // NetBox (-nb) seit 1.11.0 wählbar, Vorgabe an
   um: boolean;
   cmdb: boolean;
   links: PortalLink[];
@@ -3562,13 +3731,49 @@ export interface PortalCustomer {
   // Zugriff je Kunde (1.5.0): überall, nur intern (Management-Netz) oder nur aus access_nets
   access: PortalAccess;
   access_nets: string[];
+  // Herkunft (1.11.0, ADR 0054): aus dem Cockpit = Kurzname, Name, Werkzeuge, Zugriff und Realm nur dort
+  source: PortalSource;
+  // 1.13.0: Mandant, Kunden und Rolle aus dem Cockpit (dann nur lesbar); Ausschnitt vorhanden
+  // (Mandant und mindestens ein Kunde; null = ohne Doku)
+  scope_source?: "automato" | "cockpit";
+  assigned?: boolean | null;
+  // 1.13.0: weitere Kacheln aus dem Cockpit (dann nur lesbar)
+  links_source?: "automato" | "cockpit";
+  // 1.14.0 (ADR 0058): Benutzer des Realms mit Rolle aus dem Cockpit (null = alle mit der
+  // Standard-Rolle) und der Kunde, den Automato für das Cockpit im Mandanten angelegt hat
+  users?: PortalUser[] | null;
+  kunde_angelegt?: number | null;
+  // 1.19.2 (ADR 0058 Nachtrag): der Mandant, den Automato für das Cockpit angelegt hat (null = keiner)
+  mandant_angelegt?: { id: number; name: string } | null;
+  // 1.14.0 (ADR 0059): vom Cockpit zum Entfernen vorgemerkt – Front-Proxy sperrt alle Adressen, Daten bleiben
+  gesperrt?: boolean;
   addresses: Record<string, string>; // start, netbox, doc, um, cmdb (mit Domain)
   updated_by: string | null;
   updated_at: string | null;
   note?: string | null; // Hinweis, wenn der Soll-Stand nicht geschrieben wurde
 }
 export type PortalAccess = "ueberall" | "intern" | "netze";
-export type PortalCustomerIn = Omit<PortalCustomer, "id" | "addresses" | "updated_by" | "updated_at" | "note">;
+export type PortalSource = "oberflaeche" | "cockpit";
+export interface PortalUser {
+  benutzer: string; // Keycloak-Benutzername (klein)
+  rolle: CustomerRole;
+}
+export type PortalCustomerIn = Omit<
+  PortalCustomer,
+  | "id"
+  | "addresses"
+  | "updated_by"
+  | "updated_at"
+  | "note"
+  | "source"
+  | "scope_source"
+  | "assigned"
+  | "links_source"
+  | "users"
+  | "kunde_angelegt"
+  | "mandant_angelegt"
+  | "gesperrt"
+>;
 export interface PortalAgent {
   configured: boolean;
   writable: boolean;
@@ -3579,7 +3784,16 @@ export interface PortalAgent {
     meldung?: string;
     kunden?: string[];
     // Anmelde-Tor (1.4.0, ADR 0051): von front.sh sync gemeldet
-    tor?: { an: boolean; realms_bereit: string[]; realms_ohne_secret: string[]; gesperrt: string[]; haupt_realm: string };
+    tor?: {
+      an: boolean;
+      realms_bereit: string[];
+      realms_ohne_secret: string[];
+      gesperrt: string[];
+      haupt_realm: string;
+      // 1.13.0 (ADR 0055): Client-Secret aus dem Cockpit übernommen bzw. verworfen (nur Grund)
+      vom_cockpit?: string[];
+      verworfen?: { realm: string | null; grund: string }[];
+    };
   } | null;
 }
 export interface PortalListing {
@@ -3587,6 +3801,8 @@ export interface PortalListing {
   agent: PortalAgent;
   domain: string;
   keycloak: { base: string; main_realm: string };
+  // 1.14.0 (ADR 0058): mit verbundenem Cockpit nur lesbar (Kunden nur im Cockpit)
+  verwaltung?: "cockpit" | "automato";
 }
 export const fetchPortal = () => getJSON<PortalListing>("/api/portal/customers");
 export const createPortalCustomer = (body: PortalCustomerIn) => sendJSON<PortalCustomer>("/api/portal/customers", "POST", body);
@@ -3594,6 +3810,31 @@ export const updatePortalCustomer = (id: number, body: PortalCustomerIn) =>
   sendJSON<PortalCustomer>(`/api/portal/customers/${id}`, "PUT", body);
 export const deletePortalCustomer = (id: number) =>
   sendJSON<{ deleted: number; note: string | null }>(`/api/portal/customers/${id}`, "DELETE");
+
+// Kopplung mit dem Cockpit (1.13.0, ADR 0057): Einmal-Code statt Token kopieren. Der Code kommt nur
+// in der Antwort von createCockpitCode (einmal), das Token bekommt nur das Cockpit (POST /kopplung).
+export interface CockpitCoupling {
+  peer: "cockpit";
+  coupled: boolean;
+  name: string | null; // vom Cockpit gemeldet
+  coupled_at: string | null;
+  coupled_by: string | null; // wer den Code erzeugt hat
+  last_used: string | null;
+  code: { expires: string; failures: number } | null; // offener Code (ohne den Code selbst)
+  code_minutes: number;
+  max_failures: number;
+  env_token: boolean; // AUTOMATO_COCKPIT_TOKEN in .env gilt zusätzlich
+}
+export interface CockpitCode {
+  code: string; // XXXX-XXXX-XXXX, nur in dieser Antwort
+  expires: string;
+  minutes: number;
+  max_failures: number;
+}
+export const fetchCockpitCoupling = () => getJSON<CockpitCoupling>("/api/kopplung/cockpit");
+export const createCockpitCode = () => sendJSON<CockpitCode>("/api/kopplung/cockpit/code", "POST");
+export const withdrawCockpitCode = () => sendJSON<CockpitCoupling>("/api/kopplung/cockpit/code", "DELETE");
+export const uncoupleCockpit = () => sendJSON<CockpitCoupling>("/api/kopplung/cockpit", "DELETE");
 export const previewCustomer = (tenantId: number, selectors: CustomerSelector[], customerId?: number) =>
   sendJSON<CustomerPreview>("/api/customers/preview", "POST", { tenant_id: tenantId, selectors, customer_id: customerId ?? null });
 export const fetchCustomerSuggestions = (tenantId: number) =>
@@ -4400,13 +4641,30 @@ export interface ServerMe {
   customer_roles?: Record<string, CustomerRole>;
   capabilities?: Capability[];
   logins?: string[]; // eigene Kennungen (sub, Benutzername, E-Mail – klein)
+  // Benutzer eines Kunden-Realms ohne Mandant/Kunden in Automato (1.13.0): Meldung statt Fehlern
+  zuordnung_fehlt?: { kurzname: string; name: string; meldung: string } | null;
+  // 1.14.0 (ADR 0058): Benutzer eines Kunden-Realms ohne Rolle aus dem Cockpit (eigene Seite) und
+  // Kunden, deren Benutzer und Rollen das Cockpit führt (dort kein Zuordnen durch den Kunden-Admin)
+  rolle_fehlt?: { kurzname: string; name: string; meldung: string } | null;
+  cockpit_kunden?: number[];
+  // ADR 0068: Mandanten-Benutzer (Operator bzw. Admin im eigenen Mandanten) – Rolle und Rechte dort
+  mandant?: { mandant: number | null; rolle: TenantRole; rechte: TenantCapability[] } | null;
+  // ADR 0068: Benutzer eines Kunden-Realms aus dem Realm der Betreiber (nur Anzeige) und der Link
+  // „Ganze Plattform“ (leer = keiner); Kunde des Realms
+  betreiber?: boolean;
+  plattform_url?: string;
+  realm_kunde?: { kurzname: string; name: string } | null;
 }
 export const fetchServerMe = () => getJSON<ServerMe>("/api/auth/me");
 
 // Feinere Rollen der Kunden-Benutzer (ADR 0018 Ergänzung): Rolle je Kunde → Capabilities;
 // „operator“ = Altbestand aus 0.53.0 (gilt als triage)
-export type CustomerRole = "viewer" | "triage" | "editor" | "customer_admin";
+// ADR 0068: „customer_operator“ – im eigenen Mandanten alles sehen und einlesen
+export type CustomerRole = "viewer" | "triage" | "editor" | "customer_operator" | "customer_admin";
 export type Capability = "doc.read" | "findings.triage" | "applications.edit" | "customer_users.manage";
+// Mandanten-Benutzer (ADR 0068): Rolle und Rechte im eigenen Mandanten (der Server prüft)
+export type TenantRole = "customer_operator" | "customer_admin";
+export type TenantCapability = "mandant.read" | "mandant.collect" | "mandant.manage";
 
 // Zuordnung Benutzer → Kunde (0.53.0, Admin; seit den feineren Rollen auch der Kunden-Admin)
 export interface CustomerUserRow {
@@ -4688,6 +4946,66 @@ export async function exportL2Plan(
   const match = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") ?? "");
   return { blob: await response.blob(), filename: match?.[1] ?? `verkabelung.${format}` };
 }
+// VPN-Tunnel (IPsec, 1.19.0, ADR 0063): Liste und Detail
+export interface VpnPeer {
+  source_system_id: number;
+  context: string | null;
+  tunnel: string | null;
+  interface: string;
+  how: "gw" | "reverse";
+  label: string;
+}
+export interface VpnTunnel {
+  id: number;
+  ref: string; // <Quellsystem>|<VDOM>|<Tunnel> - bleibt über Läufe gleich
+  source_system_id: number;
+  source: string;
+  node: string;
+  context: string;
+  name: string;
+  kind: "static" | "dialup" | "ddns";
+  interface: string | null;
+  remote_gw: string | null;
+  local_gw: string | null;
+  ike_version: number | null;
+  status: string | null; // up | partial | down | idle; null = unbekannt
+  phase2_total: number;
+  phase2_up: number;
+  instances: number;
+  routes: number;
+  uncovered: number;
+  partial: number;
+  peers: VpnPeer[];
+  proposal?: string | null;
+}
+export interface VpnPhase2 {
+  name: string;
+  src: string[];
+  dst: string[];
+  src_names: string[];
+  dst_names: string[];
+  unresolved: string[];
+  status: string | null;
+  attrs: Record<string, unknown>;
+}
+export interface VpnTunnelDetail extends VpnTunnel {
+  phase2: VpnPhase2[];
+  dialup: { name: string; remote_gw: string | null; status: string; phase2: Record<string, string>; nets: string[] }[];
+  route_list: { prefix: string; family: number; table: string; protocol: string | null; distance: number | null; next_hop?: string; instance?: string; covered: "full" | "partial" | "none" | null }[];
+  behind: { net: string; from: string[] }[];
+  unresolved: string[];
+  attrs: Record<string, unknown>;
+}
+export interface VpnList {
+  tunnels: VpnTunnel[];
+  total: number;
+  counts: Record<string, number>;
+  missing: { source_system_id: number; source: string | null; context: string; missing: string[] }[];
+}
+export const fetchVpnTunnels = (tenantId: number, f: { q?: string; status?: string; system?: number | null } = {}) =>
+  getJSON<VpnList>(`/api/vpn/tunnels${cq({ tenant_id: tenantId, q: f.q, status: f.status, system: f.system ?? undefined })}`);
+export const fetchVpnTunnel = (tenantId: number, id: number) =>
+  getJSON<VpnTunnelDetail>(`/api/vpn/tunnels/${id}${cq({ tenant_id: tenantId })}`);
 export const locateEndpoint = (tenantId: number, q: string) =>
   getJSON<{ query: string; kind: string | null; ips: string[]; items: EndpointLocation[] }>(
     `/api/cabling/locate${cq({ tenant_id: tenantId, q })}`,

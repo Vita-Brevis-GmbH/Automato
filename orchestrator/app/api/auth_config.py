@@ -8,6 +8,10 @@ dann ist kein Login nötig.
 Realm je Kunde (1.3.0, ADR 0050): mit `?host=<kurzname>-doc.<domain>` liefert er den Realm
 dieses Kunden aus dem Kunden-Portal - die Oberfläche unter der Adresse des Kunden meldet sich
 dort an. Ohne Treffer (bzw. ohne Datenbank) gilt der Realm von Automato.
+
+Rücklink zum Kunden-Portal (1.17.0): unter derselben Adresse nennt `portal_url` die Startseite des
+Kunden (`https://<kurzname>.<domain>`) - aus dem Kunden-Portal bzw. in einer eigenen Instanz aus
+ihrer .env; leer = kein Link.
 """
 
 import logging
@@ -32,6 +36,7 @@ class AuthConfigOut(BaseModel):
     client_id: str
     scope: str = "openid profile"
     admin_console_url: str = ""  # Keycloak-Benutzerverwaltung des Realms (Link im UI)
+    portal_url: str = ""  # Startseite des Kunden-Portals (1.17.0, Link im UI; leer = keiner)
 
 
 def admin_console_url(settings: Settings) -> str:
@@ -59,6 +64,20 @@ def _customer_issuer(settings: Settings, factory, host: str | None) -> str | Non
     return f"{main[0]}/realms/{realm}" if realm and realm != main[1] else None
 
 
+def _portal_url(settings: Settings, factory, host: str | None) -> str:
+    """Startseite des Kunden-Portals zur Adresse der Oberfläche (leer = kein Rücklink)."""
+    if settings.instanz_kunde:  # eigene Instanz (ADR 0061): Kunde und Domain aus ihrer .env
+        return portal.instance_start(host, settings.instanz_kunde, settings.instanz_domain)
+    if not settings.front_domain or not host:
+        return ""
+    try:
+        with factory() as session:
+            return portal.start_for_host(session, host, settings.front_domain)
+    except SQLAlchemyError as exc:
+        log.warning("Kunden-Portal zur Adresse %s nicht lesbar: %s", host, exc)
+        return ""
+
+
 @router.get("/config", response_model=AuthConfigOut)
 def auth_config(
     host: str | None = None,
@@ -72,4 +91,5 @@ def auth_config(
         client_id=settings.oidc_web_client_id,
         # Kunden-Realm: keine Benutzerverwaltung von Automato verlinken
         admin_console_url="" if customer else admin_console_url(settings),
+        portal_url=_portal_url(settings, factory, host),
     )

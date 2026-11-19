@@ -8,6 +8,7 @@ import { VIEWS as findings } from "./findings";
 import { VIEWS as kern } from "./kern";
 import { VIEWS as schreibpfad } from "./schreibpfad";
 import type { ViewEntry } from "./types";
+import { VIEWS as vergleich } from "./vergleich";
 import { VIEWS as wege } from "./wege";
 import { VIEWS as worker } from "./worker";
 
@@ -17,10 +18,11 @@ export const VIEWS: ViewEntry[] = [
   ...worker,
   ...analyse,
   ...wege,
+  ...vergleich,
   ...findings,
   ...doku,
   ...design,
   ...schreibpfad,
 ].sort((a, b) => a.order - b.order);
 
-export type { Stats, View, ViewEntry, ViewParams, ViewProps } from "./types";
+export type { Layer, Place, Stats, View, ViewEntry, ViewParams, ViewProps } from "./types";

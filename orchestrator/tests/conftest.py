@@ -86,6 +86,25 @@ def _doc_snapshots_off():
     path_store.clear()
 
 
+@pytest.fixture(autouse=True)
+def _exports(tmp_path, monkeypatch):
+    """Exporte im Hintergrund (1.21.0, ADR 0069): Ablage im Testordner, der Auftrag laeuft in
+    Tests direkt in der Anfrage (ohne Thread) - `tests/test_export_all.py` laesst ihn auch im
+    Thread laufen."""
+    from app.config import get_settings
+    from app.store import export_jobs
+
+    settings = get_settings()
+    previous = settings.export_dir
+    settings.export_dir = str(tmp_path / "exports")
+    monkeypatch.setattr(export_jobs, "spawn", lambda target, job_id: target())
+    monkeypatch.setattr(export_jobs, "_slots", None)
+    export_jobs._cancel.clear()
+    export_jobs._threads.clear()
+    yield
+    settings.export_dir = previous
+
+
 def _worker_url(url: str):
     """Eigene Postgres-Datenbank je xdist-Worker; ohne xdist die Datenbank aus der URL."""
     worker = os.environ.get("PYTEST_XDIST_WORKER")  # gw0, gw1, ... (nur in xdist-Workern)

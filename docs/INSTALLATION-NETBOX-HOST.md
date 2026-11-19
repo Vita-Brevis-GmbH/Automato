@@ -139,7 +139,17 @@ In `host.conf`:
 - `ALLOW`: Adresse der Automato-VM (Front-Proxy) und das Management-Netz; alle anderen bekommen 403.
 - `FRONT`: Adresse der Automato-VM – nur ihrer Angabe `X-Forwarded-For` wird geglaubt (NetBox
   sieht die Adresse des Benutzers).
-- `NETBOX_DOCKER_TAG` / `NETBOX_VERSION`: Version aller Instanzen (Vorgabe NetBox 4.6).
+- `NETBOX_DOCKER_TAG` / `NETBOX_VERSION`: seit 1.17.0 (ADR 0062) nicht mehr setzen – die Version
+  aller Instanzen kommt mit dem Werkzeug (`deploy/netbox-host/netbox-version.conf`), ein Update aus
+  dem Cockpit übernimmt sie (4d). Nur setzen, um eine Version festzuhalten.
+- `PORT` (1.9.1): Port des Proxys auf dieser VM, Vorgabe 443. Nur wenn hier schon ein anderer
+  Dienst Port 443 belegt (in Dev z. B. die Magister-VM), einen freien Port wie `8444` setzen. Dann:
+  - auf dem Front-Proxy `AUTOMATO_FRONT_NETBOX=<ip dieser VM>:8444`;
+  - in der Firewall dieser VM (`DOCKER-USER`) den Port für die Automato-VM und das
+    Management-Netz öffnen;
+  - direkt aus dem Management-Netz heisst die NetBox `https://<kunde>-nb.<DOMAIN>:8444`.
+
+  `ALLOW` und `FRONT` bleiben wie oben (Adresse der Automato-VM). Nach einer Änderung `init`.
 
 Zertifikat ablegen und den Proxy starten:
 
@@ -173,16 +183,149 @@ sudo deploy/netbox-host/netbox-host.sh neu kunde-a "Kunde A"
 Eintrag in der hosts-Datei `<IP dieser VM> kunde-a-nb.mgmt.example.ch`, dann die Adresse im
 Browser öffnen (Zertifikat der eigenen CA).
 
-**Anbinden an Automato:**
+### 4a. Agent: Kunden aus Automato (seit 1.11.0)
+
+Statt `neu` von Hand legt der Agent die NetBox je Kunde selbst an: alle 5 Minuten holt er aus
+Automato die Kunden mit dem Werkzeug NetBox (Kunden-Portal bzw. Kundenregister des Cockpits) und
+ruft für jeden ohne Instanz `neu` auf. Entfernt wird nie selbst – eine NetBox, die in Automato
+nicht mehr freigegeben ist, meldet er nur (`pruefen`); entfernen bleibt `loeschen <kunde> --ja` bzw.
+seit 1.14.0 (ADR 0059) der Abbau im Cockpit (4c).
+
+Auf der **Automato-VM** ein eigenes Token für den NetBox-Host erzeugen (wird einmal angezeigt):
+
+```bash
+cd /opt/automato/automato && sudo deploy/aufbau.sh netbox-host-token
+```
+
+Auf dem **NetBox-Host** (fragt nach dem Token, die Eingabe ist unsichtbar):
+
+```bash
+cd /opt/netbox-host/automato
+sudo deploy/netbox-host/netbox-host.sh agent https://automato.int.example.ch
+sudo deploy/netbox-host/netbox-host.sh pruefen      # Abschnitt „Agent“
+```
+
+- Die Adresse ist die der Oberfläche von Automato; der NetBox-Host braucht dorthin HTTPS. Hat
+  ihr Zertifikat eine eigene CA, die das System nicht kennt: CA als PEM ablegen und in
+  `host.conf` `AUTOMATO_CA=/opt/netbox-host/automato-ca.pem` setzen.
+- Das Token liegt in `/opt/netbox-host/automato.token` (nur root), nie in `host.conf`; der Agent
+  übergibt es als Kopfzeile aus einer Datei, nicht in der Befehlszeile.
+- Das Passwort des Benutzers `admin` einer neuen NetBox liegt in
+  `/opt/netbox-host/kunden/<kunde>/admin-passwort` (nur root): in den Tresor, dann löschen.
+- Log: `journalctl -u netbox-host-sync -f`; einmal sofort: `sudo deploy/netbox-host/netbox-host.sh sync`.
+
+### 4b. Ohne Handgriffe: Anmeldung und Zugang für Automato (seit 1.13.0, ADR 0056)
+
+Bei jedem Abgleich macht der Agent eine NetBox fertig:
+
+- **Anmeldung über das Tor:** bei `SSO=an` richtet er sie bei jeder Instanz ein, der sie fehlt
+  oder deren Einstellungen veraltet sind (wie `sso <kunde>`), und startet nur dann ihre NetBox neu.
+  Instanzen, die schon eingerichtet sind, bleiben ohne Neustart. Entfernt der Proxy gefälschte
+  Anmelde-Kopfzeilen nicht (alte Proxy-Vorlage), richtet er nichts ein und warnt: `init`.
+- **Rücklink zum Kunden-Portal** (seit 1.17.0): jede Instanz zeigt oben den Banner
+  „← Kundenportal“ auf die Startseite `https://<kunde>.<domain>` (`BANNER_TOP` in
+  `configuration/zz_automato_portal.py`, geht vor einem Banner aus der Oberfläche von NetBox).
+  `neu` schreibt ihn vor dem ersten Start; der volle Abgleich führt ihn nach und startet die NetBox
+  nur neu, wenn er fehlt oder veraltet ist – nach dem Update auf 1.17.0 also einmal je Instanz.
+- **Zugang für Automato:** sobald der Kunde in Automato einen **Mandanten** hat (Kunden-Portal
+  bzw. Cockpit) und dieser noch keinen Zugang zu der NetBox hat, legt er `automato-collector`
+  (nur lesen) und `automato-sync` (schreibt nur die Objekttypen des Syncs, ADR 0010) mit neuen
+  Tokens an und übergibt sie Automato. Automato speichert sie verschlüsselt beim Mandanten am
+  Quellsystem NetBox (`https://<kunde>-nb.<domain>`, über den Front-Proxy; ein vorhandenes
+  Quellsystem mit dieser Adresse ohne Tokens bekommt sie, sonst ein neues „NetBox“). Die Tokens
+  stehen nirgends auf dem NetBox-Host, in keiner Ausgabe und in keinem Log.
+- **Nie überschrieben:** hat Automato schon einen Zugang zu dieser NetBox (von Hand eingetragen,
+  auch mit Port oder bei einem anderen Mandanten), bleibt er. Hat der Mandant ein Quellsystem
+  NetBox mit einer anderen Adresse, übergibt der Agent nichts („von Hand klären“).
+- **Ohne Mandant** erzeugt der Agent keine Tokens; er versucht es bei jedem Abgleich wieder.
+
+`pruefen` zeigt im Abschnitt „Agent“ den letzten Abgleich: Anmeldung eingerichtet, Zugang
+übergeben, noch ohne Mandant (Zugang folgt), von Hand klären. Danach in Automato: Zeitplan des
+Quellsystems wie bei jedem anderen setzen. Automato muss dem Zertifikat des Front-Proxys
+vertrauen (`docs/INSTALLATION-FRONT.md` 8, `deploy/trust/`).
+
+**Zugang erneuern:** in Automato beim Quellsystem NetBox „Alle hinterlegten Tokens entfernen“ –
+der Agent übergibt beim nächsten Abgleich neue (die alten ersetzt er in NetBox).
+
+**Notweg von Hand** (ohne Agent bzw. Automato vor 1.13.0):
 
 ```bash
 sudo deploy/netbox-host/netbox-host.sh token kunde-a
 ```
 
-legt `automato-collector` (nur lesen) und `automato-sync` (schreibt nur die Objekttypen des
-Syncs, ADR 0010) an und zeigt Adresse und Tokens. In Automato beim Mandanten des Kunden →
-Quellsysteme → + Quellsystem „NetBox“ eintragen. Erneut aufrufen ersetzt die Tokens. Die
-Automato-VM muss der eigenen CA vertrauen (`docs/INSTALLATION-PROD.md` 6.3) und in `ALLOW` stehen.
+legt dieselben Benutzer an und zeigt Adresse und Tokens. In Automato beim Mandanten des Kunden →
+Quellsysteme → + Quellsystem „NetBox“ eintragen. Erneut aufrufen ersetzt die Tokens – auch die,
+die der Agent übergeben hat (dann in Automato von Hand nachführen). Die Automato-VM muss der
+eigenen CA vertrauen (`docs/INSTALLATION-PROD.md` 6.3) und in `ALLOW` stehen.
+
+### 4c. Abbau aus dem Cockpit: Löschaufträge (1.14.0, ADR 0059)
+
+Entfernt der Betreiber einen Kunden im Cockpit, ist er zuerst bis zum Ablauf der Frist gesperrt
+(Front-Proxy: „Zugang gesperrt“, die NetBox bleibt unverändert). Danach schickt das Cockpit
+Automato einen Löschauftrag; Automato nennt ihn dem Agenten beim nächsten Abgleich (`loeschen` in
+`GET /api/netbox-host`). Ebenso, wenn der Betreiber bei einem Kunden, der bleibt, nur **NetBox
+abwählt** (Teil-Abbau, ADR 0059 Nachtrag): während der Frist ist die Adresse `<kunde>-nb` schon
+weg, die NetBox bleibt (`pruefen` meldet sie „ohne Freigabe“); nach der Frist kommt der
+Löschauftrag. Wählt der Betreiber NetBox vorher wieder, ist der Auftrag aufgehoben – die NetBox
+bleibt mit ihren Daten. Der Agent
+
+- löscht **nur diese** NetBox-Instanzen – wie `loeschen <kunde> --ja`, also immer erst mit einer
+  frischen Sicherung (ohne `AGE_RECIPIENT` bzw. wenn die Sicherung scheitert, wird nichts gelöscht,
+  der nächste Abgleich versucht es wieder); die Sicherungen bleiben in `BACKUP_DIR/<kunde>/`;
+- löscht **nie** einen Kunden, den Automato noch **mit NetBox** freigibt (`kunden` derselben
+  Antwort), und nie, wenn Automato eine andere Domain nennt als `host.conf` – einen Kunden, der in
+  Automato bleibt, aber ohne NetBox, löscht er auf Auftrag;
+- führt jeden Auftrag **nur einmal** aus (`/opt/netbox-host/geloescht/<kunde>` hält die Kennung):
+  wird danach unter demselben Namen von Hand wieder eine NetBox angelegt, bleibt sie. Wählt der
+  Betreiber NetBox später erneut und wieder ab, ist das ein neuer Auftrag (neue Kennung);
+- meldet nach jedem Abgleich seinen **Ist-Stand** an Automato (`PUT /api/netbox-host/stand`, nur
+  Kurznamen und Zeit: Instanzen, ohne Freigabe, gelöscht, nicht gelöscht). Daraus sieht das
+  Cockpit, dass der Abbau erledigt ist, und auf der Seite „Aufräumen“ Instanzen ohne Kunden.
+
+`pruefen` zeigt im Abschnitt „Agent“, was auf Auftrag gelöscht wurde und was nicht. Wiederholen,
+Sicherung prüfen: `journalctl -u netbox-host-sync`, `ls BACKUP_DIR/<kunde>/`.
+
+### 4d. Betrieb aus dem Cockpit: Stand, Sichern, Aktualisieren, Zurück, Neu starten (1.17.0, ADR 0062)
+
+Auf der Seite **Plattform** des Cockpits erscheint der NetBox-Host als Produkt `netbox-host`, sobald
+auf dieser VM der **Host-Agent des Cockpits** läuft. Er ruft nur
+`deploy/netbox-host/betrieb.sh` in diesem Checkout auf (Vertrag `betrieb/v1`, eine Zeile JSON,
+Exit 0 ok · 1 gescheitert und wieder auf dem alten Stand · 2 von Hand · 3 abgelehnt · 4 belegt).
+
+Einmal einrichten:
+
+1. Checkout auf 1.17.0 oder neuer (`cd /opt/netbox-host/automato && sudo git pull && sudo
+   deploy/netbox-host/netbox-host.sh init`).
+2. In `/opt/netbox-host/host.conf` die Zeilen `NETBOX_DOCKER_TAG=` und `NETBOX_VERSION=`
+   entfernen (bis 1.16.0 aus der Vorlage kopiert) – sonst bleibt die NetBox bei jedem Update auf
+   dieser Version (`betrieb.sh stand` zeigt „fest in host.conf“).
+3. Die age-Identität bleibt auf der VM (`/root/netbox-host-backup.agekey` bzw. `AGE_IDENTITY` in
+   `host.conf`): ohne sie lehnt `aktualisieren` ein Update mit neuer NetBox ab – der Rückfall
+   bräuchte sie zum Einspielen der Datenbanken.
+4. Im Cockpit → Hosts → „Host-Agent einrichten“ das Produkt `netbox-host` mit dem Checkout
+   `/opt/netbox-host/automato` wählen und die angezeigte Befehlszeile auf dieser VM ausführen.
+5. Prüfen: `cd /opt/netbox-host/automato && sudo deploy/netbox-host/betrieb.sh stand`.
+
+| Aktion | Wirkung |
+|---|---|
+| `stand` | Version und Commit des Checkouts, NetBox-Version, Health (Proxy läuft, jede Instanz antwortet im Container), ob `zurueck` geht, Zeit, bis zu der jede Instanz gesichert ist – nur lesen |
+| `sichern` | `netbox-host.sh sichern alle` (Instanzen und Konfiguration, verschlüsselt) |
+| `aktualisieren --ref <branch\|tag\|commit>` | Abgleich des Agenten ruht → Sicherung aller Instanzen → Checkout auf die Ref (Branch angehängt, sonst losgelöst) → `init` → jede Instanz mit anderer NetBox: `update <kunde>` (mit eigener Sicherung davor) → Health bis 5 min → sonst selbst zurück: alter Checkout, betroffene Instanzen aus ihrer Sicherung (Exit 1) |
+| `zurueck` | einmal auf den Stand vor dem letzten erfolgreichen Update – Checkout und die Datenbanken der Instanzen, die damals eine neue NetBox bekamen (Daten seither gehen dort verloren) |
+| `neustart` | Proxy und alle Instanzen neu starten (ohne neue Images) + Health |
+
+Repo privat (1.18.0, ADR 0062 Nachtrag): das Cockpit gibt den Stand als git-Bundle mit
+(`aktualisieren --ref <ref> --bundle <datei> --commit <sha>`); origin wird dann nie kontaktiert,
+ein Branch wird lokal ohne Upstream angehängt. Von Hand (`git pull`) geht es danach nur noch mit
+einem eigenen Lese-Zugang der VM.
+
+Abgelehnt (nichts geändert) wird ein Update mit lokalen Änderungen im Checkout, einer älteren
+Ref (zurück nur mit `zurueck`), einem Ziel ohne `deploy/netbox-host/betrieb.sh`, einer NetBox, die
+**älter** wäre als die einer Instanz, ohne `AGE_RECIPIENT` bzw. – bei neuer NetBox – ohne passende
+Identität, und wenn Proxy oder eine Instanz schon vorher nicht gesund sind (erst richten). Der Zustand für `zurueck` liegt in `/opt/netbox-host/betrieb/zustand` (keine
+Geheimnisse). Scheitert auch der Rückfall (Exit 2): `sudo deploy/netbox-host/netbox-host.sh
+pruefen`, je Instanz `wiederherstellen <kunde> <sicherung>` mit der Datei aus
+`betrieb/zustand/instanzen/<kunde>`.
 
 ## 5. Betrieb
 
@@ -192,12 +335,14 @@ Automato-VM muss der eigenen CA vertrauen (`docs/INSTALLATION-PROD.md` 6.3) und 
 | `pruefen` | Proxy, Zertifikat (Warnung 30 Tage vor Ablauf), `ALLOW`/`FRONT`, je Kunde NetBox und Weg über den Proxy, Sicherungen jünger als 26 h (je Kunde und Konfiguration) |
 | `sichern <kunde\|alle\|konfig>` | je Kunde Datenbank (`pg_dump`) und Medien, verschlüsselt mit age, nach `BACKUP_DIR/<kunde>/`; `alle` (täglich 02:17 per cron) sichert dazu die **Konfiguration** (`host.conf`, Proxy mit Zertifikat, Secrets je Kunde) nach `BACKUP_DIR/_konfig/`; älter als `BACKUP_KEEP_DAYS` wird gelöscht |
 | `wiederherstellen <kunde> <datei.sql.gz.age>` | NetBox stoppen, Datenbank (und Medien derselben Sicherung) einspielen, starten – einmal pro Jahr testen |
-| `update <kunde\|alle>` | erst sichern, dann netbox-docker und NetBox in der Version aus `host.conf` holen, starten, prüfen. Neue Version zuerst bei einem Kunden |
-| `loeschen <kunde> --ja` | letzte Sicherung, dann Container, Daten und Proxy-Eintrag entfernen; die Sicherungen bleiben |
-| `sso <kunde\|alle>` | Anmeldung über das Anmelde-Tor einrichten bzw. nachführen (1.4.0): Proxy-Vorlage übernehmen, NetBox-Einstellungen schreiben, NetBox neu starten, Gruppen und Rechte anlegen |
+| `update <kunde\|alle>` | erst sichern, dann netbox-docker und NetBox in der Version des Werkzeugs (`netbox-version.conf`) bzw. aus `host.conf` holen, starten, prüfen. Neue Version zuerst bei einem Kunden; aus dem Cockpit 4d |
+| `loeschen <kunde> --ja` | letzte Sicherung, dann Container, Daten und Proxy-Eintrag entfernen; die Sicherungen bleiben. Ohne Rückfrage nur der Agent für Löschaufträge aus Automato (4c) |
+| `sso <kunde\|alle>` | Anmeldung über das Anmelde-Tor einrichten bzw. nachführen (1.4.0): Proxy-Vorlage übernehmen, NetBox-Einstellungen schreiben, NetBox neu starten, Gruppen und Rechte anlegen; mit `SSO=aus` entfernen. Seit 1.13.0 richtet der Agent fehlende Anmeldungen selbst ein |
+| `token <kunde>` | Notweg: Lese- und Sync-Benutzer mit neuen Tokens, angezeigt zum Eintragen in Automato (seit 1.13.0 übergibt der Agent den Zugang selbst, 4b) |
 
 Alle Befehle mit `sudo deploy/netbox-host/netbox-host.sh …` im Ordner `/opt/netbox-host/automato`.
-Das Werkzeug selbst aktualisieren: `sudo git pull`, danach `init` (übernimmt die Proxy-Vorlage).
+Das Werkzeug selbst aktualisieren: aus dem Cockpit (4d), von Hand `sudo git pull`, danach `init`
+(übernimmt die Proxy-Vorlage) und – bei neuer NetBox-Version – `update alle`.
 
 - **Sicherung ausser Haus:** `BACKUP_DIR` liegt auf der VM – regelmässig auf das Sicherungssystem
   kopieren (die Dateien sind verschlüsselt). Konfiguration zurückholen:
@@ -207,7 +352,7 @@ Das Werkzeug selbst aktualisieren: `sudo git pull`, danach `init` (übernimmt di
   `X-Automato-User` (`<benutzer>@<realm>`) und die Realm-Rollen; dieser Proxy nimmt die Kopfzeilen
   nur von `FRONT` an und entfernt sie bei allen anderen. Rechte: Realm-Rolle **admin** = Superuser,
   **operator** = bearbeiten, alle anderen lesen. `SSO=an` in `host.conf` (Vorgabe); neue Instanzen
-  richtet `neu` ein, bestehende `sso <kunde|alle>`. Lokale Konten (`admin`, Token-Benutzer) bleiben
+  richtet `neu` ein, bestehende der Agent (4b) bzw. `sso <kunde|alle>`. Lokale Konten (`admin`, Token-Benutzer) bleiben
   für den Notfall und melden sich direkt aus dem Management-Netz mit Passwort an.
 
 ## 6. Grenzen
@@ -216,6 +361,6 @@ Das Werkzeug selbst aktualisieren: `sudo git pull`, danach `init` (übernimmt di
   (`deploy/front/front.sh`, `docs/INSTALLATION-FRONT.md`); ohne ihn erreicht man die NetBox nur
   aus dem Management-Netz.
 - Ein Update ändert das Schema der Datenbank – zurück geht es nur über `wiederherstellen` mit der
-  Sicherung, die `update` vorher anlegt.
-- `token` legt klassische Tokens an (NetBox 4.6); für spätere Versionen die Tokens in NetBox
-  erzeugen und in Automato eintragen.
+  Sicherung, die `update` vorher anlegt (aus dem Cockpit: `zurueck`, 4d).
+- `token` und der Agent legen klassische Tokens an (NetBox 4.6); für spätere Versionen die
+  Tokens in NetBox erzeugen und in Automato eintragen.

@@ -3,7 +3,7 @@
 // der Basis-Settings für das Cockpit.
 import { useEffect, useState } from "react";
 import { fetchModules, ModuleInfo, switchModule, Tenant } from "./api";
-import type { Me } from "./auth";
+import { canManage, type Me } from "./auth";
 import { L } from "./i18n";
 import { MODULES_CHANGED } from "./moduleState";
 import { ErrorBox, Loading } from "./ui";
@@ -89,7 +89,7 @@ export default function TenantModules({ me, tenant }: { me: Me; tenant: Tenant }
                         className={`toggle ${m.enabled ? "on" : ""}`}
                         aria-label={L(`Modul ${m.title}`, `Module ${m.title}`)}
                         aria-pressed={m.enabled}
-                        disabled={!me.isAdmin || busy !== null}
+                        disabled={!canManage(me) || busy !== null}
                         onClick={() => toggle(m)}
                       >
                         {m.enabled ? L("an", "on") : L("aus", "off")}

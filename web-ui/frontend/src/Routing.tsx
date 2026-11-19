@@ -61,6 +61,7 @@ import TopologyTab from "./Topology";
 import { FoldTitle, useFolds } from "./fold";
 import { Dash, Empty, ErrorBox, fmtTime, Icon, Loading, Note, PageHead, SharedChip } from "./ui";
 import { L } from "./i18n";
+import { replaceHash } from "./places";
 import { findingLabel } from "./refs";
 
 const PAGE = 200;
@@ -2544,7 +2545,14 @@ export default function Routing({
       )}
       <div className="tabbar sticky">
         {TABS.map((t) => (
-          <button key={t.key} className={tab === t.key ? "on" : ""} onClick={() => setTab(t.key)}>
+          <button
+            key={t.key}
+            className={tab === t.key ? "on" : ""}
+            onClick={() => {
+              setTab(t.key);
+              replaceHash("routing", t.key === "routes" ? {} : { tab: t.key }); // BGP-Nachbarn = Stelle „BGP“ (ADR 0067)
+            }}
+          >
             {t.label}
           </button>
         ))}

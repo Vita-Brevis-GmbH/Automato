@@ -67,6 +67,7 @@ class _Bag:
         self.filter_info: dict[tuple[str, str], dict] = {}
         self.cifs: dict[tuple[str, str], str] = {}  # (Tenant, Contract-Interface) -> CT-DN
         self.taboos: dict[tuple[str, str], dict] = {}  # (Tenant, Taboo) -> {dn, subjects}
+        self.vrf_enforcement: dict[tuple[str, str], str | None] = {}  # (Tenant, VRF) -> pcEnfPref
         self.vrfs: set[tuple[str, str]] = set()  # (Tenant, VRF)
         # Route-Leaking zwischen VRFs (fvCtx/leakRoutes, 0.44.0): {vrf, prefix, to, external}
         self.leaks: list[dict] = []
@@ -170,10 +171,15 @@ def _port(value: str | None) -> str | None:
 
 
 def _entry_service(attrs: dict) -> str:
+    """Dienst eines Filter-Eintrags. Ohne Protokoll zaehlt der EtherType (ADR 0071 Nachtrag,
+    P-11): `unspecified/any` = Filter ohne EtherType (z. B. `common/default` - seine Zoning-Rule
+    hat die tiefere Stufe 9 bzw. 15/16/21), `ip/any` = EtherType `ip` (Stufe 7 bzw. 13/14/17)."""
     prot = (attrs.get("prot") or "unspecified").lower()
     if prot == "unspecified":
         ether = (attrs.get("etherT") or "unspecified").lower()
-        if ether not in ("unspecified", "ip", "ipv4", "ipv6"):
+        if ether == "unspecified":
+            return "unspecified/any"
+        if ether not in ("ip", "ipv4", "ipv6"):
             return f"{ether}/any"  # z. B. arp
         prot = "ip"
     if prot in ("icmp", "icmpv4"):
@@ -302,16 +308,30 @@ def _subject_filters(subj_attrs: dict, subj_kids: list[dict]) -> dict:
     Provider) und `out` (vzOutTerm: nur Provider -> Consumer); `filters` = alle (Verweise)."""
     both = _rel(subj_kids, "vzRsSubjFiltAtt", "tnVzFilterName")
     terms: dict[str, list[str]] = {"in": [], "out": []}
+    # Filter mit `action="deny"` (Fable B-10, ADR 0071): der Filter sperrt, mit Vorrang
+    # `priorityOverride` (default | level1 | level2 | level3) - bis 1.21 nicht gelesen
+    deny: dict[str, str] = {}
+
+    def actions(kids: list[dict], cls: str) -> None:
+        for c in kids:
+            if cls in c:
+                a = _attrs(c[cls])
+                if a.get("tnVzFilterName") and str(a.get("action") or "").lower() == "deny":
+                    deny[a["tnVzFilterName"]] = str(a.get("priorityOverride") or "default").lower()
+
+    actions(subj_kids, "vzRsSubjFiltAtt")
     for c in subj_kids:  # nicht-reflexive Subjects: Filter je Richtung
         for term, key in (("vzInTerm", "in"), ("vzOutTerm", "out")):
             if term in c:
                 terms[key] += _rel(_children(c[term]), "vzRsFiltAtt", "tnVzFilterName")
+                actions(_children(c[term]), "vzRsFiltAtt")
     return {
         "filters": list(dict.fromkeys(both + terms["in"] + terms["out"])),
         "both": both,
         "in": terms["in"],
         "out": terms["out"],
         "rev_ports": str(subj_attrs.get("revFltPorts") or "yes").lower() != "no",
+        "deny": deny,
     }
 
 
@@ -333,6 +353,8 @@ def _walk(
             t = name or (dn.split("/tn-", 1)[1].split("/", 1)[0] if "/tn-" in dn else "")
         elif cls == "fvCtx":
             bag.vrfs.add((t, name))
+            # Policy Control Enforcement der VRF (ADR 0071): `unenforced` = keine Contracts
+            bag.vrf_enforcement[(t, name)] = str(attrs.get("pcEnfPref") or "").lower() or None
             bag.leaks += _leaks(kids, t, name)
         elif cls == "fvBD":
             bag.bds[(t, name)] = {
@@ -356,6 +378,9 @@ def _walk(
                 subnets=_values(kids, "fvSubnet"),
                 subnet_scopes=_subnet_scopes(kids, "fvSubnet"),
                 endpoints=_cep_endpoints(kids),
+                # Intra-EPG-Isolation (ADR 0071): `enforced` = Endpunkte der EPG untereinander
+                # gesperrt; fehlt das Attribut im Export, bleibt es ungelesen (None)
+                isolation=str(attrs.get("pcEnfPref") or "").lower() or None,
             )
         elif cls == "fvESg":
             key = dn or f"uni/tn-{t}/esg-{name}"
@@ -516,7 +541,10 @@ def parse_mo_export(data: Any) -> list[dict]:
                 "dst_zone": _zone(providers),
             }
         )
-    return contracts + _taboos(bag) + _preferred_groups(bag)
+    out = contracts + _taboos(bag) + _preferred_groups(bag)
+    for c in out:  # Dienste mit EtherType (P-11): `ip/any` ist nicht mehr der Filter ohne EtherType
+        c["ether_types"] = True
+    return out
 
 
 def _inherit_contracts(bag: _Bag) -> None:
@@ -539,9 +567,29 @@ def _unique_eps(eps: list[dict]) -> list[dict]:
     return list({ep["dn"]: ep for ep in eps}.values())
 
 
+def _by_action(s: dict) -> list[dict]:
+    """Subject je Aktion seiner Filter (Fable B-10): die erlaubenden Filter wie bisher, die
+    sperrenden (`action="deny"`) als eigener Eintrag mit `action` und `priority`."""
+    deny = s.get("deny") or {}
+    if not deny:
+        return [s]
+
+    def part(keep) -> dict:
+        return {**s, **{k: [f for f in s.get(k, []) if keep(f)]
+                        for k in ("filters", "both", "in", "out")}}  # fmt: skip
+
+    allow = part(lambda f: f not in deny)
+    blocked = part(lambda f: f in deny) | {"action": "deny"}
+    levels = [v for v in deny.values() if v != "default"]
+    blocked["priority"] = levels[0] if levels else "default"
+    if not allow["filters"]:
+        return [blocked]
+    return [allow, blocked | {"name": f"{s['name']} (deny)"}]
+
+
 def _subjects(bag: _Bag, c: dict) -> list[dict]:
     out = []
-    for s in c["subjects"]:
+    for s in (part for subj in c["subjects"] for part in _by_action(subj)):
         entry = {
             "name": s["name"],
             "services": [
@@ -554,6 +602,9 @@ def _subjects(bag: _Bag, c: dict) -> list[dict]:
         }
         if "both" in s:  # Contract-Subject (Taboos sperren nur zum geschuetzten EPG)
             entry["services"], entry["reverse"] = _directions(bag, c["tenant"], s)
+        if s.get("action") == "deny":  # sperrender Filter: keine Rueckrichtung, die oeffnet
+            entry |= {"action": "deny", "priority": s.get("priority") or "default"}
+            entry.pop("reverse", None)
         out.append(entry)
     return out
 
@@ -762,9 +813,22 @@ def parse_epgs(data: Any) -> list[dict]:
                 "endpoints": ep.get("endpoints", []),
                 "selectors": ep.get("selectors", []),
                 "pref_group": ep["pref_group"] and ep["kind"] != "vzany",
+                # ADR 0071: None = nicht gelesen (Attribut fehlt im Export)
+                "isolated": _flag(ep.get("isolation"), "enforced"),
+                "vrf_unenforced": _flag(
+                    bag.vrf_enforcement.get(
+                        _vrf_key(bag, vrf_tenant or bd.get("tenant") or ep["tenant"], vrf)
+                        or ("", "")
+                    ),
+                    "unenforced",
+                ),
             }
         )
     return out
+
+
+def _flag(value: str | None, true: str) -> bool | None:
+    return None if not value else value == true
 
 
 def parse_leaks(data: Any) -> list[dict]:

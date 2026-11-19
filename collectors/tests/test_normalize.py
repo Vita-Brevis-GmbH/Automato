@@ -900,8 +900,8 @@ def test_aci_zustandslos_dienste_je_richtung():
     ])]  # fmt: skip
     (c,) = parse_mo_export(export)
     subjects = {s["name"]: s for s in c["subjects"]}
-    assert subjects["SJ_both"]["services"] == ["tcp/443", "ip/any"]
-    assert subjects["SJ_both"]["reverse"] == ["ip/any"]  # tcp/443 zurueck: nur Antworten
+    assert subjects["SJ_both"]["services"] == ["tcp/443", "unspecified/any"]
+    assert subjects["SJ_both"]["reverse"] == ["unspecified/any"]  # tcp/443 zurueck: nur Antworten
     assert subjects["SJ_norev"]["reverse"] == ["tcp/443"]  # ohne Vertauschen: auch zurueck
     # je Richtung: Out-Term nur Provider -> Consumer (Antwort mit Quellport 443, SSH)
     assert subjects["SJ_terms"]["services"] == ["tcp/443"]
@@ -910,6 +910,6 @@ def test_aci_zustandslos_dienste_je_richtung():
     assert subjects["SJ_state"]["services"] == ["tcp/any", "icmp/any"]
     assert subjects["SJ_state"]["reverse"] == ["icmp/any"]
     rules = {r.external_id.rsplit("/", 1)[-1]: r for r in normalize_contract(c)}
-    assert rules["SJ_both"].raw["reverse"] == ["ip/any"]
+    assert rules["SJ_both"].raw["reverse"] == ["unspecified/any"]
     assert rules["SJ_both"].raw["subject"] == "SJ_both"
     assert rules["SJ_terms"].services == ["tcp/443"]

@@ -3,15 +3,19 @@ je Kunde, Portal, Weiterleitung je Werkzeug. Mit Ersatz für docker und curl; ge
 Skript schreibt (Caddy-Einträge, Seiten maskiert, Freigaben nie leer), dass Werkzeuge nur mit
 Freischaltung erscheinen und dass Einstellungen nichts in den Caddyfile schleusen können."""
 
+import base64
 import hashlib
 import json
 import os
 import re
 import shutil
 import subprocess
+import urllib.parse
 from pathlib import Path
 
 import pytest
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 SCRIPT = Path(__file__).resolve().parents[2] / "deploy" / "front" / "front.sh"
 
@@ -29,17 +33,46 @@ case "$*" in
   compose*) echo 'service "proxy" depends on undefined service "web-ui"' >&2; exit 1 ;;
 esac
 case "$*" in
+  *"exec -T orchestrator python "*)
+    [ "${FRONT_AUTOMATO_NB:-ok}" = leer ] || echo "${FRONT_AUTOMATO_NB:-ok}"; exit 0 ;;
+  # Docker-Netze von Automato (1.10.0): nur mit FRONT_DOCKER_NETZE=1
+  *" ps -q orchestrator"|*" ps -q collector"|*" ps -q proxy")
+    [ "${FRONT_DOCKER_NETZE:-}" = 1 ] && echo "id-${!#}"; exit 0 ;;
+  "inspect -f "*" id-"*)
+    case "${!#}" in id-proxy) echo "netz-a netz-tor" ;; *) echo "netz-a" ;; esac; exit 0 ;;
+  "network inspect -f "*)
+    case "${!#}" in
+      netz-a) echo "172.18.0.0/16 " ;;
+      netz-tor) echo "172.19.0.0/16 fd00::/64 " ;;
+    esac
+    exit 0 ;;
   *"exec -T orchestrator getent hosts "*)
     [ -z "${FRONT_GETENT_ORCH:-}" ] || echo "$FRONT_GETENT_ORCH  ${!#}"; exit 0 ;;
   *"exec -T collector getent hosts "*)
     [ -z "${FRONT_GETENT_COLL:-}" ] || echo "$FRONT_GETENT_COLL  ${!#}"; exit 0 ;;
-  *"exec -T proxy wget "*) [ "${FRONT_WGET_FAIL:-}" != 1 ] || exit 1; exit 0 ;;
+  *"exec -T proxy wget "*)
+    [ -z "${FRONT_WGET_OUT:-}" ] || { echo "$FRONT_WGET_OUT" >&2; exit 1; }
+    [ "${FRONT_WGET_FAIL:-}" != 1 ] || exit 1; exit 0 ;;
   "compose -p automato-tor "*"ps --status running --services"*)
     f=""; vor=""; for a in "$@"; do [ "$vor" = -f ] && f=$a; vor=$a; done
     sed -n 's/^  \(tor-[^:]*\):$/\1/p' "$f" ;;
   *"ps --status running --services"*) echo proxy ;;
 esac
 exit 0
+"""
+
+# DNS der VM (1.9.2): FRONT_DNS = Zeilen "<name> <ip>", "*.<domain> <ip>" für einen Wildcard
+GETENT = r"""
+[ "$1" = ahostsv4 ] || exit 2
+while read -r name ip; do
+  [ "$name" = "$2" ] && { echo "$ip       STREAM $2"; exit 0; }
+done <<< "${FRONT_DNS:-}"
+while read -r name ip; do
+  case "$name" in
+    "*."*) [[ "$2" == *".${name#\*.}" ]] && { echo "$ip       STREAM $2"; exit 0; } ;;
+  esac
+done <<< "${FRONT_DNS:-}"
+exit 2
 """
 
 IPTABLES = r"""
@@ -79,7 +112,21 @@ def front(tmp_path):
     pki.mkdir()
     env_file = tmp_path / "env"
     env_file.write_text(ENV)
-    curl = _stub(bin_dir / "curl", 'echo "${FRONT_CURL_CODE:-200}"\n')
+    curl = _stub(  # 1.10.0: die übrigen Namen (Name, den es nicht gibt) mit eigenem Code
+        bin_dir / "curl",
+        'case "$*" in\n'
+        '  *gibt-es-nicht-front-pruefen*) echo "${FRONT_CURL_UEBRIGE:-200}"; exit 0 ;;\n'
+        "esac\n"
+        # 1.10.0: NetBox je Kunde über /api/status/ mit ungültigem Token – NetBox antwortet JSON-403
+        'case "$*" in\n'
+        "  */api/status/*)\n"
+        '    o=""; vor=""; for a in "$@"; do [ "$vor" = -o ] && o=$a; vor=$a; done\n'
+        '    b=${FRONT_CURL_BODY-json}; [ "$b" != json ] || b=\'{"detail": "Invalid token"}\'\n'
+        '    [ -z "$o" ] || printf \'%s\' "$b" > "$o"\n'
+        '    echo "${FRONT_CURL_NB:-403}"; exit 0 ;;\n'
+        "esac\n"
+        'echo "${FRONT_CURL_CODE:-200}"\n',
+    )
     env = {
         **os.environ,
         "AUTOMATO_ENV_FILE": str(env_file),
@@ -90,6 +137,8 @@ def front(tmp_path):
         "DOCKER": str(_stub(bin_dir / "docker", DOCKER)),
         "IPTABLES": str(_stub(bin_dir / "iptables", IPTABLES)),
         "CURL": str(curl),
+        "GETENT": str(_stub(bin_dir / "getent", GETENT)),
+        "FRONT_LOKALE_IPS": "10.0.20.5 172.17.0.1",
         # Host-Agent (1.5.0: pruefen fragt systemd) – Vorgabe: läuft
         "SYSTEMCTL": str(_stub(bin_dir / "systemctl", 'exit "${FRONT_AGENT_RC:-0}"\n')),
     }
@@ -161,20 +210,45 @@ def test_werkzeuge_nur_mit_freischaltung(front):
     site = (front.gen / "sites" / "kunde-a.caddy").read_text()
     assert "kunde-a-doc.mgmt.example.ch {" in site and "respond @internal 404" in site
     assert "-um." not in site  # --um ohne Adresse von Magister bleibt aus
-    assert "AUTOMATO_FRONT_MAGISTER leer" in out.stdout
+    assert "weder AUTOMATO_FRONT_MAGISTER noch _UEBRIGE" in out.stdout
     assert "Valid redirect URI https://kunde-a-doc.mgmt.example.ch/*" in out.stdout
 
     front.env_file.write_text(ENV + "AUTOMATO_FRONT_MAGISTER=https://magister.int.example.ch\n")
     assert front("erzeugen").returncode == 0
     site = (front.gen / "sites" / "kunde-a.caddy").read_text()
     assert "kunde-a-um.mgmt.example.ch {" in site
-    assert "reverse_proxy https://magister.int.example.ch" in site
+    um = site.split("kunde-a-um.mgmt.example.ch {")[1]
+    # 1.12.0: Magister findet den Mandanten am Namen – Host und SNI des Aufrufs bleiben
+    assert "reverse_proxy https://magister.int.example.ch {" in um
+    assert "header_up Host {host}" in um and "tls_server_name {host}" in um
     seite = (front.gen / "www" / "kunde-a" / "index.html").read_text()
-    assert "Benutzerverwaltung" in seite and "Dokumentation" in seite
+    assert "Magister" in seite and "https://kunde-a-um.mgmt.example.ch" in seite
+    assert "Dokumentation" in seite
+
+    # ohne AUTOMATO_FRONT_MAGISTER: wie die übrigen Namen (dort steht Magister), mit deren CA
+    _zertifikat(front.pki, "magister-root", "DNS:magister.example.ch")
+    (front.pki / "magister-root.crt").rename(front.pki / "magister-root.pem")
+    front.env_file.write_text(
+        ENV + "AUTOMATO_FRONT_UEBRIGE=10.0.20.10\nAUTOMATO_FRONT_UEBRIGE_CA=magister-root.pem\n"
+    )
+    assert front("erzeugen").returncode == 0
+    um = (
+        (front.gen / "sites" / "kunde-a.caddy").read_text().split("kunde-a-um.mgmt.example.ch {")[1]
+    )
+    assert "reverse_proxy https://10.0.20.10 {" in um and "header_up Host {host}" in um
+    assert "tls_trust_pool file /etc/caddy/pki/magister-root.pem" in um
 
 
 def test_eigene_ca_fuer_den_netbox_host(front):
     front.env_file.write_text(ENV + "AUTOMATO_FRONT_NETBOX_CA=intern-ca.crt\n")
+    # 1.10.0: fehlt die Datei oder ist sie leer, ändert erzeugen nichts (Proxy lehnte sonst ab)
+    fehlt = front("erzeugen")
+    assert fehlt.returncode != 0 and "intern-ca.crt fehlt oder ist leer" in fehlt.stderr
+    (front.pki / "intern-ca.crt").write_text("")
+    assert "fehlt oder ist leer" in front("erzeugen").stderr
+    (front.pki / "intern-ca.crt").write_text("kein Zertifikat\n")
+    assert "ist kein Zertifikat im PEM-Format" in front("erzeugen").stderr
+    _zertifikat(front.pki, "intern-ca", "DNS:ca.example.ch")
     assert front("kunde", "kunde-a", "Kunde A").returncode == 0
     site = (front.gen / "sites" / "kunde-a.caddy").read_text()
     assert "tls_trust_pool file /etc/caddy/pki/intern-ca.crt" in site
@@ -238,6 +312,27 @@ def test_link_wird_maskiert(front):
     assert boese.returncode != 0 and "https://" in boese.stderr
 
 
+def test_netbox_in_neuem_tab(front):
+    """1.17.0 (Anwender: „Netbox soll vom Kundenportal aus als neuer Tab öffnen“): nur die Kachel
+    NetBox mit target=_blank (ohne Zugriff des neuen Tabs auf die Startseite), die übrigen
+    Werkzeuge und eigene Kacheln im selben Tab – auch eine Kachel mit dem Text „neu“."""
+    front.env_file.write_text(ENV + "AUTOMATO_FRONT_MAGISTER=https://magister.int.example.ch\n")
+    assert front("kunde", "kunde-a", "Kunde A", "--doc", "--um").returncode == 0
+    out = front("link", "kunde-a", "Handbuch", "https://handbuch.example.ch", "neu")
+    assert out.returncode == 0, out.stdout + out.stderr
+    seite = (front.gen / "www" / "kunde-a" / "index.html").read_text()
+    neu = ' target="_blank" rel="noopener noreferrer"'
+    assert re.findall(r'<a class="tile" href="([^"]+)"([^>]*)>', seite) == [
+        ("https://kunde-a-nb.mgmt.example.ch", neu),
+        ("https://kunde-a-doc.mgmt.example.ch", ""),
+        ("https://kunde-a-um.mgmt.example.ch", ""),
+        ("https://handbuch.example.ch", ""),
+    ]
+    assert "<span>neu</span>" in seite
+    # das Portal (alle Kunden) bleibt im selben Tab
+    assert "_blank" not in (front.gen / "www" / "_portal" / "index.html").read_text()
+
+
 def test_entfernen_nur_mit_bestaetigung(front):
     front("kunde", "kunde-a", "Kunde A")
     front("kunde", "kunde-b", "Kunde B")
@@ -271,9 +366,21 @@ def test_pruefen_zertifikate_und_wege(front):
     assert "DOCKER-USER ohne Sperre" in offen.stdout + offen.stderr
 
     _zertifikat(front.pki, "mgmt-int", "DNS:mgmt.int.example.ch")  # ohne Wildcard
-    out = front("pruefen", FRONT_CURL_CODE="403")
+    out = front("pruefen", FRONT_CURL_BODY="Zugriff nur aus freigegebenen Netzen")
     assert "mgmt-int.crt deckt *.mgmt.int.example.ch nicht ab" in out.stderr
     assert "NetBox-Host lehnt diese VM ab (403)" in out.stderr
+
+    # 1.10.0: Instanz fehlt auf dem NetBox-Host – Auffang 404 bzw. ältere Hosts mit leerer 200;
+    # 1.11.0: die Meldung nur einmal (nicht noch einmal auf dem Weg aus dem Orchestrator)
+    for code, body in [("404", "Keine NetBox für diesen Namen"), ("200", "")]:
+        out = front("pruefen", FRONT_CURL_NB=code, FRONT_CURL_BODY=body, FRONT_AUTOMATO_NB="fehlt")
+        assert "kunde-a: auf dem NetBox-Host gibt es keine NetBox für kunde-a" in out.stderr
+        assert out.stderr.count("keine NetBox für kunde-a") == 1
+        assert "netbox-host.sh neu kunde-a" in out.stderr
+        assert "Weg Automato → NetBox nicht geprüft (erst die NetBox" in out.stdout
+        assert "NetBox vom Front-Proxy aus erreichbar" not in out.stdout
+    out = front("pruefen", FRONT_CURL_NB="502")
+    assert "kunde-a: NetBox nicht erreichbar (HTTP 502" in out.stderr
 
 
 def _soll(front, kunden: list[dict]) -> Path:
@@ -316,6 +423,49 @@ def test_sync_uebernimmt_kunden_aus_der_oberflaeche(front):
     assert front("sync").returncode == 0
     assert not (front.gen / "sites" / "kunde-b.caddy").exists()
     assert (front.gen / "sites" / "kunde-c.caddy").exists()
+
+
+def _fassung() -> str:
+    """Fassung der Werkzeuge wie front.sh (front_fassung): front.sh, instanzen.sh, env.sh."""
+    teile = [SCRIPT, SCRIPT.with_name("instanzen.sh"), SCRIPT.parents[1] / "env.sh"]
+    return hashlib.sha256(b"".join(p.read_bytes() for p in teile)).hexdigest()
+
+
+def test_sync_erzeugt_nach_update_neu(front):
+    """1.20.0: ein Update ändert front.sh, der Soll-Stand bleibt gleich. Bis 1.19.x blieb dann die
+    alte Konfiguration stehen, bis jemand `front.sh erzeugen` aufrief (so wäre die Korrektur des
+    Abmeldens nie angekommen). Jetzt hält status.json die Fassung fest (erzeugt_mit), und sync
+    (Timer) erzeugt neu, wenn sie abweicht – einmal, danach wieder „unverändert“."""
+    _soll(front, [{"kurzname": "vb", "name": "Vita", "doc": True, "links": []}])
+    assert front("sync").returncode == 0
+    status_datei = front.gen.parent / "state" / "status.json"
+    assert _status(front)["erzeugt_mit"] == _fassung()
+    assert "unverändert" in front("sync").stdout
+
+    site = front.gen / "sites" / "vb.caddy"
+    for alt in ("0" * 64, None):  # mit einer früheren Fassung bzw. vor 1.20.0 (ohne Angabe) erzeugt
+        stand = _status(front)
+        if alt is None:
+            del stand["erzeugt_mit"]
+        else:
+            stand["erzeugt_mit"] = alt
+        status_datei.write_text(json.dumps(stand), encoding="utf-8")
+        site.write_text("# alte Konfiguration\n")
+        out = front("sync")
+        assert out.returncode == 0, out.stdout + out.stderr
+        assert "front.sh geändert (Update)" in out.stdout
+        assert "vb-doc.mgmt.example.ch {" in site.read_text()  # neu erzeugt
+        assert "Proxy neu geladen" in out.stdout or "Proxy läuft nicht" in out.stdout
+        assert _status(front)["erzeugt_mit"] == _fassung() and _status(front)["ok"]
+        assert "unverändert" in front("sync").stdout  # danach nichts mehr zu tun
+
+    # erzeugen von Hand hält die Fassung ebenfalls fest (der nächste sync erzeugt nicht doppelt)
+    stand = _status(front)
+    stand["erzeugt_mit"] = "1" * 64
+    status_datei.write_text(json.dumps(stand), encoding="utf-8")
+    assert front("erzeugen").returncode == 0
+    assert _status(front)["erzeugt_mit"] == _fassung()
+    assert "unverändert" in front("sync").stdout
 
 
 @pytest.mark.parametrize(
@@ -387,13 +537,51 @@ def test_tor_schuetzt_jede_adresse_und_sperrt_ohne_realm(front):
     assert site.count(f"import front-tor {dienst}") == 4
     nb = site.split("vb-nb.mgmt.example.ch {")[1].split("\n}\n")[0]
     assert nb.index("front-kunden-sperre") < nb.index("handle @front_nb_token {") < nb.index(
-        "redir /logout/ /oauth2/sign_out") < nb.index("import front-tor") < nb.index(
-        "import front-identitaet vb")  # fmt: skip
+        "redir /logout/ https://vb.mgmt.example.ch/oauth2/sign_out") < nb.index(
+        "import front-tor") < nb.index("import front-identitaet vb")  # fmt: skip
     doc = site.split("vb-doc.mgmt.example.ch {")[1].split("\n}\n")[0]
     assert doc.index("respond @internal 404") < doc.index("handle @front_api") < doc.index(
         "import front-tor")  # fmt: skip
     assert "import front-identitaet vb" in site.split("vb-um.mgmt.example.ch {")[1]
     assert "Abmelden" in (front.gen / "www" / "vb" / "index.html").read_text()
+    # 1.12.2: Abmelden beendet die Keycloak-Sitzung über das Tor (Backend-Logout) und zeigt die
+    # Seite „Abgemeldet“ ausserhalb des Tors (Fund aus dem Dev-Test: der Browser blieb sonst auf
+    # der Startseite stehen). 1.20.0: über alle Adressen des Kunden (das Cookie des Tors gilt je
+    # Adresse) – Einstieg /oauth2/abmelden auf jeder Adresse, je Adresse ein Schritt zur nächsten
+    assert 'href="/oauth2/abmelden"' in (front.gen / "www" / "vb" / "index.html").read_text()
+    start = site.split("vb.mgmt.example.ch {")[1].split("\n}\n")[0]
+    doc_ = site.split("vb-doc.mgmt.example.ch {")[1].split("\n}\n")[0]
+    um = site.split("vb-um.mgmt.example.ch {")[1].split("\n}\n")[0]
+    kette = [
+        ("https://vb.mgmt.example.ch", start),
+        ("https://vb-nb.mgmt.example.ch", nb),
+        ("https://vb-doc.mgmt.example.ch", doc_),
+        ("https://vb-um.mgmt.example.ch", um),
+    ]
+    einstieg = "https://vb.mgmt.example.ch/oauth2/sign_out?rd=" + urllib.parse.quote(
+        "https://vb-nb.mgmt.example.ch/oauth2/abmelden/weiter", safe=""
+    )
+    for i, (adresse, teil) in enumerate(kette):
+        naechste = (kette[i + 1][0] + "/oauth2/abmelden/weiter" if i + 1 < len(kette)
+                    else "https://vb.mgmt.example.ch/abgemeldet")  # fmt: skip
+        schritt = f"{adresse}/oauth2/sign_out?rd={urllib.parse.quote(naechste, safe='')}"
+        assert f"redir /oauth2/abmelden {einstieg} 302" in teil, adresse
+        assert f"redir /oauth2/abmelden/weiter {schritt} 302" in teil, adresse
+        # vor dem Tor (auch ohne gültige Sitzung), nach der Sperre nach Absender
+        reihe = [teil.index(x) for x in ("front-kunden-sperre", "redir /oauth2/abmelden ",
+                                         "import front-tor")]  # fmt: skip
+        assert reihe == sorted(reihe), adresse
+        assert "%25" not in teil  # nie doppelt kodiert (WAF)
+    assert f"redir /logout/ {einstieg} 302" in nb
+    seite = (front.gen / "www" / "vb" / "abgemeldet.html").read_text()
+    assert "Abgemeldet" in seite and 'href="/"' in seite
+    assert start.index("front-kunden-sperre") < start.index("handle /abgemeldet {") < start.index(
+        "import front-tor")  # fmt: skip
+    assert "rewrite * /abgemeldet.html" in start
+    assert (
+        '"--backend-logout-url=https://keycloak.int.example.ch/realms/vb/protocol/'
+        in (front.gen / "tor" / "compose.yml").read_text()
+    )
     gesperrt = (front.gen / "sites" / "kunde-b.caddy").read_text()
     assert gesperrt.count("import front-gesperrt") == 2 and "front-tor" not in gesperrt
 
@@ -416,6 +604,19 @@ def test_tor_schuetzt_jede_adresse_und_sperrt_ohne_realm(front):
     assert f'env_file: ["{datei}"]' in compose and "ein-client-secret" not in compose
     assert "read_only: true" in compose and 'cap_drop: ["ALL"]' in compose
     assert "name: automato-front-tor\n    external: true" in compose
+    assert "--whitelist-domain=login.example.ch" not in compose  # kein Umweg über Keycloak mehr
+    portal = (front.gen / "www" / "_portal" / "index.html").read_text()
+    assert 'href="/oauth2/abmelden"' in portal
+    abmelden = ("redir /oauth2/abmelden https://start.mgmt.int.example.ch/oauth2/sign_out?rd="
+                "https%3A%2F%2Fstart.mgmt.int.example.ch%2Fabgemeldet 302")  # fmt: skip
+    assert abmelden in intern
+    assert (front.gen / "www" / "_portal" / "abgemeldet.html").is_file()
+    assert intern.index("handle /abgemeldet {") < intern.index(abmelden) < intern.index(
+        "import front-tor tor-intern")  # fmt: skip
+    stand = front("tor")
+    assert "Valid post logout redirect URIs:" in stand.stdout
+    assert "https://vb.mgmt.example.ch/*" in stand.stdout
+    assert "https://start.mgmt.int.example.ch/*" in stand.stdout
     log = front.log.read_text()
     assert "compose -p automato-tor -f" in log and "up -d --remove-orphans" in log
 
@@ -588,3 +789,557 @@ def test_pruefen_host_agent_namen_und_keycloak(front):
     assert "AUTOMATO_UI_ALLOW leer" not in text and "zentraler Worker" not in text
     assert "Keycloak für Realm vb vom Proxy aus erreichbar" in text
     assert "läuft (automato-front-sync.path)" in text
+
+
+DEV_ENV = """AUTOMATO_FRONT_DOMAIN=mgmt.example.ch
+AUTOMATO_FRONT_DOMAIN_INT=mgmt.int.example.ch
+AUTOMATO_FRONT_MGMT=10.0.10.0/24
+AUTOMATO_FRONT_NETBOX=10.0.20.10:8444
+AUTOMATO_FRONT_MAGISTER=https://magister.int.example.ch
+AUTOMATO_UI_HOST=automato.int.example.ch
+AUTOMATO_UI_TLS="/etc/caddy/pki/ui.crt /etc/caddy/pki/ui.key"
+"""
+
+
+def test_pruefen_adressen_und_ziele(front):
+    """1.9.2: jede Adresse im DNS auf diese VM, im Proxy und im Zertifikat – und ein Wildcard, der
+    fremde Namen (z. B. Kundenseiten von Magister in derselben Domain) hierher holt, fällt auf."""
+    front.env_file.write_text(DEV_ENV)
+    _zertifikat(front.pki, "mgmt", "DNS:*.mgmt.example.ch")
+    _zertifikat(front.pki, "mgmt-int", "DNS:mgmt.int.example.ch,DNS:*.mgmt.int.example.ch")
+    _zertifikat(front.pki, "ui", "DNS:automato.int.example.ch")
+    assert front("kunde", "kunde-a", "Kunde A", "--doc", "--um").returncode == 0
+
+    # Wildcard der geteilten Domain zeigt auf diese VM (der Fehler aus dem Dev-Aufbau)
+    dns = ("*.mgmt.example.ch 10.0.20.5\nautomato.int.example.ch 10.0.20.5\n"
+           "start.mgmt.int.example.ch 10.0.20.5\n")  # fmt: skip
+    out = front("pruefen", FRONT_DNS=dns)
+    text = out.stdout + out.stderr
+    assert out.returncode == 0, text
+    assert "diese VM: 10.0.20.5 172.17.0.1" in text
+    for name, zweck in [("automato.int.example.ch", "Oberfläche von Automato"),
+                        ("start.mgmt.int.example.ch", "Portal"),
+                        ("kunde-a.mgmt.example.ch", "kunde-a: Startseite"),
+                        ("kunde-a-nb.mgmt.example.ch", "kunde-a: NetBox"),
+                        ("kunde-a-doc.mgmt.example.ch", "kunde-a: Automato"),
+                        ("kunde-a-um.mgmt.example.ch", "kunde-a: Magister")]:  # fmt: skip
+        assert f"OK      {name} → 10.0.20.5 ({zweck})" in text
+    assert "mgmt.int.example.ch (Verwaltung, leitet aufs Portal): nicht im DNS" in text
+    assert "*.mgmt.example.ch zeigt auf diese VM: jeder andere Name unter mgmt.example.ch" in text
+    assert "Kundenseiten von Magister" in text
+    assert "kein Wildcard *.mgmt.int.example.ch im DNS" in text
+    assert "Automato (Oberfläche, -doc) erreichbar (http://web-ui:5173/api/health)" in text
+    assert "Magister (-um) erreichbar (https://magister.int.example.ch/)" in text
+    assert "NetBox-Host 10.0.20.10:8444: je Kunde unter „Kunden“" in text
+
+    # richtig: Wildcard bei der anderen Plattform, eigene Einträge – einer fehlt
+    dns = ("*.mgmt.example.ch 10.0.20.10\nkunde-a.mgmt.example.ch 10.0.20.5\n"
+           "kunde-a-nb.mgmt.example.ch 10.0.20.5\n")  # fmt: skip
+    out = front("adressen", FRONT_DNS=dns)
+    text = out.stdout + out.stderr
+    assert out.returncode == 0, text
+    assert "OK      kunde-a-nb.mgmt.example.ch → 10.0.20.5" in text
+    assert "kunde-a-doc.mgmt.example.ch → 10.0.20.10, nicht diese VM – kunde-a: Automato" in text
+    assert "*.mgmt.example.ch → 10.0.20.10 (nicht diese VM)" in text
+    assert "zeigt auf diese VM" not in text and "Ziele" not in text  # nur die Adressen
+
+    # mit WAF zeigen die Namen auf die WAF bzw. VIP: kein Fehler, nur Hinweis
+    front.env_file.write_text(DEV_ENV + "AUTOMATO_FRONT_WAF=10.0.40.1/32\n")
+    out = front("adressen", FRONT_DNS="*.mgmt.example.ch 203.0.113.7\n")
+    waf = "kunde-a.mgmt.example.ch → 203.0.113.7 (kunde-a: Startseite; über WAF bzw. VIP)"
+    assert waf in out.stdout
+    front.env_file.write_text(DEV_ENV)
+
+    # Zertifikat der Oberfläche passt nicht, ein Kunde fehlt im erzeugten Proxy
+    _zertifikat(front.pki, "ui", "DNS:anderer.int.example.ch")
+    (front.gen / "sites" / "kunde-a.caddy").unlink()
+    out = front("adressen", FRONT_DNS="*.mgmt.example.ch 10.0.20.5\n")
+    assert out.returncode == 1
+    ui = "automato.int.example.ch (Oberfläche von Automato): Zertifikat ui.crt deckt"
+    assert ui in out.stderr
+    assert "kunde-a.mgmt.example.ch (kunde-a: Startseite): fehlt im Front-Proxy" in out.stderr
+
+    # Ziele: Serverfehler, kein Weg, docker exec geht nicht
+    front("erzeugen")
+    for wget, erwartet in [
+        ("wget: server returned error: HTTP/1.1 502 Bad Gateway", "antwortet mit HTTP 502"),
+        ("wget: bad address 'magister.int.example.ch'", "Magister (-um) nicht erreichbar"),
+        ("OCI runtime exec failed: exec failed: unable to start container process: procReady "
+         "not received", "im Proxy-Container lässt sich nichts starten"),
+    ]:  # fmt: skip
+        out = front("pruefen", FRONT_DNS=dns, FRONT_WGET_OUT=wget)
+        assert erwartet in out.stdout + out.stderr, wget
+    verboten = "wget: server returned error: HTTP/1.1 403"
+    out = front("pruefen", FRONT_DNS=dns, FRONT_WGET_OUT=verboten)
+    assert "Magister (-um) erreichbar (https://magister.int.example.ch/, HTTP 403)" in out.stdout
+
+
+def test_uebrige_namen_an_magister(front):
+    """1.10.0 (ADR 0053): übrige Namen der Kunden-Domain gehen an die Plattform dahinter (Magister)
+    statt „Unbekannte Adresse“ – Name und SNI bleiben, die Sperre nach Absender gilt."""
+    uebrige = "AUTOMATO_FRONT_UEBRIGE=10.0.20.10\nAUTOMATO_FRONT_UEBRIGE_CA=magister-root.pem\n"
+    front.env_file.write_text(DEV_ENV + uebrige)
+    _zertifikat(front.pki, "mgmt", "DNS:*.mgmt.example.ch")
+    _zertifikat(front.pki, "mgmt-int", "DNS:mgmt.int.example.ch,DNS:*.mgmt.int.example.ch")
+    _zertifikat(front.pki, "ui", "DNS:automato.int.example.ch")
+    shutil.copy(front.pki / "mgmt.crt", front.pki / "magister-root.pem")
+    assert front("kunde", "kunde-a", "Kunde A").returncode == 0
+
+    rest = (front.gen / "sites" / "_unbekannt.caddy").read_text()
+    kunden, intern = rest.split("\n*.mgmt.int.example.ch {")
+    kopf = "*.mgmt.example.ch {\n\timport front-uebrige\n\troute {\n\t\timport front-kunden-sperre"
+    assert kopf in kunden
+    assert "reverse_proxy https://10.0.20.10 {\n\t\t\theader_up Host {host}" in kunden
+    assert "tls_server_name {host}" in kunden
+    assert "tls_trust_pool file /etc/caddy/pki/magister-root.pem" in kunden
+    assert 'respond "Unbekannte Adresse"' not in kunden
+    assert 'respond "Unbekannte Adresse"' in intern
+    snippets = (front.gen / "snippets.caddy").read_text()
+    uebrig = snippets.split("(front-uebrige) {")[1].split("\n}\n")[0]
+    # Sperre wie für Kunden-Adressen, aber keine eigenen Kopfzeilen über die der Plattform
+    assert re.search(r"@front_fremd not remote_ip +10\.0\.10\.0/24", uebrig)
+    assert "header" not in uebrig
+
+    dns = "*.mgmt.example.ch 10.0.20.5\n"  # Wildcard auf den Front-Proxy: jetzt gewollt
+    (front.pki / "magister-root.pem").write_text("")  # wie nach einem abgebrochenen `cat >`
+    out = front("pruefen", FRONT_DNS=dns, FRONT_CURL_UEBRIGE="404")
+    text = out.stdout + out.stderr
+    assert "Übrige Namen unter mgmt.example.ch an: 10.0.20.10 (CA magister-root.pem)" in text
+    assert "*.mgmt.example.ch zeigt auf diese VM – übrige Namen gehen an 10.0.20.10" in text
+    # Konsole und Connector der Plattform dahinter gehen nicht über den Front-Proxy
+    for n in ("konsole", "connect"):
+        assert f"{n}.mgmt.example.ch zeigt auf diese VM (Wildcard)" in text
+        assert "eigener A-Eintrag auf 10.0.20.10" in text
+    assert "Übrige Namen: CA fehlt oder ist leer (deploy/proxy/pki/magister-root.pem)" in text
+    assert "„Unbekannte Adresse“" not in text
+
+    shutil.copy(front.pki / "mgmt.crt", front.pki / "magister-root.pem")
+    out = front("pruefen", FRONT_DNS=dns, FRONT_CURL_UEBRIGE="404")
+    text = out.stdout + out.stderr
+    assert out.returncode == 0, text
+    assert "Übrige Namen: 10.0.20.10 erreichbar, Zertifikat vertraut (HTTP 404)" in text
+    direkt = front("adressen", FRONT_DNS=dns + "konsole.mgmt.example.ch 10.0.20.10\n")
+    assert (
+        "konsole.mgmt.example.ch → 10.0.20.10 (direkt, nicht über den Front-Proxy)" in direkt.stdout
+    )
+    assert "connect.mgmt.example.ch zeigt auf diese VM (Wildcard)" in direkt.stdout
+    aufrufe = front.log.read_text() if front.log.exists() else ""
+    assert "exec -T proxy wget" in aufrufe
+    out = front("pruefen", FRONT_DNS=dns, FRONT_CURL_UEBRIGE="000")
+    assert "Übrige Namen: 10.0.20.10 nicht erreichbar bzw. Zertifikat nicht vertraut" in out.stderr
+    # Wildcard bei Magister: übrige Namen kommen gar nicht über den Front-Proxy
+    out = front("adressen", FRONT_DNS="*.mgmt.example.ch 10.0.20.10\n")
+    assert "AUTOMATO_FRONT_UEBRIGE ungenutzt" in out.stdout
+
+    front.env_file.write_text(DEV_ENV + "AUTOMATO_FRONT_UEBRIGE=10.0.20.10 {\n")
+    assert "AUTOMATO_FRONT_UEBRIGE ungültig" in front("erzeugen").stderr
+
+
+def test_topologie_fuer_das_inventar(front):
+    """1.10.0 (ADR 0053): erzeugen schreibt Adressen und Ziele für den Orchestrator (Inventar fürs
+    Cockpit) – nur mit eingerichtetem Host-Agenten, nur Namen und Adressen."""
+    front.env_file.write_text(DEV_ENV + "AUTOMATO_FRONT_UEBRIGE=10.0.20.10\n")
+    assert front("kunde", "kunde-a", "Kunde A", "--doc").returncode == 0
+    topo = front.dir / "state" / "topologie.json"
+    assert not topo.exists()  # ohne Host-Agent kein Ordner, keine Datei
+
+    (front.dir / "state").mkdir()
+    out = front("kunde", "kunde-b", "Kunde B", FRONT_HOSTNAME="automato-vm.int.example.ch")
+    assert out.returncode == 0, out.stdout + out.stderr
+    data = json.loads(topo.read_text(encoding="utf-8"))
+    assert oct(topo.stat().st_mode & 0o777) == "0o644"
+    assert data["vm"] == {
+        "name": "automato-vm.int.example.ch",
+        "adressen": ["10.0.20.5", "172.17.0.1"],
+    }
+    assert data["oberflaeche"] == "https://automato.int.example.ch"
+    assert data["portal"] == "https://start.mgmt.int.example.ch"
+    assert (data["netbox_host"], data["uebrige"], data["tor"]) == (
+        "10.0.20.10:8444",
+        "10.0.20.10",
+        False,
+    )
+    assert data["magister"] == "https://magister.int.example.ch" and data["cmdb"] is None
+    kunden = {k["kurzname"]: k for k in data["kunden"]}
+    assert kunden["kunde-a"] == {
+        "kurzname": "kunde-a", "name": "Kunde A", "startseite": "https://kunde-a.mgmt.example.ch",
+        "netbox": "https://kunde-a-nb.mgmt.example.ch", "automato": "https://kunde-a-doc.mgmt.example.ch",
+        "magister": None, "cmdb": None,
+        # 1.11.0 (ADR 0054): Herkunft und Auswahl fürs Cockpit
+        "quelle": "befehl", "werkzeuge": ["doc", "nb"], "zugriff": "ueberall", "netze": [],
+        "realm": None, "gesperrt": False,  # ADR 0059
+    }  # fmt: skip
+    assert kunden["kunde-b"]["automato"] is None
+
+
+def test_automato_selbst_an_seine_netbox(front):
+    """1.10.0 (ADR 0053): Orchestrator und Worker kommen über den Hairpin mit einer Adresse ihrer
+    Docker-Netze an den Front-Proxy – nur die API mit Token geht an die NetBox, vor der Sperre und
+    ohne Kopfzeilen der Anmeldung; pruefen geht den Weg aus dem Orchestrator bis zur NetBox."""
+    front.env_file.write_text(DEV_ENV)
+    _zertifikat(front.pki, "mgmt", "DNS:*.mgmt.example.ch")
+    _zertifikat(front.pki, "mgmt-int", "DNS:mgmt.int.example.ch,DNS:*.mgmt.int.example.ch")
+    _zertifikat(front.pki, "ui", "DNS:automato.int.example.ch")
+    out = front("kunde", "kunde-a", "Kunde A", "--zugriff", "intern", FRONT_DOCKER_NETZE="1")
+    assert out.returncode == 0, out.stdout + out.stderr
+    site = (front.gen / "sites" / "kunde-a.caddy").read_text()
+    nb = site.split("kunde-a-nb.mgmt.example.ch {")[1]
+    eigen = nb.split("@front_eigen {")[1].split("\n\t}")[0]
+    assert "remote_ip 172.18.0.0/16 172.19.0.0/16 fd00::/64" in eigen
+    assert "header_regexp Authorization ^(Token|Bearer)\\s" in eigen
+    route = nb.split("\troute {\n")[1]
+    vorn = route.split("\t\timport front-kunden-sperre")[0]
+    assert vorn.startswith("\t\timport front-ohne-identitaet\n\t\thandle @front_eigen {")
+    assert "reverse_proxy https://10.0.20.10:8444 {" in vorn and "tls_server_name {host}" in vorn
+    assert "X-Automato-User" not in vorn
+    # die Startseite und -doc bleiben wie bisher
+    assert "@front_eigen" not in site.split("kunde-a-nb.mgmt.example.ch {")[0]
+
+    ohne = front("erzeugen")  # Container laufen nicht: keine eigenen Netze, kein Eintrag
+    assert ohne.returncode == 0
+    assert "@front_eigen" not in (front.gen / "sites" / "kunde-a.caddy").read_text()
+
+    for antwort, text in [
+        ("ok", "kunde-a: Automato erreicht seine NetBox über den Front-Proxy"),
+        ("tls", "vertraut dem Zertifikat von https://kunde-a-nb.mgmt.example.ch nicht – CA nach"),
+        ("weg", "Automato erreicht https://kunde-a-nb.mgmt.example.ch nicht"),
+        ("gesperrt", "Front-Proxy lässt Automato nicht zur NetBox – front.sh erzeugen"),
+        ("fehlt", "keine NetBox für kunde-a – dort: netbox-host.sh neu kunde-a"),
+        ("leer", "Weg Automato → NetBox nicht geprüft"),
+    ]:  # fmt: skip
+        out = front("pruefen", FRONT_AUTOMATO_NB=antwort)
+        assert text in out.stdout + out.stderr, antwort
+    log = front.log.read_text()
+    assert "exec -T orchestrator python -c" in log and "https://kunde-a-nb.mgmt.example.ch" in log
+
+
+def test_portal_unter_der_domain_der_kunden(front):
+    """1.10.0 (Anwender 2026-11-13: Portal unter start.<domain>): interne Domain = Domain der
+    Kunden – nur das Portal, keine Verwaltung auf der Domain selbst, nur ein Auffang-Eintrag."""
+    geteilt = DEV_ENV.replace(
+        "AUTOMATO_FRONT_DOMAIN_INT=mgmt.int.example.ch", "AUTOMATO_FRONT_DOMAIN_INT=mgmt.example.ch"
+    )
+    front.env_file.write_text(geteilt + "AUTOMATO_FRONT_UEBRIGE=10.0.20.10\n")
+    _zertifikat(front.pki, "mgmt", "DNS:*.mgmt.example.ch")
+    _zertifikat(front.pki, "mgmt-int", "DNS:*.mgmt.example.ch")
+    _zertifikat(front.pki, "ui", "DNS:automato.int.example.ch")
+    assert front("kunde", "kunde-a", "Kunde A").returncode == 0
+    intern = (front.gen / "sites" / "_intern.caddy").read_text()
+    assert "start.mgmt.example.ch {\n\timport front-intern" in intern
+    assert "\nmgmt.example.ch {" not in intern and "Verwaltung" not in intern
+    rest = (front.gen / "sites" / "_unbekannt.caddy").read_text()
+    assert rest.count("*.mgmt.example.ch {") == 1 and "import front-uebrige" in rest
+
+    out = front("pruefen", FRONT_DNS="*.mgmt.example.ch 10.0.20.5\n")
+    text = out.stdout + out.stderr
+    assert "Portal start.mgmt.example.ch (Domain der Kunden) nur aus: 10.0.10.0/24" in text
+    assert "mgmt-int.crt gültig bis" in text and "deckt" not in text
+    assert "OK      start.mgmt.example.ch → 10.0.20.5 (Portal)" in text
+    assert "Verwaltung, leitet aufs Portal" not in text
+
+    for name in ("start", "konsole", "connect"):
+        assert f"Kurzname '{name}' ist reserviert" in front("kunde", name, "X").stderr
+
+
+# --- NetBox als Werkzeug, Kunden aus dem Cockpit (1.11.0, ADR 0054) ------------------------------
+
+
+def test_kunde_ohne_netbox(front):
+    """NB=nein (--ohne-nb): keine -nb-Adresse, keine Kachel, keine Prüfung, kein Callback."""
+    (front.dir / "state").mkdir(parents=True)
+    out = front("kunde", "kunde-a", "Kunde A", "--doc", "--ohne-nb", "--realm", "kunde-a")
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert "NetBox: aus (--ohne-nb)" in out.stdout
+    assert "NB=nein" in (front.dir / "kunden" / "kunde-a.conf").read_text()
+    assert front("kunde", "kunde-b", "Kunde B", "--realm", "kunde-a").returncode == 0
+    site = (front.gen / "sites" / "kunde-a.caddy").read_text()
+    assert "kunde-a-nb." not in site and "kunde-a-doc.mgmt.example.ch {" in site
+    seite = (front.gen / "www" / "kunde-a" / "index.html").read_text()
+    assert "-nb." not in seite and "Dokumentation" in seite
+    portal = (front.gen / "www" / "_portal" / "index.html").read_text()
+    assert "<span>Doku</span>" in portal and "<span>NetBox</span>" in portal  # nur kunde-b
+    assert "kunde-b-nb.mgmt.example.ch {" in (front.gen / "sites" / "kunde-b.caddy").read_text()
+
+    liste = front("liste").stdout
+    assert re.search(r"^kunde-a\s+Doku\s", liste, re.M)
+    assert re.search(r"^kunde-b\s+NetBox\s", liste, re.M)
+    tor = front("tor").stdout
+    assert "https://kunde-a-doc.mgmt.example.ch/oauth2/callback" in tor
+    assert "https://kunde-b-nb.mgmt.example.ch/oauth2/callback" in tor
+    assert "kunde-a-nb" not in tor
+
+    topo = json.loads((front.dir / "state" / "topologie.json").read_text(encoding="utf-8"))
+    kunden = {k["kurzname"]: k for k in topo["kunden"]}
+    assert kunden["kunde-a"]["netbox"] is None and kunden["kunde-a"]["werkzeuge"] == ["doc"]
+    assert kunden["kunde-a"]["realm"] == "kunde-a" and kunden["kunde-b"]["werkzeuge"] == ["nb"]
+
+    _zertifikat(front.pki, "mgmt", "DNS:*.mgmt.example.ch")
+    _zertifikat(front.pki, "mgmt-int", "DNS:mgmt.int.example.ch,DNS:*.mgmt.int.example.ch")
+    out = front("pruefen")
+    text = out.stdout + out.stderr
+    assert out.returncode == 0, text
+    assert "kunde-a: ohne NetBox (NB=nein)" in text
+    assert "kunde-a-nb" not in text and "kunde-b-nb.mgmt.example.ch" in text
+    assert text.count("NetBox vom Front-Proxy aus erreichbar") == 1  # nur kunde-b
+
+
+def test_alte_kunden_conf_ohne_nb_behaelt_netbox(front):
+    """kunden/<k>.conf vor 1.11.0 ohne NB: NetBox wie bisher an."""
+    kdir = front.dir / "kunden"
+    kdir.mkdir(parents=True)
+    (kdir / "kunde-a.conf").write_text(
+        "NAME='Kunde A'\nDOC=nein\nUM=nein\nCMDB_AN=nein\nREALM=''\nZUGRIFF=ueberall\nNETZE=''\n"
+    )
+    assert front("erzeugen").returncode == 0
+    assert "kunde-a-nb.mgmt.example.ch {" in (front.gen / "sites" / "kunde-a.caddy").read_text()
+    seite = (front.gen / "www" / "kunde-a" / "index.html").read_text()
+    assert 'href="https://kunde-a-nb.mgmt.example.ch"' in seite
+
+
+def test_sync_uebernimmt_netbox_und_herkunft_cockpit(front):
+    front("kunde", "kunde-c", "Kunde C")  # von Hand angelegt - bleibt unberührt
+    _soll(front, [
+        {"kurzname": "kunde-a", "name": "A", "doc": True, "nb": False, "quelle": "cockpit",
+         "realm": "kunde-a", "zugriff": "intern", "netze": [], "links": []},
+        {"kurzname": "kunde-b", "name": "B", "links": []},  # Oberfläche vor 1.11.0
+        {"kurzname": "kunde-d", "name": "D", "nb": True, "quelle": "fremd", "links": []},
+    ])  # fmt: skip
+    out = front("sync")
+    assert out.returncode == 0, out.stdout + out.stderr
+    conf = {
+        k: (front.dir / "kunden" / f"{k}.conf").read_text()
+        for k in ("kunde-a", "kunde-b", "kunde-d")
+    }
+    assert "NB=nein" in conf["kunde-a"] and "QUELLE=cockpit" in conf["kunde-a"]
+    assert "NB=ja" in conf["kunde-b"] and "QUELLE=oberflaeche" in conf["kunde-b"]
+    assert "QUELLE=oberflaeche" in conf["kunde-d"]  # nur cockpit oder oberflaeche
+    assert "kunde-a-nb." not in (front.gen / "sites" / "kunde-a.caddy").read_text()
+    assert "kunde-b-nb.mgmt.example.ch {" in (front.gen / "sites" / "kunde-b.caddy").read_text()
+
+    # aus dem Cockpit: nicht per Befehl änderbar
+    nein = front("kunde", "kunde-a", "Anders")
+    assert nein.returncode != 0 and "im Cockpit" in nein.stderr
+    liste = front("liste").stdout
+    assert re.search(r"^kunde-a\s.*nur intern\s+Cockpit", liste, re.M)
+    assert re.search(r"^kunde-b\s.*Portal", liste, re.M)
+    assert re.search(r"^kunde-c\s.*Hand", liste, re.M)
+    topo = json.loads((front.dir / "state" / "topologie.json").read_text(encoding="utf-8"))
+    kunden = {k["kurzname"]: k for k in topo["kunden"]}
+    assert (kunden["kunde-a"]["quelle"], kunden["kunde-a"]["zugriff"]) == ("cockpit", "intern")
+    assert (kunden["kunde-b"]["quelle"], kunden["kunde-c"]["quelle"]) == ("oberflaeche", "befehl")
+
+    # im Cockpit entfernt (nicht mehr im Soll-Stand): weg wie Kunden aus der Oberfläche
+    _soll(front, [{"kurzname": "kunde-b", "name": "B", "links": []}])
+    assert front("sync").returncode == 0
+    assert not (front.dir / "kunden" / "kunde-a.conf").exists()
+    assert not (front.gen / "sites" / "kunde-a.caddy").exists()
+    assert (front.gen / "sites" / "kunde-c.caddy").exists()
+
+
+# --- Client-Secrets versiegelt aus dem Cockpit (1.13.0, ADR 0055) --------------------------------
+
+GEHEIM = "testwert-cockpit-0123456789"  # Testwert, kein echtes Geheimnis
+
+
+def _kennung(pub: Path) -> str:
+    key = serialization.load_pem_public_key(pub.read_bytes())
+    der = key.public_bytes(serialization.Encoding.DER,
+                           serialization.PublicFormat.SubjectPublicKeyInfo)  # fmt: skip
+    return hashlib.sha256(der).hexdigest()
+
+
+def _versiegeln(pub: Path, realm: str, secret: str = GEHEIM, client: str = "automato-front",
+                klartext: bytes | None = None) -> str:  # fmt: skip
+    """Wie das Cockpit (Vertrag §4): JSON ohne Leerraum, RSA-OAEP mit SHA-256/MGF1-SHA-256."""
+    key = serialization.load_pem_public_key(pub.read_bytes())
+    if klartext is None:
+        klartext = json.dumps({"realm": realm, "client": client, "secret": secret},
+                              separators=(",", ":")).encode()  # fmt: skip
+    oaep = padding.OAEP(mgf=padding.MGF1(hashes.SHA256()), algorithm=hashes.SHA256(), label=None)
+    return base64.b64encode(key.encrypt(klartext, oaep)).decode()
+
+
+def _soll_mit_tor(front, kunden: list[dict], tor: list[dict]) -> Path:
+    datei = _soll(front, kunden)
+    data = json.loads(datei.read_text(encoding="utf-8"))
+    datei.write_text(json.dumps({**data, "tor_geheimnisse": tor}), encoding="utf-8")
+    return datei
+
+
+COCKPIT_A = {"kurzname": "kunde-a", "name": "Kunde A", "realm": "kunde-a", "quelle": "cockpit",
+             "links": []}  # fmt: skip
+
+
+def _nirgends(front, geheim: str, *ausgaben: subprocess.CompletedProcess) -> None:
+    """Das Geheimnis steht nur in tor/<realm>.env - nie in Ausgabe, Status, Topologie, Log."""
+    for out in ausgaben:
+        assert geheim not in out.stdout and geheim not in out.stderr
+    for datei in [*(front.dir / "state").iterdir(), front.log, *front.gen.rglob("*")]:
+        if datei.is_file():
+            assert geheim not in datei.read_text(encoding="utf-8", errors="replace"), datei
+
+
+def test_empfangsschluessel_anlegen_kennung_und_neu(front):
+    """§1: RSA 3072, privat 600, Kennung = SHA-256 über DER; im Front-Status fürs Inventar."""
+    front.env_file.write_text(TOR_ENV)
+    (front.dir / "state").mkdir(parents=True)
+    out = front("kunde", "kunde-a", "Kunde A", "--realm", "kunde-a")
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert "Empfangsschlüssel für Client-Secrets aus dem Cockpit angelegt" in out.stdout
+    key, pub = front.dir / "tor" / "empfang.key", front.dir / "tor" / "empfang.pub"
+    assert key.stat().st_mode & 0o777 == 0o600
+    assert (front.dir / "tor").stat().st_mode & 0o777 == 0o700
+    privat = serialization.load_pem_private_key(key.read_bytes(), password=None)
+    assert isinstance(privat, rsa.RSAPrivateKey) and privat.key_size == 3072
+    kennung = _kennung(pub)
+    topo = json.loads((front.dir / "state" / "topologie.json").read_text(encoding="utf-8"))
+    assert topo["tor_empfang"] == {"alg": "RSA-OAEP-256", "pem": pub.read_text(),
+                                   "kennung": kennung}  # fmt: skip
+    assert "PRIVATE" not in json.dumps(topo)
+    # bleibt beim nächsten Erzeugen
+    assert front("erzeugen").returncode == 0 and _kennung(pub) == kennung
+    stand = front("tor-empfang")
+    assert stand.returncode == 0 and f"Kennung {kennung}" in stand.stdout
+    assert "Realm kunde-a: Client-Secret fehlt" in stand.stdout
+
+    neu = front("tor-empfang", "neu")
+    assert neu.returncode == 0, neu.stdout + neu.stderr
+    assert _kennung(pub) != kennung
+    topo = json.loads((front.dir / "state" / "topologie.json").read_text(encoding="utf-8"))
+    assert topo["tor_empfang"]["kennung"] == _kennung(pub)
+    assert front("tor-empfang", "falsch").returncode != 0
+
+    # Tor aus: kein Schlüssel im Inventar, kein neuer
+    front.env_file.write_text(ENV)
+    assert front("erzeugen").returncode == 0
+    topo = json.loads((front.dir / "state" / "topologie.json").read_text(encoding="utf-8"))
+    assert topo["tor"] is False and topo["tor_empfang"] is None
+    aus = front("tor-empfang", "neu")
+    assert aus.returncode != 0 and "Anmelde-Tor ist aus" in aus.stderr
+
+
+def test_sync_uebernimmt_versiegeltes_client_secret(front):
+    """§4: sync entschlüsselt, prüft, schreibt tor/<realm>.env (600, Kopfzeile „aus dem
+    Cockpit“), behält das Cookie-Secret, startet den Container des Realms neu – und gibt das
+    Geheimnis nirgends aus, auch nicht mit bash -x."""
+    front.env_file.write_text(TOR_ENV)
+    _soll(front, [COCKPIT_A])
+    assert front("sync").returncode == 0  # legt den Empfangsschlüssel an
+    pub = front.dir / "tor" / "empfang.pub"
+    kennung = _kennung(pub)
+    siegel = {"realm": "kunde-a", "kennung": kennung, "versiegelt": _versiegeln(pub, "kunde-a")}
+    _soll_mit_tor(front, [COCKPIT_A], [siegel])
+    out = front("sync", SHELLOPTS="xtrace")  # Ablaufverfolgung wie bash -x
+    assert out.returncode == 0, out.stdout + out.stderr[-3000:]
+    assert "Realm kunde-a: Client-Secret aus dem Cockpit übernommen" in out.stdout
+    env = front.dir / "tor" / "kunde-a.env"
+    assert env.stat().st_mode & 0o777 == 0o600
+    zeilen = env.read_text().splitlines()
+    assert zeilen[0] == "# Anmelde-Tor, Realm kunde-a (aus dem Cockpit) – nur root"
+    assert zeilen[1] == f"OAUTH2_PROXY_CLIENT_SECRET={GEHEIM}"
+    assert re.fullmatch(r"OAUTH2_PROXY_COOKIE_SECRET=[0-9a-f]{32}", zeilen[2])
+    status = _status(front)
+    assert status["ok"] and status["tor"]["vom_cockpit"] == ["kunde-a"]
+    assert "kunde-a" in status["tor"]["realms_bereit"] and status["tor"]["verworfen"] == []
+    dienst = re.search(r"^  (tor-kunde-a-[0-9a-f]{8}):$", (front.gen / "tor" / "compose.yml")
+                       .read_text(), re.M).group(1)  # fmt: skip
+    log = front.log.read_text()
+    assert f"up -d --no-deps --force-recreate {dienst}" in log
+    assert log.index("--force-recreate") < log.rindex("up -d --remove-orphans")
+    assert "aus dem Cockpit" in front("tor").stdout
+    _nirgends(front, GEHEIM, out)
+
+    # dasselbe Siegel noch einmal (Timer, --immer): nichts neu
+    front.log.write_text("")
+    nochmal = front("sync", "--immer")
+    assert nochmal.returncode == 0 and "--force-recreate" not in front.log.read_text()
+
+    # von Hand ersetzt: gilt, bis das Cockpit ein anderes Chiffrat schickt
+    hand = front("tor", "kunde-a", input="testwert-von-hand-0123\n")
+    assert hand.returncode == 0 and "bis das Cockpit ein neues Client-Secret schickt" in hand.stdout
+    assert _status(front)["tor"]["vom_cockpit"] == []  # Stand des Tors auch nach Handgriffen
+    assert front("sync", "--immer").returncode == 0
+    assert "OAUTH2_PROXY_CLIENT_SECRET=testwert-von-hand-0123" in env.read_text()
+    cookie = env.read_text().splitlines()[2]
+
+    # neues Chiffrat (erneuert): übernommen, Cookie-Secret bleibt (Sitzungen bleiben)
+    neu = "testwert-erneuert-9876543210"
+    siegel = {**siegel, "versiegelt": _versiegeln(pub, "kunde-a", neu)}
+    _soll_mit_tor(front, [COCKPIT_A], [siegel])
+    out = front("sync")
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert env.read_text().splitlines()[1:] == [f"OAUTH2_PROXY_CLIENT_SECRET={neu}", cookie]
+    _nirgends(front, neu, out)
+
+    # dasselbe Geheimnis neu versiegelt (anderes Chiffrat): wie bisher, kein Neustart
+    front.log.write_text("")
+    siegel = {**siegel, "versiegelt": _versiegeln(pub, "kunde-a", neu)}
+    _soll_mit_tor(front, [COCKPIT_A], [siegel])
+    out = front("sync")
+    assert "Client-Secret aus dem Cockpit wie bisher" in out.stdout
+    assert "--force-recreate" not in front.log.read_text()
+    pr = front("pruefen")
+    assert "Realm kunde-a: Client-Secret hinterlegt (aus dem Cockpit)" in pr.stdout
+    assert "Empfangsschlüssel für Client-Secrets aus dem Cockpit" in pr.stdout
+
+
+@pytest.mark.parametrize(
+    ("fall", "grund"),
+    [
+        ("realm_im_siegel", "inhalt_ungueltig"),
+        ("client", "inhalt_ungueltig"),
+        ("secret_form", "inhalt_ungueltig"),
+        ("kein_json", "inhalt_ungueltig"),
+        ("fremder_schluessel", "nicht_entschluesselt"),
+        ("kennung_veraltet", "schluessel_veraltet"),
+        ("realm_von_hand", "realm_unbekannt"),
+        ("kennung_form", "format"),
+        ("base64_form", "format"),
+    ],
+)
+def test_sync_verwirft_falsche_siegel(front, fall, grund):
+    """§4: falscher Realm/Client/Inhalt, fremder Schlüssel, veraltete Kennung, Realm eines nicht
+    vom Cockpit gepflegten Kunden – verworfen, Warnung ohne Inhalt, der Rest geht weiter."""
+    front.env_file.write_text(TOR_ENV)
+    hand = {"kurzname": "kunde-b", "name": "Kunde B", "realm": "kunde-b", "links": []}
+    _soll(front, [COCKPIT_A, hand])
+    assert front("sync").returncode == 0
+    pub = front.dir / "tor" / "empfang.pub"
+    realm, kennung, geheim = "kunde-a", _kennung(pub), "testwert-verworfen-0123"
+    versiegelt = _versiegeln(pub, realm, geheim)
+    if fall == "realm_im_siegel":
+        versiegelt = _versiegeln(pub, "kunde-x", geheim)
+    elif fall == "client":
+        versiegelt = _versiegeln(pub, realm, geheim, client="magister")
+    elif fall == "secret_form":
+        geheim = "mit leerzeichen 0123"
+        versiegelt = _versiegeln(pub, realm, geheim)
+    elif fall == "kein_json":
+        versiegelt = _versiegeln(pub, realm, klartext=b"testwert-verworfen-0123")
+    elif fall == "fremder_schluessel":
+        anderer = front.dir / "anderer.pub"
+        key = rsa.generate_private_key(public_exponent=65537, key_size=3072)
+        spki = serialization.PublicFormat.SubjectPublicKeyInfo
+        anderer.write_bytes(key.public_key().public_bytes(serialization.Encoding.PEM, spki))
+        versiegelt = _versiegeln(anderer, realm, geheim)
+    elif fall == "kennung_veraltet":
+        kennung = "0" * 64
+    elif fall == "realm_von_hand":
+        realm = "kunde-b"
+        versiegelt = _versiegeln(pub, realm, geheim)
+    elif fall == "kennung_form":
+        kennung = kennung.upper()
+    elif fall == "base64_form":
+        versiegelt = versiegelt[:-2] + "!!"
+    _soll_mit_tor(front, [COCKPIT_A, hand],
+                  [{"realm": realm, "kennung": kennung, "versiegelt": versiegelt}])  # fmt: skip
+    out = front("sync")
+    assert out.returncode == 0, out.stdout + out.stderr  # die Kunden gehen trotzdem durch
+    assert f"Client-Secret aus dem Cockpit verworfen ({grund})" in out.stdout
+    assert not (front.dir / "tor" / f"{realm}.env").exists()
+    status = _status(front)
+    assert status["ok"] and status["tor"]["verworfen"] == [{"realm": realm, "grund": grund}]
+    assert status["tor"]["vom_cockpit"] == []
+    _nirgends(front, geheim, out)
+    pr = front("pruefen")
+    assert f"Client-Secret aus dem Cockpit verworfen: Realm {realm} ({grund})" in pr.stdout

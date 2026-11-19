@@ -1,4 +1,4 @@
-import type { Capability, CustomerRole, ServerMe } from "./api";
+import type { Capability, CustomerRole, ServerMe, TenantCapability, TenantRole } from "./api";
 // OIDC-Login fürs Web-UI (E1.3b, ADR 0007) via oidc-client-ts gegen Keycloak.
 // Authorization Code + PKCE. Der UserManager ist die einzige Quelle für das Token:
 // abgelaufene Tokens werden still per Refresh-Token erneuert, sonst geht es zurück
@@ -103,6 +103,13 @@ export async function handleRedirectCallback(): Promise<boolean> {
   if (!manager) return false;
   const params = new URLSearchParams(window.location.search);
   if (params.has("error") && params.has("state")) return handleErrorCallback(params);
+  if (params.has("state") && !params.has("code")) {
+    // zurück vom Abmelden über Keycloak (nur ?state=…, 1.20.0): Zustand aufräumen, Adresse bereinigen;
+    // danach meldet ensureSession neu an (Formular von Keycloak)
+    await manager.signoutRedirectCallback().catch(() => undefined);
+    window.history.replaceState({}, document.title, window.location.pathname + window.location.hash);
+    return false;
+  }
   if (!params.has("code")) return false;
   const user = await manager.signinRedirectCallback();
   session(RETRY, null);
@@ -250,9 +257,52 @@ async function redirect(): Promise<void> {
   }
 }
 
+// Abmelden (1.20.0, Befund des Anwenders 2026-11-18: „aus dem Automato heraus abmelden muss ich
+// mehrfach auf Abmelden klicken“). Bis 1.19.2 ging es nur über Keycloak (end_session) zurück auf die
+// Oberfläche: das Cookie des Anmelde-Tors blieb gültig, eine Anfrage während des Abmeldens konnte
+// still neu anmelden (die Weiterleitung zur Anmeldung gewann), und kam der Browser binnen einer
+// Minute nach der Anmeldung zurück, hielt der Schleifenschutz das für eine Schleife („Anmeldung
+// nicht möglich“ mit noch einem „Abmelden“, danach die Rückfrage von Keycloak ohne id_token_hint).
+// Jetzt: hinter dem Anmelde-Tor (ADR 0051) über dessen Abmelden – es beendet die Sitzung in Keycloak
+// und löscht seine Cookies auf allen Adressen des Kunden, danach „Abgemeldet“; sonst wie bisher
+// über Keycloak. In beiden Fällen ein Klick.
+const TOR_ABMELDEN = "/oauth2/abmelden";
+
+// Steht die Oberfläche hinter dem Anmelde-Tor? Dort leitet der Front-Proxy /oauth2/abmelden weiter
+// (vor dem Tor, auch ohne Sitzung); ohne Tor liefert die Oberfläche selbst die Seite (200).
+async function behindGate(): Promise<boolean> {
+  try {
+    const r = await fetch(TOR_ABMELDEN, { redirect: "manual", cache: "no-store", credentials: "same-origin" });
+    return r.type === "opaqueredirect" || (r.status >= 300 && r.status < 400);
+  } catch {
+    return false;
+  }
+}
+
 export async function logout(): Promise<void> {
-  if (!manager) return;
-  await manager.signoutRedirect();
+  if (!manager || leaving) return;
+  // ab hier keine stille Neuanmeldung mehr (laufende Anfragen warten, bis die Seite wechselt)
+  leaving = true;
+  manager.stopSilentRenew();
+  // die nächste Anmeldung ist eine neue - kein Schleifenschutz, kein zweiter Anlauf von früher
+  session(LOGIN_AT, null);
+  session(RETRY, null);
+  callbackError = null;
+  try {
+    if (await behindGate()) {
+      await manager.removeUser();
+      window.location.assign(TOR_ABMELDEN);
+      return;
+    }
+    await manager.signoutRedirect();
+  } catch (e) {
+    leaving = false; // Keycloak nicht erreichbar: Grund zeigen statt still zu warten
+    problemHandler?.(
+      `${L("Abmelden bei Keycloak nicht möglich", "Sign-out at Keycloak not possible")}: ${
+        e instanceof Error ? e.message : String(e)
+      }`,
+    );
+  }
 }
 
 // --- Anzeige: wer ist angemeldet (nur Darstellung, Prüfung macht der Orchestrator) ---
@@ -275,6 +325,19 @@ export interface Me {
   customerRoles: Record<string, CustomerRole>;
   customers: { id: number; name: string }[];
   logins: string[]; // eigene Kennungen laut Orchestrator (eigene Zuordnung erkennen)
+  // Kunden-Realm ohne Zuordnung in Automato (1.13.0): Meldung des Servers, sonst nichts laden
+  missingAssignment?: string | null;
+  // 1.14.0 (ADR 0058): Kunden-Realm ohne Rolle aus dem Cockpit – eigene Seite; Kunden, deren
+  // Benutzer und Rollen das Cockpit führt
+  missingRole?: string | null;
+  cockpitCustomers?: number[];
+  // ADR 0068: Mandanten-Benutzer – Operator bzw. Admin im eigenen Mandanten (Betreuer-Sicht ohne
+  // Kunden-Filter, nur dieser Mandant, nie Admin); Rechte dort laut Orchestrator
+  tenantRole?: TenantRole | null;
+  tenantCaps?: TenantCapability[];
+  // ADR 0068: Betreiber aus einem Kunden-Realm (nur Anzeige) und Link „Ganze Plattform“
+  betreiber?: boolean;
+  platformUrl?: string;
 }
 
 export const DEV_ME: Me = {
@@ -300,8 +363,16 @@ export function customerCan(me: Me, cap: Capability): boolean {
   return me.isCustomer && me.capabilities.includes(cap);
 }
 
+// ADR 0068: Mandanten-Benutzer (Operator bzw. Admin im eigenen Mandanten)?
+export const isTenantUser = (me: Me): boolean => !!me.tenantRole;
+// Verwaltung des Mandanten (Quellsysteme, Standorte, Module, Prüfungen, NetBox-Sync …): globaler
+// Admin bzw. Admin im eigenen Mandanten – Plattform-Funktionen bleiben `isAdmin`
+export const canManage = (me: Me): boolean => me.isAdmin || !!me.tenantCaps?.includes("mandant.manage");
+// Einlesen anstossen („Jetzt einlesen“): Betreuer-Operator bzw. Mandanten-Benutzer
+export const canCollect = (me: Me): boolean => me.isOperator || !!me.tenantCaps?.includes("mandant.collect");
+
 // Kunden-Rollen aufsteigend mit Erklärung (Auswahl bei den Kunden-Benutzern)
-export const CUSTOMER_ROLES: CustomerRole[] = ["viewer", "triage", "editor", "customer_admin"];
+export const CUSTOMER_ROLES: CustomerRole[] = ["viewer", "triage", "editor", "customer_operator", "customer_admin"];
 export const customerRoleRank = (role: string | null | undefined): number =>
   CUSTOMER_ROLES.indexOf((role === "operator" ? "triage" : role) as CustomerRole);
 export function customerRoleLabel(role: string | null | undefined): string {
@@ -310,6 +381,8 @@ export function customerRoleLabel(role: string | null | undefined): string {
       return L("Triage", "Triage");
     case "editor":
       return L("Editor", "Editor");
+    case "customer_operator":
+      return L("Operator", "Operator");
     case "customer_admin":
       return L("Kunden-Admin", "Customer admin");
     default:
@@ -325,10 +398,15 @@ export function customerRoleHint(role: string | null | undefined): string {
         "wie Triage + eigene Applikationen pflegen: Stammdaten, Regeln zuordnen/ausschliessen, Regeln je Kategorie ausblenden (nur Applikationen ganz beim Kunden)",
         "like triage + maintain own applications: master data, assign/exclude rules, hide rules per category (only applications entirely within the customer)",
       );
+    case "customer_operator":
+      return L(
+        "im eigenen Mandanten alles sehen und das Einlesen anstossen, sonst nichts ändern; im gemeinsamen Mandanten nur lesen",
+        "in the own tenant see everything and start collecting, change nothing else; in a shared tenant read only",
+      );
     case "customer_admin":
       return L(
-        "wie Editor + Kunden-Benutzer des eigenen Kunden zuordnen (nie sich selbst, höchstens die eigene Rolle)",
-        "like editor + assign customer users of the own customer (never oneself, at most the own role)",
+        "wie Editor + Kunden-Benutzer des eigenen Kunden zuordnen (nie sich selbst, höchstens die eigene Rolle); im eigenen Mandanten alles anpassen",
+        "like editor + assign customer users of the own customer (never oneself, at most the own role); in the own tenant change everything",
       );
     default:
       return L("die Doku des Kunden lesen", "read the customer's documentation");
@@ -340,16 +418,17 @@ export function customerRoleHint(role: string | null | undefined): string {
 // Orchestrator prüft serverseitig (X-Dev-Customers, X-Dev-Customer-Role).
 const DEV_CUSTOMER = "automato_dev_customer";
 
-function devCustomer(): { tenant: number; customers: number[]; role: string } | null {
+function devCustomer(): { tenant: number; customers: number[]; role: string; own: boolean } | null {
   let raw: string | null = null;
   try {
     raw = localStorage.getItem(DEV_CUSTOMER);
   } catch {
     /* localStorage nicht verfügbar */
   }
-  const m = raw?.match(/^(\d+):([\d,]*)(?::([a-z_]+))?$/);
+  // ADR 0068: „…:<Rolle>:eigen“ führt einen Mandanten-Benutzer vor (eigener Mandant, X-Dev-Own-Tenant)
+  const m = raw?.match(/^(\d+):([\d,]*)(?::([a-z_]+))?(:eigen)?$/);
   if (!m) return null;
-  return { tenant: Number(m[1]), customers: m[2].split(",").filter(Boolean).map(Number), role: m[3] ?? "viewer" };
+  return { tenant: Number(m[1]), customers: m[2].split(",").filter(Boolean).map(Number), role: m[3] ?? "viewer", own: !!m[4] };
 }
 
 // dev-Modus: angemeldeter Benutzer ohne Rollen vorführen (`automato_dev_user` = Kennung, 0.53.0) –
@@ -392,6 +471,7 @@ export function devHeaders(): Record<string, string> {
     "X-Dev-Tenants": String(c.tenant),
     "X-Dev-Customers": c.customers.join(","),
     "X-Dev-Customer-Role": c.role,
+    ...(c.own ? { "X-Dev-Own-Tenant": "1" } : {}),
   };
 }
 
@@ -456,12 +536,15 @@ export function meFromUser(user: User): Me {
 // das Token nicht – der Orchestrator entscheidet, die Oberfläche zeigt es nur an
 export function withServer(me: Me, s: ServerMe): Me {
   const roles = s.roles.filter((r) => ["viewer", "operator", "admin"].includes(r));
+  // ADR 0068: der Admin im eigenen Mandanten pflegt wie ein Betreuer-Operator (der Server prüft je
+  // Endpunkt), der Operator dort nur lesen und einlesen
+  const tenant = s.mandant ?? null;
   return {
     ...me,
     roles,
     tenantIds: s.tenant_ids,
     isAdmin: s.is_admin,
-    isOperator: s.is_admin || roles.includes("operator"),
+    isOperator: s.is_admin || roles.includes("operator") || !!tenant?.rechte.includes("mandant.manage"),
     customerIds: s.customer_ids,
     isCustomer: s.is_customer,
     capabilities: s.capabilities ?? [],
@@ -469,14 +552,25 @@ export function withServer(me: Me, s: ServerMe): Me {
     customerRoles: s.customer_roles ?? {},
     customers: s.customers.map((c) => ({ id: c.id, name: c.name })),
     logins: s.logins ?? [],
+    missingAssignment: s.zuordnung_fehlt?.meldung ?? null,
+    missingRole: s.rolle_fehlt?.meldung ?? null,
+    cockpitCustomers: s.cockpit_kunden ?? [],
+    tenantRole: tenant?.rolle ?? null,
+    tenantCaps: tenant?.rechte ?? [],
+    betreiber: !!s.betreiber,
+    platformUrl: s.plattform_url ?? "",
   };
 }
 
 export function roleLabel(me: Me): string {
+  // ADR 0068: Betreiber aus einem Kunden-Realm, sonst „Kunde · Viewer/Triage/Editor/Operator/Admin“
+  if (me.betreiber) return L("Betreiber", "Service provider");
+  if (me.tenantRole) return `${L("Kunde", "Customer")} · ${me.tenantRole === "customer_admin" ? "Admin" : "Operator"}`;
   if (me.isCustomer) {
     // feinere Rollen: höchste Kunden-Rolle (viewer = nur „Kunde“ wie bisher)
     const role = me.customerRole ?? (me.roles.includes("operator") ? "triage" : "viewer");
-    return role === "viewer" ? L("Kunde", "Customer") : `${L("Kunde", "Customer")} · ${customerRoleLabel(role)}`;
+    if (role === "viewer") return L("Kunde", "Customer");
+    return `${L("Kunde", "Customer")} · ${role === "customer_admin" ? "Admin" : customerRoleLabel(role)}`;
   }
   if (me.isAdmin) return L("Globaler Admin", "Global admin");
   if (me.roles.includes("operator")) return "Operator";

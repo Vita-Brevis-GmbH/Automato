@@ -190,11 +190,21 @@ def _entries(t: _Tenant, vs: dict) -> list[NormalizedNat]:
         **pool_info,
     }
     base_attrs = {k: v for k, v in base_attrs.items() if v not in (None, "", [])}
+    # ADR 0070: Umleitung HTTP -> HTTPS (`http_profile.http_to_https` des Anwendungsprofils, bei
+    # SNI des Parents): der Virtual Service beantwortet den Port ohne SSL selbst (HTTP 30x) -
+    # dieser Fluss endet am Load Balancer und geht nicht zum Pool
+    front_profile = t.profiles.get(ref_uuid(front.get("application_profile_ref")) or "") or {}
+    to_https = any(bool((p.get("http_profile") or {}).get("http_to_https"))
+                   for p in (profile, front_profile))  # fmt: skip
+    has_ssl = any(ssl for _port, ssl in ports)
     out = []
     for ip, floating, vip_enabled in addresses:
         family = "v6" if ":" in ip else "v4"
         for port, ssl in ports:
             attrs = {**base_attrs, **({"ssl": True} if ssl else {})}
+            redirect = to_https and has_ssl and not ssl and bool(port)
+            if redirect:
+                attrs["redirect"] = "https"
             if floating:
                 attrs["floating_ip"] = True
             if not vip_enabled:
@@ -206,13 +216,13 @@ def _entries(t: _Tenant, vs: dict) -> list[NormalizedNat]:
                     name=vs.get("name", ""),
                     ext_ip=ip,
                     ext_port=port or None,
-                    mapped_ip=first.get("ip"),
-                    mapped_port=str(first["port"]) if first.get("port") else None,
+                    mapped_ip=None if redirect else first.get("ip"),
+                    mapped_port=str(first["port"]) if first.get("port") and not redirect else None,
                     protocol="tcp",
                     portforward=bool(port),
                     vip_type=SLB,
                     family=family,
-                    targets=targets,
+                    targets=[] if redirect else targets,
                     attrs=attrs,
                     raw={
                         "tenant": t.name,

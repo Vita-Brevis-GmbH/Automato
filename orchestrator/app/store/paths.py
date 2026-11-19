@@ -55,6 +55,7 @@ Art `l3`): je Geraet und VRF ein Knoten; ihre Adressen kommen aus den `local`-Ro
 
 import ipaddress
 import json
+import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 
@@ -72,11 +73,12 @@ from app.models import (
     TopoContext,
     TopoExit,
     TopoL3Out,
-    TopoPolicyRoute,
     TopoRoute,
 )
-from app.store import nat as nat_store
-from app.store import path_service, references
+from app.store import forwarding, path_service, path_stages, references
+from app.store import vpn as vpn_store
+from app.store.path_stages import bounds as _bounds
+from app.store.path_stages import port_span as _port_span
 from app.store.topology import (
     MGMT,
     Table,
@@ -85,7 +87,6 @@ from app.store.topology import (
     ip_hex,
     is_net,
     is_private,
-    matches,
     span,
     table_of,
     within,
@@ -95,7 +96,14 @@ MAX_HOPS = 12
 MAX_PATHS = 16  # aktive Wege
 MAX_BACKUP = 16  # Backup-Wege (vor dem Filter nach Laenge)
 INNER = 5  # genauere Routen innerhalb eines Netzes je Hop (Anzeige)
-REACHED = ("connected", "fabric", "exit", "external")  # Ende = Ziel erreicht bzw. nach aussen
+# Ende = Ziel erreicht bzw. nach aussen; `vpn` = an der Gegenstelle eines IPsec-Tunnels ohne
+# gelesenes Geraet (1.19.0, ADR 0063 - in den Verbindungen gezaehlt)
+# `redirect` (ADR 0070) = der Load Balancer beantwortet den Fluss selbst (Umleitung HTTP → HTTPS)
+REACHED = ("connected", "fabric", "exit", "external", "vpn", "redirect")
+# Ende ohne Ziel (ADR 0070): `dropped` = das Geraet verwirft (Null-Route, Reverse Path, IPsec ohne
+# Selektor bzw. Tunnel down); `unchecked` = nicht geprueft (privates Ziel ueber die Default-Route
+# an ein nicht gelesenes Geraet, Reverse Path ohne gelesene Einstellungen) - gezaehlt, ADR 0048
+NOT_CHECKED = ("unchecked",)
 MAX_SERVERS = 20  # Ziel-Server einer VIP bzw. eines Pools im Hop (0.114.1)
 _CONNECTED = ("connected", "local")
 _OBJECT_ROUTE = ("dstaddr",)  # FortiGate: statische Route auf ein Adressobjekt (0.112.0)
@@ -250,6 +258,8 @@ class Graph:
         vdoms = Counter(c.source_system_id for c in contexts if c.kind == "vdom")
         self.nodes: dict[Key, Node] = {}
         self.labels: dict[tuple[int, str, str], tuple[str, str]] = {}
+        # gelesene Einstellungen je Knoten (Central NAT, Reverse Path) - `path_stages.settings`
+        self.settings: dict[Key, dict] = {}
         for c in contexts:
             source = names.get(c.source_system_id, f"#{c.source_system_id}")
             single = vdoms[c.source_system_id] == 1
@@ -266,6 +276,8 @@ class Graph:
                 node.group = groups.get(c.source_system_id)
             node.members.append(c.node)
             node.missing += [m for m in c.missing or [] if m not in node.missing]
+            if c.settings:  # FortiGate: `system settings` des VDOMs (ADR 0070)
+                self.settings.setdefault(key, {}).update(c.settings)
         self.refs = references.context(session, tenant_id)
         self._owners: dict[str, list[tuple[Key, str | None, str | None]]] | None = None
         self._zones: dict[tuple[int, str], str] = {}
@@ -286,9 +298,14 @@ class Graph:
         self._ribs: dict[Key | None, _Rib] = {}  # beste RIB-Routen je Kontext (0.74.1)
         self._boundary = None  # boundary.Boundary, erst bei Bedarf (ADR 0032)
         self._bgp = None  # bgp_filters.Filters, erst bei einem BGP-Backup (0.114.0)
+        self._vpn = None  # vpn.Index, IPsec-Tunnel (1.19.0, ADR 0063), erst bei Bedarf
         self._own_ips: dict[Key, set[str]] = {}
+        # virtuelle Gateway-Adressen (HSRP/VRRP), die ein Router nur als Standby haelt (ADR 0070)
+        self._standby: set[tuple[Key, str]] = set()
         self._rib_asked: Counter = Counter()  # Abfragen je Kontext bis zum Index
         self._loaded: dict[int, TopoRoute] = {}  # Routen aus dem Index, je Kennung
+        # Entscheidung je Menge gleicher Routen (ADR 0070, `forwarding.decide`) - je Datenstand
+        self._decisions: dict[tuple, dict] = {}
         self._shared = self._share(session, tenant_id)
         self.exits = list(
             session.scalars(
@@ -320,6 +337,7 @@ class Graph:
             self._tables = shared.setdefault("tables", {})
             self._inner_rows = shared.setdefault("inner", {})
             self._backup_rows = shared.setdefault("backup", {})
+            self._decisions = shared.setdefault("decisions", {})
         return shared
 
     # -- Bezeichnungen --------------------------------------------------------------
@@ -415,8 +433,26 @@ class Graph:
             if node is None or node.kind != L3:
                 continue
             iface = next((h.get("interface") for h in hops or [] if h.get("interface")), None)
-            out.append((key, str(prefix).split("/")[0], iface, bool((attrs or {}).get("virtual"))))
+            ip = str(prefix).split("/")[0]
+            if (attrs or {}).get("virtual") and (attrs or {}).get("state") == "standby":
+                self._standby.add((key, ip))  # IOS `show standby`: nur der aktive nimmt an
+            out.append((key, ip, iface, bool((attrs or {}).get("virtual"))))
         return out
+
+    def vpn(self):
+        """IPsec-Tunnel des Mandanten (1.19.0, ADR 0063, `store/vpn.py`) - einmal je Graph."""
+        if self._vpn is None:
+            from app.store import vpn  # spaet: nur mit Firewalls auf dem Weg
+
+            self._vpn = vpn.Index(self.session, self.tenant_id)
+        return self._vpn
+
+    def tunnel(self, key: Key, interface: str | None):
+        """IPsec-Tunnel hinter einem Interface einer FortiGate: (Tunnel, Dial-up-Instanz)."""
+        node = self.nodes.get(key)
+        if not interface or node is None or node.kind not in ("firewall", "vdom"):
+            return None
+        return self.vpn().find(key, interface)
 
     def boundary(self):
         """Firmengrenze (ADR 0032, `store/boundary.py`) - einmal je Graph geladen."""
@@ -442,12 +478,7 @@ class Graph:
         Datenbankabfrage je Aufruf - die Kunden-Ableitung, die Relevanz und die Wege fragen das
         Routing tausendfach (Anwender: Speichern und Doku brauchten Minuten)."""
         if key is not None or connected:
-            rib = self._ribs.get(key)
-            if rib is None:
-                # erst ab einigen Abfragen lohnt das Laden des Index eines Kontexts
-                self._rib_asked[key] += 1
-                if self._rib_asked[key] > _RIB_AFTER:
-                    rib = self._ribs[key] = _Rib(self._rib_rows(key))
+            rib = self._index(key)
             if rib is not None:
                 return self._route_rows(rib.containing(ip, connected))
         lo, hi = (ip_hex(v) for v in span(ip))
@@ -464,6 +495,37 @@ class Graph:
         if connected:
             stmt = stmt.where(TopoRoute.protocol.in_(_CONNECTED))
         return list(self.session.scalars(stmt))
+
+    def standby_routes(self, ip, key: Key) -> list[TopoRoute]:
+        """Routen der RIB, die die IP enthalten und **nicht** weiterleiten (`best=False`):
+        FortiOS haelt Routen gleicher Distanz mit hoeherer Prioritaet in der Routing-Tabelle -
+        gewaehlt wird ueber sie nicht, aktiv sind sie aber (Reverse Path „feasible“,
+        Gegenpruefung P-1). Nur fuer den Reverse Path gefragt, dort je Quelle gemerkt."""
+        lo, hi = (ip_hex(v) for v in span(ip))
+        return list(
+            self.session.scalars(
+                select(TopoRoute).where(
+                    TopoRoute.tenant_id == self.tenant_id,
+                    TopoRoute.source_system_id == key[0],
+                    TopoRoute.context == key[1],
+                    TopoRoute.family == ip.version,
+                    TopoRoute.table == "rib",
+                    TopoRoute.best.is_(False),
+                    TopoRoute.lo <= lo,
+                    TopoRoute.hi >= hi,
+                )
+            )
+        )
+
+    def _index(self, key: Key | None) -> "_Rib | None":
+        """Index der RIB eines Kontexts (bzw. der angeschlossenen Netze aller Kontexte) - erst ab
+        einigen Abfragen lohnt das Laden; davor None (Abfrage der Datenbank)."""
+        rib = self._ribs.get(key)
+        if rib is None:
+            self._rib_asked[key] += 1
+            if self._rib_asked[key] > _RIB_AFTER:
+                rib = self._ribs[key] = _Rib(self._rib_rows(key))
+        return rib
 
     def _rib_rows(self, key: Key | None):
         """Kennung, Familie, Praefix und Protokoll der besten RIB-Routen eines Kontexts bzw. ohne
@@ -492,32 +554,34 @@ class Graph:
         return [self._loaded[i] for i in ids if i in self._loaded]
 
     def route(self, key: Key, ip, table: Table = 0) -> dict | None:
-        """Wirksame Route des Knotens in der VRF `table`: laengstes Praefix, kleinste Distanz;
-        Next-Hops aller Mitglieder (Border-Leafs) zusammen."""
-        rows = [r for r in self._routes(ip, key) if table_of(r) == table]
-        if not rows:
-            return None
-        length = max(r.prefix_len for r in rows)
-        rows = [r for r in rows if r.prefix_len == length]
-        distance = min((r.distance or 0) for r in rows)
-        rows = [r for r in rows if (r.distance or 0) == distance]
-        hops: list[dict] = []
-        for r in rows:
-            for h in r.next_hops or []:
-                if h not in hops:
-                    hops.append(h)
-        first = rows[0]
-        out = {
-            "prefix": first.prefix,
-            "prefix_len": first.prefix_len,
-            "protocol": first.protocol,
-            "distance": first.distance,
-            "next_hops": hops,
-            "members": sorted({r.node for r in rows}),
-        }
-        if is_net(ip):  # Netz (0.39.0): Teile davon, die genauer anders geroutet werden
-            out |= self._inner(key, ip, table, hops)
+        """Wirksame Route des Knotens in der VRF `table` (`forwarding.decide`, ADR 0070):
+        laengstes Praefix, kleinste Distanz, kleinste Prioritaet; Next-Hops aller Mitglieder
+        (Border-Leafs) zusammen. Dazu `action` (connected | forward | link | drop) und `branches`
+        (Next-Hops nach rekursiver Aufloesung)."""
+        out = forwarding.decide(self, key, ip, table)
+        if out is not None and is_net(ip):  # Netz (0.39.0): Teile, die genauer anders gehen
+            out |= self._inner(key, ip, table, out["next_hops"])
         return out
+
+    def blackholes(self, key: Key) -> set[tuple]:
+        """(Praefix, VRF, Distanz) der eingeschalteten statischen Blackhole-Routen des Knotens
+        (FortiGate-Konfiguration, Tabelle `static`) - einmal je Datenstand."""
+        cache = self._decisions.setdefault(("blackholes",), {})
+        if key not in cache:
+            found = set()
+            for r in self.session.scalars(
+                select(TopoRoute).where(
+                    TopoRoute.source_system_id == key[0],
+                    TopoRoute.context == key[1],
+                    TopoRoute.table == "static",
+                    TopoRoute.best.is_(True),
+                )
+            ):
+                if (r.attrs or {}).get("blackhole"):
+                    # FortiOS: Distanz einer statischen Route ohne Angabe = 10
+                    found.add((r.prefix, table_of(r), r.distance if r.distance is not None else 10))
+            cache[key] = found
+        return cache[key]
 
     def _inner(self, key: Key, net, table: Table, hops: list[dict]) -> dict:
         """Genauere Routen innerhalb des Netzes mit anderem Next-Hop bzw. Interface: der Teil
@@ -581,6 +645,56 @@ class Graph:
             ifaces = [h.get("interface") for h in r.next_hops or [] if h.get("interface")]
             out.append((key, ifaces[0] if ifaces else None, table_of(r)))
         return out
+
+    def connected_parts(self, net) -> tuple[list[tuple[Key, str | None, str]], bool]:
+        """Knoten, an denen **Teile** des Netzes angeschlossen sind (Gegenpruefung P-13: die
+        Quelle einer breiten Regel, z. B. 10.10.0.0/16, ist groesser als das angeschlossene
+        /24): je Knoten und Interface ein Eintrag (Knoten, Interface, Praefixe als Text) - der
+        Eingang entscheidet ueber die Policies. Dazu die ACI-VRFs mit EPG-/BD-Subnetzen im Netz.
+        -> (Eintraege, ob die Teile das ganze Netz decken)."""
+        cache = self.__dict__.setdefault("_parts", {})
+        if net in cache:
+            return cache[net]
+        lo, hi = (ip_hex(v) for v in span(net))
+        found: dict[tuple[Key, str | None], list] = {}
+        rows = self.session.execute(
+            select(TopoRoute.source_system_id, TopoRoute.context, TopoRoute.prefix,
+                   TopoRoute.next_hops)
+            .where(
+                TopoRoute.tenant_id == self.tenant_id,
+                TopoRoute.family == net.version,
+                TopoRoute.table == "rib",
+                TopoRoute.best.is_(True),
+                TopoRoute.protocol == "connected",
+                TopoRoute.lo >= lo,
+                TopoRoute.hi <= hi,
+            )
+            .order_by(TopoRoute.source_system_id, TopoRoute.context, TopoRoute.lo, TopoRoute.id)
+        )  # fmt: skip
+        for sid, context, prefix, hops in rows:
+            key = (sid, context)
+            if key not in self.nodes:
+                continue
+            iface = next((h.get("interface") for h in hops or [] if h.get("interface")), None)
+            if self.table(key, iface) == MGMT:
+                continue  # Management-Netz: kein Verkehr der Quelle
+            found.setdefault((key, iface), []).append(prefix)
+        self.fabric(net)  # laedt die Subnetze des Fabrics
+        for sub, nkey, _text in self._fabric_rows or []:
+            if sub.version == net.version and within(sub, net):
+                found.setdefault((nkey, None), []).append(str(sub))
+        nets = []
+        for prefixes in found.values():
+            for prefix in prefixes:
+                try:
+                    nets.append(ipaddress.ip_network(prefix, strict=False))
+                except ValueError:
+                    continue
+        covered = sum(n.num_addresses for n in ipaddress.collapse_addresses(nets))
+        out = [(key, iface, ", ".join(dict.fromkeys(prefixes)))
+               for (key, iface), prefixes in found.items()]  # fmt: skip
+        cache[net] = (out, covered >= net.num_addresses)
+        return cache[net]
 
     def backups(self, key: Key, ip, table: Table, route: dict) -> list[dict]:
         """Backup-Next-Hops fuer das Praefix der aktiven Route: BGP-Pfade und eingeschaltete
@@ -790,12 +904,8 @@ class Graph:
         peer_key = (key[0], peer[0])
         return (peer_key, peer[1]) if peer_key in self.nodes else None
 
-    def dnat(self, key: Key, ip, ingress: dict) -> dict | None:
-        """VIP der FortiGate (DNAT) fuer das Ziel an diesem Knoten: externe IP bzw. Bereich und
-        `extintf` (any bzw. Eingang) passen -> interne IP(s), beim Virtual Server alle Real
-        Server. Ein Netz als Ziel (0.39.0) geht ohne DNAT weiter - eine VIP ist eine Adresse."""
-        if is_net(ip):
-            return None
+    def vips(self, key: Key) -> list[NatRule]:
+        """VIPs der FortiGate (DNAT) im VDOM des Knotens - einmal je Graph geladen."""
         if key not in self._vips:
             self._vips[key] = list(
                 self.session.scalars(
@@ -808,43 +918,46 @@ class Graph:
                     .order_by(NatRule.name, NatRule.id)
                 )
             )
-        ports = {v for v in (ingress.get("interface"), ingress.get("zone")) if v}
-        for n in self._vips[key]:
-            to = _vip_target(n, ip)
-            if not to:
-                continue
-            extintf = str((n.raw or {}).get("extintf") or "any")
-            if extintf != "any" and ports and extintf not in ports:
-                continue
-            raw, attrs = n.raw or {}, n.attrs or {}
-            out = {
-                "name": n.name,
-                "id": n.id,
-                "ext": n.ext_ip,
-                "to": to,
-                "type": n.vip_type,
-                "ports": [n.ext_port, n.mapped_port] if n.portforward else None,
-                # Ziel-Server mit Namen und Zustand (0.114.1, Anwender: „nur einer und nur die
-                # IP, mehr Infos wäre super“): alle Real Server bzw. die zugeordnete(n) IP(s)
-                "servers": self.vip_servers(n, to, key),
-                "mapped": n.mapped_ip if n.mapped_ip and "-" in n.mapped_ip else None,
-                "method": attrs.get("ldb-method"),
-                "health": [m.get("name") for m in attrs.get("monitor") or [] if m.get("name")],
-                "extintf": raw.get("extintf") if raw.get("extintf") not in (None, "any") else None,
-                "comment": raw.get("comment") or None,
-            }
-            extra = ("servers", "mapped", "method", "health", "extintf", "comment")
-            out = {k: v for k, v in out.items() if k not in extra or v not in (None, [], "")}
-            # Ziel der VIP ist ein Virtual Service des NSX ALB (0.79.0): im Hop nennen
-            port = n.mapped_port if n.portforward else None
-            try:
-                lb = self.balancer(ipaddress.ip_address(to[0]), ("tcp", _first_port(port)))
-            except ValueError:
-                lb = None
-            if lb is not None:
-                out["balancer"] = lb["name"]
-            return out
-        return None
+        return self._vips[key]
+
+    def dnat(self, key: Key, ip, ingress: dict, service=None, src=None) -> dict | None:
+        """VIP der FortiGate (DNAT) fuer das Ziel an diesem Knoten (`path_stages.dnat`, ADR
+        0070): externe IP bzw. Bereich, `extintf` und - bei Port-Weiterleitung - Protokoll und
+        Port passen; ohne Central NAT nur VIPs in einer eingeschalteten Policy -> interne IP(s),
+        beim Virtual Server alle Real Server. Ein Netz als Ziel (0.39.0) geht ohne DNAT weiter."""
+        n, to, _why = path_stages.dnat(self, key, ip, ingress, service, src)
+        return self.nat_out(key, n, to) if n is not None else None
+
+    def nat_out(self, key: Key, n: NatRule, to: list[str]) -> dict:
+        """VIP am Hop (`hop.nat`): Name, externe und interne Adresse(n), Ports, Server."""
+        raw, attrs = n.raw or {}, n.attrs or {}
+        out = {
+            "name": n.name,
+            "id": n.id,
+            "ext": n.ext_ip,
+            "to": to,
+            "type": n.vip_type,
+            "ports": [n.ext_port, n.mapped_port] if n.portforward else None,
+            # Ziel-Server mit Namen und Zustand (0.114.1, Anwender: „nur einer und nur die
+            # IP, mehr Infos wäre super“): alle Real Server bzw. die zugeordnete(n) IP(s)
+            "servers": self.vip_servers(n, to, key),
+            "mapped": n.mapped_ip if n.mapped_ip and "-" in n.mapped_ip else None,
+            "method": attrs.get("ldb-method"),
+            "health": [m.get("name") for m in attrs.get("monitor") or [] if m.get("name")],
+            "extintf": raw.get("extintf") if raw.get("extintf") not in (None, "any") else None,
+            "comment": raw.get("comment") or None,
+        }
+        extra = ("servers", "mapped", "method", "health", "extintf", "comment")
+        out = {k: v for k, v in out.items() if k not in extra or v not in (None, [], "")}
+        # Ziel der VIP ist ein Virtual Service des NSX ALB (0.79.0): im Hop nennen
+        port = n.mapped_port if n.portforward else None
+        try:
+            lb = self.balancer(ipaddress.ip_address(to[0]), ("tcp", _first_port(port)))
+        except ValueError:
+            lb = None
+        if lb is not None:
+            out["balancer"] = lb["name"]
+        return out
 
     def vip_servers(self, n: NatRule, to: list[str], key: Key) -> list[dict]:
         """Ziel-Server einer VIP: Real Server (Port, Zustand, Gewicht, Health-Check) bzw. die
@@ -894,8 +1007,11 @@ class Graph:
         return out
 
     def balancer(self, ip, service: tuple[str, int | None] | None) -> dict | None:
-        """Virtual Service eines Load Balancers (NSX ALB, ADR 0027) mit dieser VIP: Port des
-        Dienstes passt (ohne Dienst der erste) -> Server des Pools (aktive zuerst)."""
+        """Virtual Services eines Load Balancers (NSX ALB, ADR 0027) mit dieser VIP, deren Port
+        zum Dienst passt (ohne Dienst die des ersten Ports) - **alle zusammen** (ADR 0070):
+        mehrere Virtual Services auf derselben VIP und demselben Port (SNI-Hosting: der Parent
+        ohne Pool, die Children je mit einem) verteilen nach dem Hostnamen auf alle ihre Pools.
+        -> Server aller Pools (aktive zuerst); `redirect`, wenn der Port nur umleitet."""
         if is_net(ip):
             return None
         if self._lbs is None:
@@ -911,88 +1027,155 @@ class Graph:
                     .order_by(NatRule.name, NatRule.id)
                 ).tuples()
             )
+            # Index je VIP-Adresse (ADR 0070): nicht je Aufruf alle Virtual Services pruefen
+            index: dict[str, list] = defaultdict(list)
+            for n, source in self._lbs:
+                ext = _bounds(n.ext_ip)
+                if ext is not None and ext[0] == ext[1]:
+                    index[str(ext[0])].append((n, source))
+            self.__dict__["_lb_index"] = index
         port = service[1] if service else None
-        for n, source in self._lbs:
-            ext = _bounds(n.ext_ip)
-            if ext is None or ext[0] != ext[1] or ext[0] != ip:
-                continue
+        rows = []
+        for n, source in self.__dict__["_lb_index"].get(str(ip), []):
             ports = _port_span(n.ext_port)
             if port is not None and ports is not None and not ports[0] <= port <= ports[1]:
                 continue
-            attrs = n.attrs or {}
-            servers = [t for t in n.targets or [] if t.get("ip")]
-            ready = [t for t in servers if t.get("status", "active") == "active"] or servers
-            out = {
-                "name": n.name,
-                "id": n.id,
-                "source_system_id": n.source_system_id,
-                "source": source,
-                "ext": n.ext_ip,
-                "port": n.ext_port,
-                "to": [t["ip"] for t in ready],
-                "server_port": ready[0].get("port") if ready else None,
-                "servers": len(servers),
-                # alle Server des Pools mit Namen und Zustand (0.114.1)
-                "members": self.describe_servers(
-                    [
-                        {
-                            "ip": t["ip"],
-                            "port": t.get("port"),
-                            "status": t.get("status"),
-                            "weight": t.get("ratio") or t.get("weight"),
-                            "hostname": t.get("hostname"),
-                            "pool": t.get("pool"),
-                        }
-                        for t in servers[:MAX_SERVERS]
-                    ]
-                ),  # fmt: skip
-                "method": attrs.get("lb_algorithm"),
-                "health": attrs.get("health_monitors") or None,
-                "fqdn": attrs.get("fqdn"),
-                "pool": attrs.get("pool") or attrs.get("pool_group"),
-                "tenant": attrs.get("tenant"),
-                # Quelle danach: Service Engine (SNAT) bzw. der Client (preserve_client_ip)
-                "snat": attrs.get("snat") or "service_engine",
-                "down": attrs.get("oper_status") == "OPER_DOWN" or attrs.get("enabled") is False,
-            }
-            return {k: v for k, v in out.items() if v not in (None, "", False)}
-        return None
+            rows.append((n, source))
+        if not rows:
+            return None
+        if port is None:  # ohne Dienst: die Virtual Services des ersten Ports
+            rows = [x for x in rows if x[0].ext_port == rows[0][0].ext_port]
+        servers: list[dict] = []
+        spare: list[dict] = []  # Pool Group: Server der Pools tieferer Prioritaet (P-8)
+        for n, _source in rows:
+            later = _lower_priority(n.targets or [])
+            for t in n.targets or []:
+                if t.get("ip") and not any(
+                    (t["ip"], t.get("port")) == (x["ip"], x.get("port")) for x in servers
+                ):
+                    servers.append(t)
+                    if id(t) in later:
+                        spare.append(t)
+        # der Virtual Service, der im Hop steht: der erste mit Servern, sonst der erste
+        n, source = next((x for x in rows if any(t.get("ip") for t in x[0].targets or [])),
+                         rows[0])  # fmt: skip
+        attrs = n.attrs or {}
+        first = [t for t in servers if t not in spare]
+        ready = [t for t in first if t.get("status", "active") == "active"] or first
+        waiting = [t for t in spare if t.get("status", "active") == "active"]
+        # abgeschaltet (`enabled` bzw. `traffic_enabled` false, P-9): die VIP antwortet nicht
+        off = all((x.attrs or {}).get("enabled") is False
+                  or (x.attrs or {}).get("traffic_enabled") is False for x, _s in rows)  # fmt: skip
+        redirect = next(((x.attrs or {}).get("redirect") for x, _s in rows
+                         if (x.attrs or {}).get("redirect")), None)  # fmt: skip
+        down = all((x.attrs or {}).get("oper_status") == "OPER_DOWN"
+                   or (x.attrs or {}).get("enabled") is False for x, _s in rows)  # fmt: skip
+        out = {
+            "name": n.name,
+            "id": n.id,
+            "source_system_id": n.source_system_id,
+            "source": source,
+            "ext": n.ext_ip,
+            "port": n.ext_port,
+            "to": [t["ip"] for t in ready],
+            # Pool Group (Avi): die Pools tieferer Prioritaet bekommen erst Verkehr, wenn im
+            # Pool mit der hoechsten kein Server mehr erreichbar ist - Backup-Wege
+            "backup_to": [t["ip"] for t in waiting if t["ip"] not in {x["ip"] for x in ready}]
+            or None,
+            "server_port": ready[0].get("port") if ready else None,
+            "servers": len(servers),
+            # alle Server der Pools mit Namen und Zustand (0.114.1)
+            "members": self.describe_servers(
+                [
+                    {
+                        "ip": t["ip"],
+                        "port": t.get("port"),
+                        "status": t.get("status"),
+                        "weight": t.get("ratio") or t.get("weight"),
+                        "hostname": t.get("hostname"),
+                        "pool": t.get("pool"),
+                        "priority": t.get("priority"),
+                    }
+                    for t in servers[:MAX_SERVERS]
+                ]
+            ),  # fmt: skip
+            # weitere Virtual Services derselben VIP und desselben Ports (SNI, ADR 0070)
+            "services": [x.name for x, _s in rows] if len(rows) > 1 else None,
+            "method": attrs.get("lb_algorithm"),
+            "health": attrs.get("health_monitors") or None,
+            "fqdn": attrs.get("fqdn"),
+            "pool": attrs.get("pool") or attrs.get("pool_group"),
+            "tenant": attrs.get("tenant"),
+            # Quelle danach: Service Engine (SNAT) bzw. der Client (preserve_client_ip)
+            "snat": attrs.get("snat") or "service_engine",
+            "down": down,
+            "off": off,
+            # der Port leitet nur um (HTTP → HTTPS): der Fluss endet am Load Balancer
+            "redirect": redirect if not servers else None,
+        }
+        return {k: v for k, v in out.items() if v not in (None, "", False)}
 
-    def policies(self, key: Key, src, dst, ingress: str | None) -> list[dict]:
-        """Policy-Routen bzw. SD-WAN-Regeln des Knotens, die fuer den Verkehr gelten (koennen):
-        `certain` = Quelle, Ziel und Eingangs-Interface passen sicher."""
-        out = []
-        if key not in self._policy_routes:
-            self._policy_routes[key] = list(self.session.scalars(
-                select(TopoPolicyRoute)
-                .where(
-                    TopoPolicyRoute.source_system_id == key[0],
-                    TopoPolicyRoute.context == key[1],
-                    TopoPolicyRoute.enabled.is_(True),
-                )
-                .order_by(TopoPolicyRoute.kind, TopoPolicyRoute.seq)
-            ))  # fmt: skip
-        for p in self._policy_routes[key]:
-            m = p.match or {}
-            devices = m.get("input_device") or []
-            checks = [
-                matches(p.kind, m, "dst", dst),
-                matches(p.kind, m, "src", src),
-                True if not devices else (ingress in devices if ingress else None),
-            ]
-            if False in checks:
+    def policies(self, key: Key, src, dst, ingress: str | None, service=None,
+                 table: Table = 0) -> list[dict]:  # fmt: skip
+        """Policy-Routen bzw. SD-WAN-Regeln des Knotens, die fuer den Verkehr gelten (koennen),
+        in der Reihenfolge des Geraets (`path_stages.policy_routes`, ADR 0070): `certain` =
+        Quelle, Ziel, Eingang und Dienst passen sicher."""
+        return path_stages.policy_routes(self, key, src, dst, ingress, service, table)[0]
+
+    def link_peer(self, key: Key, interface: str | None, table: Table) -> list[tuple]:
+        """Gegenseite einer Punkt-zu-Punkt-Leitung (Route nur mit Interface, ADR 0070): der
+        andere gelesene Knoten im /30- bzw. /31-Netz (IPv6 /126, /127) dieses Interfaces."""
+        if not interface:
+            return []
+        out: list[tuple] = []
+        for (nkey, iface), nets in self._p2p().items():
+            if nkey != key or iface != interface:
                 continue
-            out.append(
-                {
-                    "kind": p.kind,
-                    "seq": p.seq,
-                    "name": p.name,
-                    "gateway": p.gateway,
-                    "output_device": p.output_device or [],
-                    "certain": all(c is True for c in checks),
-                }
-            )
+            for net in nets:
+                for (okey, oiface), others in self._p2p().items():
+                    if okey != key and net in others and all(okey != x[0] for x in out):
+                        out.append((okey, oiface))
         return out
+
+    def _p2p(self) -> dict[tuple, set[str]]:
+        """(Knoten, Interface) -> angeschlossene Punkt-zu-Punkt-Netze, einmal je Graph."""
+        found = self.__dict__.get("_p2p_nets")
+        if found is None:
+            found = defaultdict(set)
+            for sid, context, prefix, hops in self.session.execute(
+                select(TopoRoute.source_system_id, TopoRoute.context, TopoRoute.prefix,
+                       TopoRoute.next_hops)
+                .where(TopoRoute.tenant_id == self.tenant_id, TopoRoute.table == "rib",
+                       TopoRoute.protocol == "connected",
+                       TopoRoute.prefix_len.in_((30, 31, 126, 127)))
+            ):  # fmt: skip
+                for h in hops or []:
+                    if h.get("interface") and (sid, context) in self.nodes:
+                        found[((sid, context), h["interface"])].add(prefix)
+            self.__dict__["_p2p_nets"] = found
+        return found
+
+
+def _lower_priority(targets: list[dict]) -> set[int]:
+    """Server einer Pool Group (NSX ALB), die **nicht** im Pool mit der hoechsten Prioritaet
+    liegen (`id` der Eintraege): Avi waehlt einen Pool tieferer Prioritaet erst, wenn in keinem
+    der hoechsten ein Server gefunden wird (Gegenpruefung P-8). Gelesen ist nur, ob ein Server
+    eingeschaltet ist - die hoechste Prioritaet mit einem eingeschalteten Server gilt; ohne
+    Prioritaet (ein einzelner Pool) sind alle gleich."""
+
+    def rank(t: dict) -> int | None:
+        try:
+            return int(t["priority"])
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    ranked = [(rank(t), t) for t in targets if t.get("ip")]
+    levels = {r for r, _t in ranked if r is not None}
+    if len(levels) < 2:
+        return set()
+    usable = {r for r, t in ranked if r is not None and t.get("status", "active") == "active"}
+    top = max(usable or levels)
+    return {id(t) for r, t in ranked if r is not None and r != top}
 
 
 def parse_key(value: str | None) -> Key | None:
@@ -1054,6 +1237,13 @@ def _trace(
     aktiven Wege und die Backup-Wege mit hoechstens `slack` Hops mehr; je FortiGate-Hop die
     passenden Policies (Dienst optional, z. B. `("tcp", 443)`).
 
+    Seit ADR 0070 entscheidet je Hop das Modell des Geraets: die Stufen des Herstellers
+    (`path_stages`: DNAT mit Dienst, Policy-Routen in Listenreihenfolge, SD-WAN, IPsec, Load
+    Balancer) und das Forwarding (`forwarding`: Prioritaet, Null-Route, rekursiver Next-Hop,
+    Route nur mit Interface). Nach den Regeln (`policy_check`, SNAT je Hop) prueft `_enforce`
+    Reverse Path und IPsec-Selektoren mit der Quelle, wie sie am Geraet wirklich ankommt. Was
+    sich nicht sicher entscheiden laesst, steht gezaehlt in `uncertain` (ADR 0048).
+
     Viele Wege eines Mandanten (Verbindungen der Applikations-Doku, 0.45.0): `graph` und
     `checks` (`policy_check.Checks`) einmal laden; `backups=False` nur die aktiven Wege.
     `entries` (Anbindung als Quelle, `store/exit_ends.py`): Starts mit Eingang und Zone der
@@ -1065,7 +1255,16 @@ def _trace(
     dst = endpoint(dst_text)  # IP bzw. Netz (0.39.0: das Netz als Ganzes)
     src = endpoint(src_text) if src_text and src_text.strip() else None
     g = graph or Graph(session, tenant_id)
+    if with_rules and checks is None:
+        checks = policy_check.Checks.load(session, tenant_id, after=policy_check.AFTER)
     notes: list[str] = []
+    uncertain: Counter = Counter()  # Unsicherheiten am Weg, gezaehlt (ADR 0048, ADR 0070)
+
+    def unsure(kind: str, text: str | None) -> None:
+        if text and text not in notes:
+            notes.append(text)
+            uncertain[kind] += 1
+
     starts: list[tuple[Key, str | None, str]] = []
     entry_zones: dict[tuple[Key, str | None], str] = {}
     chosen = parse_key(start)
@@ -1110,6 +1309,23 @@ def _trace(
         if not starts:
             starts = [(k, None, L(f"Quelle im Fabric: {text}", f"Source in fabric: {text}"))
                       for k, text in g.fabric(src)]  # fmt: skip
+        if not starts and is_net(src) and src.prefixlen:
+            # ein Netz, groesser als die angeschlossenen (Gegenpruefung P-13, ueblich bei breiten
+            # Regeln): der Verkehr aus den angeschlossenen Teilen kommt dort an - je Knoten und
+            # Eingang ein Start; fuer den uebrigen Teil ist der Start unbekannt, gezaehlt
+            parts, whole = g.connected_parts(src)
+            for k, iface, prefixes in parts:
+                how = L(f"Teil der Quelle angeschlossen ({prefixes})",
+                        f"part of the source connected ({prefixes})")  # fmt: skip
+                starts.append((k, iface, how))
+            if starts and not whole:
+                unsure("start_part", L(
+                    f"Von der Quelle {src} sind nur Teile an gelesenen Geräten angeschlossen – "
+                    "der Weg beginnt dort; für den übrigen Teil ist der Start unbekannt "
+                    "(nicht geprüft)",
+                    f"Only parts of the source {src} are connected to devices read – the path "
+                    "starts there; for the remaining part the start is unknown (not checked)",
+                ))  # fmt: skip
         if not starts:
             whole = L(" (das ganze Netz)", " (the whole network)") if is_net(src) else ""
             notes.append(
@@ -1122,10 +1338,73 @@ def _trace(
             )
     paths: list[dict] = []
     backups_found: list[dict] = []
+    merged: dict[tuple, dict] = {}  # Wege zu Servern derselben Klasse: einer, mit allen Zielen
+    dropped = [0]  # aktive Wege ueber der Grenze MAX_PATHS (gekuerzt, gezaehlt)
+
+    def record(out: list, hops: list, hop: dict, kind: str, text: str, deviation,
+               boundary: dict | None = None) -> None:  # fmt: skip
+        """Weg ablegen. Wege, die sich nur im Server hinter einer VIP bzw. einem Load Balancer
+        unterscheiden und fuer Routing und Regeln gleich sind (gleiche Hops, gleiche
+        Adressklasse der Policies), sind **ein** Weg mit allen diesen Servern (`targets`) -
+        gerechnet je Aequivalenzklasse, nicht je Server (ADR 0070)."""
+        full = [*hops, hop]
+        fan = [i for i, h in enumerate(full) if (h.get("lb") or h.get("nat") or {}).get("targets")]
+        limit = MAX_PATHS if out is paths else MAX_BACKUP
+        if fan:
+            sig = (id(out), _fan_signature(full, kind, text, deviation), _classes(full, fan[-1]))
+            prior = merged.get(sig)
+            if prior is not None:
+                for i in fan:
+                    part = full[i].get("lb") or full[i].get("nat")
+                    had = prior["hops"][i].get("lb") or prior["hops"][i].get("nat")
+                    had["targets"] += [t for t in part["targets"] if t not in had["targets"]]
+                return
+        if len(out) >= limit:
+            # mehr Wege als die Grenze (z. B. ECMP ueber viele Next-Hops an einem Knoten):
+            # gekuerzt und gezaehlt, nie still (ADR 0048)
+            if out is paths:
+                dropped[0] += 1
+            return
+        _record(out, hops, hop, kind, text, deviation, boundary)
+        if fan:
+            merged[sig] = out[-1]
+
+    def _classes(full: list[dict], after: int) -> tuple:
+        """Adressklasse des Ziels je Firewall-Hop hinter der Verzweigung (`policy_check`): nur
+        Wege gleicher Klasse haben dieselben Urteile. ACI prueft je Adresse - dort kein
+        Zusammenfassen."""
+        if checks is None:
+            return ()
+        out = []
+        for h in full[after:]:
+            cur = h.get("_cur")
+            if h["kind"] in path_stages.FIREWALLS and cur:
+                out.append(checks.checker.addr_class(h["source_system_id"], h["context"], "dst",
+                                                     endpoint(cur)))  # fmt: skip
+            elif h["kind"] == "vrf":
+                out.append(cur)
+        return tuple(out)
+
+    def fan_out(hops, hop, key, iface, via, table, dev, part: str, targets: list[str],
+                same_hop: bool) -> None:  # fmt: skip
+        """Zu jedem Ziel einer VIP (Virtual Server) bzw. eines Pools einen Zweig: der Load
+        Balancer verteilt auf alle Mitglieder."""
+        queue = active if dev is None else backup
+        for t in targets:
+            try:
+                server = ipaddress.ip_address(t)
+            except ValueError:
+                continue
+            branch = {**hop, part: {**hop[part], "targets": [t]}}
+            if same_hop:  # VIP der Firewall: derselbe Hop, DNAT schon entschieden
+                queue.append((hops, key, iface, via, table, dev, server, branch))
+            else:  # Load Balancer: eigener Hop, weiter am selben Knoten
+                queue.append(([*hops, branch], key, iface, via, table, dev, server, None))
 
     def behind(hops, hop, key, iface, table, dev, cur) -> bool:
         """VIP eines Load Balancers hier angeschlossen (NSX ALB, ADR 0027): der Weg geht am
-        selben Knoten vom Netz der VIP zum Server des Pools weiter (einmal je Weg)."""
+        selben Knoten vom Netz der VIP zu den Servern der Pools weiter (einmal je Weg) - zu
+        allen (ADR 0070); eine Umleitung HTTP → HTTPS endet am Load Balancer."""
         if not balancers or any(h.get("lb") for h in hops):
             return False
         # Port am Eingang des Load Balancers: nach der Port-Weiterleitung der VIP (0.137.0)
@@ -1133,81 +1412,131 @@ def _trace(
         if lb is None:
             return False
         hop["lb"] = lb
+        out = paths if dev is None else backups_found
+        if lb.get("off"):
+            # abgeschalteter Virtual Service (Gegenpruefung P-9): die Service Engine antwortet
+            # fuer die VIP nicht (kein ARP) - nicht erreicht
+            text = L(
+                f"verworfen am Load Balancer {lb['name']}: der Virtual Service ist abgeschaltet "
+                "(enabled bzw. traffic_enabled aus) – die VIP antwortet nicht",
+                f"dropped at load balancer {lb['name']}: the virtual service is disabled "
+                "(enabled or traffic_enabled off) – the VIP does not answer",
+            )
+            hop["dropped"] = {"stage": "lb", "text": text}
+            _record(out, hops, hop, "dropped", text, dev)
+            return True
+        if lb.get("redirect"):
+            text = L(
+                f"Load Balancer {lb['name']} leitet um (HTTP → HTTPS) – der Fluss endet am "
+                "Load Balancer, der Client kommt auf dem anderen Port neu",
+                f"Load Balancer {lb['name']} redirects (HTTP → HTTPS) – the flow ends at the "
+                "load balancer, the client returns on the other port",
+            )
+            _record(out, hops, hop, "redirect", text, dev)
+            return True
         if not lb.get("to"):
             text = L(
                 f"Load Balancer {lb['name']}: kein Server mit IP im Pool",
                 f"Load Balancer {lb['name']}: no server with an IP in the pool",
             )
-            _record(paths if dev is None else backups_found, hops, hop, "unknown", text, dev)
+            _record(out, hops, hop, "unknown", text, dev)
             return True
         name = f"Load Balancer {lb['name']} ({lb.get('source', 'NSX ALB')})"
         via = L(f"über {name}", f"via {name}")
-        server = ipaddress.ip_address(lb["to"][0])
-        (active if dev is None else backup).append(
-            ([*hops, hop], key, iface, via, table, dev, server)
-        )
+        fan_out(hops, hop, key, iface, via, table, dev, "lb", lb["to"], False)
+        if backups and dev is None and lb.get("backup_to"):
+            # Pool Group (P-8): Pools tieferer Prioritaet sind Backup-Wege, nie aktive
+            deviation = {"hop": len(hops), "label": name, "reason": L(
+                "Pool tieferer Priorität der Pool Group – nur, wenn im Pool mit der höchsten "
+                "Priorität kein Server erreichbar ist",
+                "pool of lower priority in the pool group – only if no server of the pool "
+                "with the highest priority is reachable",
+            )}  # fmt: skip
+            fan_out(hops, hop, key, iface, via, table, deviation, "lb", lb["backup_to"], False)
         return True
 
-    # (Hops, Knoten, Eingang, wie erreicht, VRF, Abweichung, Ziel nach NAT) - aktive zuerst
-    active = [([], key, iface, via, g.table(key, iface), None, dst) for key, iface, via in starts]
+    # (Hops, Knoten, Eingang, wie erreicht, VRF, Abweichung, Ziel nach NAT, begonnener Hop) -
+    # aktive zuerst
+    active = [([], key, iface, via, g.table(key, iface), None, dst, None)
+              for key, iface, via in starts]  # fmt: skip
     backup: list[tuple] = []
     cut = False
     while active or backup:
         if active and len(paths) >= MAX_PATHS or not active and len(backups_found) >= MAX_BACKUP:
             cut = True
             break
-        hops, key, ingress, via, table, dev, cur = (active or backup).pop(0)
+        hops, key, ingress, via, table, dev, cur, begun = (active or backup).pop(0)
         out = paths if dev is None else backups_found
 
         node = g.nodes[key]
-        hop = {**node.out(), "via": via, "ingress": _port(g, key, ingress)}
-        if not hops and (key, ingress) in entry_zones:  # Anbindung: Zone ohne Interface
-            hop["ingress"].setdefault("zone", entry_zones[(key, ingress)])
-        if table != 0:
-            hop["vrf"] = table
-        leg = hops[_after_balancer(hops) :]  # nach einem Load Balancer: neuer Abschnitt
-        if any((h["key"], h.get("vrf", 0)) == (node.key, table) for h in leg):
-            text = L(f"Schleife: {node.label} ist schon auf dem Weg",
-                     f"Loop: {node.label} is already on the path")  # fmt: skip
-            _record(out, hops, hop, "loop", text, dev)
-            continue
-        if len(hops) >= MAX_HOPS:
-            text = L(f"mehr als {MAX_HOPS} Hops – abgebrochen",
-                     f"more than {MAX_HOPS} hops – aborted")  # fmt: skip
-            _record(out, hops, hop, "max_hops", text, dev)
-            continue
-        if cur != dst:
-            hop["dst"] = str(cur)  # Ziel nach NAT auf einem Hop davor
-        if node.kind in ("firewall", "vdom"):
-            nat = g.dnat(key, cur, hop["ingress"])
-            if nat is not None:  # VIP: ab hier zur internen IP
-                hop["nat"] = nat
-                cur = ipaddress.ip_address(nat["to"][0])
-        policies = g.policies(key, src, cur, ingress)
-        hop["policy_routes"] = policies
-        follow = next(
-            (p for p in policies if p["certain"] and (p["gateway"] or p["output_device"])), None
-        )
-        route = g.route(key, cur, table)
+        firewall = node.kind in path_stages.FIREWALLS
+        if begun is not None:  # Zweig einer VIP mit mehreren Servern: der Hop steht schon
+            hop = begun
+        else:
+            hop = {**node.out(), "via": via, "ingress": _port(g, key, ingress)}
+            if not hops and (key, ingress) in entry_zones:  # Anbindung: Zone ohne Interface
+                hop["ingress"].setdefault("zone", entry_zones[(key, ingress)])
+            if table != 0:
+                hop["vrf"] = table
+            leg = hops[_after_balancer(hops) :]  # nach einem Load Balancer: neuer Abschnitt
+            if any((h["key"], h.get("vrf", 0)) == (node.key, table) for h in leg):
+                text = L(f"Schleife: {node.label} ist schon auf dem Weg",
+                         f"Loop: {node.label} is already on the path")  # fmt: skip
+                record(out, hops, hop, "loop", text, dev)
+                continue
+            if len(hops) >= MAX_HOPS:
+                text = L(f"mehr als {MAX_HOPS} Hops – abgebrochen",
+                         f"more than {MAX_HOPS} hops – aborted")  # fmt: skip
+                record(out, hops, hop, "max_hops", text, dev)
+                continue
+            if cur != dst:
+                hop["dst"] = str(cur)  # Ziel nach NAT auf einem Hop davor
+            # Dienst an diesem Hop: nach der Port-Weiterleitung und den Load Balancern davor
+            svc = path_service.at_end([*hops, hop], service)
+            if firewall:  # Stufe DNAT: VIP nach Adresse, Eingang und Dienst (ADR 0070)
+                vip, to, why = path_stages.dnat(g, key, cur, hop["ingress"], svc, src)
+                unsure("nat", why)
+                if src is not None and (names := path_stages.source_filtered(g, key, cur)):
+                    hop["_src_filter"] = names
+                if vip is not None:
+                    hop["nat"] = g.nat_out(key, vip, to)
+                    if len(to) > 1:  # Virtual Server: zu jedem Real Server
+                        fan_out(hops, hop, key, ingress, via, table, dev, "nat", to, True)
+                        continue
+                    cur = ipaddress.ip_address(to[0])
+        if begun is not None:
+            cur = ipaddress.ip_address(hop["nat"]["targets"][0])
+        hop["_cur"] = str(cur)
+        if hop.get("nat"):  # nach der Port-Weiterleitung dieser VIP
+            svc = path_service.at_end([*hops, hop], service)
+        # Stufe Policy-Routen und SD-WAN (Reihenfolge der Liste, Protokoll und Port, deny)
+        shown, follow, why = path_stages.policy_routes(g, key, src, cur, ingress, svc, table)
+        unsure("policy_route", why)
+        hop["policy_routes"] = shown
+        decision = g.route(key, cur, table)  # Stufe Routing-Tabelle (`forwarding`)
+        route = None
+        if decision is not None:
+            route = {k: v for k, v in decision.items() if k != "branches"}
         hop["route"] = route
         inside = g.fabric(cur, key) if node.kind == "vrf" else []
-        # Route ohne Next-Hop-IP ueber einen Inter-VDOM-Link: weiter im VDOM am anderen Ende
-        on_link = (
-            route is not None
-            and route["protocol"] not in _CONNECTED
-            and any(
-                not h.get("ip") and g.vdom_peer(key, h.get("interface")) for h in route["next_hops"]
-            )
-        )
         if follow is not None:
             hop["policy"] = follow
-            devices = follow["output_device"] or [None]
-            next_hops = [{"ip": follow["gateway"], "interface": devices[0]}]
+            if len(follow.get("members") or []) > 1:
+                names = ", ".join(m["interface"] for m in follow["members"])
+                unsure("sdwan", L(
+                    f"{node.label}: SD-WAN-Regel {follow.get('name') or follow.get('seq')} – "
+                    f"welches Mitglied ({names}) gewählt wird, hängt vom Zustand der Links ab "
+                    "(nicht gelesen); gezeigt ist das erste",
+                    f"{node.label}: SD-WAN rule {follow.get('name') or follow.get('seq')} – "
+                    f"which member ({names}) is chosen depends on the link state (not read); "
+                    "the first one is shown",
+                ))  # fmt: skip
+            next_hops = path_stages.follow_hops(g, key, follow, cur, table)
         elif inside:
             if behind(hops, hop, key, None, table, dev, cur):
                 continue
             text = L(f"Ziel im Fabric: {inside[0][1]}", f"Destination in fabric: {inside[0][1]}")
-            _record(out, hops, hop, "fabric", text, dev)
+            record(out, hops, hop, "fabric", text, dev)
             continue
         elif node.kind == "vrf" and (leak := g.leaked(key, cur)) is not None:
             # Ziel in einer anderen VRF, ins Fabric dieser VRF geleakt (0.44.0): im Fabric,
@@ -1217,22 +1546,28 @@ def _trace(
             hop["leak"] = {"vrf": vrf, "where": where, "text": why, "kind": leak_kind}
             text = L(f"Ziel im Fabric der VRF {vrf}: {where} – {why}",
                      f"Destination in the fabric of VRF {vrf}: {where} – {why}")  # fmt: skip
-            _record(out, hops, hop, "fabric", text, dev)
+            record(out, hops, hop, "fabric", text, dev)
             continue
         elif route is None:
             text = L("keine Route zum Ziel", "no route to the destination") + (
                 f" (VRF {table})" if table != 0 else ""
             )
-            if node.missing:
+            if [m for m in node.missing if path_stages.is_routing_missing(m)]:
                 text = L(
                     "keine Route bekannt – Routing-Tabelle nicht (ganz) lesbar",
                     "no route known – routing table not (fully) readable",
                 )
-            _record(out, hops, hop, "no_route", text, dev)
+            record(out, hops, hop, "no_route", text, dev)
             continue
-        elif not on_link and (
-            route["protocol"] in _CONNECTED or not any(h.get("ip") for h in route["next_hops"])
-        ):
+        elif route["action"] == "drop":
+            # Null-/Blackhole-Route (ADR 0070): das Geraet verwirft - nie „angeschlossen“
+            iface = next((h.get("interface") for h in route["next_hops"]), None)
+            hop["egress"] = _port(g, key, iface)
+            text = L(f"verworfen an {node.label}: Null-Route {route['prefix']}",
+                     f"dropped at {node.label}: null route {route['prefix']}")  # fmt: skip
+            record(out, hops, hop, "dropped", text, dev)
+            continue
+        elif route["action"] == "connected":
             iface = next((h.get("interface") for h in route["next_hops"]), None)
             hop["egress"] = _port(g, key, iface)
             if behind(hops, hop, key, iface, table, dev, cur):
@@ -1240,10 +1575,10 @@ def _trace(
             where = f" ({iface})" if iface else ""
             text = L(f"Ziel angeschlossen an {node.label}{where}",
                      f"Destination connected to {node.label}{where}")  # fmt: skip
-            _record(out, hops, hop, "connected", text, dev)
+            record(out, hops, hop, "connected", text, dev)
             continue
         else:
-            next_hops = route["next_hops"]
+            next_hops = decision["branches"]
         branches = [(nh, hop, dev) for nh in next_hops]
         # eine Abweichung je Weg: Backup-Next-Hops dieses Knotens (nicht bei Policy-Routen)
         if backups and dev is None and follow is None and route is not None:
@@ -1264,6 +1599,11 @@ def _trace(
             target = paths if deviation is None else backups_found
             ip = nh.get("ip")
             egress = {**_port(g, key, nh.get("interface")), "next_hop": ip, **g.resolve(ip)}
+            if nh.get("recursive"):
+                # rekursiver Next-Hop (ADR 0070): die Route nennt `recursive[0]`, erreicht wird
+                # er ueber diesen Nachbarn (Route `recursive_via`)
+                egress["recursive"] = {"next_hop": nh["recursive"][0],
+                                       "via": nh.get("recursive_via")}  # fmt: skip
             branch = {**base, "egress": egress}
 
             nxt = _neighbors(g, key, ip)
@@ -1271,36 +1611,97 @@ def _trace(
             if peer is not None:  # Inter-VDOM-Link ohne (gelesene) Next-Hop-IP
                 link = f"{nh.get('interface')} ↔ {peer[1]}"
                 nxt = [(peer[0], peer[1], L(f"VDOM-Link {link}", f"VDOM link {link}"))]
+            tun = g.tunnel(key, nh.get("interface"))  # IPsec-Tunnel (1.19.0, ADR 0063)
+            if tun is not None:
+                nxt = vpn_store.hop(g, key, tun, cur, egress, nxt)
+            elif not nxt and not ip and _is_line(nh.get("interface")):
+                # Route nur mit Interface (ADR 0070): an die Gegenseite der Leitung - nur auf
+                # einer echten Punkt-zu-Punkt-Leitung (Tunnel, seriell); auf Ethernet fragt das
+                # Geraet auch im /30 per ARP nach dem Ziel (Gegenpruefung P-12, unten)
+                line = L(f"Leitung {nh.get('interface')}", f"link {nh.get('interface')}")
+                nxt = [(k, i, line) for k, i in g.link_peer(key, nh.get("interface"), table)]
             for nkey, niface, how in nxt:
                 queue.append(
-                    ([*hops, branch], nkey, niface, how, g.table(nkey, niface), deviation, cur)
+                    (
+                        [*hops, branch],
+                        nkey,
+                        niface,
+                        how,
+                        g.table(nkey, niface),
+                        deviation,
+                        cur,
+                        None,
+                    )
                 )
             if nxt:
                 continue
+            default = route is not None and route["prefix_len"] == 0 and follow is None
             ex = g.exit_for(key, nh.get("interface"), egress.get("zone"), ip)
+            if ex is None and nh.get("recursive"):
+                ex = g.exit_for(key, None, None, nh["recursive"][0])
             if ex is not None:
                 egress["exit"] = {"id": ex.id, "name": ex.name, "kind": ex.kind}
                 target_key = _exit_target(ex, cur)
                 if target_key is not None and target_key in g.nodes:
                     via_exit = L(f"über {_exit_label(ex)} (manuelle Route)",
                                  f"via {_exit_label(ex)} (manual route)")  # fmt: skip
-                    queue.append(([*hops, branch], target_key, None, via_exit, 0, deviation, cur))
+                    queue.append(([*hops, branch], target_key, None, via_exit, 0, deviation, cur,
+                                  None))  # fmt: skip
+                    continue
+                if default and ex.kind == "internet" and is_private(cur) and not _in_exit(ex, cur):
+                    # privates Ziel ueber die Default-Route ins Internet (ADR 0070): nicht geprueft
+                    text = _unchecked_default(node.label, cur, ip, _exit_label(ex))
+                    uncertain["default"] += 1
+                    record(target, hops, branch, "unchecked", text, deviation)
                     continue
                 text = _exit_text(ex, cur, ip, g.names(ip))
                 edge = g.boundary().judge(key, ip, nh.get("interface"), egress.get("zone"), ex)
-                _record(target, hops, branch, "exit", text, deviation, edge)
+                record(target, hops, branch, "exit", text, deviation, edge)
                 continue
             # VIP eines Load Balancers hinter einem Router ohne gelesenes Geraet (0.79.0): weiter
             # vom Load Balancer zum Server, am selben Knoten
             if behind(hops, branch, key, nh.get("interface"), table, deviation, cur):
                 continue
+            if tun is not None:  # Gegenstelle ohne gelesenes Geraet: sichtbar, gezaehlt (ADR 0048)
+                gw = egress["vpn"].get("remote_gw")
+                text = vpn_store.end_text(egress["vpn"], g.names(gw) if gw else None)
+                record(target, hops, branch, "vpn", text, deviation)
+                continue
             known = g.names(ip) or ([egress["network"]] if egress.get("network") else [])
             name = f" ({', '.join(known)})" if known else ""
-            if not ip:
+            if not ip and _is_line(nh.get("interface")):
                 iface = nh.get("interface") or "?"
-                kind, text = "unknown", L(f"weiter über {iface} ohne Next-Hop",
-                                          f"onward via {iface} without next-hop")  # fmt: skip
-            elif route is not None and route["prefix_len"] == 0 and follow is None:
+                kind, text = "unknown", L(
+                    f"weiter über {iface} ohne Next-Hop – die Gegenseite der Leitung ist nicht "
+                    "gelesen",
+                    f"onward via {iface} without next-hop – the far end of the link has not "
+                    "been read")  # fmt: skip
+            elif not ip:
+                # Route nur mit Interface auf einem Netz mit mehreren Teilnehmern (ADR 0070):
+                # das Geraet fragt direkt nach dem Ziel (ARP) - es ist dort nur, wenn es wirklich
+                # am Interface haengt bzw. jemand per Proxy-ARP antwortet; nicht belegt
+                iface = nh.get("interface") or "?"
+                # im Transfernetz (/30, /31) liegt ein gelesenes Geraet: an kommt es dort nur,
+                # wenn dieses per Proxy-ARP antwortet - nicht gelesen (P-12)
+                far = ", ".join(g.nodes[k].label for k, _i in g.link_peer(key, iface, table))
+                peer_de = (f"; die Gegenseite {far} nimmt den Verkehr nur mit Proxy-ARP an "
+                           "(nicht gelesen)") if far else ""  # fmt: skip
+                peer_en = (f"; the far end {far} accepts the traffic with proxy ARP only "
+                           "(not read)") if far else ""  # fmt: skip
+                kind, text = "unchecked", L(
+                    f"nicht geprüft: Route nur mit Interface {iface} an {node.label} – das "
+                    "Gerät sucht das Ziel direkt am Interface (ARP); ob es dort ist, ist nicht "
+                    f"belegt{peer_de}",
+                    f"not checked: route with interface {iface} only at {node.label} – the "
+                    "device looks for the destination directly on the interface (ARP); whether "
+                    f"it is there is not proven{peer_en}")  # fmt: skip
+                uncertain["onlink"] += 1
+            elif default and is_private(cur):
+                # privates Ziel ueber die Default-Route an ein nicht gelesenes Geraet (ADR 0070):
+                # kein Beleg, dass es dort ankommt - Grenze „nicht geprueft“, nie „erreicht“
+                kind, text = "unchecked", _unchecked_default(node.label, cur, ip, name.strip())
+                uncertain["default"] += 1
+            elif default:
                 kind, text = (
                     "external",
                     L(
@@ -1319,14 +1720,57 @@ def _trace(
             # Firmengrenze (ADR 0032): eBGP zu fremdem AS bzw. Default-Route Richtung Provider
             edge = g.boundary().judge(key, ip, nh.get("interface"), egress.get("zone"),
                                       default=kind == "external") if ip else None  # fmt: skip
-            _record(target, hops, branch, kind, text, deviation, edge)
-    if cut:
+            record(target, hops, branch, kind, text, deviation, edge)
+    pending = len(active) if cut else 0
+    if pending or dropped[0]:
+        # gekuerzt: sichtbar und gezaehlt (ADR 0048) - die uebrigen Wege sind nicht geprueft
         notes.append(L(f"mehr als {MAX_PATHS} Wege – gekürzt",
                        f"more than {MAX_PATHS} paths – truncated"))  # fmt: skip
+        uncertain["truncated"] += pending + dropped[0]
+    elif cut:
+        notes.append(L(f"mehr als {MAX_BACKUP} Backup-Wege – gekürzt",
+                       f"more than {MAX_BACKUP} backup paths – truncated"))  # fmt: skip
     primary = _unique(paths)
     for p in primary:
         p["kind"] = "active"
-    shown, hidden = _backups(primary, _unique(backups_found), slack)
+    found_backups = _unique(backups_found)
+    if with_rules:  # ohne: nur das Routing (Rueckweg, 0.134.0)
+
+        def central(hop: dict, cur_src, hop_dst, cur_svc) -> dict | None:
+            """Central SNAT der FortiGate an diesem Hop (nur mit Central NAT, ADR 0070)."""
+            key = (hop["source_system_id"], hop["context"])
+            return path_stages.central_snat(g, key, hop.get("ingress") or {},
+                                            hop.get("egress") or {}, cur_src, hop_dst,
+                                            cur_svc)  # fmt: skip
+
+        any_central = any(c.get("central_nat") for c in g.settings.values())
+        for p in primary + found_backups:  # Central NAT je FortiGate/VDOM fuer den Abgleich
+            for h in p["hops"]:  # (ADR 0071): True | False | None = nicht gelesen
+                if h.get("kind") in policy_check.FIREWALL_KINDS:
+                    key = (h.get("source_system_id"), h.get("context"))
+                    h["central_nat"] = path_stages.settings(g, key).get("central_nat")
+        policy_check.check_paths(session, tenant_id, primary + found_backups, src, dst, service,
+                                 checks, central=central if any_central else None)  # fmt: skip
+        for p in primary + found_backups:
+            for h in p["hops"]:
+                free = (h.get("rules") or {}).get("no_policy") or {}
+                if free.get("state") == "unchecked":  # ADR 0071 Nachtrag (P-6/P-7), gezaehlt
+                    unsure("no_policy", policy_check.no_policy_text(h["label"], free))
+                cen = h.get("central_snat") or {}
+                if cen.get("unread") or cen.get("sure") is False:
+                    unsure("nat", L(
+                        f"NAT nicht geprüft an {h['label']}: Central SNAT "
+                        + ("nicht gelesen" if cen.get("unread") else
+                           "nicht sicher (Objekt bzw. Dienst nicht prüfbar)"),
+                        f"NAT not checked at {h['label']}: central SNAT "
+                        + ("not read" if cen.get("unread") else
+                           "not certain (object or service cannot be checked)"),
+                    ))  # fmt: skip
+    # Reverse Path und IPsec-Selektoren mit der Quelle nach SNAT (ADR 0070)
+    if _enforce(g, primary + found_backups, src, unsure, with_rules):
+        # gekuerzte Wege koennen jetzt gleich sein (ECMP hinter der Stelle)
+        primary, found_backups = _unique(primary), _unique(found_backups)
+    shown, hidden = _backups(primary, found_backups, slack)
     if hidden:
         notes.append(
             L(
@@ -1338,8 +1782,10 @@ def _trace(
         )
     _mark_length(primary + shown)
     notes += _inner_notes(primary + shown, dst)
-    if with_rules:  # ohne: nur das Routing (Rueckweg, 0.134.0)
-        policy_check.check_paths(session, tenant_id, primary + shown, src, dst, service, checks)
+    for p in primary + found_backups:
+        for h in p["hops"]:
+            h.pop("_cur", None)
+            h.pop("_src_filter", None)
     out = {
         "start": [g.nodes[k].out() | {"via": via} for k, _, via in starts],
         # Session-Sync-Paar bzw. Verbund als ein Hop (0.29.0)
@@ -1348,12 +1794,162 @@ def _trace(
         "slack": slack,
         "service": _service_text(service),
     }
+    if uncertain:
+        # was nicht sicher entschieden ist, je Art gezaehlt (`path_stages.UNCERTAIN`)
+        out["uncertain"] = dict(uncertain)
     # Ports entlang des (ersten) Wegs: Client, VIP, Load Balancer, Server (0.137.0)
     first = next((p for p in out["paths"] if p.get("kind") != "backup"), None)
     if first is not None and (ports := path_service.chain(first, service)) is not None:
         if len({x["service"] for x in ports}) > 1:
             out["service_chain"] = ports
     return out
+
+
+def _fan_signature(full: list[dict], kind: str, text: str, deviation) -> tuple:
+    hops = tuple(
+        (h["key"], *((h.get("egress") or {}).get(k) for k in ("next_hop", "interface")))
+        for h in full
+    )
+    dev = deviation or {}
+    return (hops, kind, text, dev.get("hop"), dev.get("reason"))
+
+
+# Punkt-zu-Punkt nach dem Namen des Interfaces: Cisco `Tunnel0`/`Tu0`, `Serial0/0`/`Se0/0`,
+# `Dialer1`/`Di1`, `Virtual-Access1`/`Vi1`, `Virtual-Template1`/`Vt1`, `Multilink1`, Junos `st0`
+# (mit Ziffer hinter dem Kuerzel - „server“ bzw. „vip-net“ einer FortiGate sind keine Leitung);
+# `gre…`, `vti…`, `ppp…`, Junos `gr-`, `ip-`, `lt-`.
+_LINE = re.compile(
+    r"^(?:(?:tu|tunnel|se|serial|di|dialer|vi|vt|virtual-access|virtual-template|mu|multilink"
+    r"|st)\s*\d|gre|vti|ppp|gr-|ip-|lt-)",
+    re.I,
+)
+
+
+def _is_line(interface: str | None) -> bool:
+    """Interface einer Punkt-zu-Punkt-Leitung (Tunnel, seriell) - eine Route nur mit diesem
+    Interface geht an die Gegenseite, nicht per ARP ans Ziel. Ein /30 bzw. /31 allein macht ein
+    Ethernet-Interface nicht zur Leitung (Gegenpruefung P-12): der Router behandelt das Ziel als
+    angeschlossen und sucht es per ARP - an kommt es nur mit Proxy-ARP der Gegenseite."""
+    if not interface:
+        return True
+    return bool(_LINE.match(interface))
+
+
+def _in_exit(ex: TopoExit, dst) -> bool:
+    """Ziel in den Netzen der Anbindung (von Hand erfasst)?"""
+    for p in ex.prefixes or []:
+        try:
+            if within(dst, ipaddress.ip_network(p, strict=False)):
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+def _unchecked_default(label: str, dst, ip: str | None, where: str) -> str:
+    to = f" {where}" if where else ""
+    return L(
+        f"nicht geprüft (Default-Route): {label} kennt das private Ziel {dst} nur über die "
+        f"Default-Route an {ip or '?'}{to} – kein gelesenes Gerät, ob es dort ankommt, ist "
+        "nicht belegt",
+        f"not checked (default route): {label} knows the private destination {dst} only via "
+        f"the default route to {ip or '?'}{to} – no device read, whether it arrives there is "
+        "not proven",
+    )
+
+
+def _enforce(g: Graph, found: list[dict], src, unsure, with_rules: bool) -> bool:
+    """Stufen, die von der Quelle abhaengen, mit der Quelle, wie sie am Geraet ankommt (nach
+    dem SNAT der Hops davor, `hop.snat` aus `policy_check`): Reverse Path am Eingang jeder
+    FortiGate und die Phase-2-Selektoren am Ausgang in einen IPsec-Tunnel. Verwirft das Geraet,
+    endet der Weg dort (`dropped`); fehlen die Einstellungen, endet er als `unchecked` - beides
+    sichtbar, nie still (ADR 0070, ADR 0063 Nachtrag). -> ob ein Weg gekuerzt wurde."""
+    from app.store import policy_check  # spaet wie in `_trace`
+
+    changed = False
+    for p in found:
+        cur_src = src
+        lb = None
+        for i, hop in enumerate(p["hops"]):
+            if lb is not None and lb.get("snat") != "client":
+                cur_src = None  # hinter dem Load Balancer: Adresse der Service Engine unbekannt
+            lb = hop.get("lb")
+            if hop["kind"] not in path_stages.FIREWALLS:
+                continue
+            key = (hop["source_system_id"], hop["context"])
+            ingress = (hop.get("ingress") or {}).get("interface")
+            if src is not None and cur_src != src and path_stages.source_rules(g, key):
+                # die Policy-Routen dieses Hops sind mit der urspruenglichen Quelle verglichen -
+                # nach einem SNAT davor gilt die neue Quelle: nicht geprueft, gezaehlt
+                unsure("policy_route", L(
+                    f"{hop['label']}: Policy-Routen mit der ursprünglichen Quelle {src} "
+                    "verglichen – nach dem SNAT davor nicht geprüft",
+                    f"{hop['label']}: policy routes compared with the original source {src} – "
+                    "not checked after the SNAT before it",
+                ))  # fmt: skip
+            if hop.get("_src_filter") and cur_src != src:
+                # der Quell-Filter der VIP ist mit der urspruenglichen Quelle verglichen (P-2)
+                names = ", ".join(hop["_src_filter"][:3])
+                unsure("nat", L(
+                    f"NAT nicht geprüft an {hop['label']}: Quell-Filter der VIP {names} mit der "
+                    f"ursprünglichen Quelle {src} verglichen – nach dem SNAT davor nicht geprüft",
+                    f"NAT not checked at {hop['label']}: source filter of VIP {names} compared "
+                    f"with the original source {src} – not checked after the SNAT before it",
+                ))  # fmt: skip
+            if i > 0 and cur_src is not None and ingress:
+                res = path_stages.reverse_path(g, key, hop.get("vrf", 0), cur_src, ingress)
+                if res is not None and res["state"] == "note":
+                    unsure("rpf", res["text"])
+                elif res is not None:
+                    if res["state"] == "unchecked":
+                        unsure("rpf", res["text"])
+                    _cut_path(p, i, res, before=True)
+                    break
+            snat = hop.get("snat")
+            if snat:
+                to = snat.get("to")
+                cur_src = endpoint(to) if to else None
+            v = (hop.get("egress") or {}).get("vpn")
+            if not v:
+                continue
+            tun = g.vpn().by_name.get((key[0], key[1], v.get("name")))
+            if tun is None:
+                continue
+            inst = next((x for x in tun.instances if x.get("name") == v.get("instance")), None)
+            cur = endpoint(hop["_cur"]) if hop.get("_cur") else None
+            res = path_stages.ipsec(tun, inst, cur_src, cur, hop["label"])
+            if res is None:
+                continue
+            if res["state"] == "note":
+                unsure("vpn", res["text"])
+                continue
+            _cut_path(p, i, res, before=False)
+            break
+        if with_rules and p.get("_cut"):
+            verdicts = [(h["label"], h["rules"]["verdict"], h["kind"], h["rules"].get("text"))
+                        for h in p["hops"] if h.get("rules")]  # fmt: skip
+            p["policy"] = policy_check._overall(verdicts)
+        changed = changed or bool(p.pop("_cut", None))
+    return changed
+
+
+def _cut_path(p: dict, i: int, res: dict, before: bool) -> None:
+    """Weg endet an Hop `i`: `before` = am Eingang (vor NAT, Routing und Regeln dieses Hops),
+    sonst am Ausgang (die Regeln dieses Hops galten noch)."""
+    p["hops"] = p["hops"][: i + 1]
+    hop = p["hops"][i] = dict(p["hops"][i])
+    if before:
+        for k in ("egress", "route", "policy", "policy_routes", "nat", "lb", "rules", "snat",
+                  "backup", "checked_service"):  # fmt: skip
+            hop.pop(k, None)
+    hop.pop("boundary", None)
+    hop["dropped"] = {"stage": "rpf" if before else "ipsec", "text": res["text"]}
+    p["end"] = {"kind": res["state"], "text": res["text"]}
+    p.pop("boundary", None)
+    p["_cut"] = True
+    dev = p.get("deviation")
+    if dev and dev.get("hop", 0) > i:
+        p.pop("deviation", None)
 
 
 def target_of(g: Graph, result: dict) -> dict | None:
@@ -1430,10 +2026,26 @@ def _service_text(service: tuple[str, int | None] | None) -> str | None:
 
 
 def _signature(p: dict) -> tuple:
-    return tuple(
-        (h["key"], *((h.get("egress") or {}).get(k) for k in ("next_hop", "interface")))
-        for h in p["hops"]
-    ) + (p["end"]["kind"],)
+    """Woran zwei Wege derselbe sind: Hops mit Ausgang, die Server hinter VIP bzw. Load Balancer
+    (`targets`) und das Ende. Wege, die sich nur im Server unterscheiden, sind **nicht** gleich
+    (Gegenpruefung P-5): Server derselben Klasse hat `record` schon zu einem Weg mit allen
+    Zielen zusammengefasst - was hier noch getrennt ankommt, hat eigene Regeln (andere EPG,
+    anderes Urteil der Policies) und darf nicht still wegfallen. Ebenso der Eingang am Start:
+    mehrere Starts am selben Knoten (Teile der Quelle an verschiedenen Interfaces, P-13; mehrere
+    Eingaenge von aussen) haben je eigene Policies."""
+    first = (p["hops"][0].get("ingress") or {}).get("interface") if p["hops"] else None
+    return (
+        (first,)
+        + tuple(
+            (
+                h["key"],
+                *((h.get("egress") or {}).get(k) for k in ("next_hop", "interface")),
+                tuple((h.get("lb") or h.get("nat") or {}).get("targets") or ()),
+            )
+            for h in p["hops"]
+        )
+        + (p["end"]["kind"], p["end"].get("text"))
+    )
 
 
 def _merge_parallel(paths: list[dict]) -> list[dict]:
@@ -1543,23 +2155,6 @@ def _backups(primary: list[dict], found: list[dict], slack: int) -> tuple[list[d
     return shown, hidden
 
 
-def _bounds(text: str | None):
-    """(erste, letzte) IP eines Werts: IP, Bereich a-b oder Netz; sonst None."""
-    value = (text or "").strip()
-    try:
-        if "-" in value:
-            a, _, b = value.partition("-")
-            lo, hi = ipaddress.ip_address(a.strip()), ipaddress.ip_address(b.strip())
-        elif "/" in value:
-            net = ipaddress.ip_network(value, strict=False)
-            lo, hi = net.network_address, net.broadcast_address
-        else:
-            lo = hi = ipaddress.ip_address(value)
-    except ValueError:
-        return None
-    return (lo, hi) if lo.version == hi.version else None
-
-
 def _after_balancer(hops: list[dict]) -> int:
     """Index nach dem letzten Hop mit Load Balancer (0 ohne): dort beginnt ein neuer Abschnitt."""
     return max((i + 1 for i, h in enumerate(hops) if h.get("lb")), default=0)
@@ -1568,29 +2163,6 @@ def _after_balancer(hops: list[dict]) -> int:
 def _first_port(text: str | None) -> int | None:
     span = _port_span(text)
     return span[0] if span else None
-
-
-def _port_span(text: str | None) -> tuple[int, int] | None:
-    """`443` bzw. `8000-8010` -> (von, bis); leer bzw. unlesbar = jeder Port."""
-    lo, _, hi = (text or "").partition("-")
-    try:
-        return (int(lo), int(hi or lo)) if lo.strip() else None
-    except ValueError:
-        return None
-
-
-def _vip_target(n: NatRule, ip) -> list[str]:
-    """Interne IP(s) einer VIP fuer das Ziel: Bereich auf Bereich mit demselben Abstand, sonst
-    die zugeordnete IP bzw. alle Real Server; leer, wenn das Ziel nicht die externe IP ist."""
-    ext = _bounds(n.ext_ip)
-    if ext is None or ext[0].version != ip.version or not ext[0] <= ip <= ext[1]:
-        return []
-    mapped = _bounds(n.mapped_ip)
-    if mapped is not None and mapped[0] != mapped[1] and not n.targets:
-        moved = ipaddress.ip_address(int(mapped[0]) + int(ip) - int(ext[0]))
-        if moved <= mapped[1]:
-            return [str(moved)]
-    return [str(_bounds(t)[0]) if _bounds(t) else t for t in nat_store.internal_ips(n)]
 
 
 def _exit_target(ex: TopoExit, dst) -> Key | None:
@@ -1646,7 +2218,11 @@ def _neighbors(g: Graph, key: Key, ip: str | None) -> list[tuple[Key, str | None
     gemeinsames Transfernetz allein reicht nicht - dort haengt meist ein Aussenrouter."""
     exact: list[tuple[Key, str | None, str]] = []
     how = L("Adresse des Nachbarn", "Neighbor address")
-    for nkey, iface, _zone in g.owners().get(ip or "", []):
+    owners = g.owners().get(ip or "", [])
+    # virtuelle Gateway-Adresse (HSRP/VRRP, ADR 0070): den Verkehr nimmt der aktive Router an -
+    # der Standby nur, wenn der Zustand keines Partners „aktiv“ ist (nicht gelesen)
+    active = [o for o in owners if (o[0], ip) not in g._standby]
+    for nkey, iface, _zone in active or owners:
         if nkey != key and all(nkey != e[0] for e in exact):
             exact.append((nkey, iface, how))
     return exact

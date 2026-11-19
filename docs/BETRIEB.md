@@ -95,7 +95,35 @@ Aufbau nach dem UI-Mockup: Sidebar links (Dokumentation / Administration, Zähle
 Regeln, NAT und offene Findings), Topbar mit **Mandanten-Schalter**, HTTPS-Anzeige,
 Hell/Dunkel und Benutzermenü (Rolle, Mandanten, Mein Konto, Abmelden). Im OIDC-Modus
 wird das Token still erneuert; läuft die Keycloak-Sitzung ab, folgt die Anmeldung erneut.
+„Abmelden“ genügt einmal (1.20.0): hinter dem Anmelde-Tor des Front-Proxys über das Tor – alle
+Adressen des Kunden und Keycloak abgemeldet, danach die Seite „Abgemeldet“; sonst über Keycloak
+zurück zu dessen Anmeldeformular.
 Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigung“).
+
+**Navigation nach Netzwerkschichten** (seit 1.19.0, ADR 0067): unter *Dokumentation* das
+Übergreifende (Übersicht, Applikationen, Weg-Suche, **Wege vergleichen**, Findings, Abgleich,
+Netzwerkdesign), darunter je Schicht ihre Stellen – **L1 · Physik** (Verkabelung, Ports,
+Transceiver, Kabelnummern), **L2 · Switching** (VLANs, Spanning Tree, VLAN-Reservierungen),
+**L3 · Routing** (Netze, VRF, Routing, Statische Routen, BGP, AS-Nummern, AS-Reservierungen),
+**L4–7 · Firewall & Dienste** (Regeln & Contracts, Objekte & Inventar, NAT / VIPs, Load Balancer,
+VPN-Tunnel) – und die *Administration*. Eine Stelle ist eine Ansicht bzw. ein Reiter davon (z. B.
+BGP = Routing, Reiter BGP-Nachbarn); die Adresse lautet `#<schicht>/<stelle>` (`#l3/bgp`,
+`#l4-7/regeln?rule=…`). **Alte Adressen** (`#regeln?…`, `#routing?tab=peers`,
+`#verkabelung?tab=vlans`) leiten auf die neue Stelle um – Lesezeichen und Links in der Doku
+gelten weiter. Module je Mandant schalten wie bisher (Analyse aus blendet L1, L2 und die Stellen
+der Analyse in L3/L4–7 aus); die API-Pfade sind unverändert.
+
+**Wege vergleichen** (seit 1.19.0, ADR 0067, Modul „Wege vergleichen“, braucht Analyse und
+Wegsucher): ein L3-Weg gegen L1/L2 – je Abschnitt vom Ausgang eines Hops bis zum Eingang des
+nächsten (bzw. bis zum Anschluss von Quelle und Ziel) **VLAN erlaubt** (Access-VLAN, erlaubte VLANs
+der Trunks), **Kabel und Nachbarn** (CDP/LLDP gegen das Kabel in NetBox, Befunde der Verkabelung)
+und **Spanning Tree** (blockiert bzw. err-disabled im VLAN). Reiter *Weg* (wie die Weg-Suche; die
+Weg-Suche verlinkt „Weg gegen L1/L2 vergleichen“), *Applikation* (je Verbindung bzw. „Alle
+vergleichen“, gezählt; die Verbindungen verlinken „Gegen L1/L2 vergleichen“) und *Alle Abschnitte*
+(was der Abgleich prüft). Was nicht prüfbar ist (kein Kabel bzw. Switch dazwischen nicht gelesen,
+VLAN unbekannt, Kabel nicht in NetBox, Switch ohne Spanning Tree), steht mit Grund da und als
+Hinweis `path_l2_unchecked` je Grund; Abweichungen als Befunde `path_vlan_missing`,
+`path_cable_mismatch`, `path_stp_blocked`. Ohne gelesene Verkabelung keine Befunde.
 
 **Sprache** (seit 0.86.0): Benutzermenü → **Sprache** *Deutsch* | *English*. Die Wahl gilt je
 Browser (`localStorage automato_lang`), das Umschalten lädt die Seite neu; Standard ist Deutsch.
@@ -609,6 +637,53 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
         TE/AP/EG_a (Portgruppe der VM vm-a)“). Sonst die externe EPG über das längste
         Subnetz mit `import-security` (wie in der Doku, 0.28.0). Erfasst keine EPG die IP,
         verwirft das Fabric den Verkehr.
+      - **Wie das Gerät (ADR 0070):** Die Weg-Suche entscheidet je Hop, wie es das Gerät tut –
+        das ändert, was Wege, Verbindungen und Befunde zeigen:
+        - **Ende „verworfen“** (rot): eine Null-/Blackhole-Route, der Reverse Path einer
+          FortiGate (keine Route zur Quelle über den Eingang) bzw. ein IPsec-Tunnel ohne
+          Phase 2, deren Selektoren Quelle und Ziel enthalten, oder down. „Warum dieser Weg?“
+          erklärt die Stelle.
+        - **Ende „nicht geprüft“** (orange): Automato behauptet nichts – ein privates Ziel nur
+          über die Default-Route an ein nicht gelesenes Gerät (bis 1.20 „extern“), eine Route
+          nur mit Interface, der Reverse Path einer Firewall, deren Einstellungen noch nicht
+          gelesen sind. Abhilfe: das Gerät dahinter einlesen bzw. als Anbindung mit seinen
+          Netzen erfassen („Als Anbindung erfassen“), Firewalls neu einlesen.
+        - **„Start unbekannt“** in den Verbindungen einer Applikation: die Quelle hängt an
+          keinem gelesenen Gerät, und kein gelesenes Gerät kennt den Weg zu ihr über einen
+          nicht gelesenen Nachbarn. Der Weg beginnt nicht mehr auf dem Gerät einer passenden
+          Regel (das zeigte Wege über Firewalls, die gar nicht auf dem Weg liegen). Abhilfe:
+          das Gerät mit dem Netz der Quelle einlesen (z. B. die VRF bzw. den L3Out des Tenants).
+        - **Gezählt statt still:** mehr als 16 Wege, Rückweg nur für die ersten 8, Policy-Routen
+          bzw. VIPs, die nur möglicherweise passen, SD-WAN mit mehreren Mitgliedern, Central
+          NAT nicht gelesen – alles steht als Hinweis am Weg und macht die Applikation
+          „unvollständig geprüft“ (Befund *Applikation: unvollständig geprüft*).
+        - **Load Balancer:** der Weg geht zu allen Servern des Pools (Server im selben Netz
+          mit denselben Regeln sind ein Weg, die Server stehen am Hop); mehrere Virtual
+          Services auf derselben VIP (SNI) zählen zusammen; Port 80 mit Umleitung auf HTTPS
+          endet am Load Balancer („Umleitung am Load Balancer“).
+        - **Rückweg mit ECMP:** „Rückweg ✓“ nur, wenn alle gleichwertigen Rückwege über
+          dieselben Firewalls gehen – sonst nennt der Hinweis den Anteil („auf 1 von 2
+          gleichwertigen Rückwegen (ECMP) über …“).
+        - **Nach dem Update neu einlesen:** FortiGates (Reverse Path, Central NAT, Priorität
+          der Routen, Reihenfolge der Policy-Routen), Switches & Router (HSRP/VRRP auf IOS),
+          NSX ALB (Umleitung). Das Profil des REST-API-Benutzers der FortiGate braucht dazu
+          Lesezugriff auf `system settings` und – mit Central NAT – `firewall
+          central-snat-map`; fehlt er, steht „VDOM-Einstellungen“ bzw. „Central SNAT“ als
+          nicht lesbar im Lauf, und die Weg-Suche weist die Stelle als „nicht geprüft“ aus.
+          Switches: zusätzlich `show standby brief` und `show vrrp brief` (nur lesend).
+        - **Verkehr ohne Policy (ADR 0071 Nachtrag „Gegenprüfung“):** die FortiGate leitet
+          zwei Arten von Verkehr ohne Policy weiter – die Weg-Suche rechnet das jetzt mit:
+          *selbes Interface* (Ein- und Ausgang gleich, Quelle im Netz des Interfaces) mit
+          `allow-traffic-redirect` („ohne Policy weitergeleitet“), *selbe Zone* (zwei
+          Interfaces einer Zone) mit `intrazone allow`, wenn keine Policy passt („erlaubt
+          ohne Policy (intrazone allow der Zone …)“; eine passende Policy entscheidet vorher).
+          Gelesen wird dafür nur, was das Profil schon darf: `system global`
+          (`allow-traffic-redirect`, `ipv6-allow-traffic-redirect`), `system zone`
+          (`intrazone`) und `system settings` (`asymroute6`) – **kein neues Leserecht**, aber
+          die FortiGates einmal neu einlesen. Bis dahin: am selben Interface „abhängig …
+          allow-traffic-redirect nicht geprüft“ statt „gesperrt“, in derselben Zone wie
+          bisher gesperrt mit „(intrazone der Zone … nicht gelesen)“ – beides gezählt
+          (Befund *Applikation: unvollständig geprüft*).
       - **Ohne Quell-IP von aussen (0.135.0):** Kommt der Weg über eine Firewall ins Fabric
         (z. B. Start an der Firewall ohne Quelle), prüft die Weg-Suche jede externe EPG der VRF:
         „abhängig von der Quelle (ohne IP) – erlaubt für externe EPG …, gesperrt für …“,
@@ -622,7 +697,14 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
         aber nicht (0.111.0), heisst es „Contract CT_x von … zu … öffnet tcp/80 nicht (offen:
         tcp/443) – im ACI gesperrt“; der Contract steht mit „öffnet den Dienst nicht“ bei den
         Regeln des Hops.
-      - Ohne Dienst ist nur ein Filter `ip/any` sicher, sonst „möglich“. Ordnet das ACI die
+      - **Preferred Group sperrt Nichtmitglieder (ADR 0071 Nachtrag):** ist die Gruppe in der
+        VRF eingeschaltet, gewinnt ihre Sperre für eine EPG ausserhalb gegen einen Contract
+        vzAny ↔ vzAny mit dem Filter ohne EtherType („gesperrt durch Preferred Group … (EPG …
+        ist kein Mitglied) – mit Vorrang vor Contract …“); Contracts mit bestimmtem Filter bzw.
+        zwischen bestimmten EPGs gehen vor. Filter ohne EtherType heissen nach dem nächsten
+        Lauf des APIC `unspecified/any` (bisher `ip/any`), `ip/any` ist dann der Filter mit
+        EtherType `ip` – ihr Vorrang ist verschieden.
+      - Ohne Dienst ist nur ein Filter `ip/any` bzw. `unspecified/any` sicher, sonst „möglich“. Ordnet das ACI die
         Quelle nicht eindeutig zu (z. B. 0.0.0.0/0 in zwei L3Outs), ist der Hop „abhängig“,
         wenn die Kandidaten verschieden ausgehen.
       - **ACI ist zustandslos (0.69.1):** Filter ohne Ports (`ip`, `tcp/any`, ICMP) gelten auch
@@ -839,6 +921,47 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     - Kunde oben: Router-Kontexte sind geteilt und gehören zum Ausschnitt, wenn sie ein Netz des
       Kunden routen; Kunden-Benutzer sehen in der Doku „Router“. Der Verlauf des Routings nimmt
       die Router mit.
+- **VPN-Tunnel** (1.19.0, ADR 0063, Modul Analyse): die IPsec-Tunnel der FortiGates im
+  Interface-Modus, nur gelesen mit dem Routing (SSL-VPN nicht). Je Tunnel Firewall/VDOM, Art
+  (statisch, Dial-up, DDNS), Gegenstelle – mit der gelesenen FortiGate dort bzw. „nicht gelesen –
+  der Weg endet hier“ –, gebundenes Interface, IKE-Version, Zustand (up, teilweise, down, keine
+  Gegenstelle verbunden, unbekannt), Phase 2 up/gesamt und die Routen über den Tunnel mit
+  „ohne Selektor“ bzw. „teilweise“. Klick öffnet das Detail: Phase 2 mit den Selektoren (Namen
+  aufgelöst), bei Dial-up die verbundenen Gegenstellen, die Routen über den Tunnel mit „gedeckt“,
+  „nur teilweise“ bzw. „kein Selektor“ und die Netze dahinter (aus Phase 2, Dial-up und Routen).
+  - **Recht:** das Profil des REST-API-Benutzers braucht `set vpngrp read`
+    (`collectors/fortigate/LAB.md`). Fehlt es, steht „IPsec nicht lesbar …“ oben in der Ansicht,
+    im Lauf („Routing nicht lesbar: IPsec Phase 1 (HTTP 403)“) und in der Datenqualität; der
+    Zustand ist dann unbekannt (kein Befund „down“).
+  - **Weg-Suche und Verbindungen:** der Tunnel steht als Chip am Ausgang des Hops („VPN vpn-b →
+    Gegenstelle“, Klick öffnet ihn hier). Gehört die Gegenstelle einer gelesenen FortiGate, geht
+    der Weg dort weiter (Eingang = ihr Tunnel); sonst endet er mit „VPN-Gegenstelle“ – in den
+    Verbindungen gezählt, die Applikation ist dann „unvollständig geprüft“. Abhilfe: die FortiGate
+    der Gegenstelle einlesen oder den Tunnel als Anbindung (Partner) erfassen – „Als Anbindung
+    erfassen“ am Weg füllt Interface und Gegenstelle vor. Im Netzwerkplan ist der Tunnel ein
+    eigener Knoten zwischen den Firewalls.
+  - **Befunde** (Prüfung „VPN-Tunnel (IPsec)“): Tunnel bzw. Phase 2 down, Selektor deckt eine
+    Route über den Tunnel nur teilweise, Route über den Tunnel ohne passenden Selektor.
+- **AS-Nummern** (1.19.0, ADR 0066, Modul Analyse): die AS-Nummern im Routing einzeln, nur aus den
+  schon gelesenen BGP-Daten. Je AS die Geräte mit diesem AS (FortiGate aus dem BGP-Prozess als
+  Firewall, Router aus dem lokalen AS ihrer Nachbarn) und die BGP-Nachbarn mit diesem AS – an
+  welchem Gerät die Sitzung steht (auch ACI-L3Out), Zustand, eBGP/iBGP, Name aus dem IPAM und das
+  gelesene Gerät dahinter; abgeschaltete bzw. nur konfigurierte Nachbarn als solche. **Eigen** sind
+  die AS der gelesenen Geräte und ihrer iBGP-Nachbarn (wie die Firmengrenze), **privat** die
+  privaten AS; Reservierungen stehen am AS, reservierte AS ohne Gebrauch darunter. Filter nach
+  Nummer bzw. Text und eigen/fremd. Das lokale AS des ACI-Fabrics liest Automato nicht.
+- **Reservierungen** (1.19.0, ADR 0066, Modul Analyse): VLAN- und AS-Nummern reservieren, ändern
+  und freigeben (Operator; Reiter VLANs bzw. AS-Nummern). Nummer oder Bereich, bei VLANs der
+  Standort (wie die VLAN-Ansicht der Verkabelung; ohne = alle Standorte) und wahlweise die
+  VLAN-Gruppe in NetBox (Vorschläge: die Gruppen der Quellsysteme), Zweck; reserviert von/am und
+  geändert von/am stehen dabei. Je Reservierung der **Stand** gegen das Gelesene: *frei*, *jetzt
+  belegt* (beim Reservieren frei, jetzt gelesen in Gebrauch – ist die Reservierung umgesetzt,
+  freigeben) bzw. *Konflikt* (schon beim Reservieren in Gebrauch), dazu wo (Quellsystem bzw.
+  Gerät/Nachbar). Nach dem Speichern nennt die Ansicht, was schon in Gebrauch ist und mit welchen
+  Reservierungen sie sich überschneidet. **Befunde** (Prüfungen „Reservierung in Gebrauch“ und
+  „Doppelt reserviert“, gleich nach dem Speichern und nach jedem Lauf): Hinweis jetzt belegt,
+  Konflikt, doppelt reserviert – mit Link zurück. Ein gelöschter Standort bleibt als „Standort
+  fehlt“ stehen. Nach NetBox nur über den NetBox-Sync (Abschnitt *Reservierungen*).
 - **Verkabelung** (0.62.0, ADR 0025): welches Gerät an welchem Port welches anderen hängt –
   abgeleitet aus CDP/LLDP aller gelesenen Geräte (Switches & Router, ACI-Leafs), nichts von Hand.
   Seit 0.68.0 auch Catalyst 1200/1300 und Juniper MX/EX/QFX; ein MX steht als **Router** da
@@ -898,6 +1021,31 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     (MACs) je Port – ein Klick zeigt sie. Seit 0.65.0 unter der Konfiguration
     *vPC-Peer-Link (Domäne n)*, *STP blockiert VLAN …* (orange) und *Root-Port VLAN …* –
     Mitglieder eines Port-Channels zeigen die Werte des Channels.
+    Seit 1.19.0 eigene Spalten **Speed / Duplex**, **Transceiver** (Typ, Teilenummer,
+    Hersteller, Seriennummer – nur gelesen) und **Kabelnummer** mit Herkunft (siehe unten).
+  - **Kabelnummern** (1.19.0, ADR 0031 Nachtrag 1.19.0): je Port-Paar die Nummer aus **NetBox**
+    (Label des Kabels, gelesen mit der Referenzquelle NetBox) und die in **Automato** erfasste,
+    mit Herkunft: *Automato = NetBox*, *verschieden* (beide Werte), *Automato* (nur erfasst – der
+    NetBox-Sync schreibt sie), *NetBox* (nur dort – angezeigt, nie gelöscht). Dazu je Kabel in
+    NetBox, ob CDP/LLDP dazu passt (*passt*, *passt nicht* mit der gemeldeten Gegenstelle,
+    *unbekannt* ohne Nachbar-Daten). Filter Herkunft bzw. „Nachbar passt nicht“, Suche.
+    - **Erfassen** (Operator bzw. Admin): bei einer Verbindung, einem Port („+ Nummer“) oder hier
+      mit „Kabelnummer erfassen“ (Enden von Hand, z. B. für einen Port ohne CDP/LLDP). Je
+      Port-Paar eine Nummer (bis 100 Zeichen, wie das Label in NetBox), Notiz optional; Lang- und
+      Kurzform des Ports bzw. Gross-/Kleinschreibung und Domäne des Geräts sind dasselbe Paar.
+      Ändern bzw. „In Automato löschen“ im selben Dialog; was in NetBox steht, bleibt. Audit
+      `cable_label.set`/`.deleted`; die Befunde der Prüfung „Kabel“ rechnen gleich neu. Kein CSV.
+    - Die Nummern aus NetBox kommen mit dem nächsten Lauf der Referenzquelle NetBox (Lese-Token
+      mit Leserecht auf Kabel, wie die übrigen Objekte). Fehlt das Recht, steht „Kabel nicht
+      gelesen (HTTP 403)“ im Lauf; Kabel mit anderen Enden (Patchpanel, Circuit, mehrere Ports)
+      zählt ein Hinweis.
+  - **Transceiver** (1.19.0): je Switch gelesen mit IOS/IOS-XE `show inventory`, NX-OS `show
+    interface transceiver`, Catalyst 1200/1300 `show inventory`, Junos `show chassis hardware`,
+    Arista `show inventory | json`, Aruba CX `show interface transceiver` (Leserecht genügt).
+    Unter **Geräte** die Spalte *Transceiver*: *gelesen · n*, *nicht lesbar* (Befehl gescheitert,
+    Grund in der Meldung des Laufs) bzw. *nicht unterstützt* (Zugang SNMPv3); „–“ = nicht
+    geliefert (älterer Agent). Der Lauf meldet „Transceiver: n an m Switches; nicht lesbar auf …;
+    nicht unterstützt auf …“.
   - **Endpunkte** (0.63.0, ADR 0025 Nr. 8): aus der MAC-Tabelle und ARP der Switches.
     - **Wo hängt …:** MAC (jede Schreibweise), IP oder Name (VM, DNS-Name aus dem IPAM)
       eingeben → je MAC der **Anschluss** (Switch, Port, VLAN, Beschreibung, „über“ die
@@ -934,6 +1082,11 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     Information), *L2: Switch als einzelner Ausfallpunkt* (ohne ihn zerfällt das Netz),
     *Port-Channel unvollständig* (Mitglied nicht verbunden), *VLAN getrennt* (VLAN an Access-Ports
     bzw. SVI mehrerer Switches, die Trunks dazwischen sperren es).
+    Seit 1.19.0 (Prüfung „Kabel: NetBox, Kabelnummer, Duplex“): **Nachbar passt nicht zu
+    NetBox** (CDP/LLDP meldet am Port eines Kabels in NetBox eine andere Gegenstelle),
+    **Kabelnummer NetBox ≠ Automato** und **Duplex nicht voll** (nur, wenn beide Enden gelesen
+    sind; zwischen zwei Switches mit verschiedenem Duplex bleibt es beim Befund „Duplex
+    abweichend“). „In der Verkabelung öffnen“ führt zum Reiter Kabelnummern.
     Seit 0.65.0 **vPC-Paar uneinheitlich**: Peer nicht verbunden (Fehler, mit Keepalive-Status),
     vPC nur auf einem der beiden Peers (wenn beide gelesen), vPC down bzw. Konsistenz nicht
     erfolgreich (Warnung) – auf dem Switch `show vpc consistency-parameters vpc <n>`. Hängt ein
@@ -948,6 +1101,46 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   (Application Profiles, EPGs, Server, seit 0.124.0 auch **einzelne VMs**); **Vorschläge** nach der Projektnummer aus
   `AP_<nr>`/`H_…-<nr>-…` mit einem Klick übernehmen (Operator) – seit 0.38.0 unter der
   Liste der Applikationen, seit 0.74.1 je ACI-Tenant getrennt („Projekt 001 · TE_a“).
+  - **Alle exportieren** (1.0.1; seit 1.21.0 mit Auswahl und im Hintergrund, ADR 0069; Viewer
+    und Mandanten-Benutzer im eigenen Mandanten): Knopf über der Liste (mit Auswahl in der Liste
+    „N exportieren“) → im Dialog die **Applikationen wählen** (Liste des gewählten Mandanten bzw.
+    Kunden mit Suche nach Name, Kürzel, Verantwortlichen; „alle“/„keine“ wirken auf die
+    gefundenen; ohne Auswahl in der Liste sind alle gewählt) → Export-Passwort zweimal eingeben
+    (mindestens 8 Zeichen) → „N exportieren“. Der Export läuft **im Hintergrund**: der Dialog
+    darf geschlossen, die Seite verlassen bzw. neu geladen werden. **Meine Exporte** (im Dialog
+    und über der Liste der Applikationen) zeigt je Export den Stand (wartet, läuft, fertig,
+    Fehler, abgebrochen), den Fortschritt (*n von m Applikationen*, die aktuelle Applikation),
+    die Applikationen mit Fehler (aufklappbar) und bei „fertig“ **Herunterladen**:
+    `applikationen-<mandant>-<Datum>-<Zeit>.zip` mit **je Applikation einem ZIP** (Doku als Word
+    und Netzwerkplan als draw.io wie „Für Confluence“), jedes mit dem Passwort
+    **AES-256-verschlüsselt**. Öffnen mit 7-Zip bzw. WinRAR (`7z x web.zip`); der
+    Windows-Explorer kennt AES je nach Version nicht. Schlägt eine Applikation fehl, steht sie
+    im Export und in `FEHLER.txt`, die übrigen kommen trotzdem. „Abbrechen“ beendet einen
+    laufenden Export nach der aktuellen Applikation, „Entfernen“ löscht einen beendeten samt
+    Datei.
+    - **Nur für den Auftraggeber:** nur wer den Export gestartet hat, sieht ihn und lädt ihn
+      herunter (alle anderen, auch Admins: „nicht gefunden“). Ein Export je Benutzer zugleich;
+      höchstens zwei rechnen gleichzeitig, weitere warten (`AUTOMATO_EXPORT_PARALLEL`).
+    - **Passwort nur im Speicher:** es geht mit der Anfrage an den Orchestrator und lebt nur im
+      laufenden Export – nie in Datenbank, Protokoll, Audit (`application.exported` mit Anzahl
+      und Kennung, `application.export_downloaded`) oder Datei. **Startet der Orchestrator neu**
+      (Update, Neustart), ist ein laufender Export **abgebrochen** („abgebrochen (Neustart)“ mit
+      Grund) und muss neu gestartet werden.
+    - **Ablage und Ablauf:** die fertige Datei liegt im Volume des Orchestrators
+      (`/var/lib/automato/exports`, Volume `orchestrator-data`) und ist **24 Stunden** abrufbar
+      (`AUTOMATO_EXPORT_HOURS`), danach löscht der Orchestrator Auftrag und Datei (beim Start,
+      alle 10 Minuten, bei jeder Liste); höchstens 2048 MB je Export
+      (`AUTOMATO_EXPORT_MAX_MB`, darüber „Fehler“ – weniger Applikationen wählen). Löschen des
+      Mandanten nimmt seine Exporte mit.
+    - **Dauer:** seit 1.21.0 rechnet der Export die Abhängigkeiten je Applikation einmal statt
+      je Paar (Messung mit 51 Applikationen: vorgerechnete Stände 68 s → 7 s); Stände der Doku,
+      die nicht mehr passen, rechnet er wie bisher neu (ohne Stände 212 s → 160 s).
+    - Nicht für Kunden-Benutzer in gemeinsamen Mandanten (sie exportieren ihre Applikationen
+      einzeln, ohne Verbindungen und Netzwerkplan). API: `POST /applications/export` mit
+      `{tenant_id, password, ids?, customer_id?, sections?}` → 202 mit dem Auftrag (jede Id muss
+      sichtbar sein, sonst 404 mit den Ids; ohne `ids` alle der Liste);
+      `GET /applications/exports`, `GET …/exports/{id}`, `POST …/{id}/cancel`, `DELETE …/{id}`,
+      `GET …/{id}/download`.
   - **Stammdaten aus CSV** (0.75.0, Operator, einzige Ausnahme vom „kein CSV-Import“):
     „CSV importieren“ über der Liste → Datei wählen (Excel-CSV mit „;“ oder „,“, UTF-8 bzw.
     Windows-1252) → Vorschau je Zeile (neu, ändern, unverändert, Fehler mit Grund) →
@@ -1251,6 +1444,39 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
       (`AUTOMATO_APP_TRACES_MAX=0`) bzw. die Applikation kleiner schneiden. In der Doku zeigt
       „n Regeln: Weg nicht geprüft“ Regeln, deren Weg eine Grenze nicht prüfen liess – sie
       bleiben stehen (im Zweifel zeigen).
+    - **Welche Regel trifft (ADR 0071, Regel-Zuordnung nach echtem Treffer):** die Doku zeigt
+      eine Firewall-Regel bei einem System, wenn sie dessen Verkehr **trifft** – nicht mehr, wenn
+      sie seine Adresse nur nennt. Das gilt für jedes Regelwerk.
+      - **Nicht auf dem Weg:** eine Regel steht nur da, wenn ihre Firewall auf dem Weg zwischen
+        Gegenstelle und System liegt – auch Regeln, die das System nennen. Die übrigen sind
+        gezählt („n ausgelassen: Nicht im Pfad: Firewall nicht auf dem Weg …“); nennt die Regel
+        das System, bleibt der Befund „Regel nie gebraucht“ der Verbindungen.
+      - **überdeckt** (Chip an der Regel unter „Regeln & Contracts“, „n Regeln überdeckt“ oben):
+        frühere Policies der Firewall entscheiden allen Verkehr des Systems, den die Regel
+        trifft („überdeckt durch Policy X“). Sie ist kein Zugriff und steht nicht mehr in den
+        Kategorien. Ist eine Policy ganz überdeckt, gibt es unter Findings → Regeln den Befund
+        **„Regel überdeckt“** (Warnung, wenn die frühere anders entscheidet – z. B. Sperre vor
+        Freigabe; sonst Hinweis). Abhilfe: Reihenfolge auf der Firewall prüfen bzw. aufräumen.
+      - **breit:** an der Stelle einer überdeckten Regel, die das System nennt, steht die Policy
+        davor, die real trifft – mit Gegenstelle und Dienst des gemeinten Zugriffs („breit –
+        trifft anstelle von …“). Ihre Aktion sagt, ob der Zugriff geht.
+      - **Weg nicht geprüft:** der Weg zwischen Gegenstelle und System ist nicht bekannt (Routing
+        nicht gelesen, Gegenstelle an keinem gelesenen Gerät) bzw. eine Grenze liess ihn nicht
+        ganz prüfen – die Regel bleibt, markiert und gezählt. Endet der Weg vor dem Ziel
+        (z. B. an einem nicht gelesenen MPLS-Router), zählt sein **belegter Teil** (ADR 0071
+        Nachtrag): die Firewall darauf liegt auf dem Weg (ohne Kennzeichen); eine Firewall
+        abseits bleibt nur markiert, wenn sie das Ziel selbst kennt (angeschlossen bzw. eigene
+        Route – für ein privates Ziel nicht nur die Default-Route), sonst zählt sie unter
+        „nicht auf dem Weg“.
+      - **Negiert** (`srcaddr-negate`/`dstaddr-negate`): die Regel trifft, was sie **nicht**
+        nennt (Bezug „nicht …“) – beim genannten System steht sie nicht mehr. **FQDN-Objekte**
+        zählen für die Adressen, auf die der Name laut IPAM auflöst („… (FQDN laut IPAM)“).
+      - **VIP in der Weg-Suche:** eine Policy mit der VIP als Ziel trifft nur Verkehr über diese
+        VIP; eine erlaubende Policy mit `all` bzw. der internen Adresse ist für Verkehr zur VIP
+        nur „möglich“ („Ziel (VIP ohne VIP-Objekt)“ – ohne Central NAT nicht belegt).
+      - In den **Verbindungen** stehen dieselben Kennzeichen an den Regeln einer Verbindung,
+        neben ihrem Zustand auf dem Weg (z. B. „greift nicht – vorher entscheidet Policy X“).
+      - Nach dem Update rechnet jeder Stand der Doku einmal neu.
     - **Wege einmal je Mandant (0.140.0, ADR 0048):** Doku, Verbindungen und Befunde aller
       Applikationen teilen die Wege, die Policies und die Urteile je Hop eines Datenstands; das
       Urteil je Hop gilt für alle Adressen derselben Klasse (gleiche Objekte der Policies). Ein
@@ -1537,6 +1763,10 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
          und nur gezählt, nicht gezeigt und nicht gezählt). Trifft keine, steht die Zeile in
          ihrer Kategorie. „Direkt zugeordnete Regeln“ ist eine Ausnahme: sie hebt die gewählten
          Regeln darunter auf.
+       - **Fest für jedes Regelwerk (ADR 0071):** eine Regel, deren Firewall nicht auf dem Weg
+         liegt, steht nie in der Doku – ist „Nicht im Pfad: Firewall nicht auf dem Weg“
+         ausgeschaltet, wird sie trotzdem gezählt; eingeschaltet gilt die gewählte Wirkung.
+         Direkt zugeordnete Regeln bleiben. Ganz überdeckte Regeln sind nur Treffer.
        - **Profil** wählen und „Aktivieren“: **Regelwerk 1** = Stand bis 0.117.0 (Vorgabe),
          **Regelwerk 2** = Rückmeldung 2026-10-30 (nicht im Pfad und über das Internet-Gateway
          hinaus weder gezeigt noch gezählt; ausgehend mit breiter Quelle und deaktivierte Regeln
@@ -1609,6 +1839,17 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     Contract“. Das Regel-Detail blendet die übrigen Consumer bzw. Provider mit ihren VMs aus,
     „alle zeigen“ holt sie zurück. Firewalls mit mehreren VDOMs stehen mit dem VDOM der Policy
     da.
+- **Findings – Excel-Export** (1.0.1, Viewer): Knopf „Excel-Export“ oben rechts → `findings-<Datum>.xlsx`
+  mit **allen Findings aller Mandanten**, die der Benutzer sieht (alle Status, unabhängig von
+  Filter und Mandantenwahl). Blatt „Übersicht“: je Modul → Prüfung → Typ die Zahl offen,
+  quittiert, erledigt, ignoriert; danach **ein Blatt je Modul** mit Mandant, Prüfung, Typ,
+  Schweregrad, Status, Objekt, Quellsystem, Meldung, Hinweis, Notiz, erstmals/zuletzt gesehen
+  und ID (Autofilter). Die **Details** des Befunds (Meldung, Hinweis, Notiz, gelesene Angaben)
+  stehen als **Kommentar an der Meldung** – so bleibt nachvollziehbar, was zum Zeitpunkt des
+  Exports war. Ohne Mandanten, in denen das Modul Findings aus ist. Für Mandanten-Benutzer nur
+  ihr Mandant (ADR 0068); nicht für Kunden-Benutzer in gemeinsamen Mandanten (ADR 0018). Direkt
+  als Download (1.21.0 gemessen: 5000 Findings rund 2 s, 20 000 rund 6 s – kein Hintergrund
+  nötig). API: `GET /findings/export` (optional `tenant_id`), im Audit `finding.exported`.
 - **Findings:** oben eine **Übersicht nach Kategorien** (IPAM-Abgleich, Namenskonvention,
   Bereinigung, ACI / VMware) mit offenen/gesamten Befunden je Typ (Klick filtert). Neu mit
   dem vCenter: *VM-IP fehlt im IPAM* und *Portgruppe nach ACI-Schema ohne EPG*. Je Befund ein Satz,
@@ -1935,6 +2176,17 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   **Abgleich** ist die Anreicherung wählbar („Vergleich mit …“); gegen AD-DNS zeigt er nur
   *DNS-Name abweichend* (das IPAM hat einen anderen bzw. keinen Namen) und *nur im DNS* (IP fehlt
   im IPAM) – IPs ohne DNS-Eintrag sind kein Fehler. Netz, VLAN und Standort kommen nie aus dem DNS.
+  Seit 1.19.0 (ADR 0045 Nachtrag) übernimmt der NetBox-Sync die DNS-Namen in NetBox (Abschnitt
+  *DNS-Namen aus dem AD*, siehe NetBox-Sync), und drei Prüfungen unter Findings → *DNS aus dem
+  AD* kontrollieren die Zonen:
+  - *PTR widerspricht A-Record* je IP (Warnung bzw. Hinweis bei einem PTR ohne A-Record);
+  - *IP nicht in NetBox* je Quelle (A-Records auf IPs, die die gelesene NetBox nicht kennt, nur
+    gezählt);
+  - *nicht geprüft* je Quelle (nicht gelesen, letzter Lauf fehlgeschlagen, Zonen ohne Einträge,
+    Rückwärtszone fehlt, NetBox nicht gelesen).
+  Die **Reverse-Zonen** (z. B. `20.10.in-addr.arpa`) gehören mit in den Lesebereich und brauchen
+  die Freigabe für den Zonentransfer ebenfalls. Ohne sie ist der PTR nicht prüfbar, und bei IPs mit
+  mehreren A-Records kann der Sync keinen Namen wählen.
 - **Kunden (0.30.0, ADR 0018, Operator schreibt):** Ein Kunde ist ein Ausschnitt der
   Umgebung (des Mandanten). Statt Listen beschreiben ihn **Selektoren**:
   - ACI-Tenant, VRF (`TE_ka:VRF_ka` bzw. `VRF_ka`), Application Profile (`TE_ka/AP_007`),
@@ -2008,6 +2260,8 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     (`customer_admin`, zusätzlich die Kunden-Benutzer des eigenen Kunden zuordnen – höchstens
     mit der eigenen Rolle, nie das eigene Konto, nie andere Kunden). Kunden-Admins finden unter
     Administration → Kunden-Benutzer nur ihre Kunden; ihre Zuordnungen wirken nie auf Betreuer.
+    Seit 1.14.0 (ADR 0058) nicht bei Kunden aus dem Cockpit: dort vergibt der Betreiber Benutzer
+    und Rollen im Cockpit (siehe „Kunden, Benutzer und Rollen nur aus dem Cockpit“).
     Die Rolle gilt je Kunde. Alternativ das Keycloak-Attribut `customer_role` (Mapper
     `customer_role`; im bestehenden Realm von Hand anlegen, `deploy/keycloak/README.md`;
     `AUTOMATO_OIDC_CUSTOMER_ROLE_CLAIM`); Claim und Zuordnung zusammen = je Kunde die höhere
@@ -2160,13 +2414,50 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   Beschreibung `FW-Objekt <Name>`; nur wenn die Ziel-NetBox das führende IPAM ist (dann
   vorgewählt), bewusst externe Objekte nicht. Damit füllt Automato die NetBox als IPAM, wo es
   kein DDI gibt; nach dem Sync die NetBox neu einlesen, dann entfallen die Befunde „nicht im
-  IPAM“. Seit 1.9.0 gelten die VLAN-Gruppen der Quellsysteme am **Standort des Quellsystems**
+  IPAM“. Seit 1.19.0 *DNS-Namen aus dem AD* (ADR 0045 Nachtrag, Vorgabe aus): setzt nur das
+  Feld `dns_name` **bestehender** IP-Adressen aus den A-Records der gelesenen AD-DNS-Zonen – auch
+  an von Hand gepflegten IPs, ohne Tag und ohne andere Felder; neue IP-Adressen legt er nie an
+  (A-Records auf unbekannte IPs zählt der Hinweis); legt ein anderer Abschnitt die IP im selben
+  Sync an, bekommt sie den Namen gleich mit. Nur wenn die Ziel-NetBox das führende IPAM ist.
+  Mehrere A-Records einer IP: der PTR entscheidet, sonst steht die IP als *mehrdeutig* in der
+  Vorschau (Kandidaten und Grund, kein Vorschlag). Leerer Name in NetBox → *ändern* (wird
+  übernommen). Abweichender Name → *ändern* nur nach Bestätigung (wie die Kabelnummern): der Teil
+  „DNS-Namen aus dem AD“ der Vorschau zeigt NetBox und AD nebeneinander, je Eintrag ein Häkchen
+  (oder „alle“); übernommen werden nur die bestätigten, die übrigen bleiben in NetBox, wie sie
+  sind. Steht nur Unbestätigtes an, bleibt „Übernehmen“ gesperrt. Ändert sich ein Name im AD nach
+  der Vorschau, schreibt die Übernahme nichts (neue Vorschau). Seit 1.9.0 gelten die
+  VLAN-Gruppen der Quellsysteme am **Standort des Quellsystems**
   (Geltungsbereich in NetBox); VLANs der Switches kommen auch dann in die Gruppe des
   Quellsystems, wenn NetBox sie anderswo mehrfach hat (vorher „VLAN … nicht eindeutig“), und
   das Netz eines Firewall-Ports bekommt das VLAN des Switch-Ports (Abschnitte Netzinventar und
   Verkabelung). Objekte eines nicht gewählten Abschnitts bleiben unangetastet (auch nicht
   „veraltet“). Für Kabel braucht der Sync-Benutzer `dcim.cable` – `sync-user.sh` erneut
-  ausführen. **Vorschau
+  ausführen. Seit 1.19.0 schreibt der Abschnitt *Verkabelung* die in Automato erfassten
+  **Kabelnummern** als Label der Kabel (ADR 0031 Nachtrag 1.19.0): neue Kabel bekommen sie gleich
+  mit; an bestehenden Kabeln steht je Kabel eine Aktion *Kabelnummer* mit NetBox alt → Automato
+  neu, und die Karte **Kabelnummern bestätigen** listet sie mit Kästchen (alle/keine) –
+  übernommen wird nur Angekreuztes, an von Hand gepflegten Kabeln dann nur das Label. Ohne
+  Bestätigung meldet „Übernehmen“ „nothing to apply“, wenn sonst nichts zu schreiben ist. Nummern
+  nur in NetBox bleiben (Hinweis „Kabelnummern: n nur in NetBox“), Nummern ohne Kabel in NetBox
+  ebenso (Hinweis).
+  Seit 1.19.0 *Reservierungen* (ADR 0066, nur ausdrücklich
+  gewählt): reservierte VLANs mit Status `reserved` in der VLAN-Gruppe der Reservierung, sonst in
+  der einen Gruppe am Standort (z. B. der Switches), ohne solche in „Reservierungen <Standort>“
+  (mehrere Gruppen am Standort: Hinweis – Gruppe an der Reservierung wählen); AS-Nummern als
+  ASN-Objekte mit der RIR, die die ASN gleicher Art (privat/öffentlich) in NetBox schon tragen,
+  sonst der einzigen passenden RIR – ohne eindeutige RIR ein Hinweis (in NetBox eine RIR anlegen;
+  der Sync legt keine an), AS-Bereiche über 1024 nur als Hinweis. Was NetBox schon hat, zeigt die
+  Vorschau nur an („Reservierung – nur angezeigt“) und überschreibt es nie; liest ein Gerät das
+  reservierte VLAN, übernimmt der Abschnitt Verkabelung bzw. Netzinventar es als aktives VLAN.
+  Freigegebene Reservierungen sind veraltet bzw. mit „Löschen zulassen“ entfernt; andere
+  Abschnitte lassen reservierte VLANs stehen, und Ports bekommen nie ein reserviertes VLAN.
+  Weicht ein schon angelegtes reserviertes VLAN bzw. eine ASN ab (neuer Zweck bzw. in NetBox von
+  Hand geändert), steht es in der Karte **Geänderte Reservierungen bestätigen** mit beiden Werten –
+  geschrieben wird nur Angekreuztes (wie Kabelnummern und DNS-Namen). Für
+  ASN braucht der Sync-Benutzer `ipam.asn`: bei NetBox je Kunde führt der Agent des NetBox-Hosts
+  die Rechte seit 1.19.1 selbst nach (Token bleibt); bei einer von Hand angebundenen NetBox auf
+  ihrem Host `NUR_RECHTE=1 ./sync-user.sh` (ohne `NUR_RECHTE` entsteht ein **neuer** Token, der
+  dann in Automato einzutragen ist). **Vorschau
   erstellen** liest NetBox nur und zeigt je Art: anlegen / ändern / unverändert / Konflikt
   (von Hand gepflegtes Objekt weicht ab – bleibt unverändert) / löschen / veraltet, mit
   Aktionsliste. **Übernehmen** (Bestätigung) berechnet neu, schreibt nur bei unveränderter
@@ -2203,6 +2494,7 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
 | `GET/POST /customers`, `PUT/DELETE /customers/{id}`, `GET …/{id}/members?kind=`, `POST /customers/preview`, `GET /customers/suggestions`, `GET /customers/unassigned` (je `tenant_id`) | Kunden (ADR 0018; Schreiben = operator; Filter `customer_id` an den Listen, 0.32.0): Selektoren (`kind`, `value`, `source_system_id`, `exclude`), `shared`, Anzahl je Art (`epg`, `net`, `object`, `rule`, `vm`); Vorschau ohne Speichern (seit 0.58.0 mit `off_path`: Regeln über Netze nicht auf dem Weg, `count`/`samples` mit `why`); Vorschläge je ACI-Tenant; nicht Zugeordnetes |
 | `GET/POST /zones`, `PUT/DELETE /zones/{id}`, `GET /zones/{id}/nets`, `POST /zones/preview`, `GET /zones/matrix`, `GET /zones/matrix/rules?src=&dst=`, `PUT /zones/policy` (seit 0.57.0 mit `services`), `GET /zones/plan[?customer_id=&all=true]` (je `tenant_id`); seit 0.52.0 `GET /zones/plan/export?format=svg\|drawio\|pdf[&version_id=]` (seit 0.71.0 auch `docx`, `zip` = Word + draw.io), `GET/POST /zones/plan/versions`, `GET /zones/plan/versions/{id}[/diff?to=]`, `DELETE /zones/plan/versions/{id}` (admin); seit 0.54.0 `GET /zones/suggestions[?dismissed=true]`, `POST /zones/suggestions/accept` und `POST /zones/suggestions/dismiss[/undo]` (`keys`, operator); seit 0.55.0 `POST /zones/schema/intents` (`pairs`, `overwrite`, operator); seit 0.56.0 `POST /zones/{id}/nodes` (`nodes` = `<Quellsystem>\|<Kontext>`, operator) und `customer_id`/`all` auch am Export; seit 0.61.0 Filter an Plan und Export (`q`, `focus` mehrfach, `depth` 0–3, `hide_layer` mehrfach: dc/customer/edge/transfer/core/distribution/access/public/none/outside, `hide` mehrfach: nodes/labels/contacts/empty) und `PUT /zones/plan/arrangement` (`view` overview/all/customer:<id>, `positions` je Zone `[x, y]`), `DELETE /zones/plan/arrangement?view=` (operator); seit 0.66.0 `flows=true` an Plan und Export und `POST /zones/assist` (`name`, `code`, `kind`, `zone_id`, `selectors`; viewer, nicht für Kunden-Benutzer); seit 0.83.0 `POST /zones/plan/import/preview` und `POST /zones/plan/import` (`content` = draw.io, `positions`/`renames`/`intents`/`new_zones`; operator) | Logische Zonen (ADR 0024, 0.51.0; Schreiben = operator, nicht für Kunden-Benutzer): Selektoren wie beim Kunden plus `exit`; Netze je Zone mit Grund; Vorschau mit gleichen Netzen anderer Zonen; Matrix je Paar Quell-/Zielzone (`allow`, `deny`, `violations`, `intent`, Achsen inkl. `any`/`none`) und die Regeln einer Zelle; Absicht `allow`/`limited`/`deny` (leer = entfernen); Plan (seit 0.56.0 `format` 2) mit `view` (all/overview/customer), `customers`, `zones` (mit `nodes`, `internal`, zusammengefasste Kunden `collapsed`/`members`, Pseudo-Zonen `none`/`outside`), `nodes`, `transitions` (`name`, `networks` mit `legs`/`routers`, `l3out`, `contact`), `conflicts`, `unzoned`, `layout` (Zeichnung; seit 0.61.0 `offset`, `placed` je Zone), seit 0.61.0 `filter` (gezeigt/gesamt, `label`), `zone_choices`, `arrangement`, `positions`; Zonen mit `color_source` (schema/template/zone/kind), `nodes`, `transitions`; Export als Datei; Versionen mit `fingerprint` (Liste mit `current_fingerprint`), Stand `data` (Zonen, Plan, Matrix) und Vergleich (`zones`/`intents`/`attachments` mit `added`/`removed`/`changed`, `unzoned`, `matrix`, `same`); Vorschläge je `key` (normalisierter Name) mit `action` create/extend, `kind`/`kind_reason`, `customer_id`, `sources`, `evidence`, `selectors`, `counts` (nets/epgs/nodes), `nodes`, `code`, `conflicts`, `dismissed`, dazu `nodes` (Knoten ohne Zone) und `rest` (Netze ohne Zone und Vorschlag); übernehmen liefert `created`/`updated`/`missing`; seit 0.55.0 je Vorschlag `schema` und `schema` mit `missing`/`outside`/`intents`/`matched` (Grundschema), Absichten übernehmen liefert `changed`; seit 0.66.0 im Plan `flows` (`a`, `b`, `rules`, `ab`, `ba`), Zonen mit `partner`, Kanten mit `flow`; Vorschläge beim Erfassen mit `items` (`selector`, `source_label`, `label`, `reason`, `score`, `nets`, `epgs`, `samples`, `new`, `covered`, `conflicts`), `total`, `schema` |
 | `GET /cabling/devices`, `GET /cabling/links` (`device`, `state` both/one_sided/unread, `q`, `issues`, `limit`, `offset`), `GET /cabling/ports` (`device`, `status` up/down/disabled, `vlan`, `q`, `limit`, `offset`), `GET /cabling/vlans`, `GET /cabling/sources` (je `tenant_id`); seit 0.63.0 `GET /cabling/endpoints` (`device`, `port`, `vlan`, `q`, `uplinks`, `limit`, `offset`) und `GET /cabling/locate?q=`; seit 0.64.0 `GET /cabling/plan` (`ends`, `vlan`) und `GET /cabling/failure` (`device` bzw. `link`, seit 0.65.0 je mehrfach); seit 0.65.0 `GET /cabling/plan/export` (`format` svg/drawio, `ends`, `vlan`) | Verkabelung (0.62.0, ADR 0025; viewer, nicht für Kunden-Benutzer): Geräte mit `summary` (devices, switches, links, `states`, issues, unread, seit 0.63.0 `endpoints`) und je Gerät `read`, `kind`, Ports/verbunden, Verbindungen, Abweichungen; Verbindungen mit `a`/`b` (Gerät, Port, Schnittstelle), `state`, `protocols`, `issues`; Ports der Switches mit `peer`, `link_state`, `issues`, `endpoints`; VLANs mit Namen und je Switch Access-Ports/Trunks; Quellsysteme der Switches; Endpunkte mit `summary` (macs, ports, vms, with_ip) und je MAC-Eintrag `mac`, `vlan`, `device`, `port`, `uplink`, `via` (Gegenstelle am Port), `vm`, `ips`, `names`, `epgs`, `first_seen`/`last_seen`; Suche mit `kind` (mac/ip/name), `ips` und je MAC `reason`, `locations`, `behind`, `earlier`, `seen_on`; Plan mit `nodes` (`layer`, `x`, `y`, `switching`, `vlan_present`), `edges` (`ids`, `links`, `state`, `issues`, `lags`, `ports`, `vlan` yes/no/partial/unknown, seit 0.65.0 `standby` und `stp`), `pairs` (vPC: `a`, `b`, `domain`), `width`/`height`, `vlan` (`present`, `islands`); Ausfall mit `devices`, `links`, `parts`, `main`, `cut_off`, `cut_off_keys` (422 ohne Gerät/Kabel bzw. mehr als 50 Angaben, 404 unbekannt); Ports seit 0.65.0 mit `vpc_peer_link`, `stp_blocked`, `stp_root`; Export als Datei (`Content-Disposition`) |
+| `GET /cabling/labels` (`state` same/differs/automato/netbox/mismatch, `q`), `PUT /cabling/labels` (`tenant_id`, `a_device`, `a_port`, `b_device`, `b_port`, `label`, `note`), `DELETE /cabling/labels/{id}?tenant_id=`, `GET /cabling/transceivers` (`device`) | Verkabelung im Detail (1.19.0, ADR 0031 Nachtrag; lesen viewer, erfassen operator, nicht für Kunden-Benutzer): Kabelnummern je Port-Paar mit `state`, `automato`, `netbox` (Kabel mit Label, Quelle, Link), `link`, `neighbor` ok/mismatch/unknown und `summary`; Erfassen je Paar (422 bei gleichem Port, leer bzw. über 100 Zeichen), Antwort mit `previous`; Transceiver je Port und `devices` mit `status` read/unreadable/unsupported; dazu `label`/`transceiver` an Verbindungen, Ports (`netbox_cable`, `pair`), Patchungen und `transceivers`/`transceiver_count` an Geräten. NetBox-Sync: `POST …/plans/{id}/apply` mit `{"confirm": [<Schlüssel der Kabelnummern>]}` |
 | `GET /auth/me`, `GET/POST /customer-users`, `PATCH/DELETE /customer-users/{id}` | Wer bin ich laut Orchestrator (Rollen, Mandanten, Kunden, `customer_source` claim/automato) – die Oberfläche richtet sich danach; Zuordnung Benutzer → Kunde (0.53.0, Admin): `login`, `customer_id`, `role` viewer/operator, `note` |
 | `GET/POST /tenants/{id}/sites`, `PATCH/DELETE /tenants/{id}/sites/{sid}` | Standorte (`kind` virtual/physical, `physical_site_ids` bzw. `virtual_site_ids`) |
 | `POST /systems/{id}/check`, seit 1.7.0 `GET /systems/{id}/check/{check_id}` | Verbindung prüfen (operator). Zentral gelesene Quellsysteme vom Orchestrator aus: Schritte `dns`, `tcp`, bei NetBox `http` (`/api/status/` mit dem Lese-Token) je mit `ok`/`detail`, dazu `hint` (0.34.0). Geräte hinter einem Agenten (1.7.0): Prüfauftrag (`from: agent`, `check_id`, `status` queued → running → done bzw. expired) – der Agent bekommt ihn mit `next-run` samt Zugangsdaten, prüft read-only Name, Verbindung und Anmeldung (`dns`, `tcp`, `login`) und meldet über `POST /internal/agent/checks/{id}`; ohne Abholung nach 3 min bzw. ohne Antwort nach 5 min `expired` mit Hinweis; ein offener Auftrag je Gerät; deaktivierter Agent 409; Audit `agent_check.claimed` |
@@ -2214,7 +2506,9 @@ Lesen = `viewer`, Läufe/Triage = `operator`, Verwaltung = `admin` (mandantsgesc
 | `GET /internal/agent/next-run`, `…/targets`, `POST …/heartbeat` | Agent-Kanal (`X-Agent-Token`): Lauf + Zugangsdaten nur für zugewiesene Geräte |
 | `POST /internal/collector-runs/{id}/result`, `GET …/{id}/target` | Ergebnis (Agent-Token des abholenden Agenten oder internes Token; Antwort = Quittung `status`/`message`); Ziel für den zentralen Worker |
 | `POST /internal/collector-runs/{id}/references` | Teil-Upload einer Referenzquelle (Infoblox/NetBox, je bis 2000 Einträge; das Ergebnis meldet `reference_count`, sonst wird der Lauf verworfen) |
-| `GET /netbox-sync/targets`, `GET/POST /netbox-sync/plans`, `GET …/plans/{id}[/items]`, `POST …/plans/{id}/apply` | NetBox-Sync (admin): Vorschau, Aktionen, Übernahme |
+| `GET /netbox-sync/targets`, `GET/POST /netbox-sync/plans`, `GET …/plans/{id}[/items]`, `POST …/plans/{id}/apply` | NetBox-Sync (admin): Vorschau, Aktionen, Übernahme; seit 1.19.0 `apply` mit `{"confirm": [...]}` = bestätigte Kabelnummern bzw. abweichende DNS-Namen (IPs) |
+| `GET /reservations` (`tenant_id`, `kind` vlan/asn, `q`), `GET /reservations/options`, `POST /reservations`, `PUT/DELETE /reservations/{id}` | Reservierungen (1.19.0, ADR 0066; lesen viewer, schreiben operator, nicht für Kunden-Benutzer): `kind`, `low`, `high`, `site_id`, `vlan_group`, `purpose`; Antwort mit `state` (free/in_use/conflict), `in_use`, `used_before`, `findings`, nach dem Speichern `overlaps`; Optionen `sites`, `vlan_groups`, `limits`; freigeben = `DELETE` |
+| `GET /routing/as-numbers` (`tenant_id`, `q`, `scope` own/foreign, `customer_id`) | AS-Nummern einzeln (1.19.0, ADR 0066; viewer): je AS `devices`, `neighbors` (`peer_ip`, Namen, `peer_node`, `at`, `state`, `session`, `configured_only`), `own`, `private`, `reservations`; `summary`, reservierte AS mit `used` |
 | `GET/POST /naming-profiles`, `…/{id}/dictionary`, `DELETE …/dictionary/{id}`; seit 0.55.0 `GET/PUT/DELETE …/{id}/zone-schema`, `POST …/{id}/zone-schema/preview`, `GET …/{id}/zone-schema/drawing`, `GET /naming-profiles/zone-schema/template[?tenant_id=]`; seit 0.104.0 `GET/PUT/DELETE …/{id}/appdoc-catalog`, `GET /naming-profiles/appdoc-catalog/default`, `GET /zones/appdoc/catalog?tenant_id=` | Namensprofile; Kategorien der Applikations-Doku (`categories`, `areas`, `options`; schreiben = admin; je Mandant mit `suggestions` je Zone); Grundschema der Zonen (`content` = draw.io-XML, `filename`; schreiben = admin): `schema` mit `zones` (Name, Art, Kurzname, Farbe, `match`, Gruppe, Position) und `links` (`src`, `dst`, `intent`, `reason`), `warnings`, Vorschau mit `diff`; Zeichnung bzw. Vorlage als Datei |
 | `GET /system/status` | Betriebsstand (admin, siehe System-Seite) |
 | `GET /system/connections` (`?tenant_id=`) | Verbindungen jetzt prüfen (admin, 0.40.0): `status`, `problems`, `container.network`, `items` je Ziel mit `area`, `status` (ok/warn/error/info), `steps`, `hint`, `ufw` (Regel); dasselbe auf der VM: `automato check-connections [--json]` |
@@ -2233,11 +2527,97 @@ Client-Zertifikat und die passenden Zeilen der `agent.env`.
   Fusszeile der Web-UI), Collector-Agent, SoT-Gateway, Web-UI. Neue Version:
   `python3 scripts/version.py set X.Y.Z`, Änderungen in `CHANGELOG.md`.
 - **Orchestrator aktualisieren:** `deploy/update.sh` (bzw. `deploy/update.sh <tag>`):
-  verschlüsselte Sicherung → Code holen → (Docker aktualisieren) → Images holen und bauen →
-  starten → `/health`. Migrationen
+  Code holen (`git fetch`) → verschlüsselte Sicherung → umstellen → (Docker aktualisieren) →
+  Images holen und bauen → starten → `/health`. Braucht einen Lese-Zugang zu origin; ist das Repo
+  privat und der Host ohne eigenen Zugang (bzw. ohne origin, Checkout aus dem Cockpit), bricht es
+  vor jeder Änderung mit klarer Meldung ab (Exit 2) – dann **nur noch das Update aus dem Cockpit**
+  (unten). Migrationen
   laufen beim Start (`alembic upgrade head`). Schlägt etwas fehl: `deploy/update.sh --rollback`
   setzt Code **und** Datenbank auf den Stand vor dem Update zurück (ADR 0013). Am Ende prüft
   `deploy/aufbau.sh pruefen` den Aufbau (nur Hinweis, kein Abbruch).
+- **Update aus dem Cockpit** (1.15.0, ADR 0060): Der Host-Agent des Cockpits ruft
+  `deploy/betrieb.sh` auf – `stand`, `sichern`, `aktualisieren`, `zurueck`, `neustart`; Antwort
+  eine Zeile JSON (Fortschritt auf stderr), Exit 0 ok, 1 fehlgeschlagen und wieder auf dem alten
+  Stand, 2 von Hand (die Meldung nennt den Schritt), 3 abgelehnt (nichts geändert), 4 belegt.
+  - `aktualisieren` baut nicht, sondern nimmt die Images aus GHCR, die das **signierte Manifest**
+    des gewählten Kanals nennt, nur per Digest. Ablauf: Signatur prüfen (Schlüssel aus
+    `/etc/automato/herausgeber.pub`, sonst `deploy/release/herausgeber.pub`; ohne Schlüssel,
+    ohne gültige Signatur oder mit älterer Version abgelehnt) → Sicherung wie `update.sh` →
+    Commit des Manifests (losgelöst) und Images holen → starten → `/health` bis 5 Minuten →
+    sonst selbst zurück (Code, Images, Datenbank aus der eben gemachten Sicherung).
+  - **Kanäle** (Release `kanal-<kanal>` im Repo, ADR 0060 Nachtrag 1.18.1):
+    - `stable` = die **abgenommene** Version aus `deploy/release/stable` (eine Zeile
+      `X.Y.Z <commit>`), Version `X.Y.Z`. Bei jeder Abnahme wird die Datei auf die abgenommene
+      Version gesetzt; nach dem Push baut die CI (Job `stable` in `ci.yml`) genau diesen Commit
+      und veröffentlicht ihn – **ohne Tag**, nur wenn der Commit grün war, ein Vorfahre des Stands
+      ist, dort `VERSION` = X.Y.Z steht und die Version nie älter als die veröffentlichte ist.
+      Ein Tag `v<X.Y.Z>` geht weiterhin, ist aber nicht nötig.
+    - `latest` = jeder grüne Stand von `main`, Version `<VERSION>-latest.<n>.<sha7>`;
+    - `dev` = jeder grüne Stand des Entwicklungs-Branches, `<VERSION>-dev.<n>.<sha7>`.
+    - n = Anzahl Commits bis zu diesem Stand: wächst mit jedem Commit, ein späterer Stand hat
+      immer die grössere Zahl.
+  - **Nie älter:** eine ältere Version lehnt `aktualisieren` ab (Exit 3, „zurück nur über die
+    Aktion zurueck“) – auch bei gleichem Versionskern (z. B. `stable` 1.17.0 auf einem Host mit
+    `1.17.0-dev.…` eines späteren Commits): dann entscheidet die git-Abstammung im Checkout bzw.
+    im Bundle; eine andere Linie (weder Vorfahre noch Nachfolger) wird ebenfalls abgelehnt.
+  - **`stand`** meldet zusätzlich `stand.herkunft`: `branch` (bzw. `null`, wenn losgelöst),
+    `losgeloest`, `kanal` (`dev`, `latest`, `stable` bzw. `unbekannt`) und `aus` (`manifest`,
+    `version`, `branch`, `tag`). Nach einem Update aus dem Cockpit gilt der Kanal des Manifests,
+    aus git gebaut der Branch (`main` = latest, Entwicklungs-Branch = dev) – das Cockpit wählt
+    damit den Kanal ohne Zutun.
+  - Die gepinnten Images stehen in `.automato-images.env` (nicht von Hand ändern); `docker compose
+    up -d` von Hand nimmt dieselben. `deploy/update.sh` baut weiterhin aus git und entfernt sie
+    (danach Quelle „git“). Nach einem Update aus dem Cockpit ist der Checkout losgelöst:
+    `update.sh main` bzw. mit Tag.
+  - `betrieb.sh zurueck` und `update.sh --rollback` gehen auf denselben Stand vor dem letzten
+    Update (Code bzw. Images **und** Datenbank – Daten seit dem Update gehen verloren);
+    `zurueck` nur einmal. Beide nehmen dieselbe Sperre (`.betrieb.lock`).
+  - Von Hand z. B. `sudo deploy/betrieb.sh stand`. Einrichten (Schlüssel, Secret, GHCR
+    öffentlich): `deploy/release/README.md`.
+  - **Repo privat** (1.18.0, ADR 0060 Nachtrag): nur das Cockpit hat einen GitHub-Zugang. Es gibt
+    den Code als git-Bundle mit (`aktualisieren … --bundle <datei>`: Commit aus dem Manifest, aus
+    dem Bundle statt von origin – origin wird nie kontaktiert; Bundle defekt bzw. ohne den Commit →
+    abgelehnt, nichts geändert) und für private Images einen Pull-Zugang nur für diesen Host (der
+    Agent setzt `DOCKER_CONFIG`). Reihenfolge: zuerst jeden Host auf ≥ 1.18.0 und den Host-Agenten
+    neu einrichten, erst dann die Repos und Pakete auf privat stellen. Danach geht `update.sh` nur
+    noch mit einem eigenen Lese-Zugang des Hosts (Deploy-Key mit Leserecht); ohne ihn nur noch aus
+    dem Cockpit. Gleiches gilt für den NetBox-Host (`aktualisieren --ref … --bundle … --commit …`,
+    ADR 0062 Nachtrag) und Magister.
+- **Eigene Automato-Instanz je Kunde** (1.16.0, ADR 0061): wählt der Betreiber im Cockpit beim
+  Kunden „eigene Automato-Instanz“, legt der Host-Agent auf der VM des Front-Proxys einen eigenen
+  Stack an – `git clone` nach `<basisordner>/<instanz>` (z. B. `/opt/automato/instanzen/kunde-a`),
+  Commit des Manifests, dann `deploy/betrieb.sh installieren …`. Die Instanz hat eine eigene `.env`
+  (auf dem Host erzeugt, 0600: Geheimnisse, Projekt `automato-<instanz>`, OIDC auf den Realm des
+  Kunden), keine Ports auf dem Host und ist nur über `https://<kunde>-doc.<domain>` erreichbar
+  (Front-Proxy, hinter dem Anmelde-Tor; Netz `automato-front-instanzen`, Anschluss
+  `automato-<instanz>-web-ui:5173`). Läuft sie nicht, antwortet die Adresse 503.
+  - In der Instanz gehen `stand`, `sichern`, `aktualisieren`, `zurueck`, `neustart` wie oben (im
+    Ordner der Instanz, z. B. `cd /opt/automato/instanzen/kunde-a && sudo deploy/betrieb.sh stand`);
+    `docker compose ps|logs` dort zeigt nur die Instanz. Sicherungen unter
+    `/var/backups/automato/instanzen/<instanz>`, mit der age-Identität des Hosts.
+  - `deploy/betrieb.sh entfernen --ja` (Abbau im Cockpit): Sicherung → Container und Volumes
+    der Instanz → Ordner nach `<basisordner>/archiv/<instanz>-<zeit>`; ohne gelungene Sicherung
+    wird nichts gelöscht. In der Hauptinstanz lehnt `entfernen` immer ab.
+  - Scheitert `installieren`, räumt es Container, Volumes und `.env` der neuen Instanz selbst weg.
+    Reste einer früheren Instanz gleichen Namens meldet es nur (Exit 3) – ansehen mit
+    `docker ps -a --filter label=com.docker.compose.project=automato-<instanz>` (bzw. `docker
+    volume ls …`), dann von Hand entfernen.
+  - `sudo deploy/front/front.sh pruefen` zeigt je Kunde, ob seine Instanz im Netz läuft, und
+    Instanzen ohne Kunden (Altlast, nur gemeldet). Voraussetzung: der Proxy der Hauptinstanz läuft
+    mit ≥ 1.16.0 (`docker compose up -d proxy` legt das Netz an).
+- **NetBox-Host und Keycloak aus dem Cockpit** (1.17.0, ADR 0062): mit einem Host-Agenten auf
+  der jeweiligen VM erscheinen sie auf der Seite Plattform des Cockpits (Produkte `netbox-host` bzw.
+  `keycloak`). Der Agent ruft `deploy/netbox-host/betrieb.sh` im Checkout des NetBox-Hosts bzw.
+  `deploy/keycloak/betrieb.sh` in einem Automato-Checkout auf der Keycloak-VM auf – gleiche
+  Aktionen und Exit-Codes wie oben.
+  - NetBox-Host: `aktualisieren --ref <branch|tag|commit>` sichert alle Instanzen, stellt den
+    Checkout um, übernimmt mit `netbox-host.sh update` die NetBox-Version des Werkzeugs
+    (`netbox-version.conf`; steht sie in `host.conf`, bleibt sie fest) und fällt bei Fehler mit
+    den Datenbanken zurück. Einrichten: `docs/INSTALLATION-NETBOX-HOST.md` 4d.
+  - Keycloak: `aktualisieren --version <X.Y.Z>` holt und prüft das Image, sichert die Datenbank
+    verschlüsselt, setzt die Version in `docker-compose.override.yml` und fällt bei Fehler mit der
+    Datenbank zurück. Einrichten (Konfiguration `/etc/automato/keycloak-betrieb.conf`, Checkout,
+    age-Schlüssel): `deploy/keycloak/PROD-INSTALL.md` 14 bzw. das Ansible-Playbook.
 - **Aufbau prüfen** (0.40.0, nach dem Muster von Magisters `plattform-aufbau.sh`):
   - `deploy/aufbau.sh pruefen` – Werkzeuge (docker, compose, curl, git, python3), Docker-Dienst,
     Container (läuft, Health), `/health`, die Verbindungen aus dem Orchestrator-Container
@@ -2375,8 +2755,8 @@ Client-Zertifikat und die passenden Zeilen der `agent.env`.
   (automatisch entsperrt über Clevis + Tang oder vTPM), gehärtetes Ubuntu und Docker, Automato
   mit Anmeldung, Agent-Gateway, Sicherung und Abnahme-Liste.
 - **NetBox je Kunde** (0.121.0, ADR 0044): `docs/INSTALLATION-NETBOX-HOST.md` – eigene VM, je Kunde
-  eine NetBox hinter einem Proxy mit Startseite; anlegen, an Automato anbinden (`token`), sichern,
-  aktualisieren und löschen mit `deploy/netbox-host/netbox-host.sh`.
+  eine NetBox hinter einem Proxy mit Startseite; anlegen, an Automato anbinden (seit 1.13.0 der
+  Agent, von Hand `token`), sichern, aktualisieren und löschen mit `deploy/netbox-host/netbox-host.sh`.
 - **Oberfläche nur aus erlaubten Netzen** (0.116.0, R14): `AUTOMATO_UI_ALLOW` in `.env`
   (Netze mit Leerzeichen getrennt, z. B. `"10.0.10.0/24 10.8.0.0/16"`; Vorgabe alles) – der
   Proxy antwortet anderen Quellen mit 403. Docker muss dafür die Quell-IP erhalten
@@ -2400,9 +2780,14 @@ Client-Zertifikat und die passenden Zeilen der `agent.env`.
   Dienst „Read-only file system“, schreibt er an eine neue Stelle – Meldung an die Entwicklung.
 - **Front-Proxy** (1.2.0, `docs/INSTALLATION-FRONT.md`): Startseiten `<kunde>.<domain>`,
   Weiterleitung `<kunde>-nb`/`-doc`/`-um`/`-cmdb` und internes Portal `start.<intern>` laufen im
-  Proxy von Automato. Kunden pflegen mit `sudo deploy/front/front.sh kunde|link|entfernen|liste`,
+  Proxy von Automato. Kunden pflegen mit `sudo deploy/front/front.sh kunde|link|entfernen|liste`
+  (mit verbundenem Cockpit seit 1.14.0 nur noch im Notfall mit `--trotzdem`, ADR 0058),
   prüfen mit `front.sh pruefen`; Einstellungen `AUTOMATO_FRONT_*` in `.env`, danach
   `front.sh erzeugen`. Kunden-Adressen nur von der WAF und aus dem Management-Netz.
+- **Zurück zum Kunden-Portal** (1.17.0): auf der Startseite eines Kunden öffnet NetBox einen neuen
+  Tab; Automato (unter `<kunde>-doc`), NetBox und Magister (unter `<kunde>-um`) führen mit
+  „Kundenportal“ oben zurück zur Startseite `https://<kunde>.<domain>`
+  (`docs/INSTALLATION-FRONT.md` 5).
 - **Kunden-Portal** (1.3.0, ADR 0050): Administration → Kunden-Portal (Admin) – Kunden anlegen,
   ändern, entfernen; der Host-Agent (`front.sh agent`, systemd) übernimmt sie in den Front-Proxy.
   Ein **eigener Realm** je Kunde: Anmeldung unter `<kurzname>-doc.<domain>` an diesem Realm; seine
@@ -2412,12 +2797,152 @@ Client-Zertifikat und die passenden Zeilen der `agent.env`.
   Werkzeugen eines Kunden zuerst die Anmeldung in seinem Realm (oauth2-proxy je Realm); danach
   ohne zweite Maske in Automato, NetBox (Rechte aus den Realm-Rollen admin/operator, sonst lesen)
   und Magister. Client-Secret je Realm: `sudo deploy/front/front.sh tor <realm>`; Stand:
-  `front.sh tor` und im Kunden-Portal. Kunden ohne Realm sind gesperrt. NetBox:
-  `netbox-host.sh sso <kunde|alle>` (`docs/INSTALLATION-FRONT.md` 6).
+  `front.sh tor` und im Kunden-Portal. Kunden ohne Realm sind gesperrt. NetBox: seit 1.13.0 der
+  Agent des NetBox-Hosts, von Hand `netbox-host.sh sso <kunde|alle>` (`docs/INSTALLATION-FRONT.md` 6).
+  Seit 1.13.0 (ADR 0055)
+  liefert das Cockpit das Client-Secret seiner Kunden versiegelt mit (auch erneuert); von Hand
+  geht weiter und gilt bis zum nächsten neuen aus dem Cockpit. Empfangsschlüssel:
+  `front.sh tor-empfang [neu]`; `front.sh tor`/`pruefen` zeigen je Realm „von Hand“ bzw. „aus dem
+  Cockpit“ und verworfene Secrets.
 - **Zugriff je Kunde** (1.5.0): im Kunden-Portal *Zugriff* – überall (Vorgabe), nur intern
   (Management-Netz) oder nur aus diesen Netzen; von Hand `front.sh kunde … --zugriff intern|"<netze>"`.
   Wer nicht darf, sieht für alle Adressen des Kunden nur „Unbekannte Adresse“ (auch keine
   Anmeldung, keine NetBox-API). `front.sh liste` zeigt Zugriff und Quelle (Portal/Hand).
+- **Kunden aus dem Cockpit** (1.11.0, ADR 0054): das Kundenregister des Cockpits schickt seine
+  Kunden mit `PUT /api/freigaben` (Token wie das Inventar, seit 1.13.0 über die Kopplung). Im
+  Kunden-Portal tragen sie „aus dem Cockpit“: Kurzname, Name, Werkzeuge, Zugriff und Realm nur
+  lesbar, Entfernen nur im Cockpit; hier pflegt man Mandant, Kunden, Rolle und Kacheln. Ein
+  vorhandener Kunde mit gleichem Kurznamen wird übernommen. `front.sh liste` zeigt Quelle
+  „Cockpit“; von Hand nicht änderbar. Seit 1.13.0 kann das Cockpit auch **Mandant, Kunden und
+  Rolle** wählen (Liste aus dem Inventar von Automato): dann stehen sie im Kunden-Portal „aus dem
+  Cockpit“ und sind hier nur lesbar; schickt das Cockpit keine Zuordnung, pflegt man sie wie
+  bisher hier. Mandanten und Kunden selbst legt man weiterhin in Automato an. Ein Kunde aus dem
+  Cockpit ohne Mandant bzw. ohne Kunden ist in der Liste markiert („noch kein Mandant – Benutzer
+  haben keine Rechte“); seine Benutzer sehen nach der Anmeldung nur diese Meldung statt
+  „Keine Berechtigung“. Ebenfalls seit 1.13.0 kann das Cockpit die **weiteren Kacheln der
+  Startseite** eines Kunden pflegen: dann zeigt „Bearbeiten“ sie mit „Kacheln aus dem Cockpit“ nur
+  lesbar (ändern beim Kunden im Cockpit); schickt das Cockpit keine Kacheln, bleiben die
+  bisherigen und sind hier wieder änderbar. Für eine Kachel gilt hier wie im Cockpit: Titel
+  höchstens 60 Zeichen, Adresse mit `https://` (höchstens 500 Zeichen, ohne Leerzeichen),
+  Beschreibung höchstens 200 Zeichen, höchstens 20 Kacheln.
+- **Kunden, Benutzer und Rollen nur aus dem Cockpit** (1.14.0, ADR 0058): ist Automato mit einem
+  Cockpit verbunden (gekoppelt oder `AUTOMATO_COCKPIT_TOKEN`), ist das Kunden-Portal nur lesbar –
+  kein „+ Kunde“, „Ansehen“ statt „Bearbeiten“, kein Entfernen (die API antwortet `409`). Kunden,
+  die noch aus der Oberfläche stammen, tragen „im Cockpit übernehmen“: im Cockpit beim
+  Kundenregister übernehmen. Ohne Cockpit wie bisher. Das Cockpit kann zusätzlich
+  - den **Kunden in Automato anlegen** lassen (Freigaben: `zuordnung.kunde_anlegen`): Automato
+    legt im gewählten Mandanten einen Kunden mit dem Namen des Portal-Kunden an (gibt es den Namen
+    schon: „<Name> (<Kurzname>)“) und ordnet ihn zu; im Kunden-Portal mit „für das Cockpit
+    angelegt“. Selektoren, Zonen usw. pflegt man danach wie bei jedem Kunden unter Administration
+    → Kunden.
+  - einen **eigenen Mandanten** anlegen lassen (1.19.2, Freigaben: `zuordnung.mandant_anlegen`,
+    im Cockpit „Neuer Mandant“, dort die Vorgabe für neue Kunden mit Automato): Automato legt einen
+    Mandanten mit dem Namen des Kunden an (gibt es ihn schon: „<Name> (<Kurzname>)“), darin den
+    Kunden, und ordnet beides zu – einmal je Kurzname. Die Benutzer des Kunden-Realms sehen nur
+    diesen Mandanten. Im Kunden-Portal steht beim Mandanten „für das Cockpit angelegt“. Der Mandant
+    beginnt leer (Quellsysteme, Standorte und Einstellungen gehören dem Mandanten und kommen beim
+    Wechsel nicht mit). Wechselt ein bestehender Kunde so aus einem gemeinsamen Mandanten, entfernt
+    Automato dort den für ihn angelegten Kunden nur, wenn ihm keine Daten zugeordnet sind; sonst
+    bleibt er (Audit „Umzug“, im Cockpit unter „Aufräumen“), von Hand entfernen, wenn gewollt. Ein
+    Quellsystem seiner NetBox bleibt im alten Mandanten; soll es mit, dort entfernen – der Agent des
+    NetBox-Hosts liefert den Zugang dann für den neuen. Automato löscht einen so angelegten
+    Mandanten nie selbst, auch nicht beim Abbau (der nimmt nur den Kunden darin): leer gewordene
+    Mandanten unter Administration → Mandanten löschen.
+    **Rechte im eigenen Mandanten** (ADR 0068): hier sehen und dürfen die Benutzer des Kunden-Realms
+    je Rolle mehr – nur mit der Rolle aus dem Cockpit (Standard-Rolle bzw. `benutzer`):
+
+    | Rolle | Anzeige oben rechts | sieht | darf |
+    |---|---|---|---|
+    | `viewer` | Kunde | Doku und L4–7 seines Kunden (wie bisher) | lesen |
+    | `triage` | Kunde · Triage | wie viewer | + Findings quittieren |
+    | `editor` | Kunde · Editor | wie viewer | + Applikationen pflegen |
+    | `customer_operator` | Kunde · Operator | **alles des Mandanten**: L1–L7, Weg-Suche, Wege vergleichen, Abgleich, Läufe, Quellsysteme (ohne Zugangsdaten), Zeitplan, Standorte | **nur** „Jetzt einlesen“, „Alle einlesen“, „Regeln neu einlesen“ |
+    | `customer_admin` | Kunde · Admin | alles des Mandanten | alles im Mandanten: Applikationen, Findings, Prüfungen, Module, Zonen, Wege, Standorte, Quellsysteme (siehe unten), Läufe abbrechen, NetBox-Sync der NetBox dieses Mandanten |
+
+    Nie für Benutzer eines Kunden-Realms: System, Kunden-Portal, Mandanten anlegen/ändern/löschen,
+    andere Mandanten, Benutzer & Rollen, Kunden, Namensprofile, Collector-Agenten verwalten (der
+    Server antwortet `403` „not available in the own tenant“). **Quellsysteme:** der Admin legt neue
+    nur mit einem **Collector-Agenten seines Mandanten** an (Agent unter Administration →
+    Collector-Agenten mit diesem Mandanten anlegen – das macht der Betreiber) und ändert Adresse,
+    Agent, TLS-Prüfung, Switch-Adressen und Zugang nur an solchen; Name, Aktiv, Standort, Zeitplan,
+    Verbund und Zugangsdaten an allen Systemen seines Mandanten. NetBox als Quellsystem richtet der
+    Betreiber ein. In einem gemeinsamen Mandanten (von Hand gewählt) bleibt alles wie bisher
+    (Kunden-Sicht; `customer_operator` liest dort nur). Lesezugriffe dieser Benutzer stehen immer
+    im Audit (`read.*` mit `mandant_rolle`). Nach dem Update `alembic upgrade head` (Migration
+    `0095_rolle_operator`). Vorführen im dev-Modus:
+    `localStorage.setItem("automato_dev_customer", "1::customer_admin:eigen")`.
+  - **Betreiber** (`<name>@betrieb`, Anmelden als Betreiber über die Startseite des Kunden) haben
+    unter `<kunde>-doc` die Rolle, die das Cockpit vergibt (Vorgabe Admin), und sehen oben rechts
+    „Betreiber“ und den Link **„Ganze Plattform“** zur internen Oberfläche (`https://<AUTOMATO_UI_HOST>`
+    aus dem Front-Proxy; nicht bei einer eigenen Instanz). Dort melden sie sich im Realm von
+    Automato an – als **Admin**, wenn das Cockpit den Identity Provider `betrieb` auch dort
+    eingerichtet hat (Cockpit → Betreiber → „Rolle in Automato (ganze Plattform)“, Vorgabe Admin).
+    Einmal von Hand, damit das Cockpit das darf: in Keycloak im Realm von Automato einen Client
+    `cockpit` (Service-Account, vertraulich) mit den Rollen `view-clients`, `manage-clients`,
+    `view-users` und `manage-identity-providers` aus `realm-management` anlegen bzw. ergänzen und
+    den Realm im Cockpit unter Kunden → Keycloak mit diesem Zugang eintragen (Cockpit-Runbook
+    `kunde-einrichten.md`, Abschnitt „Realm von Automato“). Wird die Rolle im Cockpit
+    zurückgenommen, behalten bestehende Konten `<name>@betrieb` sie, bis sie in Keycloak entfernt
+    wird (Users → `<name>@betrieb` → Role mapping).
+  - **Benutzer und Rollen** schicken: dann haben nur diese Benutzer des Realms Rechte (Liste im
+    Kunden-Portal unter „Ansehen“, Spalte Ausschnitt „N Benutzer“); alle anderen sehen nach der
+    Anmeldung „Für Sie ist in Automato keine Rolle vergeben – das macht der Betreiber im Cockpit“.
+    Ohne Liste haben alle Benutzer des Realms die Rolle der Zuordnung. Bei Kunden aus dem Cockpit
+    zählt die Rolle aus dem Realm (`customer_role`, Realm-Rollen) nicht mehr.
+  Bei Kunden aus dem Cockpit ordnet der **Kunden-Admin keine Kunden-Benutzer** mehr zu (Seite
+  „Kunden-Benutzer“ ausgeblendet bzw. nur seine übrigen Kunden; API `409` „Benutzer und Rollen
+  dieses Kunden vergibt der Betreiber im Cockpit“), früher von ihm angelegte Zuordnungen wirken
+  nicht mehr. Der globale Admin kann weiterhin zuordnen (Notzugang). `front.sh kunde|link|entfernen`
+  lehnen bei verbundenem Cockpit ab; nur im Notfall mit `--trotzdem` (Warnung „am Cockpit
+  vorbei“; das Cockpit sieht den Kunden mit Herkunft „Hand“ und kann ihn übernehmen bzw.
+  abbauen). Nach dem Update `alembic upgrade head` (1.14.0: Migrationen `0086_cockpit_verwaltung`
+  und `0087` für den Abbau).
+- **Kopplung mit dem Cockpit** (1.13.0, ADR 0057): Administration → Kunden-Portal, Karte
+  „Cockpit“ (nur Admin) → „Code zum Koppeln erzeugen“ und den Code im Cockpit bei der
+  Automato-Instanz unter „Koppeln“ eingeben (15 Minuten, einmal, höchstens 5 Fehlversuche; nur
+  dort eingeben, nie in Chat, Ticket oder Datei). Die Karte merkt die Kopplung selbst und zeigt
+  danach „Gekoppelt mit …“ und wann das Cockpit zuletzt kam. „Entkoppeln“ macht das Token des
+  Cockpits sofort ungültig; ein neues Koppeln ersetzt es. Ohne Oberfläche: `sudo deploy/aufbau.sh
+  cockpit-kopplung [status|verwerfen|entkoppeln]`. Ein Token in `.env`
+  (`AUTOMATO_COCKPIT_TOKEN`, früherer Weg `aufbau.sh cockpit-token`) gilt zusätzlich – nach dem
+  Koppeln dort leeren und den Orchestrator neu starten. Im Audit `cockpit.kopplung.*` (nie Code
+  oder Token).
+- **NetBox als Werkzeug** (1.11.0): im Kunden-Portal „NetBox (-nb)“ (Vorgabe an), von Hand
+  `front.sh kunde … --ohne-nb`. Ohne NetBox keine Adresse `<kunde>-nb`, keine Kachel, keine
+  Prüfung.
+- **NetBox ohne Handgriffe** (1.13.0, ADR 0056): der Agent des NetBox-Hosts legt die NetBox an,
+  richtet die Anmeldung über das Tor ein und übergibt Automato den Zugang (Lese- und Sync-Token),
+  sobald der Kunde im Kunden-Portal einen **Mandanten** hat. Automato legt dort das Quellsystem
+  „NetBox“ (`https://<kunde>-nb.<domain>`) an bzw. ergänzt eines mit dieser Adresse ohne Tokens;
+  Audit „Zugang aus dem NetBox-Host“ (`source.netbox_host_access`, ohne Tokens). Vorhandene
+  Zugangsdaten bleiben immer. Erneuern: beim Quellsystem „Alle hinterlegten Tokens entfernen“ –
+  der Agent liefert beim nächsten Abgleich (5 Minuten) neue. Zeitplan wie bei jedem Quellsystem
+  setzen. Stand auf dem NetBox-Host: `netbox-host.sh pruefen` (Abschnitt „Agent“).
+- **Abbau aus dem Cockpit** (1.14.0, ADR 0059): einen Kunden entfernt man im Cockpit (Abbau-Plan, Frist).
+  Während der Frist ist er **gesperrt** – im Kunden-Portal markiert („Zugang gesperrt“), jede
+  Adresse des Kunden antwortet „Zugang gesperrt“, Benutzer seines Realms haben in Automato keine
+  Rechte; Daten bleiben, rückgängig im Cockpit. Nach der Frist nimmt das Cockpit ihn heraus und
+  schickt einen **Löschauftrag**: die NetBox löscht der Agent des NetBox-Hosts (immer mit Sicherung
+  vorher, Sicherungen bleiben), das Tor-Geheimnis des Realms entfernt der Front-Proxy (nur, wenn
+  kein anderer Kunde den Realm nutzt), den Kunden in Automato entfernt Automato nur, wenn es ihn
+  für diesen Portal-Kunden angelegt hat (`zuordnung.kunde_anlegen`, ADR 0058 – auch in einem
+  früheren Mandanten) und ihm **keine Daten** zugeordnet sind (Selektoren,
+  Zugehörigkeit, Benutzer, Zonen, Anordnung des Zonenplans) – sonst bleibt er und das Inventar
+  meldet `hat_daten` (Daten von Hand entfernen bzw. den Kunden behalten). Kunden aus der
+  Oberfläche nimmt der Abbau nie. Audit `portal.abbau.*` (angenommen, Fortschritt, erledigt,
+  aufgehoben), entfernte Kunden in Automato als `customer.deleted` mit Akteur `cockpit`. Den
+  Ist-Stand aller Instanzen (Altlasten) zeigt das Cockpit auf „Aufräumen“.
+- **Werkzeug abwählen entfernt auch die Instanz** (1.14.0, ADR 0059 Nachtrag): wählt der Betreiber
+  im Cockpit bei einem Kunden, der bleibt, ein Werkzeug ab, ist es während der Frist schon aus
+  (keine Adresse, keine Kachel), die Instanz bleibt. Nach der Frist schickt das Cockpit einen
+  Löschauftrag nur für dieses Werkzeug: **NetBox** abgewählt → der Agent des NetBox-Hosts löscht
+  die NetBox (mit Sicherung); **Automato** (`doc`) abgewählt → Automato entfernt den Kunden, den es
+  für ihn angelegt hat (nur ohne Daten, sonst `hat_daten`; nennt das Cockpit ihn noch in der
+  Zuordnung, bleibt er mit `zugeordnet`); **Realm gewechselt** → der Front-Proxy entfernt das
+  Tor-Geheimnis des früheren Realms (nur, wenn ihn kein Kunde mehr nutzt). Ein Werkzeug, das noch
+  gewählt ist, nimmt Automato nie ab (`aktiv`); wird es vor der Ausführung wieder gewählt, endet
+  der Auftrag für dieses Werkzeug (`aufgehoben`, die Instanz bleibt mit ihren Daten). Stand im
+  Inventar (`ist.entfernen`, je Teil).
 - Agent-Tokens werden nur gehasht gespeichert und einmalig angezeigt. Produktiv sprechen
   Agenten nur über das **mTLS-Agent-Gateway** (`deploy/agent-gateway`, Modus `bind`:
   Zertifikat und Token gehören zum selben Agenten); Port 8000 nicht in Agent-Netze freigeben.
@@ -2525,7 +3050,8 @@ Client-Zertifikat und die passenden Zeilen der `agent.env`.
 
 - **Lauf mit „Routing nicht lesbar: … (HTTP 403)“** (ab 0.16.0) — Regeln und Objekte sind
   eingelesen, aber dem Konto fehlt das Leserecht auf diese Routing-Tabelle (FortiGate: Profil
-  mit Router/System lesen; APIC: Fabric-Knoten lesen). Unter **Routing** steht der
+  mit Router/System lesen, seit 1.19.0 für „IPsec …“ auch VPN lesen `vpngrp`; APIC:
+  Fabric-Knoten lesen). Unter **Routing** steht der
   Kontext dann als nicht lesbar. Recht ergänzen und neu einlesen. „zu gross“ heisst: mehr als
   50 000 Einträge (z. B. volle Internet-Tabelle per BGP) – diese Tabelle wird nicht übernommen.
 

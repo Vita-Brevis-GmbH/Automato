@@ -46,6 +46,7 @@ from app.store import (
     appdoc_ruleset,
     references,
     rule_index,
+    rule_match,
     rule_view,
     sites,
     virtual,
@@ -108,6 +109,15 @@ L3OUT, NARROW, FW_RULES, CAT_HIDDEN = "_l3out", "_narrow", "_fw_rules", "_cat_hi
 L3OUT_COVERED, CAT10_OUT, REL_CAUSE = "_l3out_covered", "_cat10_out", "_rel_cause"
 DISABLED, DECIDED, DECIDED_BY = "_disabled", "_decided", "_decided_by"
 UNSPECIFIC = ("subnet", "any", "vzany", "pref_group")
+# Regel-Zuordnung nach echtem Treffer (ADR 0071) - Kennzeichen an Zeile und Treffer, je mit Text:
+# `SHADOWED` = fuer dieses System ganz ueberdeckt („überdeckt durch Policy X“: fruehere Policies
+# entscheiden allen Verkehr, den sie trifft - kein Zugriff, nur noch Treffer), `BROAD_HIT` =
+# breite Policy, die real trifft, an der Stelle der Regel dahinter, die das System nennt
+# („breit“: Zeile mit Kategorie, Gegenstelle und Dienst des gemeinten Zugriffs), und
+# `PATH_UNCHECKED` = Weg zwischen Gegenstelle und System nicht bekannt bzw. nicht ganz geprueft
+# („Weg nicht geprüft“ - die Regel bleibt, gezaehlt in `summary.path_unchecked`)
+SHADOWED, BROAD_HIT, PATH_UNCHECKED = "_shadowed", "_broad", "_path_unchecked"
+SHADOWED_IDS = "_shadowed_by"  # IDs der ueberdeckenden Policies (nur intern)
 # Ausgehende Firewall-Regeln mit breiter Quelle (0.103.0, Anwender: „Firewall-Regeln, welche die
 # Source offen ist (z. B. 10.0.0.0/8), damit der Server irgendwo zugreifen kann, sollen bei dem
 # Server nicht zeigen“): das System steht nur ueber ein Netz, einen Bereich bzw. any in der
@@ -140,7 +150,7 @@ CP_REFS = "_cp_refs"
 # ausserhalb aller Zonen) und EPGs, unspezifisch = any, 0.0.0.0/0, Netz ueber mehrere Zonen
 CP_SCOPE = "_cp_scope"
 INTERNAL = (PARTIES, HELPER, HELPERS, L3OUT_ALONE, CP_REFS, DECIDED,
-            DECIDED_BY, CP_SCOPE)  # nur intern bzw. fuer die Treffer  # fmt: skip
+            DECIDED_BY, CP_SCOPE, SHADOWED_IDS)  # nur intern bzw. fuer die Treffer  # fmt: skip
 
 # Spalten seit 0.84.0 (Anwender: „heute steht alles in Server Name“): Quelle und Ziel in
 # Verkehrsrichtung, je mit Name und IP; die Seite der Applikation (`APP`) bzw. die Gegenstelle
@@ -599,9 +609,17 @@ class TenantData:
 
     @cached_property
     def on_path(self) -> appdoc_path.OnPath:
-        """Unspezifische Firewall-Regeln nur von Firewalls auf dem Weg (0.113.2); teilt den
-        Graph der Relevanz."""
-        return appdoc_path.OnPath(self.session, self.tenant_id, lambda: self.relevance.graph)
+        """Firewall-Regeln nur von Firewalls auf dem Weg (0.113.2, seit ADR 0071 fuer jede
+        Regel); teilt den Graph der Relevanz."""
+        on_path = appdoc_path.OnPath(self.session, self.tenant_id, lambda: self.relevance.graph)
+        on_path.matcher = self.matcher
+        return on_path
+
+    @cached_property
+    def matcher(self) -> rule_match.Matcher:
+        """Zuordnung Regel <-> System nach echtem Treffer (ADR 0071), im Speicher je
+        Datenstand."""
+        return rule_match.for_tenant(self.session, self.tenant_id, dns=lambda: self.dns)
 
     @cached_property
     def aci(self) -> aci_relevance.Classifier:
@@ -1201,6 +1219,7 @@ def _fw_rows(
     rels: dict[str, dict] | None = None,
     ips: list[str] | None = None,
     own_zones: list[int] | None = None,
+    marks: dict[str, dict] | None = None,
 ) -> list:
     """Firewall-Regel als (Tabelle, Zeile) je Seite, auf der das System steht (Ziel =
     eingehend, Quelle = ausgehend); `sides` = Seite -> (Bezug, Art des Bezugs, Objekt der
@@ -1301,6 +1320,7 @@ def _fw_rows(
                 meta |= {REL: rel["state"], REL_TEXT: rel["text"], REL_CAUSE: rel.get("cause")}
             if str((rule.raw or {}).get("status") or "") == "disable":
                 meta[DISABLED] = True  # FortiGate-Policy deaktiviert (0.118.0, Regelwerk)
+            meta |= (marks or {}).get(side) or {}  # ADR 0071: überdeckt, breit, Weg nicht geprüft
             out.append((idx, {**row, VIA: via, **meta, OBJECT: obj, OBJECT_VALUE: value}))
     return out
 
@@ -1444,11 +1464,12 @@ def _covered_rows(
     enthalten muss (Subnetz eines BD, den die EPG mit anderen teilt, 0.43.1). `epg_nets`: Netze
     der EPG einer VM (Netz -> EPG, 0.126.1) - ein Objekt darin ist fuer die VM spezifisch wie fuer
     die EPG (sonst „Subnetz“)."""
-    cover = rule_index.covers(
-        session, data.tenant_id, values, overlap=overlap, domain=RuleDomain.FIREWALL
-    )
+    # ADR 0071: welche Regel den Verkehr des Systems trifft (`rule_match`: negierte Seite als
+    # Komplement, FQDN ueber das IPAM) - im Speicher je Datenstand, ohne SQL je Adresse
+    matcher = data.matcher
+    cover = matcher.covers(values, overlap=overlap)
     if contained:
-        more = rule_index.covers(session, data.tenant_id, contained, domain=RuleDomain.FIREWALL)
+        more = matcher.covers(contained)
         for rid, c in more.items():
             for role, side in c.sides.items():
                 cover.setdefault(rid, rule_index.Cover()).add(role, *side)
@@ -1469,7 +1490,8 @@ def _covered_rows(
             direct = L("direkt", "direct")  # Bezug (Anzeige)
             for e in r.endpoints:
                 role = e.role.value
-                if is_direct(e) and role not in sides:
+                # negierte Seite (ADR 0071): die Regel nennt das System, um es auszunehmen
+                if is_direct(e) and role not in sides and not matcher.negated(r.id, role):
                     o = data.objs.get(e.network_object_id) if e.network_object_id else None
                     if c is not None and role in c.sides:  # Objektname wie auf der Firewall
                         sides[role] = (direct, "specific", c.via(role), c.value(role))
@@ -1487,15 +1509,56 @@ def _covered_rows(
             sides = {k: v for k, v in sides.items() if v[1] != "any"}
         zones = {"src": data.zones.get(r.src_zone_id), "dst": data.zones.get(r.dst_zone_id)}
         rels = {s: data.relevance.check(r, s, values, zones[s]) for s in sides}
+        marks: dict[str, dict] = {s: {} for s in sides}
         for s, side in sides.items():
-            # unspezifisch (0.113.2): nur, wenn der Weg zur Gegenstelle ueber diese Firewall geht;
-            # konkrete Regeln nur, wenn das Regelwerk danach fragt (0.118.0)
-            path = side[1] in BROAD or data.ruleset.uses("off_path_specific")
-            if path and rels[s]["state"] != relevance_store.IMPOSSIBLE:
+            if rels[s]["state"] == relevance_store.IMPOSSIBLE:
+                continue
+            # Weg als harte Bedingung (ADR 0071, bis 1.21 nur unspezifische Regeln bzw. nach dem
+            # Regelwerk): nur Firewalls auf dem Weg zwischen Gegenstelle und System tragen bei.
+            # Ueber eine VIP bzw. einen Load Balancer erfasst: die Firewall schreibt um - auf dem
+            # Weg. Weg unbekannt: die Regel bleibt, markiert und gezaehlt
+            if not matcher.derived(r.id, side[2]):
                 off = data.on_path.check(r, s, values, data.device(r))
                 rels[s] = off or rels[s]
-        out += _fw_rows(data, r, sides, system_name, dnat, rels, shown, own)
+                if off is None and ((r.id, s) in data.on_path.unknown
+                                    or r.id in data.on_path.unchecked):  # fmt: skip
+                    marks[s][PATH_UNCHECKED] = L("Weg nicht geprüft", "path not checked")
+            if rels[s]["state"] == relevance_store.IMPOSSIBLE:
+                continue
+            # wirksamer Rest (ADR 0071): fruehere Policies entscheiden allen Verkehr des Systems,
+            # den diese Regel trifft - sie ist kein Zugriff mehr
+            by = matcher.shadow(r.id, s, values)
+            if by:
+                names = matcher.labels(by)
+                marks[s][SHADOWED] = L(f"überdeckt durch {names}", f"shadowed by {names}")
+                marks[s][SHADOWED_IDS] = by
+        rows = _fw_rows(data, r, sides, system_name, dnat, rels, shown, own, marks)
+        out += rows
+        # breit (ADR 0071): nennt die ueberdeckte Regel das System, trifft real die breitere
+        # Policy davor - sie wird an ihrer Stelle gezeigt (Kategorie, Gegenstelle und Dienst
+        # des gemeinten Zugriffs), als „breit“ gekennzeichnet
+        for idx, row in rows:
+            by = row.get(SHADOWED_IDS)
+            if by and row.get(SCOPE) not in BROAD:
+                for e in data.rules(set(by[: rule_match.SHOWN])):
+                    out.append((idx, _instead(row, e, r)))
     return out
+
+
+def _instead(row: dict, real: Rule, meant: Rule) -> dict:
+    """Zeile der real treffenden Policy `real` anstelle der ueberdeckten Regel `meant` (ADR
+    0071): derselbe Zugriff (System, Gegenstelle, Dienst, Kategorie), entschieden von `real`."""
+    name = meant.name or f"#{meant.external_id}"
+    drop = (SHADOWED, SHADOWED_IDS, NAT, SNAT_IP, DISABLED)
+    return {k: v for k, v in row.items() if k not in drop} | {
+        RULE: real.id,
+        DESCRIPTION: real.name or f"#{real.external_id}",
+        # in der Kategorie und im Export sichtbar: „allow (breit)“
+        ACTION: f"{action_label(real)} ({L('breit', 'broad')})",
+        PROTECTION: ", ".join(real.protections) if real.protections else "",
+        VIA: L("breite Regel davor", "broad rule before"),
+        BROAD_HIT: L(f"breit – trifft anstelle von {name}", f"broad – hits instead of {name}"),
+    }
 
 
 def _in_epg_net(value: str | None, nets: list[tuple[tuple, str]]) -> str | None:

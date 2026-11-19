@@ -1,0 +1,18 @@
+# Betrieb von Keycloak aus dem Cockpit (deploy/keycloak/betrieb.sh, ADR 0062) – liegt als
+# /etc/automato/keycloak-betrieb.conf (root, 0600). Das Ansible-Playbook legt sie an; von Hand:
+# PROD-INSTALL.md, Abschnitt 14. Keine Geheimnisse: Orte und der öffentliche age-Empfänger.
+# Zeilen NAME=Wert (gelesen, nicht ausgeführt).
+
+# Ordner des Stacks (docker-compose.yml, .env, Caddyfile)
+KC_DIR=/opt/automato-keycloak
+
+# Empfänger der verschlüsselten Sicherung (age1…, mehrere mit Leerzeichen). Leer = der Empfänger
+# von AGE_IDENTITY.
+AGE_RECIPIENT=
+
+# Identität für den Rückfall (Datenbank aus der Sicherung einspielen) – ohne sie auf der VM lehnt
+# betrieb.sh Updates ab. Zusätzlich getrennt von der VM aufbewahren (Tresor).
+AGE_IDENTITY=/root/automato-keycloak-backup.agekey
+
+BACKUP_DIR=/var/backups/automato-keycloak
+BACKUP_KEEP_DAYS=14

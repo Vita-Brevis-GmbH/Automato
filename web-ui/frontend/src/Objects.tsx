@@ -24,6 +24,7 @@ import {
   VmRow,
 } from "./api";
 import { L } from "./i18n";
+import { replaceHash } from "./places";
 import {
   CATEGORY_LABEL,
   FAMILY_LABEL,
@@ -127,6 +128,7 @@ export default function Objects({
     setPrefix("");
     setPinned(null);
     setTab(t);
+    replaceHash("objekte", t === "addr" ? {} : { tab: t }); // Subnetze und VRFs = Stellen in L3 (ADR 0067)
   };
   useEffect(() => setObjType(""), [tab]);
   useEffect(() => {

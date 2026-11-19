@@ -60,6 +60,8 @@ class FindingType(enum.StrEnum):
     SNAT_POOL_MISSING = "snat_pool_missing"
     # VIP der Firewall ohne Ziel: kein Load Balancer, interne IP nirgends vergeben (0.134.0)
     VIP_TARGET_MISSING = "vip_target_missing"
+    # Regel überdeckt durch Policy X (ADR 0071): frühere Policies entscheiden ihren ganzen Verkehr
+    RULE_SHADOWED = "rule_shadowed"
     # Topologie (0.50.0, `store/topo_model`): Plausibilitaet der gelesenen Netze und Routen
     TOPO_DUPLICATE_IP = "topo_duplicate_ip"  # dieselbe IP auf zwei Knoten im selben Netz
     TOPO_MASK_MISMATCH = "topo_mask_mismatch"  # Gegenstellen mit verschiedener Netzmaske
@@ -94,6 +96,12 @@ class FindingType(enum.StrEnum):
     LINK_VLAN_MISMATCH = "link_vlan_mismatch"
     LINK_LAG_MISMATCH = "link_lag_mismatch"
     LINK_ONE_SIDED = "link_one_sided"
+    # Verkabelung im Detail (1.19.0, `store/cable_labels`): LLDP/CDP-Nachbar passt nicht zum Kabel
+    # in NetBox; Kabelnummer in NetBox und Automato verschieden; Duplex nicht voll (beide Enden
+    # gelesen)
+    CABLE_NEIGHBOR_MISMATCH = "cable_neighbor_mismatch"
+    CABLE_LABEL_MISMATCH = "cable_label_mismatch"
+    LINK_HALF_DUPLEX = "link_half_duplex"
     # Endpunkte (0.63.0, `store/l2`): VLAN der VMs eines ESXi-Hosts fehlt an seinem Uplink
     UPLINK_VLAN_MISSING = "uplink_vlan_missing"
     # L2-Sicht (0.64.0, `store/l2_topo`): Redundanz und VLAN-Wege
@@ -133,6 +141,46 @@ class FindingType(enum.StrEnum):
     # Nachkontrolle des NetBox-Syncs (0.115.0, ADR 0042): nach dem Uebernehmen steht ein
     # geschriebenes Objekt nicht so in NetBox (fehlt, Felder anders, nicht geloescht)
     NETBOX_SYNC_MISMATCH = "netbox_sync_mismatch"
+    # IPsec-Tunnel (1.19.0, ADR 0063, `store/vpn`): Tunnel bzw. eine Phase 2 down; ein
+    # Phase-2-Selektor deckt eine Route ueber den Tunnel nur teilweise; Route ueber den Tunnel
+    # ohne passenden Selektor (der Verkehr dorthin geht nicht durch den Tunnel)
+    VPN_TUNNEL_DOWN = "vpn_tunnel_down"
+    VPN_SELECTOR_PARTIAL = "vpn_selector_partial"
+    VPN_ROUTE_NO_SELECTOR = "vpn_route_no_selector"
+    # Statische Routen (1.19.0, `store/static_routes`): Next-Hop nicht erreichbar (kein
+    # angeschlossenes Netz, keine Route im VRF), ueberdeckt (nie aktiv - keine bewusste
+    # Backup-Route), doppelt, Blackhole (Hinweis), nicht pruefbar (Hinweis je Kontext)
+    STATIC_NEXTHOP_UNREACHABLE = "static_nexthop_unreachable"
+    STATIC_SHADOWED = "static_shadowed"
+    STATIC_DUPLICATE = "static_duplicate"
+    STATIC_BLACKHOLE = "static_blackhole"
+    STATIC_UNCHECKED = "static_unchecked"
+    # Spanning Tree (1.19.0, `store/stp`): Root nicht am Soll bzw. ohne Soll nur gemeldet, Port
+    # unerwartet blockiert, err-disabled durch BPDU-Guard, gemischte Modi im selben L2-Bereich,
+    # viele Topologieaenderungen
+    STP_ROOT_MISMATCH = "stp_root_mismatch"
+    STP_ROOT_INFO = "stp_root_info"
+    STP_PORT_BLOCKED = "stp_port_blocked"
+    STP_BPDU_GUARD = "stp_bpdu_guard"
+    STP_MODE_MIXED = "stp_mode_mixed"
+    STP_TOPOLOGY_CHANGES = "stp_topology_changes"
+    # Wege vergleichen (1.19.0, ADR 0067): L3-Abschnitt gegen L1/L2
+    PATH_VLAN_MISSING = "path_vlan_missing"  # VLAN auf dem Weg nicht ueberall erlaubt
+    PATH_CABLE_MISMATCH = "path_cable_mismatch"  # Kabel/Nachbarn auf dem Weg weichen ab
+    PATH_STP_BLOCKED = "path_stp_blocked"  # Spanning Tree blockiert jeden Weg im VLAN
+    PATH_L2_UNCHECKED = "path_l2_unchecked"  # Abschnitte nicht (ganz) geprueft, je Grund
+    # Reservierungen (1.19.0, ADR 0066, `store/reservations`): reservierte VLAN- bzw. AS-Nummer
+    # jetzt gelesen in Gebrauch (Hinweis) bzw. schon beim Reservieren in Gebrauch (Konflikt);
+    # Reservierungen derselben Art ueberschneiden sich (doppelt reserviert)
+    RESERVATION_IN_USE = "reservation_in_use"
+    RESERVATION_CONFLICT = "reservation_conflict"
+    RESERVATION_OVERLAP = "reservation_overlap"
+    # DNS aus dem AD (1.19.0, ADR 0045 Nachtrag, `store/dns_checks`): PTR widerspricht dem
+    # A-Record; A-Records auf IPs, die NetBox nicht kennt (nur gezaehlt); nicht pruefbar
+    # (Quelle bzw. Zone nicht gelesen, Rueckwaertszone fehlt, NetBox nicht gelesen)
+    DNS_PTR_MISMATCH = "dns_ptr_mismatch"
+    DNS_IP_UNKNOWN = "dns_ip_unknown"
+    DNS_UNCHECKED = "dns_unchecked"
 
 
 class Severity(enum.StrEnum):
@@ -165,6 +213,7 @@ class SubjectKind(enum.StrEnum):
     PATH = "path"  # Weg `<Quelle> → <Ziel>` (von Hand erfasst, 0.109.0)
     NETBOX = "netbox"  # Objekt in der Ziel-NetBox (`<NetBox>|<Art>|<Schluessel>`, 0.115.0)
     APPLICATION = "application"  # Applikation (Name, 0.140.0)
+    RESERVATION = "reservation"  # Reservierung (`vlan|<Nummer>` bzw. `asn|<Nummer>`, 1.19.0)
 
 
 class Finding(Base):

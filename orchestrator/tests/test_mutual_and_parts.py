@@ -80,7 +80,9 @@ def test_netz_als_ziel_genauer_geroutete_teile(client):
     conns = client.get(f"/applications/{app['id']}/connections").json()["connections"]
     whole = next(c for c in conns if c["dst"]["ip"] == "10.0.0.0/8")
     assert "10.30.0.0/24" in whole["parts"]
-    assert whole["end"]["kind"] == "external"  # das ganze Netz: ueber die Default-Route
+    # ADR 0070: das ganze private Netz nur ueber die Default-Route an ein nicht gelesenes Geraet
+    # = nicht geprueft (bis 1.20 „extern“ und damit erreicht)
+    assert whole["end"]["kind"] == "unchecked"
     part = next(c for c in conns if c.get("part_of") == whole["key"]
                 and c["dst"]["ip"] == "10.30.0.0/24")  # fmt: skip
     assert part["dst"]["label"].endswith("› 10.30.0.0/24") and part["service"] == "tcp/443"

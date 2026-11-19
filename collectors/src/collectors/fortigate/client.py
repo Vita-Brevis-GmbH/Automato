@@ -139,6 +139,11 @@ class FortiGateClient:
         glob = self._get("system/global")
         if isinstance(glob, dict):
             info["hostname"] = glob.get("hostname")
+            # ADR 0071 Nachtrag (P-7, nur lesend): Verkehr, der am selben Interface ein- und
+            # ausgeht, leitet die FortiGate mit `allow-traffic-redirect` ohne Policy weiter
+            for key in ("allow-traffic-redirect", "ipv6-allow-traffic-redirect"):
+                if glob.get(key) in ("enable", "disable"):
+                    info[key] = glob[key]
         try:
             response = read_get(
                 self._client, f"{self._root}/monitor/system/status", headers=self._headers
@@ -274,6 +279,14 @@ class FortiGateClient:
             "route_maps": lambda: self._get("router/route-map", vdom),
             "access_lists4": lambda: self._get("router/access-list", vdom),
             "access_lists6": lambda: self._get("router/access-list6", vdom),
+            # IPsec (1.19.0, ADR 0063): Phase 1/2 im Interface-Modus und Zustand der Tunnel
+            "ipsec_phase1": lambda: self._get("vpn.ipsec/phase1-interface", vdom),
+            "ipsec_phase2": lambda: self._get("vpn.ipsec/phase2-interface", vdom),
+            "ipsec_status": lambda: self._monitor_rows("vpn/ipsec", vdom),
+            # ADR 0070 (nur lesend): Einstellungen des VDOMs (Central NAT, Reverse Path) und die
+            # Tabelle des Central SNAT
+            "settings": lambda: self._get("system/settings", vdom),
+            "central_snat": lambda: self._get("firewall/central-snat-map", vdom),
         }
         out: dict[str, Any] = {"missing": []}
         for key, read in reads.items():

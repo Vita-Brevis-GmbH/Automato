@@ -67,9 +67,11 @@ from app.store import (
     epg_locate,
     net_assign,
     path_service,
+    path_stages,
     paths,
     policy_check,
     return_path,
+    static_routes,
 )
 from app.store import epgs as epg_store
 from app.store import nat as nat_store
@@ -94,7 +96,14 @@ class _Cuts:
     """Was eine Grenze nicht prueft (0.140.0): je Art die betroffenen Regeln und wie viele
     Gegenstellen, Dienste bzw. Teile fehlen - fuer `coverage` und den Befund `app_coverage`."""
 
-    KINDS = ("counter", "services", "parts", "limit", "failed")
+    # vpn (1.19.0, ADR 0063): Verbindungen, deren Weg an der Gegenstelle eines IPsec-Tunnels ohne
+    # gelesenes Geraet endet - der Weg dahinter ist nicht geprueft
+    # ADR 0070 (jede Unsicherheit gezaehlt): `start` = Verbindungen ohne bekannten Start (kein
+    # Rueckfall mehr auf das Geraet einer Regel); die uebrigen kommen aus `paths.trace`
+    # (`uncertain`, `path_stages.UNCERTAIN`) - gekuerzte Wege, moegliche Policy-Routen, SD-WAN,
+    # Reverse Path bzw. NAT nicht geprueft, IPsec-Selektoren, Default-Route, Rueckweg
+    KINDS = ("counter", "services", "parts", "limit", "failed", "vpn", "start",
+             *path_stages.UNCERTAIN)  # fmt: skip
 
     def __init__(self) -> None:
         self.rules: dict[str, set[int]] = defaultdict(set)
@@ -129,6 +138,62 @@ def cut_text(kind: str, x: dict) -> str:
                    f"{n} connections not checked (limit AUTOMATO_APP_TRACES_MAX)"),
         "failed": L(f"{n} Wege wegen eines Fehlers im Programm nicht berechnet",
                     f"{n} paths not computed because of a program error"),
+        "vpn": L(f"{n} Verbindungen von {rules} Regeln enden an der Gegenstelle eines VPN-Tunnels "
+                 "ohne gelesenes Gerät bzw. mit nicht prüfbaren Phase-2-Selektoren – der Weg "
+                 "dahinter ist nicht geprüft",
+                 f"{n} connections of {rules} rules end at the peer of a VPN tunnel without a "
+                 "device read or with phase 2 selectors that cannot be checked – the path behind "
+                 "it is not checked"),
+        "start": L(f"{n} Verbindungen von {rules} Regeln ohne bekannten Start – die Quelle hängt "
+                   "an keinem gelesenen Gerät, und kein gelesenes Gerät kennt den Weg zu ihr; "
+                   "der Weg ist nicht geprüft",
+                   f"{n} connections of {rules} rules without a known start – the source is "
+                   "connected to no device read, and no device read knows the path to it; the "
+                   "path is not checked"),
+        "start_part": L(f"{n} Verbindungen von {rules} Regeln mit einem Netz als Quelle, von "
+                        "dem nur Teile an gelesenen Geräten angeschlossen sind – der Weg beginnt "
+                        "dort, für den übrigen Teil ist der Start nicht geprüft",
+                        f"{n} connections of {rules} rules with a network as source of which "
+                        "only parts are connected to devices read – the path starts there, for "
+                        "the remaining part the start is not checked"),
+        "truncated": L(f"{n} Verbindungen von {rules} Regeln mit mehr als {paths.MAX_PATHS} "
+                       "Wegen – die übrigen Wege sind nicht geprüft",
+                       f"{n} connections of {rules} rules with more than {paths.MAX_PATHS} "
+                       "paths – the other paths are not checked"),
+        "policy_route": L(f"{n} Verbindungen von {rules} Regeln mit Policy-Routen, die nur "
+                          "möglicherweise passen – der Weg ist dort nicht sicher",
+                          f"{n} connections of {rules} rules with policy routes that only "
+                          "possibly match – the path is not certain there"),
+        "sdwan": L(f"{n} Verbindungen von {rules} Regeln über SD-WAN mit mehreren Mitgliedern – "
+                   "welches gewählt wird, hängt vom Zustand der Links ab (nicht gelesen)",
+                   f"{n} connections of {rules} rules via SD-WAN with several members – which "
+                   "one is chosen depends on the link state (not read)"),
+        "rpf": L(f"{n} Verbindungen von {rules} Regeln: Reverse Path einer Firewall nicht "
+                 "geprüft (Einstellungen nicht gelesen)",
+                 f"{n} connections of {rules} rules: reverse path of a firewall not checked "
+                 "(settings not read)"),
+        "nat": L(f"{n} Verbindungen von {rules} Regeln: NAT nicht geprüft (Central NAT nicht "
+                 "gelesen bzw. VIP nur möglich)",
+                 f"{n} connections of {rules} rules: NAT not checked (central NAT not read or "
+                 "VIP only possible)"),
+        "default": L(f"{n} Verbindungen von {rules} Regeln mit privatem Ziel über die "
+                     "Default-Route an ein nicht gelesenes Gerät – nicht geprüft",
+                     f"{n} connections of {rules} rules with a private destination via the "
+                     "default route to a device not read – not checked"),
+        "onlink": L(f"{n} Verbindungen von {rules} Regeln über eine Route nur mit Interface – ob "
+                    "das Ziel dort angeschlossen ist, ist nicht geprüft",
+                    f"{n} connections of {rules} rules via a route with an interface only – "
+                    "whether the destination is connected there is not checked"),
+        "no_policy": L(f"{n} Verbindungen von {rules} Regeln über dasselbe Interface bzw. "
+                       "dieselbe Zone einer Firewall: ob sie den Verkehr ohne Policy weiterleitet "
+                       "(allow-traffic-redirect, intrazone), ist nicht geprüft",
+                       f"{n} connections of {rules} rules via the same interface or the same "
+                       "zone of a firewall: whether it forwards the traffic without a policy "
+                       "(allow-traffic-redirect, intrazone) is not checked"),
+        "return": L(f"{n} Verbindungen von {rules} Regeln: Rückweg nur für die ersten "
+                    f"{return_path.MAX_PATHS} Wege geprüft",
+                    f"{n} connections of {rules} rules: return path checked for the first "
+                    f"{return_path.MAX_PATHS} paths only"),
     }[kind]  # fmt: skip
 
 
@@ -213,13 +278,24 @@ def _build(session: Session, app: Application, doc: dict | None, graph: paths.Gr
     data = appdoc.TenantData(session, tid)
     doc = doc or applications.build_doc(session, app, data=data)
     t_doc = time.monotonic()
-    rule_ids = {h["rule_id"] for h in doc["hits"]}
+    # mit den Regeln abseits des Wegs (ADR 0071, `doc["off_path"]`): nicht in der Doku, hier
+    # weiter als „Regel nie gebraucht“ (0.107.0)
+    rule_ids = {h["rule_id"] for h in [*doc["hits"], *(doc.get("off_path") or [])]}
     rules = {
         r.id: r
         for r in session.scalars(
             select(Rule).where(Rule.id.in_(rule_ids)).options(selectinload(Rule.services))
         )
     }
+    # Kennzeichen der Regel-Zuordnung (ADR 0071) je Regel, fuer die Regeln der Verbindungen:
+    # überdeckt, breit, Weg nicht geprüft - mit dem Text der Doku
+    doc_marks: dict[int, dict[str, str]] = defaultdict(dict)
+    for h in doc["hits"]:
+        for key, name in (("shadowed", appdoc.SHADOWED), ("broad", appdoc.BROAD_HIT),
+                          ("path_unchecked", appdoc.PATH_UNCHECKED)):  # fmt: skip
+            if h.get(name):
+                doc_marks[h["rule_id"]].setdefault(key, h[name])
+    data.doc_marks = doc_marks
     cuts = _Cuts()  # was eine Grenze nicht prueft (0.140.0)
     conns, notes, without = _candidates(session, data, doc, rules, limit, cuts)
     t_cand = time.monotonic()
@@ -280,6 +356,14 @@ def _build(session: Session, app: Application, doc: dict | None, graph: paths.Gr
                 progress(traced, len(todo))
             continue
         slow.append((time.monotonic() - t_one, conn["key"]))
+        if conn.get("vpn_end"):  # Ende an einer fremden VPN-Gegenstelle: gezaehlt (ADR 0063)
+            cuts.add("vpn", None, 1)
+            cuts.rules["vpn"].update(c.rules)
+        for kind in conn.get("uncertain") or {}:  # ADR 0070: jede Unsicherheit gezaehlt
+            if kind == "vpn" and conn.get("vpn_end"):
+                continue
+            cuts.add(kind, None, 1)
+            cuts.rules[kind].update(c.rules)
         if progress is not None:
             progress(traced, len(todo))
         if time.monotonic() - logged > PROGRESS_SECONDS:  # lange Berechnung: Fortschritt im Log
@@ -343,7 +427,8 @@ def _build(session: Session, app: Application, doc: dict | None, graph: paths.Gr
             )
         )
     cuts.add("failed", None, len(failed))
-    for kind in ("counter", "services", "parts"):  # Grenzen je Regel (0.140.0): nie still
+    for kind in ("counter", "services", "parts", "vpn", "start", *path_stages.UNCERTAIN):
+        # Grenzen je Regel (0.140.0) und Unsicherheiten der Wege (ADR 0070): nie still
         if kind in cuts.out():
             notes.append(cut_text(kind, cuts.out()[kind]))
     t_traces = time.monotonic()
@@ -355,6 +440,7 @@ def _build(session: Session, app: Application, doc: dict | None, graph: paths.Gr
     used |= {x["rule_id"] for x in unused}
     missing = [{"rule_id": rid, "label": _rule_label(rules[rid]), "reasons": sorted(why)}
                for rid, why in without.items() if rid in rules and rid not in used]  # fmt: skip
+    statics = static_routes.for_doc(session, tid, out)  # 1.19.0: statische Routen der Wege
     return {
         "connections": out,
         "notes": notes,
@@ -374,7 +460,11 @@ def _build(session: Session, app: Application, doc: dict | None, graph: paths.Gr
                 1 for c in out if (c.get("return") or {}).get("state") == "asymmetric"
             ),  # fmt: skip
             "unused": len({x["rule_id"] for x in unused}),  # 0.107.0
+            # ueber einen IPsec-Tunnel (1.19.0, ADR 0063) - nur, wenn es welche gibt
+            **({"vpn": len(over)} if (over := [c for c in out if _over_vpn(c)]) else {}),
         },
+        # IPsec-Tunnel auf den Wegen (1.19.0, ADR 0063) - je Tunnel die Verbindungen
+        **({"vpn": vpn_tunnels(over)} if over else {}),
         "unused": unused,
         # Vollstaendigkeit (0.140.0): geprueft von allen, was eine Grenze ausliess - nicht
         # vollstaendig = Befund `app_coverage`
@@ -386,6 +476,7 @@ def _build(session: Session, app: Application, doc: dict | None, graph: paths.Gr
         },  # fmt: skip
         "without": sorted(missing, key=lambda x: x["label"].lower()),
         "members": members(doc),
+        "statics": statics,
         # 0.78.2: L3Out-Contracts, die weniger oeffnen als die Firewall (Befund)
         "narrower": doc.get("narrower") or [],
         # 0.132.1: Dauer je Teil und die langsamsten Wege (Sekunden)
@@ -402,6 +493,24 @@ def _build(session: Session, app: Application, doc: dict | None, graph: paths.Gr
             ],
         },  # fmt: skip
     }
+
+
+def _over_vpn(c: dict) -> bool:
+    return any(h.get("vpn") for h in c.get("hops") or [])
+
+
+def vpn_tunnels(conns: list[dict]) -> list[dict]:
+    """IPsec-Tunnel auf den Wegen der Verbindungen (1.19.0, ADR 0063): je Tunnel (beide Enden
+    eine Kennung) das Geraet, Zustand, Gegenstelle und die Zahl der Verbindungen."""
+    out: dict[str, dict] = {}
+    for c in conns:
+        for h in c.get("hops") or []:
+            v = h.get("vpn")
+            if not v:
+                continue
+            entry = out.setdefault(v["id"], {**v, "device": h["label"], "connections": 0})
+            entry["connections"] += 1
+    return sorted(out.values(), key=lambda x: (x["device"], x["name"]))
 
 
 def members(doc: dict) -> dict:
@@ -515,7 +624,11 @@ def _candidates(
     # spezifische Treffer zuerst, je Regel in der Reihenfolge der Doku
     order = {r.id: i for i, r in enumerate(doc["rules"])}
     hits = sorted(
-        (h for h in doc["hits"] if h["system"] in systems and h["rule_id"] in rules),
+        (
+            h
+            for h in [*doc["hits"], *(doc.get("off_path") or [])]
+            if h["system"] in systems and h["rule_id"] in rules
+        ),
         key=lambda h: (
             h["scope"] != "specific",
             order.get(h["rule_id"], 1 << 30),
@@ -525,7 +638,7 @@ def _candidates(
     )
     for h in hits:
         rule = rules[h["rule_id"]]
-        if h["relevance"] == "impossible":
+        if h["relevance"] == "impossible" and not h.get("off_path"):
             without[rule.id].add(_why("impossible"))
             continue
         if h["scope"] in _SKIP:
@@ -1004,10 +1117,12 @@ def _named(text: str) -> list[tuple[str, int | None] | None]:
 
 
 def _start(data: appdoc.TenantData, rule: Rule, h: dict, by_label: dict[str, Epg]) -> str | None:
-    """Startpunkt, falls die Quelle an keinem gelesenen Geraet haengt: das Geraet der Regel
-    (FortiGate: VDOM; ACI: VRF der EPG des Systems)."""
-    if rule.domain == RuleDomain.FIREWALL:
-        return f"{rule.source_system_id}|{rule.vdom or 'root'}"
+    """Startpunkt, falls die Quelle an keinem gelesenen Geraet haengt - nur, wo sie nachweislich
+    ist (ADR 0070): die ACI-VRF der EPG des Systems, wenn das System die Quelle ist (die EPG
+    kennt das ACI, auch ohne Subnetz im Fabric). Das Geraet einer Firewall-Regel ist kein Start
+    mehr - dort kommt der Verkehr nicht an, nur weil eine Regel passt."""
+    if rule.domain == RuleDomain.FIREWALL or h.get("direction") == "in":
+        return None
     epg = by_label.get(h.get("epg") or "")
     vrf = data.aci.vrf_of(epg) if epg is not None else None
     return f"{rule.source_system_id}|{vrf}" if vrf else None
@@ -1059,8 +1174,15 @@ def _connection(
     foreign = [x["rule_id"] for x in off if x["rule_id"] not in c.specific]
     mismatch = _mismatch(states, verdict, text, reached)
     variants = path_variants(res["paths"])
+    # Ende an der Gegenstelle eines IPsec-Tunnels ohne gelesenes Geraet (1.19.0, ADR 0063)
+    vpn_end = [{k: v for k, v in (_last_egress(p).get("vpn") or {}).items()
+                if k in ("name", "remote_gw", "kind", "instance")}
+               for p in active if p["end"]["kind"] == "vpn"]  # fmt: skip
     parts = _net_parts(c, first)
     assign = _assign(c, first, assigner)
+    unsure = dict(res.get("uncertain") or {})
+    if not res["paths"]:  # kein Start: nicht geprueft, gezaehlt (ADR 0070)
+        unsure["start"] = 1
     return {
         "key": f"{c.src.ip}>{c.dst.ip}>{_service_text(c.service) or 'alle'}",
         "direction": c.direction,
@@ -1084,6 +1206,9 @@ def _connection(
         "variants": variants if len(variants) > 1 else [],
         "inconsistent": inconsistent(variants),
         "notes": res["notes"],
+        **({"vpn_end": vpn_end} if vpn_end else {}),
+        # ADR 0070: was am Weg nicht sicher entschieden ist (je Art), ohne Start `start`
+        **({"uncertain": unsure} if unsure else {}),
         # Rueckweg ueber dieselben Firewalls (0.136.0, ausser ACI und Verbund)
         "return": return_path.summary(active),
         # Ports entlang des Wegs, wenn sie sich aendern: Client, VIP, Load Balancer, Server
@@ -1093,6 +1218,8 @@ def _connection(
         "parts": parts,
         # Netz groesser als die Routen (0.111.0, ADR 0040): wohin es gehoert
         "assign": assign,
+        # statische Routen auf den Wegen (1.19.0) - `_build` ersetzt sie durch ihre Schluessel
+        "statics": static_routes.on_paths(res["paths"]),
         # Eingaben des Wegs fuer „Warum dieser Weg?“ (0.109.0, `GET /routing/explain`)
         "trace": {
             "src": c.src.ip,
@@ -1105,34 +1232,224 @@ def _connection(
 
 def connection_trace(session: Session, tid: int, graph: paths.Graph,
                      checks: policy_check.Checks | None, src: str, dst: str,
-                     service: tuple[str, int | None] | None, starts: list[str]
+                     service: tuple[str, int | None] | None, starts: list[str] | None = None
                      ) -> tuple[dict, str | None]:  # fmt: skip
-    """Weg einer Verbindung (auch fuer „Warum dieser Weg?“, 0.109.0): ab der Quelle; haengt sie
-    an keinem gelesenen Geraet, ab dem Eingang nach dem Rueckweg (0.107.0), sonst ab dem Geraet
-    der Regel. Mit Backup-Wegen gleicher Laenge (slack 0): uneinheitliche Wege (0.73.0).
+    """Weg einer Verbindung (auch fuer „Warum dieser Weg?“, 0.109.0) - **nur von dort, wo der
+    Verkehr der Quelle ankommt** (ADR 0070):
+
+    1. ab dem Knoten, an dem die Quelle angeschlossen ist (bzw. ihrer ACI-VRF);
+    2. sonst ab dem Eingang nach dem Rueckweg (0.107.0): wo der Weg vom Ziel zur Quelle das
+       gelesene Netz verlaesst;
+    3. sonst ab den Knoten am Rand: die eine Route zur Quelle ueber einen nicht gelesenen
+       Nachbarn haben (`edge_entries`).
+
+    4. sonst ab der ACI-VRF der EPG, in der die Quelle nachweislich ist (`starts`, nur
+       ACI-VRFs - die EPG des Systems kennt das ACI auch ohne Subnetz im Fabric).
+
+    Den Rueckfall auf das Geraet einer Firewall-Regel (bis 1.20) gibt es nicht mehr - dort kommt
+    der Verkehr nicht an, nur weil eine Regel passt (Stichproben des Anwenders: Wege ueber eine
+    Firewall abseits des Wegs); Firewalls in `starts` (gespeicherte Aufrufe) werden uebergangen.
+    Ohne Start bleibt das Ergebnis leer („Start unbekannt“, in den Verbindungen gezaehlt).
+    Mit Backup-Wegen gleicher Laenge (slack 0): uneinheitliche Wege (0.73.0).
     -> (Ergebnis von `paths.trace`, Start falls nicht an der Quelle)."""
     res = paths.trace(session, tid, dst, src, None, 0, service, graph=graph,
                       checks=checks)  # fmt: skip
     start = None
+    turned = False  # ein Eingang von aussen schickte den Verkehr gleich wieder hinaus (M-1)
     if not res["paths"]:
         # Quelle an keinem gelesenen Geraet (0.107.0, Anwender: Wege, „welche Routing technisch
         # keinen Sinn ergeben“): der Weg beginnt, wo der Rueckweg das gelesene Netz verlaesst -
         # nicht auf irgendeinem Geraet mit einer Regel dafuer
-        entries = entries_of(session, tid, graph, checks, src, dst)
-        found = paths.trace(session, tid, dst, src, None, 0, service, graph=graph,
-                            checks=checks, entries=entries) if entries else None  # fmt: skip
-        if found and found["paths"]:
-            res = found
-            start = ", ".join(dict.fromkeys(graph.nodes[k].label for k, *_ in entries))
+        # Reihenfolge der Eingaenge: nach dem Rueckweg, sonst am Rand, sonst an der Firewall,
+        # der das Ziel als VIP gehoert (Befund M-1: Verkehr von aussen zu einer oeffentlichen
+        # Adresse kommt dort an, wo die Adresse liegt)
+        for entries in (entries_of(session, tid, graph, checks, src, dst),
+                        edge_entries(graph, src), vip_entries(graph, src, dst)):  # fmt: skip
+            if not entries:
+                continue
+            found = paths.trace(session, tid, dst, src, None, 0, service, graph=graph,
+                                checks=checks, entries=entries)  # fmt: skip
+            # ein Eingang, der den Verkehr gleich wieder dorthin zurueckschickt, woher er kam,
+            # ist keiner: der Nachbar haette ihn nie hierher geroutet
+            kept = [p for p in found["paths"] if not _hairpin(graph, p, src)]
+            # ein Eingang zaehlt nur mit einem aktiven Weg: bleibt von ihm nur ein Backup-Weg
+            # (z. B. ein nicht gewaehlter BGP-Pfad), kommt der Verkehr dort nicht an
+            alive = {_entry_of(p) for p in kept if p.get("kind") != "backup"}
+            kept = [p for p in kept if _entry_of(p) in alive]
+            turned = turned or len(kept) < len(found["paths"])
+            if not kept:
+                continue
+            res = {**found, "paths": kept}
+            used = {paths.parse_key(x.get("key")) for p in kept
+                    for x in _parts(p["hops"][0])}  # fmt: skip
+            start = ", ".join(dict.fromkeys(graph.nodes[k].label for k, *_ in entries
+                                            if k in used))  # fmt: skip
+            break
     if not res["paths"]:
-        for key in starts:
-            if paths.parse_key(key) in graph.nodes:
-                res = paths.trace(session, tid, dst, src, key, 0, service, graph=graph,
-                                  checks=checks)  # fmt: skip
-                if res["paths"]:
-                    start = graph.nodes[paths.parse_key(key)].label
-                    break
+        for key in starts or []:
+            node = graph.nodes.get(paths.parse_key(key))
+            if node is None or node.kind != "vrf":
+                continue
+            found = paths.trace(session, tid, dst, src, key, 0, service, graph=graph,
+                                checks=checks)  # fmt: skip
+            if found["paths"]:
+                res, start = found, node.label
+                break
+    if not res["paths"]:
+        text = L(
+            "Start unbekannt – die Quelle hängt an keinem gelesenen Gerät, und kein gelesenes "
+            "Gerät kennt eine Route zu ihr über einen nicht gelesenen Nachbarn; der Weg ist "
+            "nicht geprüft",
+            "Start unknown – the source is connected to no device read, and no device read has "
+            "a route to it via a neighbor that is not read; the path is not checked",
+        )
+        if turned:
+            # die Eingaenge von aussen leiten das Ziel nur wieder hinaus: dort kommt Verkehr
+            # fuer dieses Ziel nicht an - nie „nicht ueber die Firewall der Regel“ (M-1)
+            text = L(
+                f"Start unbekannt – Verkehr von {src} zu {dst} kommt dort an, wo {dst} liegt "
+                "(Besitzer der Adresse bzw. der VIP); an den gelesenen Eingängen von aussen "
+                "ginge er nur wieder hinaus, und das Routing des Besitzers ist nicht gelesen; "
+                "der Weg ist nicht geprüft",
+                f"Start unknown – traffic from {src} to {dst} arrives where {dst} is located "
+                "(owner of the address or the VIP); at the entries from outside that were read "
+                "it would only leave again, and the routing of the owner has not been read; the "
+                "path is not checked",
+            )
+        if text not in res["notes"]:
+            res["notes"].append(text)
+        res.setdefault("uncertain", {})["start"] = 1
     return res, start
+
+
+def _entry_of(p: dict) -> tuple:
+    """Eingang eines Wegs: Knoten und Interface des ersten Hops (bzw. des Verbunds)."""
+    first = (p.get("hops") or [{}])[0]
+    return tuple(sorted((str(x.get("key")), str((x.get("ingress") or {}).get("interface")))
+                        for x in _parts(first)))  # fmt: skip
+
+
+# Enden, an denen der Weg die gelesenen Geraete verlaesst (bzw. dort nicht weiter bekannt ist)
+_LEAVES = ("exit", "external", "unknown", "unchecked", "vpn")
+
+
+def _hairpin(graph: paths.Graph, p: dict, src: str | None = None) -> bool:
+    """Weg, der am ersten Knoten wieder dorthin hinausgeht, woher er kam (nicht zu einem
+    gelesenen Geraet): ueber seinen Eingang - bzw. ueber einen der Wege, auf denen der Knoten
+    die Quelle erreicht (Befund M-1: mit zwei Providern kommt der Verkehr von „any“ an wan1 an
+    und ginge fuer ein oeffentliches Ziel ueber die Default-Route an wan2 wieder hinaus - der
+    Provider haette ihn nie hierher geroutet, das Ziel liegt woanders)."""
+    hops = p.get("hops") or []
+    if len(hops) != 1:
+        return False
+    try:
+        source = endpoint(src) if src else None
+    except ValueError:
+        source = None
+    for part in _parts(hops[0]):
+        ingress = (part.get("ingress") or {}).get("interface")
+        egress = part.get("egress") or {}
+        if ingress and ingress == egress.get("interface"):
+            return True
+        key = paths.parse_key(part.get("key"))
+        if source is None or key not in graph.nodes or (p.get("end") or {}).get("kind") \
+                not in _LEAVES or part.get("nat") or part.get("lb"):  # fmt: skip
+            continue
+        back = graph.route(key, source, part.get("vrf", 0)) or {}
+        for b in back.get("branches") or []:
+            same_hop = b.get("ip") and b.get("ip") == egress.get("next_hop")
+            same_port = b.get("interface") and b.get("interface") == egress.get("interface")
+            if same_hop or (same_port and not (b.get("ip") and egress.get("next_hop"))):
+                return True
+    return False
+
+
+def vip_entries(graph: paths.Graph, src: str, dst: str) -> list[tuple]:
+    """Firewalls (mit gelesenem Routing), denen das Ziel als VIP gehoert (Befund M-1): Verkehr
+    von aussen zu einer veroeffentlichten Adresse kommt an der Firewall der VIP an - am Eingang
+    der VIP (`extintf`; any: nach der Route zur Quelle). -> wie `entries_of`."""
+    try:
+        ip = endpoint(dst)
+    except ValueError:
+        return []
+    if paths.is_net(ip):
+        return []
+    out: list[tuple] = []
+    for key, node in graph.nodes.items():
+        if node.kind not in path_stages.FIREWALLS:
+            continue
+        for n in path_stages._vips_at(graph, key, ip):
+            raw = n.raw if isinstance(n.raw, dict) else {}
+            if str(raw.get("status") or "enable") == "disable":
+                continue
+            extintf = str(raw.get("extintf") or "any").strip()
+            iface = None if extintf == "any" else extintf
+            how = L(f"VIP {n.name}", f"VIP {n.name}") if iface is None else L(
+                f"VIP {n.name}, Eingang {iface}", f"VIP {n.name}, incoming {iface}")  # fmt: skip
+            zone = graph.zone(key[0], iface) if iface else None
+            out.append((key, iface, zone, how))
+            break
+    return out
+
+
+def edge_entries(graph: paths.Graph, src: str) -> list[tuple]:
+    """Wo der Verkehr einer Quelle ausserhalb der gelesenen Geraete ankommt (ADR 0070): an den
+    Knoten am Rand - sie kennen die Quelle ueber eine Route, deren Next-Hop keinem gelesenen
+    Geraet gehoert (dahinter liegt die Quelle); der Eingang ist das Interface dieser Route (bei
+    der FortiGate verlangt das auch der Reverse Path). Ein Knoten, der die Quelle ueber ein
+    gelesenes Geraet erreicht, ist kein Rand. Eine private Quelle nur ueber die Default-Route
+    zaehlt nicht (kein Beleg, dass sie dort ist). -> wie `entries_of`."""
+    try:
+        source = endpoint(src)
+    except ValueError:
+        return []
+    cache = graph.__dict__.setdefault("_edge_entries", {})
+    if src in cache:
+        return cache[src]
+    via = L("Eingang nach der Route zur Quelle", "entry by the route to the source")
+    private = paths.is_private(source)
+    out: list[tuple] = []
+    for key, node in graph.nodes.items():
+        if node.kind == "vrf":
+            continue  # ACI: die Quelle im Fabric ist ein eigener Start (Subnetz der EPG)
+        tables = {paths.table_of(r) for r in graph._routes(source, key)}
+        for table in sorted(tables, key=str):
+            if table == paths.MGMT:
+                continue
+            route = graph.route(key, source, table)
+            if route is None or route.get("action") not in ("forward", "link"):
+                continue
+            if route["prefix_len"] == 0 and private:
+                continue
+            for b in route.get("branches") or []:
+                ip, iface = b.get("ip"), b.get("interface")
+                if not iface:
+                    continue
+                read = any(k != key for k, *_ in graph.owners().get(ip or "", []))
+                if read or graph.vdom_peer(key, iface) is not None:
+                    continue
+                if not ip and (graph.link_peer(key, iface, table)
+                               or _read_tunnel(graph, key, iface)):  # fmt: skip
+                    continue
+                entry = (key, iface, graph.zone(key[0], iface), via)
+                if entry[:2] not in [e[:2] for e in out]:
+                    out.append(entry)
+    cache[src] = out
+    return out
+
+
+def _read_tunnel(graph: paths.Graph, key, iface: str) -> bool:
+    """Geht das Interface in einen IPsec-Tunnel zu einer gelesenen FortiGate?"""
+    tun = graph.tunnel(key, iface)
+    if tun is None:
+        return False
+    t, inst = tun
+
+    def owners(ip: str) -> list:
+        return [(k[0], k[1], i or "") for k, i, _z in graph.owners().get(ip, [])]
+
+    return any((p["source_system_id"], p["context"]) in graph.nodes
+               for p in graph.vpn().far(t, inst, owners))  # fmt: skip
 
 
 def entries_of(session: Session, tid: int, graph: paths.Graph, checks: policy_check.Checks,
@@ -1153,7 +1470,7 @@ def entries_of(session: Session, tid: int, graph: paths.Graph, checks: policy_ch
             continue
         for part in _parts(p["hops"][-1]):
             egress = part.get("egress") or {}
-            left = end.get("kind") in ("exit", "external") or (
+            left = end.get("kind") in ("exit", "external", "vpn") or (
                 end.get("kind") == "unknown" and egress.get("next_hop"))  # fmt: skip
             key = paths.parse_key(part.get("key"))
             if not left or key not in graph.nodes:
@@ -1374,7 +1691,24 @@ def _hop(h: dict, l3: L3Outs | None = None) -> dict:
         # NSX ALB (0.77.0): an diesem Hop vom Load Balancer weiter zum Server; seit 0.85.0 mit
         # der EPG bzw. dem Interface, an dem seine VIP liegt (Netzwerkplan)
         **({"lb": _balancer(h, checks, l3)} if h.get("lb") else {}),
+        # IPsec-Tunnel am Ausgang (1.19.0, ADR 0063): Verbindungen, Netzwerkplan, Export
+        **({"vpn": vpn} if (vpn := _vpn_of(h)) else {}),
     }
+
+
+def _last_egress(p: dict) -> dict:
+    hops = p.get("hops") or []
+    return (_parts(hops[-1])[0].get("egress") or {}) if hops else {}
+
+
+def _vpn_of(h: dict) -> dict | None:
+    """Tunnel am Ausgang eines Hops (bei einem Verbund der erste)."""
+    for p in _parts(h):
+        v = (p.get("egress") or {}).get("vpn")
+        if v:
+            return {k: v[k] for k in ("id", "name", "kind", "status", "remote_gw", "instance",
+                                      "covered", "phase2", "peer") if v.get(k)}  # fmt: skip
+    return None
 
 
 def _balancer(h: dict, checks: list[dict], l3: "L3Outs | None") -> dict:
@@ -1434,6 +1768,9 @@ def _state(rule: Rule, active: list[dict], data: appdoc.TenantData) -> dict:
     label = _rule_label(rule)
     base = {"rule_id": rule.id, "label": label, "action": rule.action.value,
             "device": data.device(rule)}  # fmt: skip
+    marks = (getattr(data, "doc_marks", None) or {}).get(rule.id)
+    if marks:  # ADR 0071: überdeckt, breit, Weg nicht geprüft (Text der Doku)
+        base["marks"] = [{"key": k, "text": v} for k, v in marks.items()]
     if not active:
         text = L("Weg nicht bekannt – nicht prüfbar", "path not known – not checkable")
         return base | {"state": "unknown", "text": text}

@@ -51,11 +51,21 @@ export const FINDING_LABEL: Record<string, string> = {
   epg_assignment_conflict: L("EPG: gelernt ≠ konfiguriert", "EPG: learned ≠ configured"),
   snat_pool_missing: L("SNAT-Pool fehlt", "SNAT pool missing"),
   vip_target_missing: L("VIP ohne Ziel", "VIP without target"),
+  rule_shadowed: L("Regel überdeckt", "Rule shadowed"),
   topo_duplicate_ip: L("IP doppelt im Netz", "Duplicate IP in network"),
   topo_mask_mismatch: L("Netzmaske abweichend", "Netmask differs"),
   topo_route_loop: L("Routing-Schleife", "Routing loop"),
   topo_static_unused: L("Statische Route ohne Wirkung", "Static route without effect"),
+  // 1.19.0: statische Routen (Ansicht „Statische Routen“)
+  static_nexthop_unreachable: L("Statische Route: Next-Hop nicht erreichbar", "Static route: next-hop unreachable"),
+  static_shadowed: L("Statische Route überdeckt", "Static route shadowed"),
+  static_duplicate: L("Statische Route doppelt", "Static route duplicated"),
+  static_blackhole: L("Blackhole-Route", "Blackhole route"),
+  static_unchecked: L("Statische Routen nicht geprüft", "Static routes not checked"),
   topo_bgp_down: L("BGP nicht aufgebaut", "BGP not established"),
+  vpn_tunnel_down: L("VPN-Tunnel down", "VPN tunnel down"),
+  vpn_selector_partial: L("VPN: Selektor deckt Route nicht", "VPN: selector does not cover route"),
+  vpn_route_no_selector: L("VPN: Route ohne Selektor", "VPN: route without selector"),
   zone_policy_violation: L("Zone: gegen die Absicht", "Zone: against the intent"),
   zone_overlap: L("Netz in mehreren Zonen", "Network in several zones"),
   zone_outside_schema: L("Zone ausserhalb des Schemas", "Zone outside the schema"),
@@ -78,6 +88,9 @@ export const FINDING_LABEL: Record<string, string> = {
   link_vlan_mismatch: L("Kabel: VLANs abweichend", "Link: VLANs differ"),
   link_lag_mismatch: L("Kabel: Port-Channel einseitig", "Link: Port-Channel one-sided"),
   link_one_sided: L("Kabel: nur eine Seite meldet", "Link: only one side reports"),
+  link_half_duplex: L("Kabel: Duplex nicht voll", "Link: duplex not full"), // 1.19.0
+  cable_neighbor_mismatch: L("Kabel: Nachbar passt nicht zu NetBox", "Cable: neighbor does not match NetBox"),
+  cable_label_mismatch: L("Kabelnummer: NetBox ≠ Automato", "Cable number: NetBox ≠ Automato"),
   uplink_vlan_missing: L("VLAN fehlt am ESXi-Uplink", "VLAN missing on ESXi uplink"),
   l2_single_link: L("L2: nur ein Kabel", "L2: single cable"),
   l2_single_switch: L("L2: alle Kabel am selben Switch", "L2: all cables on the same switch"),
@@ -85,6 +98,26 @@ export const FINDING_LABEL: Record<string, string> = {
   lag_degraded: L("Port-Channel unvollständig", "Port-Channel incomplete"),
   vlan_split: L("VLAN getrennt", "VLAN split"),
   vpc_mismatch: L("vPC-Paar uneinheitlich", "vPC pair inconsistent"),
+  // Spanning Tree (1.19.0)
+  stp_root_mismatch: L("Spanning Tree: Root nicht am Soll", "Spanning Tree: root not at target"),
+  stp_root_info: L("Spanning Tree: Root (ohne Soll)", "Spanning Tree: root (no target)"),
+  stp_port_blocked: L("Spanning Tree: unerwartet blockiert", "Spanning Tree: unexpectedly blocked"),
+  stp_bpdu_guard: L("Spanning Tree: BPDU-Guard", "Spanning Tree: BPDU guard"),
+  stp_mode_mixed: L("Spanning Tree: gemischte Modi", "Spanning Tree: mixed modes"),
+  stp_topology_changes: L("Spanning Tree: viele Topologieänderungen", "Spanning Tree: many topology changes"),
+  // Reservierungen (1.19.0, ADR 0066)
+  reservation_in_use: L("Reservierung jetzt belegt", "Reservation now in use"),
+  reservation_conflict: L("Reservierung in Gebrauch (Konflikt)", "Reservation in use (conflict)"),
+  reservation_overlap: L("Doppelt reserviert", "Reserved twice"),
+  // Wege vergleichen (1.19.0, ADR 0067)
+  path_vlan_missing: L("Weg: VLAN nicht überall erlaubt", "Path: VLAN not allowed everywhere"),
+  path_cable_mismatch: L("Weg: Kabel bzw. Nachbar weicht ab", "Path: cable or neighbor deviates"),
+  path_stp_blocked: L("Weg: Spanning Tree blockiert", "Path: Spanning Tree blocks"),
+  path_l2_unchecked: L("Wege vergleichen: nicht geprüft", "Compare paths: not checked"),
+  // DNS aus dem AD (1.19.0)
+  dns_ptr_mismatch: L("DNS: PTR widerspricht A-Record", "DNS: PTR contradicts A record"),
+  dns_ip_unknown: L("DNS: IP nicht in NetBox", "DNS: IP not in NetBox"),
+  dns_unchecked: L("DNS: nicht geprüft", "DNS: not checked"),
   source_stale: L("Quellsystem: Stand veraltet", "Source system: data outdated"),
   source_partial: L("Quellsystem: nur teilweise gelesen", "Source system: only partially collected"),
   manual: L("Von Hand erfasst", "Captured manually"),
@@ -159,6 +192,10 @@ export const FINDING_HINT: Record<string, string> = {
     "VIP der Firewall ohne Load Balancer dahinter – die interne Adresse ist im IPAM nicht vergeben und gehört zu keiner VM bzw. keinem ACI-Endpunkt",
     "Firewall VIP without a load balancer behind it – the internal address is not assigned in the IPAM and belongs to no VM or ACI endpoint",
   ),
+  rule_shadowed: L(
+    "Firewall-Policy, deren ganzen Verkehr frühere Policies in der Reihenfolge der Firewall schon entscheiden – sie trifft nie Verkehr (überdeckt durch Policy X)",
+    "Firewall policy whose entire traffic is already decided by earlier policies in the order of the firewall – it never matches traffic (shadowed by policy X)",
+  ),
   topo_duplicate_ip: L("dieselbe IP auf zwei Geräten im selben Netz", "the same IP on two devices in the same network"),
   topo_mask_mismatch: L(
     "Gegenstellen im selben Netz mit verschiedener Netzmaske",
@@ -172,7 +209,30 @@ export const FINDING_HINT: Record<string, string> = {
     "eingeschaltete statische Route, die nicht in der Routing-Tabelle steht",
     "enabled static route that is not in the routing table",
   ),
+  static_nexthop_unreachable: L(
+    "nicht aktive statische Route (auch Backup), deren Next-Hop in keinem angeschlossenen Netz liegt und zu dem keine Route im selben VRF führt",
+    "inactive static route (also backup) whose next-hop is in no connected network and that no route in the same VRF leads to",
+  ),
+  static_shadowed: L(
+    "statische Route, die nie aktiv wird (bessere Route, spezifischere Routen) – bewusste Backup-Routen mit erhöhter Distanz zählen nicht",
+    "static route that never becomes active (better route, more specific routes) – deliberate backup routes with a raised distance do not count",
+  ),
+  static_duplicate: L("dieselbe statische Route mehrfach eingeschaltet", "the same static route enabled several times"),
+  static_blackhole: L("Hinweis: statische Route ins Leere – der Verkehr wird verworfen", "Note: static route into nothing – traffic is dropped"),
+  static_unchecked: L(
+    "statische Routen, die die Prüfungen nicht beurteilen konnten (Routing-Tabelle nicht lesbar, Adressobjekt, SD-WAN, dynamisch, Interface)",
+    "static routes the checks could not judge (routing table not readable, address object, SD-WAN, dynamic, interface)",
+  ),
   topo_bgp_down: L("BGP-Sitzung eines gelesenen Knotens nicht aufgebaut", "BGP session of a read node not established"),
+  vpn_tunnel_down: L("IPsec-Tunnel bzw. eine seiner Phase 2 ist down (nicht Dial-up)", "IPsec tunnel or one of its phase 2 is down (not dial-up)"),
+  vpn_selector_partial: L(
+    "Phase-2-Selektor deckt eine Route über den Tunnel nur teilweise – ein Teil des Verkehrs geht nicht durch den Tunnel",
+    "Phase 2 selector covers a route via the tunnel only partly – part of the traffic does not pass the tunnel",
+  ),
+  vpn_route_no_selector: L(
+    "Route über den Tunnel ohne passenden Phase-2-Selektor – der Verkehr geht nicht durch den Tunnel",
+    "Route via the tunnel without a matching phase 2 selector – the traffic does not pass the tunnel",
+  ),
   zone_policy_violation: L(
     "erlaubende Regel zwischen Zonen, die laut Zonenmatrix gesperrt sind",
     "accepting rule between zones that are blocked according to the zone matrix",
@@ -258,6 +318,18 @@ export const FINDING_HINT: Record<string, string> = {
     "Verbindung, die nur einer von zwei gelesenen Switches per CDP/LLDP meldet",
     "Link that only one of two read switches reports via CDP/LLDP",
   ),
+  link_half_duplex: L(
+    "Halbduplex an einem Ende einer Verbindung, deren beide Enden gelesen sind",
+    "Half duplex at one end of a link whose two ends are read",
+  ),
+  cable_neighbor_mismatch: L(
+    "CDP/LLDP meldet am Port eines Kabels in NetBox eine andere Gegenstelle",
+    "CDP/LLDP reports another peer on the port of a cable in NetBox",
+  ),
+  cable_label_mismatch: L(
+    "Kabelnummer in NetBox und in Automato verschieden",
+    "Cable number differs between NetBox and Automato",
+  ),
   uplink_vlan_missing: L(
     "Port, an dem VMs eines ESXi-Hosts gesehen werden, lässt ein VLAN ihres Clusters/vSwitches nicht durch",
     "Port on which VMs of an ESXi host are seen does not pass a VLAN of their cluster/vSwitch",
@@ -285,6 +357,70 @@ export const FINDING_HINT: Record<string, string> = {
   vpc_mismatch: L(
     "vPC nur auf einem Peer, down bzw. inkonsistent – oder der Peer des vPC-Paars ist nicht verbunden",
     "vPC only on one peer, down or inconsistent – or the peer of the vPC pair is not connected",
+  ),
+  path_vlan_missing: L(
+    "L3-Abschnitt: das VLAN des Ausgangs ist auf einem Trunk bzw. Port des Wegs über die Kabel nicht erlaubt bzw. der Eingang liegt in einem anderen VLAN",
+    "L3 section: the VLAN of the egress is not allowed on a trunk or port of the path via the cables or the ingress is in another VLAN",
+  ),
+  path_cable_mismatch: L(
+    "L3-Abschnitt: ein Kabel auf dem Weg passt nicht zu NetBox (CDP/LLDP) bzw. hat einen Befund der Verkabelung",
+    "L3 section: a cable on the path does not match NetBox (CDP/LLDP) or has a cabling finding",
+  ),
+  path_stp_blocked: L(
+    "L3-Abschnitt: jeder Weg im VLAN führt über einen Port, den Spanning Tree blockiert (bzw. err-disabled)",
+    "L3 section: every path in the VLAN runs via a port blocked by Spanning Tree (or err-disabled)",
+  ),
+  path_l2_unchecked: L(
+    "L3-Abschnitte, die der Vergleich nicht (ganz) prüfen konnte – je Grund gezählt",
+    "L3 sections the comparison could not (fully) check – counted per reason",
+  ),
+  stp_root_mismatch: L(
+    "Root eines VLANs bzw. einer MST-Instanz ist nicht der Soll-Root (bzw. der Ersatz-Root ist Root)",
+    "root of a VLAN or MST instance is not the target root (or the backup root is root)",
+  ),
+  stp_root_info: L(
+    "kein Soll-Root festgelegt – gemeldet wird nur, wer Root ist",
+    "no target root defined – only the current root is reported",
+  ),
+  stp_port_blocked: L(
+    "blockierter Port, der nicht zu einer Reserve zwischen Switches passt: Schutzfunktion, Backup-Rolle, vPC-Peer-Link, Edge-Port bzw. Gegenstelle kein Switch",
+    "blocked port that does not fit a backup path between switches: protection feature, backup role, vPC peer link, edge port or peer not a switch",
+  ),
+  stp_bpdu_guard: L(
+    "Port durch BPDU-Guard gesperrt (err-disabled) – an einem Edge-Port kam ein BPDU an",
+    "port locked by BPDU guard (err-disabled) – a BPDU arrived on an edge port",
+  ),
+  stp_mode_mixed: L(
+    "verbundene Switches mit verschiedenen Modi (PVST+, Rapid-PVST+, MST, aus) bzw. Grenze zu einem anderen Protokoll",
+    "connected switches with different modes (PVST+, Rapid-PVST+, MST, off) or boundary to another protocol",
+  ),
+  reservation_in_use: L(
+    "Hinweis: reservierte VLAN- bzw. AS-Nummer war beim Reservieren frei und ist jetzt gelesen in Gebrauch – umgesetzt? Dann freigeben",
+    "Note: reserved VLAN or AS number was free when reserved and is now read in use – put in place? Then release it",
+  ),
+  reservation_conflict: L(
+    "reservierte VLAN- bzw. AS-Nummer war schon beim Reservieren gelesen in Gebrauch",
+    "reserved VLAN or AS number was already read in use when it was reserved",
+  ),
+  reservation_overlap: L(
+    "zwei Reservierungen derselben Art überschneiden sich (VLANs am selben Standort bzw. für alle Standorte)",
+    "two reservations of the same kind overlap (VLANs at the same site or for all sites)",
+  ),
+  stp_topology_changes: L(
+    "mindestens die Schwelle an Topologieänderungen je 24 h (Vorgabe 10, unter Spanning Tree einstellbar)",
+    "at least the limit of topology changes per 24 h (default 10, adjustable under Spanning Tree)",
+  ),
+  dns_ptr_mismatch: L(
+    "der PTR einer IP nennt keinen ihrer A-Records (AD-DNS) – Warnung, wenn A-Records bzw. der Name auf eine andere IP zeigen",
+    "the PTR of an IP names none of its A records (AD DNS) – warning if A records or the name point to another IP",
+  ),
+  dns_ip_unknown: L(
+    "Hinweis je AD-DNS-Quelle: A-Records auf IPs, die NetBox nicht kennt – nur gezählt, der NetBox-Sync legt keine IP an",
+    "note per AD DNS source: A records pointing to IPs NetBox does not know – only counted, the NetBox sync does not create IPs",
+  ),
+  dns_unchecked: L(
+    "was die Prüfungen zu DNS nicht beurteilen können: Quelle bzw. Zonen nicht gelesen, Rückwärtszone fehlt, NetBox nicht gelesen",
+    "what the DNS checks cannot judge: source or zones not collected, reverse zone missing, NetBox not collected",
   ),
   source_stale: L(
     "letzter erfolgreicher Lauf älter als die Grenze (AUTOMATO_STALE_DAYS, Zeitplan beachtet) – Doku und Weg-Suche zeigen einen alten Stand",
@@ -316,6 +452,15 @@ export const FINDING_GROUPS: { key: string; label: string; help: string; types: 
     ],
   },
   {
+    key: "dns",
+    label: L("DNS aus dem AD", "DNS from the AD"),
+    help: L(
+      "AD-DNS-Zonen: PTR widerspricht A-Record, A-Records auf IPs, die NetBox nicht kennt, nicht prüfbar",
+      "AD DNS zones: PTR contradicts A record, A records pointing to IPs NetBox does not know, not checkable",
+    ),
+    types: ["dns_ptr_mismatch", "dns_ip_unknown", "dns_unchecked"],
+  },
+  {
     key: "naming",
     label: L("Namenskonvention", "Naming convention"),
     help: L(
@@ -331,7 +476,7 @@ export const FINDING_GROUPS: { key: string; label: string; help: string; types: 
       "ohne Quelle/Ziel bzw. ohne Consumer/Provider, Contract-Scope ohne Gegenstelle",
       "without source/destination or without consumer/provider, contract scope without peer",
     ),
-    types: ["rule_incomplete", "aci_scope_unpaired", "aci_contract_both_sides", "snat_pool_missing", "vip_target_missing"],
+    types: ["rule_incomplete", "aci_scope_unpaired", "aci_contract_both_sides", "snat_pool_missing", "vip_target_missing", "rule_shadowed"],
   },
   {
     key: "parallel",
@@ -365,6 +510,24 @@ export const FINDING_GROUPS: { key: string; label: string; help: string; types: 
     types: ["topo_duplicate_ip", "topo_mask_mismatch", "topo_route_loop", "topo_static_unused", "topo_bgp_down", "net_wider_than_routes"],
   },
   {
+    key: "static_routes",
+    label: L("Statische Routen", "Static routes"),
+    help: L(
+      "Next-Hop nicht erreichbar, überdeckt (nie aktiv), doppelt, Blackhole, nicht geprüft",
+      "Next-hop unreachable, shadowed (never active), duplicated, blackhole, not checked",
+    ),
+    types: ["static_nexthop_unreachable", "static_shadowed", "static_duplicate", "static_blackhole", "static_unchecked"],
+  },
+  {
+    key: "vpn",
+    label: L("VPN-Tunnel", "VPN tunnels"),
+    help: L(
+      "IPsec der FortiGates: Tunnel bzw. Phase 2 down, Routen über den Tunnel ohne passenden bzw. nur teilweise passenden Phase-2-Selektor",
+      "IPsec of the FortiGates: tunnel or phase 2 down, routes via the tunnel without a matching or only partly matching phase 2 selector",
+    ),
+    types: ["vpn_tunnel_down", "vpn_selector_partial", "vpn_route_no_selector"],
+  },
+  {
     key: "bgp_filter",
     label: L("BGP-Filter", "BGP filters"),
     help: L(
@@ -394,10 +557,37 @@ export const FINDING_GROUPS: { key: string; label: string; help: string; types: 
     key: "cabling",
     label: L("Verkabelung", "Cabling"),
     help: L(
-      "Verbindungen zwischen Switches: Speed, Duplex, VLANs, Port-Channel, einseitig gemeldet",
-      "Links between switches: speed, duplex, VLANs, Port-Channel, reported one-sided",
+      "Verbindungen zwischen Switches: Speed, Duplex (auch nicht voll), VLANs, Port-Channel, einseitig gemeldet; Kabel in NetBox gegen CDP/LLDP, Kabelnummer NetBox ≠ Automato",
+      "Links between switches: speed, duplex (also not full), VLANs, Port-Channel, reported one-sided; cables in NetBox against CDP/LLDP, cable number NetBox ≠ Automato",
     ),
-    types: ["link_speed_mismatch", "link_duplex_mismatch", "link_vlan_mismatch", "link_lag_mismatch", "link_one_sided", "uplink_vlan_missing", "l2_single_link", "l2_single_switch", "l2_single_point", "lag_degraded", "vlan_split", "vpc_mismatch"],
+    types: ["link_speed_mismatch", "link_duplex_mismatch", "link_vlan_mismatch", "link_lag_mismatch", "link_one_sided", "uplink_vlan_missing", "l2_single_link", "l2_single_switch", "l2_single_point", "lag_degraded", "vlan_split", "vpc_mismatch", "link_half_duplex", "cable_neighbor_mismatch", "cable_label_mismatch"],
+  },
+  {
+    key: "stp",
+    label: "Spanning Tree",
+    help: L(
+      "Root gegen den Soll-Root, unerwartet blockierte Ports, BPDU-Guard, gemischte Modi, viele Topologieänderungen",
+      "Root against the target root, unexpectedly blocked ports, BPDU guard, mixed modes, many topology changes",
+    ),
+    types: ["stp_root_mismatch", "stp_root_info", "stp_port_blocked", "stp_bpdu_guard", "stp_mode_mixed", "stp_topology_changes"],
+  },
+  {
+    key: "reservations",
+    label: L("Reservierungen", "Reservations"),
+    help: L(
+      "reservierte VLAN- und AS-Nummern gegen das Gelesene (jetzt belegt bzw. Konflikt) und doppelt reserviert",
+      "reserved VLAN and AS numbers against what is read (now in use or conflict) and reserved twice",
+    ),
+    types: ["reservation_in_use", "reservation_conflict", "reservation_overlap"],
+  },
+  {
+    key: "compare",
+    label: L("Wege vergleichen", "Compare paths"),
+    help: L(
+      "L3-Abschnitte gegen L1/L2: VLAN auf allen Trunks erlaubt, Kabel und Nachbarn, Spanning Tree; nicht Prüfbares gezählt",
+      "L3 sections against L1/L2: VLAN allowed on all trunks, cables and neighbors, Spanning Tree; not checkable counted",
+    ),
+    types: ["path_vlan_missing", "path_cable_mismatch", "path_stp_blocked", "path_l2_unchecked"],
   },
   {
     key: "zones",

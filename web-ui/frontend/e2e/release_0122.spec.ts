@@ -49,5 +49,5 @@ test("Übersicht: gleich hoch, ohne Querscrollen, Breite wählbar, ziehen (0.122
   await page.click("#overview-layout button:has-text('Fertig')");
   // Zone anklicken: Regeln mit dieser Suche
   await page.locator("#dash-zones .hbar-row[data-key='dmz']").click();
-  await expect(page).toHaveURL(/#regeln\?q=dmz/);
+  await expect(page).toHaveURL(/#l4-7\/regeln\?q=dmz/);
 });

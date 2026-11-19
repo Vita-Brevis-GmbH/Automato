@@ -1,3 +1,5 @@
 # Fehlalarme (Testwerte, keine echten Secrets) - Format: <commit>:<datei>:<regel>:<zeile>
 # Gateway-Secret-Testwert in test_mtls.py (seit 0.5.0 als SECRET = "test-" * 4 ersetzt)
 e19381405a5292110777ff9e8c629f43a8c5cf6a:orchestrator/tests/test_mtls.py:generic-api-key:8
+# Testwert „testwert-von-hand-0123“ für das Client-Secret des Tors in test_front_script.py (1.13.0)
+e0bdc42671fc8b1b3c6f11039b98aca0efb94734:orchestrator/tests/test_front_script.py:generic-api-key:1171

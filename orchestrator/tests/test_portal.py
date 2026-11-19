@@ -59,6 +59,7 @@ def test_kunde_anlegen_schreibt_soll_stand(portal_client, session_factory, tmp_p
         "realm": "kunde-a",  # 1.4.0: das Anmelde-Tor fragt im Realm des Kunden (ADR 0051)
         "zugriff": "ueberall", "netze": [],  # 1.5.0: Vorgabe wie bisher
         "links": [{"title": "Handbuch", "url": "https://handbuch.example.ch", "text": "Doku"}],
+        "nb": True, "quelle": "oberflaeche",  # 1.11.0: NetBox wählbar (Vorgabe an), Herkunft
     }]  # fmt: skip
     # Mandant, Kunden und Rolle bleiben in Automato
     assert "tenant" not in json.dumps(soll) and "customer_ids" not in json.dumps(soll)
@@ -79,10 +80,21 @@ def test_kunde_anlegen_schreibt_soll_stand(portal_client, session_factory, tmp_p
     ("data", "status", "text"),
     [
         ({"short_name": "start"}, 422, "reserviert"),
+        ({"short_name": "konsole"}, 422, "reserviert"),  # 1.11.0 wie front.sh seit 1.10.0
+        ({"short_name": "connect"}, 422, "reserviert"),
         ({"short_name": "kunde-doc"}, 422, "reserviert"),
         ({"short_name": "Kunde_A"}, 422, "ungültig"),
         ({"realm": "master"}, 422, "Realm"),
         ({"links": [{"title": "x", "url": "http://a.example.ch"}]}, 422, "https://"),
+        # 1.13.0: dieselbe Pruefung wie fuer Kacheln aus dem Cockpit (Grenzen des Vertrags)
+        ({"links": [{"title": "T" * 61, "url": "https://a.example.ch"}]}, 422, "60 Zeichen"),
+        ({"links": [{"title": "x", "url": "https://a.example.ch/a b"}]}, 422, "Leerzeichen"),
+        (
+            {"links": [{"title": "x", "url": "https://a.example.ch", "text": "a\rb"}]},
+            422,
+            "Zeilenumbrüche",
+        ),
+        ({"links": [{"title": "x", "url": "https://k.example.ch"}] * 21}, 422, "höchstens 20"),
         ({"name": "A\tB"}, 422, "Tabulator"),
         ({"default_role": "admin"}, 422, "Rolle"),
         ({"access": "vpn"}, 422, "Zugriff"),
@@ -274,3 +286,52 @@ def test_auth_config_je_adresse(oidc_client, session_factory):
     assert get("kunde-b-doc.mgmt.example.ch")["issuer"] == ISSUER  # ohne -doc kein eigener Login
     assert get("vb-doc.mgmt.example.ch")["issuer"] == ISSUER  # gemeinsamer Realm
     assert get("automato.int.example.ch")["issuer"] == ISSUER
+
+
+# --- Realm-Benutzer ohne Zuordnung (1.13.0) --------------------------------------------------
+
+
+@pytest.mark.parametrize("zuordnung", ["ohne_mandant", "ohne_kunden", "kunde_geloescht"])
+def test_kunden_realm_ohne_zuordnung_klare_meldung(oidc_client, session_factory, keys, zuordnung):
+    """Fund 2026-11-16: statt „insufficient role“ sagt Automato, dass der Mandant fehlt - und
+    gibt weiterhin keine Rechte (fail-closed). Ebenso, wenn der einzige zugeordnete Kunde in
+    Automato geloescht wurde (Fund aus der Kette mit dem Cockpit: sonst ein leeres Automato ohne
+    Meldung, im Inventar und im Kunden-Portal „zugeordnet“)."""
+    with session_factory() as s:
+        tid, _ = _tenant(s, "dc")
+        weg = Customer(tenant_id=tid, name="Kunde weg")
+        s.add(weg)
+        s.flush()
+        weg_id = weg.id
+        s.add(PortalCustomer(short_name="kunde-a", name="Kunde A", doc=True, realm="kunde-a",
+                             tenant_id=None if zuordnung == "ohne_mandant" else tid,
+                             customer_ids=[weg_id] if zuordnung == "kunde_geloescht" else [],
+                             links=[]))  # fmt: skip
+        s.delete(weg)
+        s.commit()
+    if zuordnung == "kunde_geloescht":
+        listing = oidc_client.get("/portal/customers", headers={
+            "Authorization": f"Bearer {_token(keys['vb'], 'vb', realm_access={'roles': ['admin']})}"
+        }).json()["customers"]  # fmt: skip
+        assert listing[0]["assigned"] is False and listing[0]["customer_ids"] == [weg_id]
+    auth = {"Authorization": f"Bearer {_token(keys['kunde-a'], 'kunde-a')}"}
+    r = oidc_client.get("/auth/me", headers=auth)
+    assert r.status_code == 200, r.text
+    me = r.json()
+    assert me["is_customer"] is True and me["capabilities"] == [] and me["customers"] == []
+    fehlt = me["zuordnung_fehlt"]
+    assert (fehlt["kurzname"], fehlt["name"]) == ("kunde-a", "Kunde A")
+    assert "Kunde A (kunde-a)" in fehlt["meldung"] and "Kunden-Portal → kunde-a" in fehlt["meldung"]
+    for pfad in ("/tenants", "/portal/customers", "/applications"):
+        r = oidc_client.get(pfad, headers=auth)
+        assert r.status_code == 403 and "noch kein Mandant zugeordnet" in r.json()["detail"], pfad
+    # zugeordnet: wie bisher, ohne Meldung
+    with session_factory() as s:
+        cid = s.query(Customer).filter_by(tenant_id=tid).first().id
+        pc = s.query(PortalCustomer).one()
+        pc.tenant_id, pc.customer_ids = tid, [cid]
+        s.commit()
+    realms.invalidate()
+    me = oidc_client.get("/auth/me", headers=auth).json()
+    assert me["zuordnung_fehlt"] is None and me["customer_ids"] == [cid]
+    assert oidc_client.get("/tenants", headers=auth).status_code == 200

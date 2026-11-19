@@ -13,8 +13,13 @@ Kunden hier selbst zu (`admin` bleibt dem globalen Admin vorbehalten: 422). Ein 
 sieht und aendert nur die Zuordnungen seiner Kunden, vergibt hoechstens die eigene Rolle, aendert
 bzw. entfernt nie die eigene Zuordnung und nie andere Kunden; seine Zuordnungen
 (`origin = customer`) wirken nie auf Betreuer. Betreuer: Admin.
+
+Seit 1.14.0 (ADR 0058) nicht bei Kunden aus dem Cockpit: dort vergibt nur der Betreiber im Cockpit
+Benutzer und Rollen - der Kunden-Admin bekommt 409 (`auth/verwaltung.py`), seine frueheren
+Zuordnungen wirken nicht mehr; der globale Admin bleibt Notzugang.
 """
 
+import re
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -26,11 +31,19 @@ from app import audit
 from app.api.customer_filter import actor
 from app.auth import assignments
 from app.auth import capabilities as caps
-from app.auth.deps import require_admin, require_viewer, tenant_scope
+from app.auth.deps import (
+    assignment_missing_text,
+    require_admin,
+    require_viewer,
+    role_missing_text,
+    tenant_scope,
+)
 from app.auth.principal import Principal
+from app.config import Settings, get_settings
 from app.db import get_session
 from app.i18n import L
 from app.models import CUSTOMER_USER_ROLES, Customer, CustomerUser
+from app.store import inventory, verwaltung
 
 router = APIRouter(tags=["customer-users"])
 
@@ -112,8 +125,16 @@ def _managed(principal: Principal, customer_id: int) -> None:
         return
     if customer_id not in (principal.customer_ids or ()):
         raise HTTPException(status_code=404, detail="customer not found")
+    _cockpit(principal, customer_id)
     if not principal.can(caps.USERS_MANAGE, customer_id):
         raise HTTPException(status_code=403, detail="insufficient role")
+
+
+def _cockpit(principal: Principal, customer_id: int) -> None:
+    """Kunde aus dem Cockpit (1.14.0, ADR 0058): Benutzer und Rollen vergibt nur der Betreiber
+    im Cockpit - der Kunden-Admin hier nicht (409); der globale Admin bleibt Notzugang."""
+    if principal.is_customer and customer_id in principal.cockpit_customers:
+        raise HTTPException(status_code=409, detail=verwaltung.benutzer_text())
 
 
 def _within(principal: Principal, customer_id: int, role: str) -> None:
@@ -182,6 +203,8 @@ def _get(session: Session, principal: Principal, assignment_id: int) -> Customer
         raise HTTPException(status_code=404, detail="assignment not found")
     tenant_scope(principal, a.tenant_id)
     if principal.is_customer:  # Kunden-Admin: nur Zuordnungen seiner Kunden, nie die eigene
+        if a.customer_id in (principal.customer_ids or ()):
+            _cockpit(principal, a.customer_id)
         if a.customer_id not in principal.customers_with(caps.USERS_MANAGE):
             raise HTTPException(status_code=404, detail="assignment not found")
         if _own(principal, a.login):
@@ -230,14 +253,42 @@ def remove(
     session.delete(a)
 
 
+#: nur eine https-Adresse ohne Pfad-Tricks (Host, optional Port und Pfad)
+_PLATTFORM_URL = re.compile(r"https://[A-Za-z0-9.-]{1,253}(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?")
+
+
+def plattform_url(principal: Principal, settings: Settings) -> str:
+    """Link „Ganze Plattform“ (ADR 0068): nur fuer Betreiber aus einem Kunden-Realm, nur in der
+    gemeinsamen Instanz (nicht in einer eigenen, ADR 0061) und nur mit der internen Adresse der
+    Oberflaeche aus dem Front-Proxy (`topologie.json`, `https://<AUTOMATO_UI_HOST>`) - nur
+    Anzeige, die Rechte prueft das Ziel. Leer = kein Link."""
+    if not principal.betreiber or principal.realm_customer is None or settings.instanz_kunde:
+        return ""
+    url = str(inventory.installation(settings).get("oberflaeche") or "")
+    return url if _PLATTFORM_URL.fullmatch(url) else ""
+
+
+def _mandant(principal: Principal) -> dict | None:
+    """Mandanten-Benutzer (ADR 0068): Rolle und Rechte im eigenen Mandanten."""
+    if not principal.is_tenant_user:
+        return None
+    return {
+        "mandant": principal.tenant_ids[0] if principal.tenant_ids else None,
+        "rolle": principal.tenant_role,
+        "rechte": sorted(principal.tenant_capabilities),
+    }
+
+
 @router.get("/auth/me")
 def me(
     principal: Principal = Depends(require_viewer),
     session: Session = Depends(get_session, scope="function"),
+    settings: Settings = Depends(get_settings),
 ) -> dict:
     """Wer bin ich laut Orchestrator: Rollen, Mandanten, Kunden (auch aus der Zuordnung in
     Automato) - die Oberflaeche richtet sich danach. Seit den feineren Rollen dazu die Kunden-Rolle
-    je Kunde und die Capabilities (Betreuer: zur Anzeige aus ihren Rollen)."""
+    je Kunde und die Capabilities (Betreuer: zur Anzeige aus ihren Rollen). Seit ADR 0068 die
+    Mandanten-Rolle (`mandant`), ob Betreiber und der Link „Ganze Plattform“."""
     customers = []
     if principal.customer_ids:
         customers = [
@@ -248,11 +299,13 @@ def me(
                 .order_by(Customer.name)
             )
         ]
-    capabilities = (
-        principal.capabilities
-        if principal.is_customer
-        else caps.staff_capabilities(principal.roles)
-    )
+    if principal.is_customer:
+        capabilities = principal.capabilities
+    elif principal.is_tenant_user:  # zur Anzeige: Doku-Rechte der Stufe und die des Mandanten
+        capabilities = (caps.TENANT_DOC_CAPABILITIES.get(principal.tenant_role or "", frozenset())
+                        | principal.tenant_capabilities)  # fmt: skip
+    else:
+        capabilities = caps.staff_capabilities(principal.roles)
     return {
         "subject": principal.subject,
         "roles": sorted(principal.roles),
@@ -273,4 +326,37 @@ def me(
         # eigene Kennungen (sub, Benutzername, E-Mail): die Oberflaeche erkennt die eigene
         # Zuordnung (aendern/entfernen nicht moeglich)
         "logins": list(principal.logins),
+        # Benutzer eines Kunden-Realms ohne Zuordnung in Automato (1.13.0): die Oberflaeche
+        # zeigt diese Meldung statt Fehlern beim Laden
+        "zuordnung_fehlt": {
+            "kurzname": principal.realm_customer[0],
+            "name": principal.realm_customer[1],
+            "meldung": assignment_missing_text(principal),
+        }
+        if principal.assignment_missing and principal.realm_customer
+        else None,
+        # 1.14.0 (ADR 0058): Benutzer eines Kunden-Realms, dem das Cockpit keine Rolle gibt -
+        # eigene Seite statt Fehlern beim Laden
+        "rolle_fehlt": {
+            "kurzname": principal.realm_customer[0],
+            "name": principal.realm_customer[1],
+            "meldung": role_missing_text(principal),
+        }
+        if principal.realm_role_missing and principal.realm_customer
+        else None,
+        # 1.14.0: Kunden, deren Benutzer und Rollen das Cockpit fuehrt (hier kein Zuordnen)
+        "cockpit_kunden": list(principal.cockpit_customers),
+        # ADR 0068: Mandanten-Benutzer (Operator bzw. Admin im eigenen Mandanten), sonst null
+        "mandant": _mandant(principal),
+        # ADR 0068: Benutzer eines Kunden-Realms aus dem Realm der Betreiber (nur Anzeige) und
+        # der Link „Ganze Plattform“ (leer = keiner)
+        "betreiber": principal.betreiber,
+        "plattform_url": plattform_url(principal, settings),
+        # Kunde des Realms (Kurzname, Name) - Anzeige „Kunde · …“
+        "realm_kunde": {
+            "kurzname": principal.realm_customer[0],
+            "name": principal.realm_customer[1],
+        }
+        if principal.realm_customer
+        else None,
     }

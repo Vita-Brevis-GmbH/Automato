@@ -83,5 +83,14 @@ bis die öffentliche OIDC-Discovery von `kc_domain` antwortet.
 
 ## Updates
 
-Image-Tag in `group_vars` anheben und Playbook erneut laufen lassen; der Compose-Up
-zieht das neue Image und rekonfiguriert idempotent. DB-Volume bleibt erhalten.
+Seit 1.17.0 (ADR 0062) aus dem Cockpit: das Playbook legt mit `kc_automato_repo` einen
+Automato-Checkout (`kc_automato_dir`, Vorgabe `/opt/automato-keycloak/automato`), die Konfiguration
+`/etc/automato/keycloak-betrieb.conf` (Empfänger aus `kc_backup_age_recipient`, sonst neuer
+Schlüssel `kc_backup_age_identity` auf der VM – in den Tresor) und eine tägliche verschlüsselte
+Sicherung an. Danach im Cockpit den Host-Agenten mit dem Produkt `keycloak` und diesem Checkout
+einrichten; Aktualisieren, Zurück, Sichern und Neu starten gehen dann über die Seite Plattform
+(`deploy/keycloak/betrieb.sh`, `PROD-INSTALL.md` Abschnitt 14). Die Version steht danach in
+`docker-compose.override.yml` – `kc_image` gilt nur ohne diese Datei.
+
+Ohne Cockpit: Image-Tag in `group_vars` anheben und Playbook erneut laufen lassen; der
+Compose-Up zieht das neue Image und rekonfiguriert idempotent. DB-Volume bleibt erhalten.

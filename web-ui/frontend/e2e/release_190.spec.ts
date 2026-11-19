@@ -1,11 +1,10 @@
 // 1.9.0 (Anwender 2026-11-11): VLANs je Standort, Native VLAN der Firewall-Netze vom Switch.
 import { expect, test } from "./fixtures";
 
-test("Verkabelung → VLANs: je Standort aufklappbar (1.9.0)", async ({ page, problems }) => {
+test("L2 · VLANs: je Standort aufklappbar (1.9.0)", async ({ page, problems }) => {
   // Anwender: „die VLANs sind entweder physischer Standort spezifisch oder für einen virtuellen Standort
   // spezifisch … pro Standort aufklappen“
-  await page.goto("/#verkabelung");
-  await page.click(".tabbar button:has-text('VLANs')");
+  await page.goto("/#l2/vlans"); // seit 1.19.0 (ADR 0067) eigene Ansicht in L2
   const groups = page.locator("#cabling-vlans tbody tr.group-row");
   await expect(groups.first()).toBeVisible();
   await expect(groups.first()).toContainText(/Standort|without site|site/);
