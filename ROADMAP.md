@@ -611,11 +611,16 @@ Anwender: „Es funktioniert bisher alles wie gewünscht … Bitte den Stand fer
 | 19 | Juniper MX am echten Gerät testen: Routing-Tabelle und BGP-Nachbarn (aus Version 1, Anwender 2026-11-11: keine Hardware zum Testen) – **→ Datacenter-Kopie** (wartet auf Hardware) |
 | 20 | **Wege erkennen verbessern** (Anwender 2026-11-17: „mit Fable 5.2 das Wege erkennen verbessern und weiterbringen, … noch ein Schritt bevor wir V2 abschliessen“) – **erledigt in 1.22.0** (Weg-Suche und Regel-Zuordnung ersetzt, ADR 0070/0071; offen: gleiche Adresse in mehreren VRFs, SD-WAN-Zustand, Pools über HTTP-Policies) |
 
-*Vor Version 3 (Anwender 2026-11-19):* erst **Prod auf den aktuellen Stand** (Automato, NetBox-Host,
-Magister-Instanz der Schule hinter dem Front-Proxy), dann **Umzug auf ein internes Git (Forgejo)**:
+*Abschluss Version 2 (Anwender 2026-11-19), in dieser Reihenfolge:* 1. **Prod auf den aktuellen
+Stand** – erledigt 2026-11-19 (Automato 1.22.0 und NetBox-Host-Werkzeug per `update.sh`, Magister-Instanz
+der Schule über den Front-Proxy mit `AUTOMATO_FRONT_UEBRIGE`); 2. **Test von Automato 1.21.0/1.22.0** in
+Prod durch den Anwender; 3. **Umzug auf ein internes Git (Forgejo)**:
 Repos samt Verlauf, CI mit eigenem Runner (Forgejo Actions), Registry für die Images, Update-Kette
 des Cockpits mit einem Adapter „Git-Quelle“ statt der GitHub-API (eigene ADR), Deploy-Keys der Hosts
-auf Forgejo; entwickelt wird danach mit Claude Code auf einer internen VM. Erst danach Version 3.
+auf Forgejo; entwickelt wird danach mit Claude Code auf einer internen VM; 4. **Cockpit in Prod**:
+Umzug der alten Konsole aus dem Magister-Checkout nach `/opt/cockpit/src` (Cockpit-Runbook
+`umzug-aus-magister.md`), Automato koppeln, Host-Agenten auf Automato, NetBox-Host und Keycloak.
+Damit ist die Plattform von Version 2 fertig; erst danach Version 3.
 Die Datacenter-Kopie (`automato-dc`, Nr. 16) ruht vorerst im **Backlog** (nicht mehr forciert).
 
 *Version 3 – CMDB (3.x, Anwender 2026-11-11):* Lizenz- und Gerätemanagement als **CMDB, ein
