@@ -20,6 +20,16 @@ der Regel (Host bzw. Netz, nicht any) zum System bzw. vom System zur Gegenstelle
 der Regel (FortiGate mit VDOM) auf keinem aktiven Weg, der sein Ziel erreicht, braucht dieses
 System die Regel nicht - sie gilt als routingtechnisch nicht moeglich, mit Begruendung. Ist ein
 Weg nicht bekannt bzw. endet er vor dem Ziel, bleibt die Regel (keine Vermutung). Nur lesend.
+
+Nachtrag „Gegenpruefung“ (ADR 0071, P-4, Stichprobe S2 des Anwenders): endet ein Weg vor dem
+Ziel (z. B. an einem nicht gelesenen Uebergang), zaehlt sein **belegter Teil**:
+
+- eine Firewall auf dem belegten Teil liegt auf dem Weg - ohne Kennzeichen;
+- eine Firewall abseits davon kann nur hinter dem Ende liegen. Dazu muss sie das Ziel des Wegs
+  selbst kennen: angeschlossen bzw. ueber eine eigene Route - fuer ein privates Ziel nicht nur
+  ueber die Default-Route (dorthin ginge es ins Internet). Dann bleibt die Regel, markiert „Weg
+  nicht geprueft“; sonst liegt sie nicht auf dem Weg (gezaehlt, nie still). Ist das Routing der
+  Firewall nicht gelesen, bleibt die Regel markiert.
 """
 
 import ipaddress
@@ -29,9 +39,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.i18n import L
-from app.models import Rule, RuleDomain, RuleIpRange
+from app.models import Rule, RuleDomain, RuleIpRange, TopoRoute
 from app.store import paths
 from app.store.relevance import IMPOSSIBLE
+from app.store.topology import endpoint, is_net, is_private
 
 OFF_PATH = "off_path"  # Ursache (`check(...)["cause"]`) neben denen der Relevanz
 # 0.140.0 (Anwender: „nicht zuverlaessig“): angehoben, seit die Wege je Mandant gemerkt werden
@@ -65,6 +76,9 @@ class OnPath:
         self._checks = None
         self._peers: dict[tuple[int, str], list[str]] = {}
         self._active: dict[tuple[str, str], list[dict] | None] = {}
+        # Wege, die vor dem Ziel enden (Nachtrag P-4): ihr belegter Teil zaehlt
+        self._partial: dict[tuple[str, str], list[dict]] = {}
+        self._beyond: dict[tuple, bool | None] = {}
         self.unchecked: set[int] = set()  # Regeln, die eine Grenze ungeprueft stehen liess
         # (Regel, Seite) ohne bekannten Weg (ADR 0071): die Regel bleibt, markiert und gezaehlt
         self.unknown: set[tuple[int, str]] = set()
@@ -107,7 +121,44 @@ class OnPath:
             active = [p for p in res["paths"] if p.get("kind") != "backup"]
             reached = bool(active) and all(p["end"]["kind"] in paths.REACHED for p in active)
             self._active[key] = active if reached else None
+            if active and not reached:
+                self._partial[key] = active
         return self._active[key]
+
+    def _has_routes(self, node: paths.Key) -> bool:
+        """Ist die Routing-Tabelle des Knotens gelesen (mindestens eine Route)?"""
+        key = ("routes", node)
+        if key not in self._beyond:
+            self._beyond[key] = self.session.scalars(
+                select(TopoRoute.id).where(
+                    TopoRoute.source_system_id == node[0], TopoRoute.context == node[1],
+                    TopoRoute.table == "rib").limit(1)
+            ).first() is not None  # fmt: skip
+        return bool(self._beyond[key])
+
+    def _may_be_beyond(self, rule: Rule, dst: str) -> bool | None:
+        """Kann die Firewall der Regel hinter dem Ende eines Wegs zu `dst` liegen? Nur, wenn sie
+        das Ziel selbst kennt: angeschlossen bzw. eigene Route - fuer ein privates Ziel nicht
+        nur die Default-Route. None = ihr Routing ist nicht gelesen (keine Aussage)."""
+        key = (rule.source_system_id, rule.vdom, dst)
+        if key not in self._beyond:
+            g = self._graph()
+            nodes = [k for k in g.nodes if k[0] == rule.source_system_id
+                     and (not rule.vdom or k[1] == rule.vdom)]  # fmt: skip
+            target = endpoint(dst)
+            found: bool | None = None
+            for node in nodes:
+                rows = g._routes(target, node)
+                if any(r.prefix_len > 0 for r in rows) or (rows and not is_private(target)):
+                    found = True  # angeschlossen bzw. eigene Route (oeffentlich: auch Default)
+                    break
+                if is_net(target) and g._inner(node, target, 0, []):
+                    found = True  # genauere Routen fuer Teile des Netzes
+                    break
+                if rows or self._has_routes(node):
+                    found = False
+            self._beyond[key] = found
+        return self._beyond[key]
 
     def check(self, rule: Rule, side: str, values: list[str], device: str) -> dict | None:
         """Relevanz `impossible` mit Begruendung, wenn kein Weg zwischen den Gegenstellen der
@@ -124,6 +175,7 @@ class OnPath:
             self.unchecked.add(rule.id)  # nur ein Teil pruefbar: die Regel bleibt, gezaehlt
             return None
         unknown = 0
+        ended: tuple[str, str, str] | None = None  # Paar mit Ende vor dem Ziel, Firewall abseits
         for peer in peers:
             for ip in own:
                 src, dst = (peer, ip) if side == "dst" else (ip, peer)
@@ -131,6 +183,15 @@ class OnPath:
                 active = self._paths(src, dst)
                 if self._cut:
                     self.unchecked.add(rule.id)
+                partial = self._partial.get((src, dst)) if active is None else None
+                if partial:
+                    # Nachtrag P-4: der Weg endet vor dem Ziel - sein belegter Teil zaehlt
+                    if app_paths.rule_nodes(rule, partial):
+                        return None  # auf dem belegten Teil: auf dem Weg, ohne Kennzeichen
+                    if self._may_be_beyond(rule, dst) is False:
+                        # abseits und ohne eigene Route zum Ziel: auch nicht hinter dem Ende
+                        ended = ended or (src, dst, partial[0]["end"].get("text") or "")
+                        continue
                 if active is None:  # Weg unbekannt: weiter, ob ein anderes Paar ihn zeigt
                     unknown += 1
                     if unknown >= MAX_UNKNOWN:
@@ -142,6 +203,17 @@ class OnPath:
         if unknown:  # kein Paar zeigt die Firewall, aber nicht jeder Weg ist bekannt
             self.unknown.add((rule.id, side))
             return None
+        if ended is not None:
+            a, b, end = ended
+            text = L(
+                f"{device} liegt nicht auf dem belegten Teil des Wegs von {a} zu {b} (endet vor "
+                f"dem Ziel) und hat keine eigene Route zu {b} – die Regel braucht dieses System "
+                "nicht",
+                f"{device} is not on the proven part of the path from {a} to {b} (ends before "
+                f"the destination) and has no route of its own to {b} – this system does not "
+                "need the rule",
+            )
+            return {"state": IMPOSSIBLE, "text": text, "cause": OFF_PATH}
         a, b = (peers[0], own[0]) if side == "dst" else (own[0], peers[0])
         text = L(
             f"{device} liegt nicht auf dem Weg von {a} zu {b} – die Regel braucht dieses System "

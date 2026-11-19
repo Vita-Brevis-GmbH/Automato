@@ -79,4 +79,9 @@ ADR 0047 (Vorrechnen in Durchgängen).
   die Default-Route), `onlink` (Route nur mit Interface), `start` (Start unbekannt – kein Rückfall
   mehr auf das Gerät einer Regel). Wege zu Servern derselben Klasse (gleiche Hops, gleiche
   Adressklasse der Policies) hinter einer VIP bzw. einem Load Balancer sind ein Weg mit allen
-  Servern – so greift die Grenze von 16 Wegen nicht schon bei einem grossen Pool.
+  Servern – so greift die Grenze von 16 Wegen nicht schon bei einem grossen Pool. Nach der Gegenprüfung
+  zusätzlich `start_part` (Quelle als Netz, von dem nur Teile an gelesenen Geräten angeschlossen
+  sind – der Weg beginnt dort, der Rest ist gezählt) und `no_policy` (FortiGate leitet vielleicht
+  ohne Policy weiter: `intrazone` bzw. `allow-traffic-redirect` nicht gelesen); Server hinter einer
+  VIP bzw. einem Load Balancer mit eigener EPG oder eigenem Urteil sind eigene Wege (ADR 0070
+  Nachtrag „Gegenprüfung“).

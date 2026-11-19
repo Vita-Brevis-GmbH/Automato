@@ -426,7 +426,8 @@ def _sync_peers(cluster: Any) -> list[dict[str, Any]]:
     return out
 
 
-def settings(raw: dict, vdom: str, interfaces: list[dict] | None) -> dict[str, Any]:
+def settings(raw: dict, vdom: str, interfaces: list[dict] | None,
+             zones: list | None = None, system: dict | None = None) -> dict[str, Any]:  # fmt: skip
     """Einstellungen des VDOMs, die den Weg bestimmen (ADR 0070, nur lesend):
 
     - `system settings`: `central_nat` (Central NAT statt Policy-NAT), `asymroute` (kein Reverse
@@ -434,8 +435,26 @@ def settings(raw: dict, vdom: str, interfaces: list[dict] | None) -> dict[str, A
       die Tabelle gelesen wurde (fehlt = „nicht geprueft“ in der Weg-Suche);
     - `src_check_off`: Interfaces des VDOMs mit `src-check disable`;
     - `central_snat`: `firewall central-snat-map` in der Reihenfolge der Tabelle (nur mit
-      Central NAT) - Positivliste der Felder."""
+      Central NAT) - Positivliste der Felder.
+
+    Verkehr ohne Policy (ADR 0071 Nachtrag „Gegenpruefung“, P-6/P-7) - je Schluessel nur, wenn
+    gelesen (fehlt = „nicht geprueft“ im Abgleich):
+
+    - `intrazone_allow`: Zonen des VDOMs (`system zone`) mit `intrazone allow` - Verkehr zwischen
+      ihren Interfaces geht ohne Policy durch (leer = gelesen, keine);
+    - `allow_traffic_redirect` / `allow_traffic_redirect6` (`system global`, gilt fuer alle
+      VDOMs): Verkehr, der am selben Interface ein- und ausgeht, ohne Policy."""
     out: dict[str, Any] = {}
+    if isinstance(zones, list) and all(
+        isinstance(z, dict) and z.get("intrazone") in ("allow", "deny") for z in zones
+    ):
+        out["intrazone_allow"] = sorted(
+            str(z["name"]) for z in zones if z.get("name") and z["intrazone"] == "allow"
+        )
+    for key, name in (("allow-traffic-redirect", "allow_traffic_redirect"),
+                      ("ipv6-allow-traffic-redirect", "allow_traffic_redirect6")):  # fmt: skip
+        if (system or {}).get(key) in ("enable", "disable"):
+            out[name] = system[key] == "enable"
     cfg = raw.get("settings")
     if isinstance(cfg, list):
         cfg = cfg[0] if cfg else None
@@ -482,8 +501,9 @@ def _snat_row(r: dict) -> dict[str, Any]:
 
 
 def normalize(
-    vdoms: list[dict], global_ha: dict | None, node: str, interfaces: list[dict] | None = None
-) -> RoutingInventory:
+    vdoms: list[dict], global_ha: dict | None, node: str, interfaces: list[dict] | None = None,
+    system: dict | None = None,
+) -> RoutingInventory:  # fmt: skip
     """Routing aller VDOMs (`vdoms[i]["routing"]` = Rohtabellen + `missing`) und HA - auch leer,
     damit der Orchestrator den Stand des Quellsystems ersetzt. `interfaces` (cmdb) liefern VRF
     und Management-Kennzeichen der Routen."""
@@ -499,7 +519,7 @@ def normalize(
                 node=node,
                 context=vdom,
                 missing=raw.get("missing", []),
-                settings=settings(raw, vdom, interfaces),
+                settings=settings(raw, vdom, interfaces, v.get("zones"), system),
             )
         )
         inv.routes += rib(raw.get("rib4"), node, vdom, ifaces)

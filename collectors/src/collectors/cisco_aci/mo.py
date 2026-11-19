@@ -171,10 +171,15 @@ def _port(value: str | None) -> str | None:
 
 
 def _entry_service(attrs: dict) -> str:
+    """Dienst eines Filter-Eintrags. Ohne Protokoll zaehlt der EtherType (ADR 0071 Nachtrag,
+    P-11): `unspecified/any` = Filter ohne EtherType (z. B. `common/default` - seine Zoning-Rule
+    hat die tiefere Stufe 9 bzw. 15/16/21), `ip/any` = EtherType `ip` (Stufe 7 bzw. 13/14/17)."""
     prot = (attrs.get("prot") or "unspecified").lower()
     if prot == "unspecified":
         ether = (attrs.get("etherT") or "unspecified").lower()
-        if ether not in ("unspecified", "ip", "ipv4", "ipv6"):
+        if ether == "unspecified":
+            return "unspecified/any"
+        if ether not in ("ip", "ipv4", "ipv6"):
             return f"{ether}/any"  # z. B. arp
         prot = "ip"
     if prot in ("icmp", "icmpv4"):
@@ -536,7 +541,10 @@ def parse_mo_export(data: Any) -> list[dict]:
                 "dst_zone": _zone(providers),
             }
         )
-    return contracts + _taboos(bag) + _preferred_groups(bag)
+    out = contracts + _taboos(bag) + _preferred_groups(bag)
+    for c in out:  # Dienste mit EtherType (P-11): `ip/any` ist nicht mehr der Filter ohne EtherType
+        c["ether_types"] = True
+    return out
 
 
 def _inherit_contracts(bag: _Bag) -> None:

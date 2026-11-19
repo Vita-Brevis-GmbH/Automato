@@ -139,6 +139,11 @@ class FortiGateClient:
         glob = self._get("system/global")
         if isinstance(glob, dict):
             info["hostname"] = glob.get("hostname")
+            # ADR 0071 Nachtrag (P-7, nur lesend): Verkehr, der am selben Interface ein- und
+            # ausgeht, leitet die FortiGate mit `allow-traffic-redirect` ohne Policy weiter
+            for key in ("allow-traffic-redirect", "ipv6-allow-traffic-redirect"):
+                if glob.get(key) in ("enable", "disable"):
+                    info[key] = glob[key]
         try:
             response = read_get(
                 self._client, f"{self._root}/monitor/system/status", headers=self._headers

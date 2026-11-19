@@ -249,6 +249,7 @@ def collect_once(
                     d.get("ha"),
                     node,
                     d.get("interfaces"),
+                    d.get("system"),
                 ),
                 message=_vdom_message(d),
             )

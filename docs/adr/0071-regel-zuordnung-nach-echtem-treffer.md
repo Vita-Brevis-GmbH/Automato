@@ -168,3 +168,45 @@ Rest (höchstens rund 30 s, einmal je Datenstand und Adressklasse); die Doku ins
 wie bisher – sie rechnet jetzt zusätzlich Reihenfolge und Weg je Regel. **Nicht gemessen:** mehrere
 Firewalls mit gelesenem Routing (der Weg wird jetzt für jede Regel geprüft, nicht nur für
 unspezifische – mehr Wege, die der Wege-Speicher je Datenstand teilt) und Postgres.
+
+## Nachtrag „Gegenprüfung“ (2026-11-18)
+
+Die unabhängige Gegenprüfung (Phase 3, `orchestrator/tests/test_fable_pruefung.py`,
+`collectors/tests/test_fable_pruefung.py`) fand in der Regel-Zuordnung fünf Abweichungen vom
+echten Gerät; sie sind korrigiert (Tests ohne `xfail`, dazu `test_fable_korrektur_regeln.py`).
+Belege wie in der Prüfung nur über Suchtreffer (Fortinet KB, Cisco ACI Design Guide).
+
+| Nr. | Echt | Jetzt |
+|---|---|---|
+| P-3 | ACI Preferred Group: je EPG ausserhalb der Gruppe Sperren mit Priorität 18 (Nichtmitglied → any) und 19 (any → Nichtmitglied); die Erlaubnis der Mitglieder 20, vzAny ↔ vzAny mit Filter ohne EtherType 21 | `aci_check._pair` reiht die Sperren in den Vorrang ein. Sie entscheiden, wenn dahinter ein Contract erlaubt hätte („gesperrt durch Preferred Group … (… ist kein Mitglied) – mit Vorrang vor …“); Contracts mit Priorität 7–17 gehen vor. Ohne solchen Contract bleibt der Text „kein Contract …“ |
+| P-4 | Stichprobe S2: der Weg endet an einem nicht gelesenen Übergang – die Firewall davor liegt nachweislich auf dem Weg, die Internet-Firewall nicht | `appdoc_path.OnPath`: der **belegte Teil** eines Wegs, der vor dem Ziel endet, zählt. Firewall darauf = auf dem Weg, ohne Kennzeichen. Firewall abseits = „Weg nicht geprüft“ nur, wenn sie das Ziel selbst kennt (angeschlossen bzw. eigene Route; privates Ziel nicht nur über die Default-Route; Routing nicht gelesen = keine Aussage, bleibt markiert) – sonst „nicht auf dem Weg“, gezählt (`off_path` bzw. `off_path_specific`) |
+| P-6 | FortiGate: Reihenfolge Policies → `intrazone` der Zone → implizite Sperre; mit `intrazone allow` geht Verkehr zwischen zwei Interfaces der Zone ohne Policy durch | Collector: `settings.intrazone_allow` (Zonen des VDOMs mit `allow`). `policy_check`: passt keine Policy sicher, ist der Hop „erlaubt ohne Policy“; eine nur mögliche Sperre davor = „abhängig“. Nicht gelesen: Urteil wie bisher, ausgewiesen und gezählt |
+| P-7 | FortiGate: mit `allow-traffic-redirect` (system global; Vorgabe `enable` bis 7.4.9/7.6.4) wird Verkehr, der am selben Interface ein- und ausgeht und dessen Quelle im Netz des Interfaces liegt, nur nach dem Routing weitergeleitet – ohne Policy, ohne Sitzung | Collector: `settings.allow_traffic_redirect` / `allow_traffic_redirect6`. `policy_check`: „ohne Policy weitergeleitet“ (kein Abgleich, kein NAT der Policy). Nicht gelesen bzw. Quelle unbekannt: statt „gesperrt“ „abhängig … allow-traffic-redirect nicht geprüft“, gezählt |
+| P-11 | ACI: Filter ohne EtherType (`unspecified`) = Priorität 9 bzw. 15/16/21, Filter mit EtherType `ip` = 7 bzw. 13/14/17 – je Zoning-Rule, also je Filter | Collector: `unspecified/any` für den Filter ohne EtherType, `ip/any` nur noch für EtherType `ip`; Kennzeichen `raw.ether_types`. `aci_check._priority` nimmt die Stufe des **passenden** Filters. Läufe älterer Collectors (ohne Kennzeichen): `ip/any` gilt wie bisher als offen |
+
+Dazu, nur lesend und **ohne neues Leserecht** (alles aus Tabellen, die der Collector schon liest):
+`asymroute6` (`system settings`), `allow-traffic-redirect` und `ipv6-allow-traffic-redirect`
+(`system global`), `intrazone` (`system zone`) → `topo_context.settings`. Die Auswertung von
+`asymroute6` im Reverse Path gehört zur Weg-Suche (ADR 0070, P-10).
+
+**Gezählt:** „Verkehr ohne Policy nicht geprüft“ ist eine eigene Art der Unsicherheit am Weg
+(`uncertain.no_policy`, `path_stages.UNCERTAIN`) – Hinweis am Weg, in den Verbindungen gezählt,
+Befund `app_coverage` (ADR 0048).
+
+**Fassung:** `rule_match.VERSION = 2` – jeder Stand der Doku rechnet einmal neu (ADR 0037). Die
+neuen Einstellungen und die Dienste der ACI-Filter zählen über ihren Inhalt (ADR 0049).
+
+**Grenzen (ausgewiesen):**
+
+- `allow-traffic-redirect` gilt nur für Quellen im Netz des Interfaces. Für Quellen dahinter
+  (geroutet, „one-arm“) ist das Verhalten je FortiOS-Version verschieden – dort bleibt es beim
+  Abgleich mit den Policies.
+- Verkehr am selben Interface einer Zone mit `intrazone allow` und ausgeschaltetem
+  `allow-traffic-redirect`: Abgleich mit den Policies (nicht belegt, ob die Zone ihn erlaubt).
+- SD-WAN-Zonen haben kein `intrazone` – wie bisher nur mit Policy.
+- Preferred Group: Sonderfälle der externen EPG mit 0.0.0.0/0 in der Gruppe und ESG-Mitglieder
+  über Selektoren sind nicht eigens modelliert (Mitglied ist, wen der Collector als Mitglied
+  liefert).
+- Ohne Dienst gilt für den Vorrang die Stufe des sicher passenden Filters; passt ein bestimmter
+  Filter nur „möglich“, kann der Contract im Fabric eine Stufe höher greifen.
+

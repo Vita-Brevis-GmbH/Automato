@@ -68,6 +68,9 @@ UNCERTAIN = (
     "return",
     # Quelle als Netz, von dem nur Teile angeschlossen sind (Gegenpruefung P-13)
     "start_part",
+    # ADR 0071 Nachtrag: Verkehr, den die FortiGate vielleicht ohne Policy weiterleitet
+    # (`allow-traffic-redirect` bzw. `intrazone` nicht gelesen) - `policy_check.Checker.free`
+    "no_policy",
 )
 
 
