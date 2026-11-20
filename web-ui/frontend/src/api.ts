@@ -2644,7 +2644,8 @@ export interface TraceVpn {
   covered?: "full" | "partial" | "none";
   phase2?: string;
   phase2_status?: string;
-  peer?: { key: string; source_system_id: number; context: string; label: string | null; tunnel: string | null; how: "gw" | "reverse" };
+  // Gegenstelle: gelesene FortiGate mit ihrem Tunnel; `pair` = gekoppelt (1.23.0), `open` = Tunnel dort nicht eindeutig
+  peer?: { key: string; source_system_id: number; context: string; label: string | null; tunnel: string | null; how: VpnHow; pair?: VpnPairOrigin; open?: number };
 }
 // Ziel-Server einer VIP bzw. eines Pools in der Weg-Suche (0.114.1)
 export interface VipServer {
@@ -3905,7 +3906,7 @@ export interface TopoEdgeRouter {
 }
 export interface TopoEdge {
   id: string;
-  kind: "transfer" | "member" | "vdom_link" | "route" | "bgp" | "uplink" | "exit_route" | "parallel" | "sync";
+  kind: "transfer" | "member" | "vdom_link" | "route" | "bgp" | "uplink" | "exit_route" | "parallel" | "sync" | "vpn";
   a: string;
   b: string;
   origin: TopoOrigin;
@@ -3923,6 +3924,8 @@ export interface TopoEdge {
   peer?: string;
   to?: Record<string, number>;
   boundary?: { reason: BoundaryReason; as?: number; private_as?: boolean }; // ADR 0032
+  // gekoppelte IPsec-Tunnel zweier FortiGates (1.23.0, ADR 0063 Nachtrag): Tunnel je Ende
+  tunnels?: { a: string; b: string; pair: VpnPairOrigin; status: (string | null)[] }[];
 }
 export interface TopoIssue {
   type: string;
@@ -4947,12 +4950,31 @@ export async function exportL2Plan(
   return { blob: await response.blob(), filename: match?.[1] ?? `verkabelung.${format}` };
 }
 // VPN-Tunnel (IPsec, 1.19.0, ADR 0063): Liste und Detail
+// Wie die Gegenstelle erkannt wurde (1.23.0): Adresse, VIP davor, ihr Tunnel zeigt auf uns, verbundene Dial-up-Gegenstelle,
+// ihr statischer Tunnel zeigt auf diesen Dial-up, von Hand
+export type VpnHow = "gw" | "vip" | "reverse" | "dialup" | "spoke" | "manual";
+export type VpnPairOrigin = "auto" | "manual";
 export interface VpnPeer {
   source_system_id: number;
   context: string | null;
   tunnel: string | null;
-  interface: string;
-  how: "gw" | "reverse";
+  interface: string | null;
+  how: VpnHow;
+  label: string;
+  pair?: VpnPairOrigin; // gekoppelt (1.23.0)
+  pair_id?: number | null; // Zeile der Kopplung von Hand
+  tunnel_id?: number; // Kennung des anderen Tunnels (Link in der Ansicht)
+  ref?: string;
+  open?: number; // Tunnel dort nicht eindeutig: Zahl der Vorschläge
+}
+// Tunnel einer anderen FortiGate für die Kopplung von Hand (1.23.0)
+export interface VpnTunnelRef {
+  tunnel_id: number;
+  ref: string;
+  source_system_id: number;
+  context: string;
+  tunnel: string;
+  kind: "static" | "dialup" | "ddns";
   label: string;
 }
 export interface VpnTunnel {
@@ -4976,6 +4998,7 @@ export interface VpnTunnel {
   uncovered: number;
   partial: number;
   peers: VpnPeer[];
+  suggestions: number; // Vorschläge für eine Kopplung von Hand (1.23.0)
   proposal?: string | null;
 }
 export interface VpnPhase2 {
@@ -4995,12 +5018,18 @@ export interface VpnTunnelDetail extends VpnTunnel {
   behind: { net: string; from: string[] }[];
   unresolved: string[];
   attrs: Record<string, unknown>;
+  // Kopplung (1.23.0): Vorschläge, gelöste automatische Kopplungen, wählbare Tunnel anderer FortiGates
+  suggestion_list: (VpnTunnelRef & { why: string; exact: boolean; text: string })[];
+  separated: (VpnTunnelRef & { pair_id: number })[];
+  choices: VpnTunnelRef[];
 }
 export interface VpnList {
   tunnels: VpnTunnel[];
   total: number;
   counts: Record<string, number>;
   missing: { source_system_id: number; source: string | null; context: string; missing: string[] }[];
+  // Kopplungen von Hand, deren Tunnel kein Lauf mehr liefert (1.23.0)
+  orphans: { pair_id: number; mode: "coupled" | "separated"; ends: { source_system_id: number; source: string; context: string; tunnel: string }[] }[];
 }
 export const fetchVpnTunnels = (tenantId: number, f: { q?: string; status?: string; system?: number | null } = {}) =>
   getJSON<VpnList>(`/api/vpn/tunnels${cq({ tenant_id: tenantId, q: f.q, status: f.status, system: f.system ?? undefined })}`);

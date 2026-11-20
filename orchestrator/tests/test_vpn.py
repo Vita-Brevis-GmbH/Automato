@@ -150,6 +150,7 @@ def test_weg_ueber_tunnel_zwischen_zwei_fortigates(client):
         "label": FW_B,
         "tunnel": "vpn-a",
         "how": "gw",
+        "pair": "auto",  # 1.23.0: beide Enden gelesen - automatisch gekoppelt
     }
     # Eingang auf fw-b ist sein Tunnel zu fw-a - die Policies pruefen ihn
     assert b["ingress"]["interface"] == "vpn-a"

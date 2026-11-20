@@ -224,6 +224,9 @@ TENANT_ROUTE_CAPABILITIES: dict[tuple[str, str], str] = {
     # vpn
     ("GET", "/vpn/tunnels"): TENANT_READ,
     ("GET", "/vpn/tunnels/{tunnel_id}"): TENANT_READ,
+    # Kopplung der Tunnel von Hand (1.23.0, ADR 0063 Nachtrag): Laufzeitdaten, kein Geraet
+    ("PUT", "/vpn/pairs"): TENANT_MANAGE,
+    ("DELETE", "/vpn/pairs/{pair_id}"): TENANT_MANAGE,
     # zones
     ("GET", "/zones"): TENANT_READ,
     ("POST", "/zones"): TENANT_MANAGE,

@@ -1,7 +1,9 @@
 // IPsec-Tunnel als Schritt des Wegs (1.19.0, ADR 0063): Chip mit Name, Zustand und Gegenstelle – in Weg-Suche,
-// „Warum dieser Weg?“ und den Verbindungen der Applikation. Ein Klick öffnet den Tunnel in „VPN-Tunnel“.
+// „Warum dieser Weg?“ und den Verbindungen der Applikation. Ein Klick öffnet den Tunnel in „VPN-Tunnel“; seit 1.23.0
+// ist die gelesene Gegenstelle ein Link auf ihren Tunnel (gekoppelt automatisch bzw. von Hand).
 import type { TraceVpn } from "../../api";
 import { L } from "../../i18n";
+import { hashOf } from "../../places";
 
 const STATE: Record<string, string> = { up: "ok", partial: "warn", down: "crit" };
 
@@ -40,7 +42,39 @@ export function VpnChip({ v, sid, context }: { v: Pick<TraceVpn, "name" | "kind"
         chip
       )}
       {v.remote_gw && <span className="mono faint"> → {v.remote_gw}</span>}
-      {v.peer?.label && <span className="faint"> ({v.peer.label})</span>}
+      {v.peer?.label && <PeerLink peer={v.peer} />}
+    </span>
+  );
+}
+
+// Gegenstelle des Tunnels: die andere FortiGate mit ihrem Tunnel als Link in „VPN-Tunnel“ (1.23.0)
+function PeerLink({ peer }: { peer: NonNullable<TraceVpn["peer"]> }) {
+  const how =
+    peer.pair === "manual"
+      ? L(" · von Hand gekoppelt", " · coupled manually")
+      : peer.pair === "auto"
+        ? L(" · automatisch gekoppelt", " · coupled automatically")
+        : peer.open
+          ? L(" · Tunnel dort nicht eindeutig", " · tunnel there not unique")
+          : "";
+  const text = `${peer.label}${peer.tunnel ? ` · ${peer.tunnel}` : ""}`;
+  if (!peer.tunnel)
+    return (
+      <span className="faint vpn-peer-link">
+        {" "}
+        ({text}
+        {how})
+      </span>
+    );
+  const ref = `${peer.source_system_id}|${peer.context}|${peer.tunnel}`;
+  return (
+    <span className="faint vpn-peer-link">
+      {" "}
+      (
+      <a href={hashOf("vpn", { tunnel: ref })} target="_blank" rel="noopener noreferrer" title={L("Tunnel der Gegenstelle öffnen", "Open the tunnel of the peer")}>
+        {text}
+      </a>
+      {how})
     </span>
   );
 }

@@ -940,6 +940,28 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     der Gegenstelle einlesen oder den Tunnel als Anbindung (Partner) erfassen – „Als Anbindung
     erfassen“ am Weg füllt Interface und Gegenstelle vor. Im Netzwerkplan ist der Tunnel ein
     eigener Knoten zwischen den Firewalls.
+  - **Kopplung** (1.23.0, ADR 0063 Nachtrag 1.23.0): sind beide Enden gelesen, sind die Tunnel
+    **ein** Übergang zwischen den Firewalls – der Weg geht durch den Tunnel auf der anderen
+    FortiGate weiter (Eingang = ihr Tunnel, ihre Policies prüfen ihn), in der Topologie hängen
+    die Standorte über eine Kante „VPN-Tunnel (IPsec)“ zusammen. In der Spalte „Gegenstelle“ steht
+    die andere Firewall mit ihrem Tunnel (Klick öffnet ihn) und der Herkunft:
+    - **automatisch**, wo es belegt und eindeutig ist: die statische Seite zeigt auf eine Adresse
+      der anderen FortiGate (bzw. auf eine VIP einer gelesenen FortiGate davor) und dort zeigt ein
+      Tunnel zurück bzw. ein Dial-up-Tunnel auf diesem Interface hat gespiegelte Phase-2-Selektoren;
+      die Gegenstelle liegt hinter NAT und genau ein Tunnel der anderen FortiGate zeigt auf uns;
+      eine verbundene Dial-up-Gegenstelle kommt von der anderen FortiGate;
+    - **von Hand**: was nicht eindeutig ist (z. B. „einseitig dynamisch“ mit NAT davor), steht als
+      „Vorschlag zum Koppeln“ in der Liste. Im Tunnel unter „Kopplung“ die Vorschläge (nicht
+      eindeutige Treffer, gespiegelte Selektoren) mit „Koppeln“ bzw. „Tunnel einer anderen
+      FortiGate wählen …“ → „Von Hand koppeln“ (Operator, Admin; Mandanten-Benutzer mit Recht
+      „anpassen“). „Lösen“ entfernt eine Kopplung von Hand bzw. setzt eine automatische außer
+      Kraft („wieder zulassen“ hebt das auf). Ein statischer Tunnel hat höchstens eine Gegenstelle,
+      zwei Dial-up-Tunnel lassen sich nicht koppeln.
+    - Die Kopplung ist eine Angabe in Automato (Audit `vpn_pair.*`), nichts geht an die Firewall.
+      Sie gilt über die Läufe (Firewall, VDOM, Tunnelname); liefert ein Lauf einen gekoppelten
+      Tunnel nicht mehr, steht oben „Kopplung von Hand ohne gelesenen Tunnel“ mit „Kopplung
+      entfernen“. Selektoren und Zustand gelten weiter (ohne passende Phase 2 bzw. mit Tunnel down
+      verworfen). Doku und Verbindungen rechnen nach einer Kopplung neu.
   - **Befunde** (Prüfung „VPN-Tunnel (IPsec)“): Tunnel bzw. Phase 2 down, Selektor deckt eine
     Route über den Tunnel nur teilweise, Route über den Tunnel ohne passenden Selektor.
 - **AS-Nummern** (1.19.0, ADR 0066, Modul Analyse): die AS-Nummern im Routing einzeln, nur aus den

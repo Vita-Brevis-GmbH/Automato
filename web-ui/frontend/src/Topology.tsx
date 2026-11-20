@@ -64,6 +64,7 @@ const EDGE_KIND: Record<string, string> = {
   exit_route: L("manuelle Route", "manual route"),
   parallel: L("Verbund", "Parallel group"),
   sync: L("Session-Sync", "Session sync"),
+  vpn: L("VPN-Tunnel (IPsec)", "VPN tunnel (IPsec)"), // 1.23.0: gekoppelte Tunnel zweier FortiGates
 };
 const ORIGIN: Record<string, [string, string]> = {
   derived: ["na", L("abgeleitet", "derived")],
@@ -121,6 +122,13 @@ function EdgeDetail({ e, me }: { e: TopoEdge; me: string }) {
         {r.remote_as ? ` · AS ${r.remote_as}` : ""}
         {r.interface ? ` · ${r.interface}` : ""}
         {r.zone && r.zone !== r.interface ? ` (${r.zone})` : ""}
+      </span>,
+    );
+  for (const t of e.tunnels ?? [])
+    parts.push(
+      <span key={`vpn-${t.a}-${t.b}`} className="mono">
+        {me === e.a ? `${t.a} ↔ ${t.b}` : `${t.b} ↔ ${t.a}`}{" "}
+        <span className={`chip ${t.pair === "manual" ? "info" : "ok"}`}>{t.pair === "manual" ? L("von Hand", "manual") : L("automatisch", "automatic")}</span>
       </span>,
     );
   for (const l of e.links ?? [])
