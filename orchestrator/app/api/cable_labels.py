@@ -4,8 +4,13 @@
                                  (Label der Kabel, Referenzquelle) mit Herkunft (gleich,
                                  verschieden, nur Automato, nur NetBox) und ob CDP/LLDP zum Kabel
                                  in NetBox passt; Filter Herkunft, Suche (viewer).
+- `GET    /cabling/labels/choices` (1.23.0) Auswahl zum Erfassen: Geraete mit Suche bzw. die
+                                 Ports eines Geraets mit der bekannten Gegenstelle als Vorschlag
+                                 (CDP/LLDP, Kabel in NetBox, Erfassung) und Herkunft (viewer).
 - `PUT    /cabling/labels`       Kabelnummer eines Port-Paars erfassen bzw. aendern - eine
-                                 Erfassung je Paar (operator, Audit `cable_label.set`).
+                                 Erfassung je Paar (operator, Audit `cable_label.set`); ein neues
+                                 Paar an einem gelesenen Geraet nur mit einem gelesenen Port
+                                 (1.23.0), frei nur ohne gelesenes Geraet (z. B. Patchpanel).
 - `DELETE /cabling/labels/{id}`  Erfassung loeschen (operator, Audit `cable_label.deleted`); was
                                  in NetBox steht, bleibt.
 - `GET    /cabling/transceivers` Transceiver je Port und Lesestatus je Switch (gelesen, nicht
@@ -54,15 +59,18 @@ class LabelIn(BaseModel):
     note: str | None = Field(default=None, max_length=500)
 
 
-def _row(pair: str, index: store.Index, links: dict[str, cabling.Link],
+def _row(pair: str, index: store.Index, cab: cabling.Cabling,
          seen: dict[str, list[cabling.End]]) -> dict:  # fmt: skip
     """Ein Port-Paar: Enden, Kabelnummer mit Herkunft, Verbindung aus CDP/LLDP, Nachbar-Abgleich
-    der Kabel in NetBox."""
+    der Kabel in NetBox. Ein erfasstes Ende ohne gelesenes bzw. gemeldetes Geraet ist `free`
+    (frei erfasst, z. B. Patchpanel; 1.23.0)."""
     mine, theirs = index.labels.get(pair), index.by_pair.get(pair, [])
-    link = links.get(pair)
+    link = cab.links.get(pair)
     if mine is not None:
-        a, b = {"device": mine.a_device, "port": mine.a_port}, {"device": mine.b_device,
-                                                               "port": mine.b_port}  # fmt: skip
+        a, b = (
+            {"device": d, "port": p, "free": cabling.device_key(d) not in cab.devices}
+            for d, p in ((mine.a_device, mine.a_port), (mine.b_device, mine.b_port))
+        )
     elif theirs:
         a, b = theirs[0].out()["a"], theirs[0].out()["b"]
     else:  # pragma: no cover - nur Paare mit Nummer oder Kabel
@@ -101,7 +109,7 @@ def list_labels(
     cab = cabling.build(session, tid)
     seen = store._ends_at(cab)
     pairs = sorted(set(index.labels) | set(index.by_pair))
-    rows = [_row(p, index, cab.links, seen) for p in pairs]
+    rows = [_row(p, index, cab, seen) for p in pairs]
     summary = {s: sum(1 for r in rows if r["state"] == s) for s in STATES}
     neighbors = [r["neighbor"] for r in rows]
     summary |= {"automato_total": len(index.labels), "netbox_total": len(index.cables),
@@ -133,6 +141,28 @@ def _audit(session: Session, principal: Principal, action: str, row: CableLabel,
                          **extra})  # fmt: skip
 
 
+@router.get("/labels/choices")
+def label_choices(
+    tenant_id: int | None = None,
+    device: str | None = Query(None, max_length=200),
+    q: str | None = Query(None, max_length=200),
+    limit: int = Query(100, ge=1, le=1000),
+    principal: Principal = Depends(require_viewer),
+    session: Session = Depends(get_session, scope="function"),
+) -> dict:
+    """Auswahl zum Erfassen einer Kabelnummer (1.23.0): ohne `device` die Geraete (Suche `q`;
+    gelesene zuerst, dann von Nachbarn gemeldete, aus NetBox, frei erfasste), mit `device` dessen
+    Ports und je Port die bekannte Gegenstelle als Vorschlag. Unbekanntes Geraet: `device` None
+    - frei erfassen."""
+    tid = _tenant(session, principal, tenant_id)
+    choices = store.Choices(session, tid)
+    if device and device.strip():
+        found = choices.port_list(device.strip())
+        return found or {"device": None, "ports": []}
+    total, items = choices.device_list(q, limit)
+    return {"total": total, "items": items}
+
+
 @router.put("/labels")
 def set_label(
     body: LabelIn,
@@ -145,9 +175,11 @@ def set_label(
     try:
         row, old = store.set_label(session, tid, body.a_device, body.a_port, body.b_device,
                                    body.b_port, body.label, body.note,
-                                   f"user:{principal.subject}")  # fmt: skip
+                                   f"user:{principal.subject}",
+                                   store.Choices(session, tid))  # fmt: skip
     except store.Invalid as exc:
-        raise HTTPException(status_code=422, detail=_invalid(str(exc))) from None
+        detail = L(str(exc), exc.en) if exc.en else _invalid(str(exc))
+        raise HTTPException(status_code=422, detail=detail) from None
     _audit(session, principal, "set", row, old=old)
     store.refresh_findings(session, tid)
     index = store.Index(session, tid)

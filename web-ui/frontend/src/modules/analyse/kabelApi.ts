@@ -9,6 +9,7 @@ export type NeighborState = "ok" | "mismatch" | "unknown";
 export interface PortRef {
   device: string;
   port: string;
+  free?: boolean; // erfasstes Ende ohne gelesenes bzw. gemeldetes Gerät (frei erfasst, 1.23.0)
 }
 export interface AutomatoLabel {
   id: number;
@@ -85,3 +86,34 @@ export const fetchTransceivers = (tenantId: number, device?: string) =>
     devices: { device: string; status: TransceiverStatus | null; count: number }[];
     items: ({ device: string; port: string } & Transceiver)[];
   }>(`/api/cabling/transceivers${qs({ tenant_id: tenantId, device })}`);
+
+// Auswahl zum Erfassen (1.23.0, Anwender 2026-11-20: „Geräte und Ports auswählen“): Herkunft eines Geräts –
+// gelesen (Ports aus dem Inventar), nur von Nachbarn gemeldet (CDP/LLDP), nur am Kabel einer NetBox bzw.
+// früher frei erfasst (z. B. Patchpanel)
+export type ChoiceOrigin = "inventory" | "neighbor" | "netbox" | "free";
+export interface DeviceChoice {
+  name: string;
+  origin: ChoiceOrigin;
+  kind: string | null;
+  source: string | null;
+  ports?: number;
+  free_ports: boolean; // Ports nicht (vollständig) gelesen: auch frei
+}
+// Vorschlag der Gegenstelle eines Ports: aus CDP/LLDP, dem Kabel in NetBox bzw. einer Erfassung
+export interface PeerChoice {
+  device: string;
+  port: string;
+  via: string[]; // cdp | lldp | netbox | automato
+  labels: string[];
+}
+export interface PortChoice {
+  name: string;
+  read: boolean;
+  status: string | null;
+  description: string | null;
+  peers: PeerChoice[];
+}
+export const fetchLabelDevices = (tenantId: number, q: string) =>
+  getJSON<{ total: number; items: DeviceChoice[] }>(`/api/cabling/labels/choices${qs({ tenant_id: tenantId, q: q || undefined, limit: 30 })}`);
+export const fetchLabelPorts = (tenantId: number, device: string) =>
+  getJSON<{ device: DeviceChoice | null; ports: PortChoice[] }>(`/api/cabling/labels/choices${qs({ tenant_id: tenantId, device })}`);

@@ -73,6 +73,7 @@ TENANT_ROUTE_CAPABILITIES: dict[tuple[str, str], str] = {
     ("GET", "/routing/bgp/peers/{peer_id}/zones"): TENANT_READ,
     # cable_labels
     ("GET", "/cabling/labels"): TENANT_READ,
+    ("GET", "/cabling/labels/choices"): TENANT_READ,
     ("PUT", "/cabling/labels"): TENANT_MANAGE,
     ("DELETE", "/cabling/labels/{label_id}"): TENANT_MANAGE,
     ("GET", "/cabling/transceivers"): TENANT_READ,

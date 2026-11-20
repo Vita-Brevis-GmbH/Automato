@@ -576,7 +576,7 @@ function PortsTab({ tenantId, devices, device, onDevice, onEndpoints, canEdit }:
           a={edit.a}
           b={edit.b}
           info={edit.info}
-          fixed={!!edit.b.port}
+          fixed={edit.info?.automato ? true : "a"}
           onClose={() => setEdit(null)}
           onSaved={() => {
             setEdit(null);
