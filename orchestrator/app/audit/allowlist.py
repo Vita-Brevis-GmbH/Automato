@@ -168,6 +168,9 @@ ALLOWLIST: dict[str, frozenset[str]] = {
     # Kabelnummer in Automato (1.19.0): Enden, Nummer und die bisherige (Laufzeitdaten)
     "cable_label.set": frozenset({"tenant_id", "label", "a", "b", "old"}),
     "cable_label.deleted": frozenset({"tenant_id", "label", "a", "b"}),
+    # Kopplung zweier VPN-Tunnel von Hand (1.23.0, ADR 0063 Nachtrag): Enden, Modus, bisher
+    "vpn_pair.set": frozenset({"tenant_id", "mode", "a", "b", "previous"}),
+    "vpn_pair.deleted": frozenset({"tenant_id", "mode", "a", "b"}),
     # Reservierungen von VLAN- und AS-Nummern (1.19.0, ADR 0066): Art, Bereich, Standort,
     # VLAN-Gruppe und Zweck; freigeben = loeschen
     "reservation.created": _RESERVATION,

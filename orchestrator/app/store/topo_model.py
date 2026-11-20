@@ -23,6 +23,7 @@ Kanten (`kind`, je mit Herkunft `origin`: derived | manual | confirmed):
 - `vdom_link`: Inter-VDOM-Link derselben FortiGate;
 - `route`: Route ueber die Adresse eines anderen gelesenen Knotens ohne gemeinsames Netz;
 - `bgp`: BGP-Sitzung zwischen zwei gelesenen Knoten;
+- `vpn`: gekoppelte IPsec-Tunnel zweier gelesener FortiGates (1.23.0, automatisch bzw. von Hand);
 - `uplink`: Knoten -> Anbindung bzw. Router (aktiv, Backup, nur Nachbar; AS, Zustand), von Hand
   ueber Interface bzw. Zone der Anbindung;
 - `exit_route`: manuelle Route einer Anbindung zu einem gelesenen Knoten;
@@ -160,6 +161,7 @@ class Model:
         self._routes()
         self._vdom_links()
         self._bgp()
+        self._vpn()
         self._uplinks()
         self._manual_exits()
         self._redundancy()
@@ -463,6 +465,30 @@ class Model:
                         "state": p.state,
                     }  # fmt: skip
                 )
+
+    def _vpn(self) -> None:
+        """IPsec-Tunnel zwischen zwei gelesenen FortiGates (1.23.0, ADR 0063 Nachtrag): je
+        Kopplung (automatisch bzw. von Hand, `store/vpn_kopplung`) eine Kante `vpn` - die
+        Standorte haengen zusammen."""
+        index = self.g.vpn()
+        if not index:
+            return
+        seen: set[tuple] = set()
+        for links in index.pairing().links.values():
+            for k in links:
+                a, b = (k.a.source_system_id, k.a.context), (k.b.source_system_id, k.b.context)
+                mark = (k.a.ref, k.b.ref)
+                if a not in self.g.nodes or b not in self.g.nodes or mark in seen:
+                    continue
+                seen.add(mark)
+                edge = self._edge("vpn", node_id(a), node_id(b))
+                if k.origin == "manual":
+                    edge.origin = "manual"
+                ends = {node_id(a): k.a, node_id(b): k.b}
+                edge.attrs.setdefault("tunnels", []).append({
+                    "a": ends[edge.a].name, "b": ends[edge.b].name, "pair": k.origin,
+                    "status": [ends[edge.a].status, ends[edge.b].status],
+                })  # fmt: skip
 
     def _allowed(self, key: Key, ip: str) -> bool:
         """ACI: Gegenstellen nur an den L3Outs (SVI-/Interface-Netz, Peer), nicht das Fabric."""

@@ -1,12 +1,15 @@
 // VPN-Tunnel (IPsec, 1.19.0, ADR 0063): Tunnel der FortiGates im Interface-Modus mit Zustand, Gegenstelle
 // (gelesene FortiGate bzw. nicht gelesen), Phase 2 mit Selektoren, Routen über den Tunnel (deckt ein Selektor
-// sie?) und den Netzen dahinter; Dial-up-Tunnel mit den verbundenen Gegenstellen. Rein lesend.
+// sie?) und den Netzen dahinter; Dial-up-Tunnel mit den verbundenen Gegenstellen. Von den Geräten nur gelesen.
+// Seit 1.23.0 (ADR 0063 Nachtrag): Tunnel zweier gelesener FortiGates sind gekoppelt – automatisch, wo belegt, sonst
+// von Hand (Vorschläge aus gespiegelten Selektoren); die Kopplung sind Laufzeitdaten in Automato (Operator).
 import { useEffect, useMemo, useState } from "react";
-import { fetchVpnTunnel, fetchVpnTunnels, VpnList, VpnTunnel, VpnTunnelDetail } from "../../api";
+import { fetchVpnTunnel, fetchVpnTunnels, VpnList, VpnPeer, VpnTunnel, VpnTunnelDetail } from "../../api";
 import { L } from "../../i18n";
 import { useDebounced } from "../../Objects";
 import { Dash, Drawer, Empty, ErrorBox, Loading, Note, PageHead } from "../../ui";
 import type { View, ViewParams } from "../types";
+import { deleteVpnPair, setVpnPair } from "./vpnApi";
 
 const STATUS: Record<string, [string, string]> = {
   up: ["ok", "up"],
@@ -45,21 +48,78 @@ function where(t: { source: string; context: string }): string {
   return t.context && t.context !== "root" ? `${t.source} · VDOM ${t.context}` : t.source;
 }
 
-function Peer({ t }: { t: VpnTunnel }) {
-  if (t.kind === "dialup" && !t.instances) return <span className="faint">{L("wechselnd, keine verbunden", "changing, none connected")}</span>;
+// Wie die Kopplung erkannt wurde (1.23.0)
+const HOW: Record<string, string> = {
+  gw: L("Gegenstelle ist eine Adresse dieser Firewall", "peer is an address of this firewall"),
+  vip: L("Gegenstelle ist eine VIP vor dieser Firewall", "peer is a VIP in front of this firewall"),
+  reverse: L("ihr Tunnel zeigt auf diese Firewall (NAT davor)", "its tunnel points to this firewall (NAT in front)"),
+  dialup: L("verbundene Dial-up-Gegenstelle", "connected dial-up peer"),
+  spoke: L("ihr statischer Tunnel zeigt auf diese Firewall", "its static tunnel points to this firewall"),
+  manual: L("von Hand gekoppelt", "coupled manually"),
+};
+
+export function PairChip({ pair }: { pair?: string | null }) {
+  if (!pair) return null;
+  return pair === "manual" ? (
+    <span className="chip info vpn-pair" title={L("von Hand gekoppelt (Automato, nicht am Gerät)", "coupled manually (Automato, not on the device)")}>
+      {L("von Hand", "manual")}
+    </span>
+  ) : (
+    <span className="chip ok vpn-pair" title={L("automatisch gekoppelt – beide Enden gelesen", "coupled automatically – both ends read")}>
+      {L("automatisch", "automatic")}
+    </span>
+  );
+}
+
+function PeerLine({ p, onOpen }: { p: VpnPeer; onOpen?: (id: number) => void }) {
+  const tunnel = p.tunnel ? (
+    p.tunnel_id != null && onOpen ? (
+      <>
+        {" "}
+        (
+        <button
+          className="linkbtn mono"
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpen(p.tunnel_id!);
+          }}
+        >
+          {p.tunnel}
+        </button>
+        )
+      </>
+    ) : (
+      ` (${p.tunnel})`
+    )
+  ) : (
+    ""
+  );
+  return (
+    <div className="faint vpn-peer" title={HOW[p.how] ?? p.how}>
+      → {p.label}
+      {tunnel} <PairChip pair={p.pair} />
+      {!p.pair && p.how === "gw" && !p.tunnel ? L(" – Tunnel dort nicht eindeutig", " – tunnel there not unique") : ""}
+    </div>
+  );
+}
+
+function Peer({ t, onOpen }: { t: VpnTunnel; onOpen?: (id: number) => void }) {
+  const linked = t.peers.some((p) => p.pair);
+  if (t.kind === "dialup" && !t.instances && !linked) return <span className="faint">{L("wechselnd, keine verbunden", "changing, none connected")}</span>;
   return (
     <>
       <span className="mono">{t.remote_gw ?? (t.kind === "dialup" ? L(`${t.instances} verbunden`, `${t.instances} connected`) : "?")}</span>
       {t.peers.length ? (
-        t.peers.map((p, i) => (
-          <div key={i} className="faint vpn-peer">
-            → {p.label}
-            {p.tunnel ? ` (${p.tunnel})` : ""}
-            {p.how === "reverse" ? L(" – über ihren Tunnel erkannt", " – recognized by its tunnel") : ""}
-          </div>
-        ))
+        t.peers.map((p, i) => <PeerLine key={i} p={p} onOpen={onOpen} />)
       ) : (
         <div className="faint vpn-peer">{L("nicht gelesen – der Weg endet hier", "not read – the path ends here")}</div>
+      )}
+      {(t.suggestions ?? 0) > 0 && !linked && (
+        <div>
+          <span className="chip warn vpn-suggest" title={L("Vorschläge für eine Kopplung von Hand – im Tunnel öffnen", "Suggestions for a manual coupling – open the tunnel")}>
+            {L(`${t.suggestions} Vorschlag${t.suggestions > 1 ? "e" : ""} zum Koppeln`, `${t.suggestions} suggestion${t.suggestions > 1 ? "s" : ""} to couple`)}
+          </span>
+        </div>
       )}
     </>
   );
@@ -70,11 +130,13 @@ export default function VpnTunnels({
   tenantLabel,
   params,
   go,
+  canEdit = false,
 }: {
   tenantId: number | null;
   tenantLabel: string;
   params: ViewParams;
   go: (v: View, p?: ViewParams) => void;
+  canEdit?: boolean;
 }) {
   const [q, setQ] = useState(params.q ?? "");
   const query = useDebounced(q);
@@ -82,6 +144,8 @@ export default function VpnTunnels({
   const [data, setData] = useState<VpnList | null>(null);
   const [err, setErr] = useState<unknown>(null);
   const [open, setOpen] = useState<number | null>(null);
+  const [reload, setReload] = useState(0); // nach einer Kopplung (1.23.0): Liste neu
+  const [busy, setBusy] = useState(false);
   useEffect(() => {
     if (tenantId == null) return;
     let live = true;
@@ -98,18 +162,45 @@ export default function VpnTunnels({
     return () => {
       live = false;
     };
-  }, [tenantId, query, status, params.tunnel]);
+  }, [tenantId, query, status, params.tunnel, reload]);
+  const removeOrphan = async (id: number) => {
+    if (tenantId == null) return;
+    setBusy(true);
+    try {
+      await deleteVpnPair(id, tenantId);
+      setReload((n) => n + 1);
+    } catch (e) {
+      setErr(e);
+    } finally {
+      setBusy(false);
+    }
+  };
   if (tenantId == null) return <Empty title={L("Mandant wählen", "Choose a tenant")} />;
   const c = data?.counts ?? {};
   return (
     <>
       <PageHead title={L("VPN-Tunnel", "VPN tunnels")}>
         {L(
-          `IPsec-Tunnel der FortiGates von ${tenantLabel} (Interface-Modus, nur gelesen): Zustand, Gegenstelle, Phase 2 mit Selektoren und die Routen über den Tunnel. Ist die Gegenstelle eine gelesene FortiGate, geht der Weg dort weiter – sonst endet er sichtbar an der Gegenstelle. SSL-VPN wird nicht gelesen.`,
-          `IPsec tunnels of the FortiGates of ${tenantLabel} (interface mode, read only): state, peer, phase 2 with selectors and the routes via the tunnel. If the peer is a FortiGate that is read, the path continues there – otherwise it visibly ends at the peer. SSL VPN is not read.`,
+          `IPsec-Tunnel der FortiGates von ${tenantLabel} (Interface-Modus, nur gelesen): Zustand, Gegenstelle, Phase 2 mit Selektoren und die Routen über den Tunnel. Sind beide Enden gelesen, sind die Tunnel gekoppelt – automatisch, wo die Adressen bzw. Selektoren es belegen, sonst von Hand im Tunnel – und der Weg geht auf der anderen FortiGate weiter; sonst endet er sichtbar an der Gegenstelle. SSL-VPN wird nicht gelesen.`,
+          `IPsec tunnels of the FortiGates of ${tenantLabel} (interface mode, read only): state, peer, phase 2 with selectors and the routes via the tunnel. If both ends are read, the tunnels are coupled – automatically where addresses or selectors prove it, otherwise manually in the tunnel – and the path continues on the other FortiGate; otherwise it visibly ends at the peer. SSL VPN is not read.`,
         )}
       </PageHead>
       <ErrorBox error={err} onClose={() => setErr(null)} />
+      {(data?.orphans ?? []).map((o) => (
+        <Note key={`orphan-${o.pair_id}`} warn>
+          <span className="vpn-orphan">
+            {L(
+              `Kopplung von Hand ohne gelesenen Tunnel: ${o.ends.map((e) => `${e.source} · ${e.tunnel}`).join(" ↔ ")} – ein Lauf liefert ihn nicht mehr.`,
+              `Manual coupling without a tunnel read: ${o.ends.map((e) => `${e.source} · ${e.tunnel}`).join(" ↔ ")} – a run no longer delivers it.`,
+            )}
+          </span>{" "}
+          {canEdit && (
+            <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => removeOrphan(o.pair_id)}>
+              {L("Kopplung entfernen", "Remove coupling")}
+            </button>
+          )}
+        </Note>
+      ))}
       {(data?.missing ?? []).map((m) => (
         <Note key={`${m.source_system_id}|${m.context}`} warn>
           {L(
@@ -189,7 +280,7 @@ export default function VpnTunnels({
                     </td>
                     <td>{KIND[t.kind] ?? t.kind}</td>
                     <td>
-                      <Peer t={t} />
+                      <Peer t={t} onOpen={setOpen} />
                     </td>
                     <td className="mono">{t.interface ?? <Dash />}</td>
                     <td>{t.ike_version ? `v${t.ike_version}` : <Dash />}</td>
@@ -217,7 +308,18 @@ export default function VpnTunnels({
           )}
         </div>
       </div>
-      {open != null && <TunnelDetail tenantId={tenantId} id={open} onClose={() => setOpen(null)} go={go} />}
+      {open != null && (
+        <TunnelDetail
+          key={`${open}-${reload}`}
+          tenantId={tenantId}
+          id={open}
+          onClose={() => setOpen(null)}
+          go={go}
+          canEdit={canEdit}
+          onOpen={setOpen}
+          onChanged={() => setReload((n) => n + 1)}
+        />
+      )}
     </>
   );
 }
@@ -232,7 +334,23 @@ function Selectors({ values, names }: { values: string[]; names: string[] }) {
   );
 }
 
-function TunnelDetail({ tenantId, id, onClose, go }: { tenantId: number; id: number; onClose: () => void; go: (v: View, p?: ViewParams) => void }) {
+function TunnelDetail({
+  tenantId,
+  id,
+  onClose,
+  go,
+  canEdit,
+  onOpen,
+  onChanged,
+}: {
+  tenantId: number;
+  id: number;
+  onClose: () => void;
+  go: (v: View, p?: ViewParams) => void;
+  canEdit: boolean;
+  onOpen: (id: number) => void;
+  onChanged: () => void;
+}) {
   const [t, setT] = useState<VpnTunnelDetail | null>(null);
   const [err, setErr] = useState<unknown>(null);
   useEffect(() => {
@@ -264,7 +382,7 @@ function TunnelDetail({ tenantId, id, onClose, go }: { tenantId: number; id: num
             </dd>
             <dt>{L("Gegenstelle", "Peer")}</dt>
             <dd>
-              <Peer t={t} />
+              <Peer t={t} onOpen={onOpen} />
             </dd>
             <dt>Interface</dt>
             <dd className="mono">
@@ -282,6 +400,7 @@ function TunnelDetail({ tenantId, id, onClose, go }: { tenantId: number; id: num
               </>
             )}
           </dl>
+          <Pairing t={t} tenantId={tenantId} canEdit={canEdit} onOpen={onOpen} onChanged={onChanged} onError={setErr} />
           {t.unresolved.length > 0 && (
             <Note warn>
               {L(
@@ -412,5 +531,156 @@ function TunnelDetail({ tenantId, id, onClose, go }: { tenantId: number; id: num
         </div>
       )}
     </Drawer>
+  );
+}
+
+// Kopplung des Tunnels (1.23.0, ADR 0063 Nachtrag): gekoppelte Tunnel mit Herkunft (lösen), von Hand gelöste
+// automatische Kopplungen (wieder zulassen), Vorschläge und die Wahl eines Tunnels einer anderen FortiGate (Operator).
+function Pairing({
+  t,
+  tenantId,
+  canEdit,
+  onOpen,
+  onChanged,
+  onError,
+}: {
+  t: VpnTunnelDetail;
+  tenantId: number;
+  canEdit: boolean;
+  onOpen: (id: number) => void;
+  onChanged: () => void;
+  onError: (e: unknown) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [pick, setPick] = useState("");
+  const linked = t.peers.filter((p) => p.pair);
+  const full = t.kind !== "dialup" && linked.length > 0; // ein statischer Tunnel hat eine Gegenstelle
+  const run = async (f: () => Promise<unknown>) => {
+    setBusy(true);
+    try {
+      await f();
+      onChanged();
+    } catch (e) {
+      onError(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const couple = (other: number, mode: "coupled" | "separated" = "coupled") => run(() => setVpnPair({ tenant_id: tenantId, a: t.id, b: other, mode }));
+  return (
+    <div id="vpn-pairing">
+      <h3>{L("Kopplung", "Coupling")}</h3>
+      {linked.length === 0 ? (
+        <p className="faint">
+          {L(
+            "Nicht gekoppelt – der Weg geht nur weiter, wenn die Gegenstelle eine Adresse einer gelesenen FortiGate ist (Tunnel dort offen), sonst endet er an der Gegenstelle.",
+            "Not coupled – the path only continues if the peer is an address of a FortiGate that is read (tunnel there open), otherwise it ends at the peer.",
+          )}
+        </p>
+      ) : (
+        <table className="compact" id="vpn-pairs">
+          <tbody>
+            {linked.map((p) => (
+              <tr key={`${p.source_system_id}|${p.context}|${p.tunnel}`} data-pair={p.pair}>
+                <td>
+                  {p.label}{" "}
+                  {p.tunnel_id != null ? (
+                    <button className="linkbtn mono" onClick={() => onOpen(p.tunnel_id!)}>
+                      {p.tunnel}
+                    </button>
+                  ) : (
+                    <span className="mono">{p.tunnel}</span>
+                  )}
+                </td>
+                <td>
+                  <PairChip pair={p.pair} /> <span className="faint">{HOW[p.how] ?? p.how}</span>
+                </td>
+                <td className="nowrap">
+                  {canEdit && p.pair === "manual" && p.pair_id != null && (
+                    <button className="btn btn-ghost btn-sm vpn-unpair" disabled={busy} onClick={() => run(() => deleteVpnPair(p.pair_id!, tenantId))}>
+                      {L("Lösen", "Separate")}
+                    </button>
+                  )}
+                  {canEdit && p.pair === "auto" && p.tunnel_id != null && (
+                    <button
+                      className="btn btn-ghost btn-sm vpn-unpair"
+                      disabled={busy}
+                      title={L("Die automatische Kopplung gilt nicht (von Hand gelöst)", "The automatic coupling does not apply (separated manually)")}
+                      onClick={() => couple(p.tunnel_id!, "separated")}
+                    >
+                      {L("Lösen", "Separate")}
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {(t.separated ?? []).length > 0 && (
+        <div className="faint" id="vpn-separated">
+          {(t.separated ?? []).map((x) => (
+            <div key={x.pair_id}>
+              {L(`Automatische Kopplung mit ${x.label} · ${x.tunnel} von Hand gelöst`, `Automatic coupling with ${x.label} · ${x.tunnel} separated manually`)}{" "}
+              {canEdit && (
+                <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => run(() => deleteVpnPair(x.pair_id, tenantId))}>
+                  {L("wieder zulassen", "allow again")}
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      {!full && (t.suggestion_list ?? []).length > 0 && (
+        <>
+          <h4>{L("Vorschläge", "Suggestions")}</h4>
+          <table className="compact" id="vpn-suggestions">
+            <tbody>
+              {(t.suggestion_list ?? []).map((x) => (
+                <tr key={x.tunnel_id} data-tunnel={x.tunnel}>
+                  <td>
+                    {x.label}{" "}
+                    <button className="linkbtn mono" onClick={() => onOpen(x.tunnel_id)}>
+                      {x.tunnel}
+                    </button>
+                  </td>
+                  <td className="faint">{x.text}</td>
+                  <td className="nowrap">
+                    {canEdit && (
+                      <button className="btn btn-primary btn-sm vpn-couple" disabled={busy} onClick={() => couple(x.tunnel_id)}>
+                        {L("Koppeln", "Couple")}
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+      {canEdit && !full && (t.choices ?? []).length > 0 && (
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 8 }}>
+          <select id="vpn-pair-pick" className="sel" aria-label={L("Tunnel einer anderen FortiGate", "Tunnel of another FortiGate")} value={pick} onChange={(e) => setPick(e.target.value)}>
+            <option value="">{L("Tunnel einer anderen FortiGate wählen …", "Choose a tunnel of another FortiGate …")}</option>
+            {(t.choices ?? []).map((c) => (
+              <option key={c.tunnel_id} value={String(c.tunnel_id)}>
+                {`${c.label} · ${c.tunnel}${c.kind === "dialup" ? L(" (Dial-up)", " (dial-up)") : ""}`}
+              </option>
+            ))}
+          </select>
+          <button className="btn btn-primary btn-sm" id="vpn-pair-save" disabled={busy || !pick} onClick={() => couple(Number(pick))}>
+            {L("Von Hand koppeln", "Couple manually")}
+          </button>
+        </div>
+      )}
+      {canEdit && (
+        <p className="faint">
+          {L(
+            "Die Kopplung ist eine Angabe in Automato (Audit), nichts geht an die Firewall. Selektoren und Zustand gelten weiter: ohne passende Phase 2 bzw. mit Tunnel down verwirft die Firewall.",
+            "The coupling is a setting in Automato (audit), nothing goes to the firewall. Selectors and state still apply: without a matching phase 2 or with the tunnel down the firewall drops.",
+          )}
+        </p>
+      )}
+    </div>
   );
 }

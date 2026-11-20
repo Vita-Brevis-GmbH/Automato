@@ -1251,6 +1251,12 @@ def _fw_rows(
         # aufgeteilt, nicht dass wir die Ziele im MPLS auch auf dem anderen Tenant sehen“) - vorher
         # eine Zeile mit allen Gegenstellen, bei mehreren Zonentypen „unspezifisch“
         groups: dict[tuple[int, str], dict] = {}
+        # Benutzer bzw. Gruppen (Remote Access, 1.23.0): eine Bedingung an die Quelle, keine
+        # eigene Gegenstelle - eine Zeile „<Adressbereich> (Benutzer: <Gruppen>)“ statt einer
+        # zweiten Zeile mit den Gruppen (Anwender 2026-11-20)
+        counterpart_eps, cp_objs, cp_any, users = _split_identity(
+            rule, counterpart_eps, cp_objs, cp_any
+        )
         for e, o, is_any in zip(counterpart_eps, cp_objs, cp_any, strict=True):
             label = _peer_label(o, e.inline_value)
             external = o is not None and o.object_class == ObjectClass.EXTERNAL
@@ -1287,7 +1293,7 @@ def _fw_rows(
         for (idx, cp_scope), g in groups.items():
             row = {
                 APP: app_label(system_name, own),
-                PEER: lines(g["labels"]),
+                PEER: _with_users(g["labels"], users),
                 SERVICE: ", ".join(rule_view.service_labels(rule)),
                 PROTECTION: ", ".join(rule.protections) if rule.protections else "",
                 ACTION: action_label(rule),
@@ -1323,6 +1329,43 @@ def _fw_rows(
             meta |= (marks or {}).get(side) or {}  # ADR 0071: überdeckt, breit, Weg nicht geprüft
             out.append((idx, {**row, VIA: via, **meta, OBJECT: obj, OBJECT_VALUE: value}))
     return out
+
+
+# Identitaet einer FortiGate-Policy (Benutzer, Gruppen, FSSO) - der Collector liefert sie als
+# zusaetzliche Quelle (`usergroup:<Name>`, `collectors/fortigate/normalize._IDENTITY`)
+_IDENTITY_FIELDS = ("users", "groups", "fsso-groups")
+
+
+def _split_identity(rule: Rule, eps: list, objs: list, any_: list) -> tuple[list, list, list, list]:
+    """Gegenstellen ohne die Benutzer/Gruppen der Policy (1.23.0): die Gruppen sind auf dem
+    Geraet eine Bedingung an die Quelle (Adresse **und** Benutzer), keine eigene Gegenstelle.
+    Liefert (Endpunkte, Objekte, any je Endpunkt, Namen der Benutzer/Gruppen). Ohne Adresse
+    daneben bleiben die Gruppen die Gegenstelle (wie bisher)."""
+    raw = rule.raw or {}
+    names = {str(x.get("name")) for f in _IDENTITY_FIELDS for x in raw.get(f) or []
+             if isinstance(x, dict) and x.get("name")}  # fmt: skip
+    if not names:
+        return eps, objs, any_, []
+    keep, users = [], []
+    for e, o, a in zip(eps, objs, any_, strict=True):
+        if not a and o is not None and not o.value and not o.fqdn and o.name in names:
+            users.append(o.name)
+        else:
+            keep.append((e, o, a))
+    if not users or not keep:
+        return eps, objs, any_, []
+    return [k[0] for k in keep], [k[1] for k in keep], [k[2] for k in keep], users
+
+
+def _with_users(labels: list[str], users: list[str]) -> str:
+    """Gegenstelle mit den Benutzern/Gruppen: „10.0.9.1-10.0.9.254 (Benutzer: VPN-Benutzer)“;
+    mehrere Adressen je auf einer Zeile, die Benutzer auf der letzten."""
+    text = lines(labels)
+    if not users:
+        return text
+    who = L(f"(Benutzer: {', '.join(dict.fromkeys(users))})",
+            f"(users: {', '.join(dict.fromkeys(users))})")  # fmt: skip
+    return f"{text} {who}" if text else who
 
 
 def _cp_scope(zm, e, o) -> str:

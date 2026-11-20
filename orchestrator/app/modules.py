@@ -240,6 +240,7 @@ MODULES: tuple[Module, ...] = (
             "topo_model",
             "version_refresh",  # Befunde nach einem Update neu (0.133.0)
             "vpn",  # IPsec-Tunnel (1.19.0, ADR 0063)
+            "vpn_kopplung",  # Kopplung der Tunnel, automatisch bzw. von Hand (1.23.0)
         ),
         views=(
             "routing",

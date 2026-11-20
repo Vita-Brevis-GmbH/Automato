@@ -56,7 +56,9 @@ export const VIEWS: ViewEntry[] = [
     section: "doc",
     order: 65,
     places: [{ slug: "vpn", layer: "l4-7", label: L("VPN-Tunnel", "VPN tunnels"), icon: "vpn", order: 450 }],
-    render: (p) => <VpnTunnels key={p.paramsKey} tenantId={p.tenantId} tenantLabel={p.tenantLabel} params={p.params} go={p.go} />,
+    render: (p) => (
+      <VpnTunnels key={p.paramsKey} tenantId={p.tenantId} tenantLabel={p.tenantLabel} params={p.params} go={p.go} canEdit={p.me.isAdmin || p.me.isOperator} />
+    ),
   },
   {
     key: "verkabelung",

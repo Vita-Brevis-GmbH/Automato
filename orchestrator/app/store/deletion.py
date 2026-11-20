@@ -148,6 +148,10 @@ def delete_source_system(session: Session, source: SourceSystem) -> dict[str, in
             | (ParallelRejection.system_b_id == source.id)
         )
     )
+    from app.models import VpnPair  # VPN-Kopplung von Hand (1.23.0): mit einem der Enden
+
+    session.execute(delete(VpnPair).where((VpnPair.a_system_id == source.id)
+                                          | (VpnPair.b_system_id == source.id)))  # fmt: skip
     counts["vms"] = _delete_vms(session, Vm.source_system_id == source.id)
     session.execute(delete(Portgroup).where(Portgroup.source_system_id == source.id))
     # Kunden (ADR 0018): Selektoren dieses Quellsystems fallen weg
@@ -203,9 +207,10 @@ def delete_tenant(session: Session, tenant: Tenant) -> dict[str, int]:
     session.execute(delete(TenantModule).where(TenantModule.tenant_id == tid))  # 0.107.0
     # Exporte im Hintergrund (1.21.0): die Dateien raeumt `export_jobs.purge` als Reste weg
     session.execute(delete(ExportJob).where(ExportJob.tenant_id == tid))
-    from app.models import CableLabel  # Kabelnummern (1.19.0)
+    from app.models import CableLabel, VpnPair  # Kabelnummern (1.19.0), VPN-Kopplung (1.23.0)
 
     session.execute(delete(CableLabel).where(CableLabel.tenant_id == tid))
+    session.execute(delete(VpnPair).where(VpnPair.tenant_id == tid))
     counts = {"rules": _delete_rules(session, Rule.tenant_id == tid)}
     counts["nat_rules"] = _count(session, delete(NatRule).where(NatRule.tenant_id == tid))
     counts["findings"] = _count(session, delete(Finding).where(Finding.tenant_id == tid))
