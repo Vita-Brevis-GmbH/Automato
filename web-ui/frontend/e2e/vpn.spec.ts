@@ -123,3 +123,125 @@ test("VPN-Tunnel: Link mit festem Schlüssel öffnet den Tunnel (1.19.0)", async
   await expect(page.locator(".drawer h2")).toHaveText("VPN vpn-b");
   await expect(page.locator("#vpn-detail #vpn-routes tbody tr")).toHaveCount(3);
 });
+
+// 1.23.0 (Anwender 2026-11-20: „Die VPN Verbindungen werden herausgelesen aber nicht verknüpft …“ – „Manuell, wenn es
+// dynamisch nicht geht?“, ADR 0063 Nachtrag): Tunnel zweier gelesener FortiGates gekoppelt – automatisch bzw. von
+// Hand; Vorschläge aus gespiegelten Selektoren, Koppeln, Lösen, verwaiste Kopplung.
+const PAIRED = [
+  {
+    ...TUNNELS[0],
+    peers: [{ source_system_id: 4, context: "root", tunnel: "vpn-a", interface: "wan1", how: "gw", label: "fw-b", pair: "auto", pair_id: null, tunnel_id: 21, ref: "4|root|vpn-a" }],
+    suggestions: 0,
+  },
+  {
+    id: 14, ref: "3|root|to-hub", source_system_id: 3, source: "fw-a", node: "fw-a", context: "root", name: "to-hub",
+    kind: "static", interface: "wan1", remote_gw: "198.51.100.200", local_gw: null, ike_version: 2, status: "up",
+    phase2_total: 1, phase2_up: 1, instances: 0, routes: 1, uncovered: 0, partial: 0, peers: [], suggestions: 1, proposal: null,
+  },
+  {
+    id: 21, ref: "4|root|vpn-a", source_system_id: 4, source: "fw-b", node: "fw-b", context: "root", name: "vpn-a",
+    kind: "static", interface: "wan1", remote_gw: "203.0.113.1", local_gw: null, ike_version: 2, status: "up",
+    phase2_total: 1, phase2_up: 1, instances: 0, routes: 1, uncovered: 0, partial: 0,
+    peers: [{ source_system_id: 3, context: "root", tunnel: "vpn-b", interface: "wan1", how: "gw", label: "fw-a", pair: "auto", pair_id: null, tunnel_id: 11, ref: "3|root|vpn-b" }],
+    suggestions: 0, proposal: null,
+  },
+  {
+    id: 22, ref: "4|root|dial-in", source_system_id: 4, source: "fw-b", node: "fw-b", context: "root", name: "dial-in",
+    kind: "dialup", interface: "wan1", remote_gw: null, local_gw: null, ike_version: 2, status: "idle",
+    phase2_total: 1, phase2_up: 0, instances: 0, routes: 0, uncovered: 0, partial: 0, peers: [], suggestions: 1, proposal: null,
+  },
+];
+const REF = (t: (typeof PAIRED)[number]) => ({ tunnel_id: t.id, ref: t.ref, source_system_id: t.source_system_id, context: "root", tunnel: t.name, kind: t.kind, label: t.source });
+
+async function mockPairs(page: Page, sent: { method: string; url: string; body?: unknown }[], coupled: { on: boolean }) {
+  await page.route(/\/api\/vpn\/tunnels(\?|$)/, (route) => {
+    const list = PAIRED.map((t) =>
+      coupled.on && t.id === 14
+        ? { ...t, suggestions: 0, peers: [{ source_system_id: 4, context: "root", tunnel: "dial-in", interface: "wan1", how: "manual", label: "fw-b", pair: "manual", pair_id: 7, tunnel_id: 22, ref: "4|root|dial-in" }] }
+        : t,
+    );
+    return route.fulfill({
+      json: {
+        tunnels: list, total: list.length, counts: { up: 3 }, missing: [],
+        orphans: [{ pair_id: 9, mode: "coupled", ends: [{ source_system_id: 3, source: "fw-a", context: "root", tunnel: "alt-tunnel" }, { source_system_id: 4, source: "fw-b", context: "root", tunnel: "dial-in" }] }],
+      },
+    });
+  });
+  await page.route(/\/api\/vpn\/tunnels\/(\d+)(\?|$)/, (route) => {
+    const id = Number(new URL(route.request().url()).pathname.split("/").pop());
+    const t = PAIRED.find((x) => x.id === id)!;
+    const base = { ...DETAIL, ...t, phase2: [], route_list: [], behind: [], dialup: [], attrs: {}, separated: [] };
+    if (id === 14 && !coupled.on)
+      return route.fulfill({
+        json: {
+          ...base,
+          suggestion_list: [{ ...REF(PAIRED[3]), why: "mirror", exact: true, text: "Phase-2-Selektoren gespiegelt" }],
+          choices: [REF(PAIRED[2]), REF(PAIRED[3])],
+        },
+      });
+    if (id === 14)
+      return route.fulfill({ json: { ...base, peers: [{ source_system_id: 4, context: "root", tunnel: "dial-in", interface: "wan1", how: "manual", label: "fw-b", pair: "manual", pair_id: 7, tunnel_id: 22, ref: "4|root|dial-in" }], suggestion_list: [], choices: [REF(PAIRED[3])] } });
+    return route.fulfill({ json: { ...base, suggestion_list: [], choices: [] } });
+  });
+  await page.route(/\/api\/vpn\/pairs/, (route) => {
+    const req = route.request();
+    sent.push({ method: req.method(), url: req.url(), body: req.method() === "PUT" ? req.postDataJSON() : undefined });
+    if (req.method() === "PUT") {
+      coupled.on = true;
+      return route.fulfill({ json: { pair_id: 7, mode: "coupled", previous: null, a: "3|root|to-hub", b: "4|root|dial-in" } });
+    }
+    coupled.on = false;
+    return route.fulfill({ json: { deleted: Number(new URL(req.url()).pathname.split("/").pop()) } });
+  });
+}
+
+test("VPN-Tunnel: gekoppelt automatisch bzw. von Hand, Vorschlag koppeln und lösen (1.23.0)", async ({ page }) => {
+  const sent: { method: string; url: string; body?: unknown }[] = [];
+  const coupled = { on: false };
+  await mockPairs(page, sent, coupled);
+  await page.goto("/#vpn");
+  const table = page.locator("#vpn-table");
+  // automatisch gekoppelt: Gegenstelle mit Herkunft, der andere Tunnel als Link
+  const b = table.locator("tr[data-tunnel='vpn-b']");
+  await expect(b).toContainText("→ fw-b (vpn-a)");
+  await expect(b.locator(".vpn-pair")).toHaveText("automatisch");
+  // nicht gekoppelt, aber ein Vorschlag
+  const spoke = table.locator("tr[data-tunnel='to-hub']");
+  await expect(spoke).toContainText("nicht gelesen – der Weg endet hier");
+  await expect(spoke.locator(".vpn-suggest")).toHaveText("1 Vorschlag zum Koppeln");
+  // verwaiste Kopplung: sichtbar, entfernbar
+  await expect(page.locator(".note").filter({ hasText: "Kopplung von Hand ohne gelesenen Tunnel" })).toContainText("fw-a · alt-tunnel ↔ fw-b · dial-in");
+
+  // Link auf den anderen Tunnel öffnet dessen Detail
+  await b.locator(".vpn-peer").getByRole("button", { name: "vpn-a" }).click();
+  await expect(page.locator(".drawer h2")).toHaveText("VPN vpn-a");
+  await expect(page.locator("#vpn-pairs tr[data-pair='auto']")).toContainText("fw-a");
+  await page.keyboard.press("Escape");
+
+  // Vorschlag koppeln (Operator): PUT mit beiden Kennungen, danach von Hand gekoppelt
+  await spoke.getByRole("button", { name: "to-hub" }).click();
+  const pairing = page.locator("#vpn-pairing");
+  await expect(pairing).toContainText("Nicht gekoppelt");
+  await expect(pairing.locator("#vpn-suggestions tr[data-tunnel='dial-in']")).toContainText("Phase-2-Selektoren gespiegelt");
+  await expect(page.locator("#vpn-pair-pick option")).toHaveCount(3);
+  await pairing.locator("#vpn-suggestions .vpn-couple").click();
+  await expect(pairing.locator("#vpn-pairs tr[data-pair='manual']")).toContainText("von Hand gekoppelt");
+  expect(sent[0]).toMatchObject({ method: "PUT", body: { tenant_id: 1, a: 14, b: 22, mode: "coupled" } });
+  await expect(table.locator("tr[data-tunnel='to-hub'] .vpn-pair")).toHaveText("von Hand");
+
+  // lösen: DELETE der Zeile
+  await pairing.locator(".vpn-unpair").click();
+  await expect(pairing).toContainText("Nicht gekoppelt");
+  expect(sent[1].method).toBe("DELETE");
+  expect(sent[1].url).toContain("/api/vpn/pairs/7");
+});
+
+test("VPN-Tunnel: automatische Kopplung lösen sendet „separated“ (1.23.0)", async ({ page }) => {
+  const sent: { method: string; url: string; body?: unknown }[] = [];
+  await mockPairs(page, sent, { on: false });
+  await page.goto("/#vpn");
+  await page.locator("#vpn-table tr[data-tunnel='vpn-b']").getByRole("button", { name: "vpn-b" }).click();
+  await page.locator("#vpn-pairing .vpn-unpair").click();
+  await expect.poll(() => sent.length).toBe(1);
+  expect(sent[0]).toMatchObject({ method: "PUT", body: { tenant_id: 1, a: 11, b: 21, mode: "separated" } });
+});

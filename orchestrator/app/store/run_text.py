@@ -215,6 +215,9 @@ PHRASES: tuple[tuple[str, str], ...] = (
     # Switches (cisco_switch/tasks.py, client.py, normalize.py, junos.py)
     ("^kein Switch gelesen$", "no switch read"),
     ("^Switches: {n} gelesen (", "Switches: {n} read ("),
+    # LLDP der FortiGate ohne Leserecht (1.23.0, fortigate/tasks.py) - ein Hinweis
+    ("Hinweise: LLDP der FortiGate nicht abgefragt (",
+     "Notes: LLDP of the FortiGate not queried ("),
     (" · nicht gelesen: ", " · not read: "),
     (" · Hinweise: ", " · Notes: "),
     # Dauer des Laufs und laengster Switch (1.9.0, cisco_switch/tasks.durations)
@@ -266,6 +269,10 @@ PHRASES: tuple[tuple[str, str], ...] = (
     ("VDOM nicht lesbar: {skipped} - das Profil braucht Lesezugriff auf alle VDOMs; gelesen: ",
      "VDOM not readable: {skipped} - the profile needs read access to all VDOMs; read: "),
     ("Routing nicht lesbar: ", "Routing not readable: "),
+    (") - Leserecht Netzwerk (netgrp) im Profil ergaenzen",
+     ") - add the read permission network (netgrp) to the profile"),
+    ("LLDP-Nachbarn (", "LLDP neighbors ("),
+    ("Interface-MACs (", "interface MACs ("),
     (" · nicht lesbar: ", " · not readable: "),
     ("Routing-Tabelle ", "routing table "),
     ("BGP-Pfade ", "BGP paths "),

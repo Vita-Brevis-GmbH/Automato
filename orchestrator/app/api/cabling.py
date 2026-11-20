@@ -144,6 +144,7 @@ def devices(
             "key": d.key, "name": d.name, "kind": d.kind, "read": d.read, "source": d.source,
             "source_system_id": d.source_system_id, "platform": d.platform, "model": d.model,
             "version": d.version, "mgmt_ip": d.mgmt_ip,
+            "ha_of": d.ha_of,  # HA-Mitglied des gelesenen Geraets (1.23.0)
             "ports": sum(1 for p in own if p.kind == "physical"),
             "connected": sum(1 for p in own if p.kind == "physical"
                              and (p.status or "") in ("connected", "up")),

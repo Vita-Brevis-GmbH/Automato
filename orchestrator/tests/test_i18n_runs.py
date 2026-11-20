@@ -53,6 +53,12 @@ KNOWN = [
      "Switches: 2 read (IOS/IOS-XE, NX-OS) · not read: 10.0.0.3: not reachable: connection to "
      "port 22 refused (SSH off or path blocked) · Notes: 10.0.0.1: MAC table: 120 entries "
      "above 50000 not taken over"),
+    # LLDP der FortiGate ohne Leserecht (1.23.0)
+    ("VDOMs: root, kunde-a · Hinweise: LLDP der FortiGate nicht abgefragt (LLDP-Nachbarn "
+     "(HTTP 403); Interface-MACs (HTTP 403)) - Leserecht Netzwerk (netgrp) im Profil ergaenzen",
+     "VDOMs: root, kunde-a · Notes: LLDP of the FortiGate not queried (LLDP neighbors "
+     "(HTTP 403); interface MACs (HTTP 403)) - add the read permission network (netgrp) to the "
+     "profile"),
     # Dauer und laengster Switch (1.9.0)
     ("Switches: 3 gelesen (IOS/IOS-XE) · Dauer 2 min 10 s, längster Switch sw-01 (45 s, "
      "Sitzung)",

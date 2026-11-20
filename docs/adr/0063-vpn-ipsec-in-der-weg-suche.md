@@ -106,3 +106,55 @@ Selektoren aller Phase 2 waren vereinigt.
 - Nicht entscheidbar (Selektor nur teilweise, Selektoren nicht auflösbar): der Weg geht weiter,
   die Stelle ist als „nicht geprüft“ gezählt (`uncertain.vpn`, ADR 0048).
 - Ein Tunnel ohne gelesene Phase 2 wird nicht verworfen (nichts zu vergleichen).
+
+## Nachtrag 1.23.0 (2026-11-20): Tunnel zweier gelesener FortiGates koppeln
+
+Anwender (Test von 1.22.0 in Prod): „Die VPN Verbindungen werden herausgelesen aber nicht
+verknüpft, also bleiben die verbundenen Standorte weiterhin getrennt“ – „Beide eingelesen.
+Einseitig ist es dynamisch, kann man dies nicht koppeln? Manuell, wenn es dynamisch nicht geht?“
+
+Bis 1.22 fand die Weg-Suche die andere FortiGate nur, wenn die Adresse der Gegenstelle einem ihrer
+Interfaces gehörte bzw. (NAT davor) ihr Tunnel eindeutig auf uns zeigte. Eine statische Seite
+hinter NAT bzw. eine VIP gegenüber einem Dial-up blieb „Gegenstelle nicht gelesen“; die Wahl des
+Tunnels dort nahm bei mehreren Kandidaten still den ersten. Die Topologie kannte keine Tunnel.
+
+Entscheid:
+
+1. **Kopplung als eigener Begriff** (`store/vpn_kopplung.py`): zwei Tunnel gelesener FortiGates
+   sind **ein** Übergang. Die Weg-Suche (`vpn.Index.far`) nimmt zuerst das gekoppelte Gegenstück –
+   Eingang dort ist sein Tunnel; Dial-up wählt unter mehreren Gekoppelten nach der Adresse bzw.
+   den Netzen der verbundenen Gegenstelle, sonst nach den lokalen Selektoren, die das Ziel
+   enthalten, nur eindeutig. Ohne Kopplung gilt wie bisher die FortiGate, der die Adresse der
+   Gegenstelle gehört – der Tunnel dort bleibt dann offen (nie mehr still der erste), mit dem
+   Hinweis „Tunnel dort nicht eindeutig, in ‚VPN-Tunnel‘ koppeln“.
+2. **Automatisch** nur, wo belegt und eindeutig (`pair = auto`, `how` aus Sicht des Tunnels):
+   `gw` – die statische Seite zeigt auf eine Interface-Adresse der anderen FortiGate, dort zeigt ein
+   statischer Tunnel zurück (bzw. hinter NAT: ein statischer Tunnel auf dem Interface mit
+   gespiegelten Selektoren) oder ein Dial-up auf diesem Interface hat gespiegelte Selektoren;
+   `vip` – dasselbe über eine VIP einer gelesenen FortiGate davor (ohne Port-Weiterleitung bzw.
+   mit UDP 500/4500); `reverse` – die eigene Gegenstelle gehört keinem gelesenen Gerät, genau ein
+   noch freier Tunnel einer gelesenen FortiGate zeigt auf uns und die Selektoren sind gespiegelt;
+   `dialup` – eine verbundene Dial-up-Gegenstelle kommt von einer Adresse der anderen FortiGate,
+   deren statischer Tunnel dort eindeutig ist und gespiegelte Selektoren hat. „Gespiegelt“ =
+   lokal ↔ Gegenstelle gleich bzw. umfassend (ein Hub mit 0.0.0.0/0). Ein statischer Tunnel hat
+   höchstens eine Gegenstelle; mehrere Kandidaten bzw. nicht gespiegelte Selektoren koppeln nicht,
+   sie sind **Vorschläge**.
+3. **Von Hand** (`vpn_pair`, Migration `0102_vpn_kopplung`): koppeln (`coupled`) bzw. eine
+   automatische Kopplung lösen (`separated`), in der Ansicht „VPN-Tunnel“ mit Vorschlägen
+   (nicht eindeutige Treffer, gespiegelte Selektoren) und der Wahl eines Tunnels einer anderen
+   gelesenen FortiGate. Von Hand geht vor. Laufzeitdaten in Automato über den festen Schlüssel
+   (Quellsystem, VDOM, Tunnel) – über die Läufe gültig; ein Ende, das kein Lauf mehr liefert,
+   bleibt als verwaist sichtbar und lösbar (nie still gelöscht); mit dem Quellsystem bzw. Mandanten
+   gelöscht. Rechte: Operator; für Mandanten-Benutzer „anpassen“ (`auth/tenant_routes.py`,
+   ADR 0068). `PUT /vpn/pairs`, `DELETE /vpn/pairs/{id}`, Audit `vpn_pair.set`/`.deleted` – damit
+   ändern sich Fingerabdruck und Wege-Speicher (ADR 0037, 0048). Kein Schreibweg zu einem Gerät.
+4. **Selektoren und Zustand** gelten unverändert (Nachtrag ADR 0070): ohne passende Phase 2 bzw.
+   mit Tunnel down ist der Weg am Ausgang verworfen, gleich ob gekoppelt.
+5. **Anzeige:** Weg und Verbindungen nennen die andere Firewall mit ihrem Tunnel als Link
+   (`peer.pair`, `peer.open`, Format von `paths.trace` nur erweitert); die Ansicht zeigt Herkunft
+   „automatisch“/„von Hand“, Vorschläge, verwaiste Kopplungen; die Topologie hat eine Kante `vpn`
+   (Herkunft `derived` bzw. `manual`) – die Standorte hängen zusammen.
+
+Grenzen: Welche Phase 1 eine FortiGate für einen eingehenden Peer wählt, hängt von dessen
+Absender-Adresse ab; hinter NAT ist sie nicht gelesen – dort entscheiden die Selektoren, sonst die
+Hand. Eingehender Verkehr wird an den Selektoren der Gegenstelle nicht geprüft (nur am Ausgang).

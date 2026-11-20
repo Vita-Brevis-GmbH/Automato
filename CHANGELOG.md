@@ -7,6 +7,51 @@ der Datei `VERSION` (SemVer). Neue Version setzen: `python3 scripts/version.py s
 Minor = neue Funktionen. Die Agent-Version lautet `<Release>+<Build>` – der Build ist ein
 Fingerabdruck der ausgelieferten Dateien und unterscheidet auch Stände ohne neue Release-Nummer.
 
+## 1.23.0 – 2026-11-20
+
+Rückmeldung des Anwenders zum Test von 1.22.0 in Prod (2026-11-20). Migrationen
+`0099_lldp_dns_zonen`, `0102_vpn_kopplung`; Nachträge zu ADR 0025, 0045, 0063 und 0067.
+
+- **Firewalls in der Verkabelung** („die Firewalls werden nicht in der Verkabelung erkannt, LLDP ist
+  aktiv“): Die FortiGate wird über alle Merkmale erkannt – Hostname (auch aus dem Systemstatus; der
+  Name des Quellsystems darf abweichen), HA-Mitglieder, Seriennummer, Chassis-ID bzw. Interface-MAC,
+  Port-ID als Interface-Name bzw. Alias, Interface-Adresse. Die FortiGate liest ihre eigenen
+  LLDP-Nachbarn (Monitor-API, nur lesend, Leserecht Netzwerk); ohne Recht nur ein Hinweis. Eine MAC
+  als Gerätename wird nicht mehr abgeschnitten. Neues Feld Chassis-ID am Nachbarn.
+- **Kabelnummern erfassen mit Auswahl** („die Geräte und Ports auswählen“): je Ende das Gerät mit
+  Suche (gelesen, CDP/LLDP, NetBox, frei erfasst), dann den Port dieses Geräts; die bekannte
+  Gegenstelle wird vorgeschlagen. Frei nur, wo kein gelesenes Gerät existiert (z. B. Patchpanel),
+  gekennzeichnet „frei“. Neuer Endpunkt `GET /cabling/labels/choices`.
+- **Catalyst 1200/1300** („Spanningtree … nicht erkannt, Rapid per VLAN“, „show mac address-table:
+  Unrecognized command“): Diese Switches werden immer in einer Sitzung gelesen wie von Hand (nicht
+  per Exec) – MAC-Tabelle, ARP und LLDP der Business-CLI; Spanning Tree Rapid-PVST, PVST, MSTP, RSTP
+  und STP je VLAN mit Root, Bridge und Ports (Port-Channels als Ports). Steht das Lesekonto nur im
+  User EXEC (Prompt `>`), nennt der Hinweis das nötige Recht statt „Plattform prüfen“ – auch in
+  „Verbindung prüfen“.
+- **VPN-Tunnel gekoppelt** („werden herausgelesen aber nicht verknüpft“, „einseitig dynamisch … manuell,
+  wenn es dynamisch nicht geht?“): Sind beide Enden gelesen, ist der Tunnel ein Übergang – die
+  Weg-Suche geht auf der anderen FortiGate weiter, Verbindungen und VPN-Ansicht nennen die andere
+  Firewall mit Link, die Topologie und der L3-Plan verbinden die Standorte. Automatisch, wo Adresse,
+  VIP davor, Gegen-Tunnel bzw. gespiegelte Selektoren es eindeutig belegen (auch Dial-up); sonst ein
+  Vorschlag. Von Hand koppeln bzw. lösen in „VPN-Tunnel“ (nur in Automato, Audit, Recht „anpassen“).
+- **Remote-Access-Regel einmal in der Applikations-Doku**: Benutzer und Gruppen einer Policy sind
+  keine eigene Gegenstelle mehr – eine Zeile „<Adressbereich> (Benutzer: <Gruppen>)“.
+- **Pläne je Schicht** (neu): **L1-Plan** (Geräte, Kabel mit Ports und Kabelnummer, Port-Channels),
+  **L2-Plan** (Trunks mit erlaubten VLANs, Root je VLAN/MST, blockierte Ports), **L3-Plan**
+  (Firewalls/VDOMs, Router, Netze, Transfernetze, statische Routen, BGP, IPsec-Tunnel) für den ganzen
+  Mandanten mit Filter nach Standort, Ebenen ein-/ausblendbar, Grenze 250 Elemente gezählt, Export
+  draw.io mit Ebenen.
+- **Befund „VLAN getrennt“ nur innerhalb einer L2-Domäne** (gleicher Standort, über Kabel verbundene
+  Switches, nicht über das ACI-Fabric): dieselbe VLAN-Nummer an getrennten Standorten ist normal.
+  „Wege vergleichen“ gleich.
+- **FortiGate ohne BGP** gilt nicht mehr als „nur teilweise gelesen“.
+- **DNS aus dem AD**: eine übertragene Zone gilt als gelesen, auch ohne Einträge; die Meldung
+  unterscheidet „keine Rückwärtszone eingetragen“, „eingetragen, aber noch nicht gelesen“ und „PTR
+  fehlt“ (mit Liste) – bisher hiess eine leere Zone fälschlich „ohne gelesene Rückwärtszone“.
+- **Nach dem Update:** FortiGates, Switches & Router und AD-DNS einmal neu einlesen; für die LLDP-
+  Nachbarn der FortiGate Leserecht Netzwerk. Beim Catalyst 1300 „Verbindung prüfen“ – mit dem Zusatz
+  „Stufe 1“ braucht das Lesekonto Privileged EXEC (oder Zugang SNMPv3, dann ohne Spanning Tree).
+
 ## 1.22.0 – 2026-11-19
 
 Version 2 Nr. 20 „Wege erkennen verbessern“. Anwender (2026-11-18): „Es soll absolut der Wahrheit

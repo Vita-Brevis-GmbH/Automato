@@ -2644,7 +2644,8 @@ export interface TraceVpn {
   covered?: "full" | "partial" | "none";
   phase2?: string;
   phase2_status?: string;
-  peer?: { key: string; source_system_id: number; context: string; label: string | null; tunnel: string | null; how: "gw" | "reverse" };
+  // Gegenstelle: gelesene FortiGate mit ihrem Tunnel; `pair` = gekoppelt (1.23.0), `open` = Tunnel dort nicht eindeutig
+  peer?: { key: string; source_system_id: number; context: string; label: string | null; tunnel: string | null; how: VpnHow; pair?: VpnPairOrigin; open?: number };
 }
 // Ziel-Server einer VIP bzw. eines Pools in der Weg-Suche (0.114.1)
 export interface VipServer {
@@ -3905,7 +3906,7 @@ export interface TopoEdgeRouter {
 }
 export interface TopoEdge {
   id: string;
-  kind: "transfer" | "member" | "vdom_link" | "route" | "bgp" | "uplink" | "exit_route" | "parallel" | "sync";
+  kind: "transfer" | "member" | "vdom_link" | "route" | "bgp" | "uplink" | "exit_route" | "parallel" | "sync" | "vpn";
   a: string;
   b: string;
   origin: TopoOrigin;
@@ -3923,6 +3924,8 @@ export interface TopoEdge {
   peer?: string;
   to?: Record<string, number>;
   boundary?: { reason: BoundaryReason; as?: number; private_as?: boolean }; // ADR 0032
+  // gekoppelte IPsec-Tunnel zweier FortiGates (1.23.0, ADR 0063 Nachtrag): Tunnel je Ende
+  tunnels?: { a: string; b: string; pair: VpnPairOrigin; status: (string | null)[] }[];
 }
 export interface TopoIssue {
   type: string;
@@ -3943,6 +3946,99 @@ export interface TopologyModel {
 }
 export const fetchTopology = (tenantId: number, node?: string) =>
   getJSON<TopologyModel>(`/api/topology${cq({ tenant_id: tenantId, node })}`);
+
+// Pläne je Netzwerkschicht (1.23.0, ADR 0067 Nachtrag 1.23.0): L1 Physik, L2 Switching, L3 Routing für den ganzen
+// Mandanten, Lage serverseitig, Filter nach Standort (`site`: Standort, 0 = ohne Standort, ohne Angabe alle)
+export type LayerPlanKey = "l1" | "l2" | "l3";
+export interface LayerPlanLink {
+  view: string;
+  params: Record<string, string>;
+}
+export interface LayerPlanNode {
+  id: string;
+  label: string;
+  kind: string;
+  kind_text: string;
+  sub: string;
+  read: boolean;
+  layer: string | null; // Ebene (ohne = immer sichtbar)
+  badges: { text: string; tone: string; layer: string | null }[];
+  info: string[];
+  link: LayerPlanLink | null;
+  foreign: boolean; // Nachbar an einem anderen Standort (blass)
+  group: number;
+  sites: number[];
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+export interface LayerPlanEnd {
+  x: number;
+  y: number;
+  text: string;
+  anchor: "start" | "end";
+}
+export interface LayerPlanEdge {
+  id: string;
+  a: string;
+  b: string;
+  kind: string;
+  label: string;
+  texts: { text: string; layer: string | null }[];
+  tone: string;
+  dash: boolean;
+  layer: string | null;
+  info: string[];
+  link: LayerPlanLink | null;
+  ends_layer: string;
+  end_a: string | null;
+  end_b: string | null;
+  points: [number, number][];
+  lx: number;
+  ly: number;
+  pa: LayerPlanEnd | null;
+  pb: LayerPlanEnd | null;
+}
+export interface LayerPlan {
+  layer: LayerPlanKey;
+  title: string;
+  site: number | null;
+  sites: SiteRef[];
+  layers: { key: string; label: string; used: boolean }[];
+  groups: { id: number; title: string; code: string | null; x: number; y: number; w: number; h: number }[];
+  nodes: LayerPlanNode[];
+  edges: LayerPlanEdge[];
+  summary: { nodes: Record<string, number>; edges: Record<string, number>; foreign: number };
+  limits: {
+    max_nodes: number;
+    max_edges: number;
+    nodes_total: number;
+    nodes_shown: number;
+    edges_total: number;
+    edges_shown: number;
+    dropped: Record<string, number>;
+    [k: string]: unknown;
+  };
+  notes: string[];
+  width: number;
+  height: number;
+}
+export const fetchLayerPlan = (tenantId: number, layer: LayerPlanKey, site: number | null) =>
+  getJSON<LayerPlan>(`/api/network-plans/${layer}${cq({ tenant_id: tenantId, site: site ?? undefined })}`);
+// Export draw.io (Ebenen als Ebenen in draw.io, ausgeblendete kommen ausgeblendet); Name aus Content-Disposition
+export async function exportLayerPlan(
+  tenantId: number,
+  layer: LayerPlanKey,
+  site: number | null,
+  hide: string[],
+): Promise<{ blob: Blob; filename: string }> {
+  const response = await fetchChecked(
+    withLang(`/api/network-plans/${layer}/export${cq({ tenant_id: tenantId, format: "drawio", site: site ?? undefined, hide: hide.join(",") || undefined })}`),
+  );
+  const match = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") ?? "");
+  return { blob: await response.blob(), filename: match?.[1] ?? `plan-${layer}.drawio` };
+}
 
 // Logische Zonen (0.51.0, ADR 0024): in Automato gepflegt, Selektoren wie beim Kunden und dazu
 // `exit` (Netze hinter einer Anbindung); Zonenmatrix mit Absicht je Paar, Zonenplan
@@ -4700,6 +4796,7 @@ export interface CablingDevice {
   model: string | null;
   version: string | null;
   mgmt_ip: string | null;
+  ha_of?: string | null; // HA-Mitglied des gelesenen Geräts (1.23.0)
   ports: number;
   connected: number;
   links: number;
@@ -4911,7 +5008,8 @@ export interface L2Plan {
   pairs: { a: string; b: string; domain: string }[]; // vPC-Paare (0.65.0)
   width: number;
   height: number;
-  vlan?: { vid: number; present: string[]; islands: string[][] };
+  // split (1.23.0): je L2-Domäne (Standort, über Kabel verbunden), in der das VLAN getrennt ist, die Inseln
+  vlan?: { vid: number; present: string[]; islands: string[][]; split?: string[][][] };
 }
 export interface L2Failure {
   devices: string[];
@@ -4947,12 +5045,31 @@ export async function exportL2Plan(
   return { blob: await response.blob(), filename: match?.[1] ?? `verkabelung.${format}` };
 }
 // VPN-Tunnel (IPsec, 1.19.0, ADR 0063): Liste und Detail
+// Wie die Gegenstelle erkannt wurde (1.23.0): Adresse, VIP davor, ihr Tunnel zeigt auf uns, verbundene Dial-up-Gegenstelle,
+// ihr statischer Tunnel zeigt auf diesen Dial-up, von Hand
+export type VpnHow = "gw" | "vip" | "reverse" | "dialup" | "spoke" | "manual";
+export type VpnPairOrigin = "auto" | "manual";
 export interface VpnPeer {
   source_system_id: number;
   context: string | null;
   tunnel: string | null;
-  interface: string;
-  how: "gw" | "reverse";
+  interface: string | null;
+  how: VpnHow;
+  label: string;
+  pair?: VpnPairOrigin; // gekoppelt (1.23.0)
+  pair_id?: number | null; // Zeile der Kopplung von Hand
+  tunnel_id?: number; // Kennung des anderen Tunnels (Link in der Ansicht)
+  ref?: string;
+  open?: number; // Tunnel dort nicht eindeutig: Zahl der Vorschläge
+}
+// Tunnel einer anderen FortiGate für die Kopplung von Hand (1.23.0)
+export interface VpnTunnelRef {
+  tunnel_id: number;
+  ref: string;
+  source_system_id: number;
+  context: string;
+  tunnel: string;
+  kind: "static" | "dialup" | "ddns";
   label: string;
 }
 export interface VpnTunnel {
@@ -4976,6 +5093,7 @@ export interface VpnTunnel {
   uncovered: number;
   partial: number;
   peers: VpnPeer[];
+  suggestions: number; // Vorschläge für eine Kopplung von Hand (1.23.0)
   proposal?: string | null;
 }
 export interface VpnPhase2 {
@@ -4995,12 +5113,18 @@ export interface VpnTunnelDetail extends VpnTunnel {
   behind: { net: string; from: string[] }[];
   unresolved: string[];
   attrs: Record<string, unknown>;
+  // Kopplung (1.23.0): Vorschläge, gelöste automatische Kopplungen, wählbare Tunnel anderer FortiGates
+  suggestion_list: (VpnTunnelRef & { why: string; exact: boolean; text: string })[];
+  separated: (VpnTunnelRef & { pair_id: number })[];
+  choices: VpnTunnelRef[];
 }
 export interface VpnList {
   tunnels: VpnTunnel[];
   total: number;
   counts: Record<string, number>;
   missing: { source_system_id: number; source: string | null; context: string; missing: string[] }[];
+  // Kopplungen von Hand, deren Tunnel kein Lauf mehr liefert (1.23.0)
+  orphans: { pair_id: number; mode: "coupled" | "separated"; ends: { source_system_id: number; source: string; context: string; tunnel: string }[] }[];
 }
 export const fetchVpnTunnels = (tenantId: number, f: { q?: string; status?: string; system?: number | null } = {}) =>
   getJSON<VpnList>(`/api/vpn/tunnels${cq({ tenant_id: tenantId, q: f.q, status: f.status, system: f.system ?? undefined })}`);

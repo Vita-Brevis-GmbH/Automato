@@ -6,6 +6,20 @@ eine eigene Auswertung: Spalten nach der Strichzeile, jedes Wort in die Spalte, 
 Zeilen ohne erste Spalte gehoeren zur Zeile davor. Portnamen wie im Rest (`Gi1/0/1`, `Te1/0/1`,
 `Po1`). VLANs der Ports aus `show vlan` (getaggt bzw. ungetaggt je VLAN). Seit 0.94.0 die
 IPv6-Nachbarn aus `show ipv6 neighbors all` (gleiche Tabellenform).
+
+Seit 1.23.0 (Anwender 2026-11-20, Catalyst 1300 mit Firmware 4.1):
+- **Spanning Tree** aus `show spanning-tree` und `show spanning-tree detail` (`stp_tree`,
+  `stp_detail`): Modus (`Spanning tree enabled mode: Rapid-PVST` bzw. PVST, MSTP, RSTP, STP), je
+  VLAN bzw. MST-Instanz Root-ID und Bridge-ID (`Priority:`, `Address:`, `Path Cost:`,
+  `Root Port:`) und die Port-Tabelle `Name State Prio.Nbr Cost Sts Role PortFast Type`;
+  Port-Channels sind Ports. RSTP/STP ohne VLAN-Abschnitt = eine Instanz fuer alle VLANs (wie
+  MST0). Topologieaenderungen aus `detail` (Zahl; das Alter nur in bekannten Formen).
+- **ARP**: die erste Spalte `VLAN Interface` traegt beides (`vlan 10    gi1/0/22`) - Interface
+  ist das VLAN (`Vl10`), nicht der Port.
+- **Ports** nur aus Zeilen mit Port: eine Tabelle ohne Spalte `Port`/`Ch` liefert keinen Port
+  (vorher ein Port ohne Namen).
+- **Rechte**: im User EXEC (Prompt `>`, Stufe 1) kennt die CLI MAC-Tabelle, ARP und Spanning Tree
+  nicht („Unrecognized command“) - der Hinweis nennt das statt „Plattform pruefen“ (`rights`).
 """
 
 import ipaddress
@@ -19,8 +33,10 @@ from collectors.common.dto import (
     NormalizedInterface,
     NormalizedMac,
     NormalizedNeighbor,
+    NormalizedStpPort,
     NormalizedVlan,
 )
+from collectors.common.i18n import L
 
 _DASHES = re.compile(r"^\s*-{2,}(?:\s+-{2,})*\s*$")
 _PREFIX = {"gi": "Gi", "te": "Te", "fa": "Fa", "tw": "Tw", "fo": "Fo", "po": "Po", "ch": "Po",
@@ -112,6 +128,27 @@ def _fields(text: str) -> dict[str, str]:
     return out
 
 
+def rights(error: str) -> str:
+    """Zusatz zur Fehlermeldung eines Befehls, wenn das Konto im User EXEC steht (Prompt `>`)
+    und die CLI den Befehl dort nicht kennt (1.23.0) - sonst leer."""
+    if "unrecognized command" not in (error or "").lower():
+        return ""
+    return L(
+        " – im User EXEC (Prompt „>“, Stufe 1) nicht verfügbar: das Lesekonto muss nach der "
+        "Anmeldung im Privileged EXEC stehen (Prompt „#“)",
+        " – not available in User EXEC (prompt “>”, level 1): the read account must be in "
+        "Privileged EXEC after login (prompt “#”)",
+    )
+
+
+def rights_short() -> str:
+    """Zusatz fuer „Verbindung pruefen“ (1.23.0): Konto im User EXEC."""
+    return L(
+        ", Stufe 1 (Prompt „>“): MAC-Tabelle, ARP und Spanning Tree nicht lesbar",
+        ", level 1 (prompt “>”): MAC table, ARP and Spanning Tree not readable",
+    )
+
+
 def _col(row: dict, *names: str) -> str:
     for n in names:
         for k, v in row.items():
@@ -155,6 +192,8 @@ def inventory(
 
     def port(raw: str) -> dict:
         key = port_name(raw)
+        if not key:  # Zeile ohne Port (1.23.0): kein Port ohne Namen
+            return {}
         return ports.setdefault(key, {"name": key})
 
     for table in tables(outputs.get("show interfaces status", "")):
@@ -202,8 +241,15 @@ def inventory(
                 device=name, port=local, protocol="lldp",
                 remote_name=_col(r, "system name") or _col(r, "device id") or "?",
                 remote_port=_col(r, "port id") or None, remote_caps=caps,
+                remote_chassis=_col(r, "device id")[:100] or None,  # 1.23.0: Chassis-ID
             ))  # fmt: skip
     first = {n.port: n for n in reversed(neighbors)}
+    for key, st in stp_ports(outputs.get("show spanning-tree", "")).items():  # 1.23.0
+        if key in ports:
+            if st["blocked"]:
+                ports[key]["stp_blocked"] = _ranges(st["blocked"])
+            if st["root"]:
+                ports[key]["stp_root"] = _ranges(st["root"])
     interfaces = [_interface(name, e, first.get(e["name"])) for e in ports.values()]
     macs: list[NormalizedMac] = []
     for table in tables(outputs.get("show mac address-table", "")):
@@ -221,9 +267,8 @@ def inventory(
         for r in table:
             mac, ip = _mac(_col(r, "hw address", "mac")), _ip(_col(r, "ip address", "ip"))
             if mac and ip:
-                vlan = _col(r, "vlan").replace(" ", "")
                 arps.append(NormalizedArp(device=name, ip=ip, mac=mac,
-                                          interface=port_name(vlan) if vlan else None))  # fmt: skip
+                                          interface=_arp_interface(_col(r, "vlan"))))  # fmt: skip
     rows = []  # IPv6-Nachbarn (0.94.0): Interface, IPv6-Adresse, HW-Adresse, Zustand
     for table in tables(outputs.get(nd.CBS, "")):
         for r in table:
@@ -234,6 +279,22 @@ def inventory(
     arps += nd.entries(name, rows)
     return NetworkInventory(devices=[device], interfaces=interfaces, vlans=vlans,
                             neighbors=neighbors, macs=macs, arps=arps)  # fmt: skip
+
+
+def _arp_interface(text: str) -> str | None:
+    """Erste Spalte von `show arp`: `vlan 10` bzw. (Firmware 4.x) `vlan 10 gi1/0/22` - das
+    L3-Interface ist das VLAN (`Vl10`); ohne VLAN der Port bzw. das Interface wie gemeldet."""
+    m = re.match(r"\s*vlan\s*(\d+)", text or "", re.I)
+    if m:
+        return f"Vl{m.group(1)}"
+    word = (text or "").split()
+    return port_name(word[0]) if word else None
+
+
+def _ranges(vlans: set[int]) -> str:
+    from collectors.cisco_switch.normalize import vlan_ranges
+
+    return vlan_ranges(vlans)
 
 
 def _text(value: str | None) -> str | None:
@@ -263,6 +324,7 @@ def _interface(device: str, e: dict, nb: NormalizedNeighbor | None) -> Normalize
     tagged = sorted(e.get("tagged") or [])
     untagged = e.get("untagged")
     mode = "tagged" if tagged else ("access" if untagged is not None else None)
+    attrs = {k: e[k] for k in ("media", "stp_blocked", "stp_root") if e.get(k)}
     return NormalizedInterface(
         device=device, name=e["name"], kind=_kind(e["name"]),
         enabled=None if e.get("status") is None else e.get("status") != "disabled",
@@ -273,5 +335,162 @@ def _interface(device: str, e: dict, nb: NormalizedNeighbor | None) -> Normalize
         status=e.get("status"), speed=e.get("speed"), duplex=e.get("duplex"),
         native_vlan=untagged if mode == "tagged" else None,
         trunk_vlans=vlan_ranges(set(tagged)) if tagged else None,
-        attrs={"media": e["media"]} if e.get("media") else None,
+        attrs=attrs or None,
     )  # fmt: skip
+
+
+# -- Spanning Tree (1.23.0) -----------------------------------------------------------------
+
+# `Spanning tree enabled mode:` -> (Protokoll wie bei IOS, Modus der Ansicht)
+_STP_MODES = {"rapid-pvst": ("rstp", "rapid-pvst"), "pvst": ("ieee", "pvst"),
+              "mstp": ("mstp", "mst"), "rstp": ("rstp", "rstp"),
+              "stp": ("ieee", "stp")}  # fmt: skip
+_STP_ROLES = {"root": "root", "desg": "designated", "altn": "alternate", "back": "backup",
+              "bkup": "backup", "mstr": "master", "dsbl": "disabled",
+              "disb": "disabled"}  # fmt: skip
+_STP_STATES = {"frw": "forwarding", "fwd": "forwarding", "blk": "blocking", "lrn": "learning",
+               "lis": "listening", "dsbl": "disabled", "dis": "disabled",
+               "dsc": "discarding"}  # fmt: skip
+_S_MODE = re.compile(r"Spanning tree enabled mode:\s*(\S+)", re.I)
+_S_OFF = re.compile(r"Spanning tree (?:is )?disabled", re.I)
+_S_VLAN = re.compile(r"^\s*VLAN\s*0*(\d+)\s*$", re.I)
+_S_MST = re.compile(r"^[\s#]*MST\s*0*(\d+)\b(?:.*?Vlans?\s+Mapped:\s*(\S+))?", re.I)
+_S_BLOCK = re.compile(r"^\s*(?:CST\s+|IST\s+)?(Root|Bridge|Regional Root)\s+ID\b", re.I)
+_S_PRIO = re.compile(r"\bPriority\s*:?\s*(\d+)", re.I)
+_S_ADDR = re.compile(r"\bAddress\s*:?\s*([0-9A-Fa-f]{2}(?:[:.-]?[0-9A-Fa-f]{2}){5})\b")
+_S_COST = re.compile(r"\b(?:Path\s+|Root\s+Path\s+)?Cost\s*:?\s*(\d+)\b", re.I)
+_S_RPORT = re.compile(r"\bRoot\s+Port\s*:?\s*([A-Za-z][\w/.-]*)", re.I)
+_S_SELF = re.compile(r"This (?:switch|bridge) is the root", re.I)
+_S_TC = re.compile(r"Number of topology changes\s*:?\s*(\d+)"
+                   r"(?:\s+last change occurred\s*:?\s*(.+?)(?:\s+ago)?\s*$)?", re.I)  # fmt: skip
+
+
+def _stp_mode(text: str) -> tuple[str | None, str | None]:
+    m = _S_MODE.search(text or "")
+    return _STP_MODES.get(m.group(1).lower(), (m.group(1).lower(), m.group(1).lower())) \
+        if m else (None, None)  # fmt: skip
+
+
+def _stp_sections(text: str) -> list[tuple[str, int, str | None, list[str]]]:
+    """Abschnitte je Instanz: (Art, Nummer, VLANs der MST-Instanz, Zeilen). RSTP/STP ohne
+    Abschnitt: eine Instanz `mst 0` ab der ersten Root-ID (ein Baum fuer alle VLANs)."""
+    out: list[tuple[str, int, str | None, list[str]]] = []
+    for line in (text or "").replace("\r", "").splitlines():
+        v, m = _S_VLAN.match(line), _S_MST.match(line)
+        if v:
+            out.append(("vlan", int(v.group(1)), None, []))
+        elif m and not _S_BLOCK.match(line):
+            out.append(("mst", int(m.group(1)), m.group(2), []))
+        elif not out and _S_BLOCK.match(line):
+            out.append(("mst", 0, "1-4094", [line]))
+        elif out:
+            out[-1][3].append(line)
+    return out
+
+
+def _stp_rows(lines: list[str]) -> list[NormalizedStpPort]:
+    """Port-Tabelle `Name State Prio.Nbr Cost Sts Role PortFast Type` eines Abschnitts.
+    `*` markiert eine Inkonsistenz („Port Type or PVID Inconsistency“); PortFast `Yes` = Edge."""
+    out: list[NormalizedStpPort] = []
+    for table in tables("\n".join(lines)):
+        for r in table:
+            if "prio.nbr" not in r and "sts" not in r:
+                continue
+            raw = " ".join(r.values())
+            name = port_name(_col(r, "name").lstrip("*"))
+            if not name or not re.match(r"[A-Za-z]", name):
+                continue
+            cost = _int(_col(r, "cost"))
+            ptype = re.sub(r"\s+", " ", _col(r, "type").replace("*", "")).strip()
+            if ptype in ("-", "--"):
+                ptype = ""
+            if _col(r, "portfast").lower() == "yes":  # `P2P (rpvst)` -> `P2P Edge (rpvst)`
+                head, paren, rest = ptype.partition("(")
+                ptype = re.sub(r"\s+", " ", f"{head.strip()} Edge {paren}{rest}").strip()
+            role, sts = _col(r, "role").lower(), _col(r, "sts").lower()
+            out.append(NormalizedStpPort(
+                port=name, role=_STP_ROLES.get(role, role or None),
+                state=_STP_STATES.get(sts, sts or None), cost=cost,
+                priority=_col(r, "prio.nbr") or None, type=ptype or None,
+                inconsistent="TYPE/PVID_Inc" if "*" in raw else None,
+            ))  # fmt: skip
+    return out
+
+
+def stp_tree(text: str) -> list[dict]:
+    """`show spanning-tree` -> je Instanz {kind, number, protocol, mode, vlans, root_*,
+    bridge_*, is_root, ports} wie `stp.parse_tree`."""
+    protocol, mode = _stp_mode(text)
+    out: list[dict] = []
+    for kind, number, vlans, lines in _stp_sections(text):
+        cur = {"kind": kind, "number": number, "protocol": protocol, "mode": mode,
+               "vlans": vlans, "is_root": False, "root_priority": None, "root_mac": None,
+               "root_cost": None, "root_port": None, "bridge_priority": None,
+               "bridge_mac": None, "ports": _stp_rows(lines)}  # fmt: skip
+        block = None
+        for line in lines:
+            b = _S_BLOCK.match(line)
+            if b:
+                block = "root" if b.group(1).lower() in ("root", "regional root") else "bridge"
+            if _DASHES.match(line) or re.match(r"^\s*Name\s+State\b", line, re.I):
+                block = None  # ab hier die Port-Tabelle
+            if block is None:
+                continue
+            if _S_SELF.search(line):
+                cur["is_root"] = True
+            m = _S_PRIO.search(line)
+            if m and cur[f"{block}_priority"] is None:
+                cur[f"{block}_priority"] = int(m.group(1))
+            m = _S_ADDR.search(line)
+            if m and cur[f"{block}_mac"] is None:
+                cur[f"{block}_mac"] = _mac(m.group(1))
+            if block == "root":
+                m = _S_RPORT.search(line)
+                if m:
+                    cur["root_port"] = port_name(m.group(1))
+                m = _S_COST.search(line)
+                if m and cur["root_cost"] is None:
+                    cur["root_cost"] = int(m.group(1))
+        if cur["root_mac"] and cur["root_mac"] == cur["bridge_mac"]:
+            cur["is_root"] = True
+        if cur["is_root"]:
+            cur["bridge_mac"] = cur["bridge_mac"] or cur["root_mac"]
+            cur["bridge_priority"] = cur["bridge_priority"] or cur["root_priority"]
+            cur["root_cost"], cur["root_port"] = 0, None
+        out.append(cur)
+    return out
+
+
+def stp_detail(text: str) -> dict[tuple[str, int], dict]:
+    """`show spanning-tree detail` -> je Instanz die Topologieaenderungen (Zahl; Alter in
+    Sekunden nur in bekannter Form wie `2d18h` bzw. `00:01:52`, sonst None - die Firmware 4.1
+    meldet z. B. `01010145`, dessen Einheit nicht belegt ist)."""
+    from collectors.cisco_switch.stp import seconds
+
+    out: dict[tuple[str, int], dict] = {}
+    for kind, number, _vlans, lines in _stp_sections(text):
+        for line in lines:
+            m = _S_TC.search(line)
+            if m:
+                ago = (m.group(2) or "").strip()
+                out[(kind, number)] = {"tc_count": int(m.group(1)),
+                                       "tc_ago": seconds(ago) if ago else None}  # fmt: skip
+                break
+    return out
+
+
+def stp_ports(text: str) -> dict[str, dict[str, set[int]]]:
+    """Je Port die VLANs, in denen er blockiert bzw. Root-Port ist (Rapid-PVST/PVST; wie die
+    `attrs.stp_blocked`/`stp_root` der IOS-Switches)."""
+    out: dict[str, dict[str, set[int]]] = {}
+    for t in stp_tree(text):
+        if t["kind"] != "vlan":
+            continue
+        for p in t["ports"]:
+            entry = out.setdefault(p.port, {"blocked": set(), "root": set()})
+            if p.state == "blocking" or (p.role in ("alternate", "backup")
+                                         and p.state != "forwarding"):  # fmt: skip
+                entry["blocked"].add(t["number"])
+            if p.role == "root":
+                entry["root"].add(t["number"])
+    return out

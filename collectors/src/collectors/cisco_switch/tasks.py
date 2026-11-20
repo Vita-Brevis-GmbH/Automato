@@ -22,8 +22,8 @@ from concurrent.futures import ThreadPoolExecutor
 from importlib import resources
 
 from collectors.celery_app import app
-from collectors.cisco_switch import routing, transceiver
-from collectors.cisco_switch.client import COMMANDS, SwitchClient, fingerprint
+from collectors.cisco_switch import cbs, routing, transceiver
+from collectors.cisco_switch.client import COMMANDS, SESSION_ONLY, SwitchClient, fingerprint
 from collectors.cisco_switch.normalize import (
     PLATFORM_LABEL,
     cli_error,
@@ -99,7 +99,8 @@ def read_switch(entry: str, target: Target) -> dict:
                 continue
             error = cli_error(text)
             if error and not quiet(platform, cmd, error):
-                notes.append(f"{cmd}: {error}")
+                user = platform == "cbs" and getattr(client, "privilege", None) == "user"
+                notes.append(f"{cmd}: {error}{cbs.rights(error) if user else ''}")
             outputs[cmd] = text
         # Transceiver (1.19.0): ein Befehl je Plattform; Fehler -> Status `unreadable`
         for cmd in transceiver.COMMANDS.get(platform, ()):
@@ -124,7 +125,8 @@ def read_switch(entry: str, target: Target) -> dict:
         mode = client.mode
     cut = sorted(set(getattr(client, "cut", ())) & routing.ALL)
     return {"host": entry, "platform": platform, "outputs": outputs, "notes": notes,
-            "host_key": client.host_key, "mode": mode, "routing_errors": routing_errors,
+            "host_key": client.host_key, "mode": mode,
+            "privilege": getattr(client, "privilege", None), "routing_errors": routing_errors,
             "routing_cut": cut, "seconds": round(time.monotonic() - start, 1)}  # fmt: skip
 
 
@@ -183,12 +185,17 @@ def check(target: Target | None = None) -> tuple[bool, str]:
                                   known_key=target.known_hosts.get(entry))  # fmt: skip
             with client:
                 version = client.version()
+                platform = detect_platform(version)
+                if platform in SESSION_ONLY:  # wie im Lauf (1.23.0): Sitzung, Prompt
+                    client.prepare(platform)
                 mode = client.mode
         except Exception as exc:  # noqa: BLE001 - Diagnose fuer den Operator
             return False, f"{entry}: {diagnose.device_error(exc, 'cisco_switch', target, True)}"
-        kind = PLATFORM_LABEL[detect_platform(version)]
+        kind = PLATFORM_LABEL[platform]
         if mode == "shell":
             kind += L(", Sitzung", ", session")
+        if platform == "cbs" and getattr(client, "privilege", None) == "user":
+            kind += cbs.rights_short()
         key = fingerprint(client.host_key or "")
         return True, L(f"{entry}: erreichbar ({kind}, Host-Schluessel {key})",
                        f"{entry}: reachable ({kind}, host key {key})")  # fmt: skip

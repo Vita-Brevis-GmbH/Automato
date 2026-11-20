@@ -73,6 +73,7 @@ TENANT_ROUTE_CAPABILITIES: dict[tuple[str, str], str] = {
     ("GET", "/routing/bgp/peers/{peer_id}/zones"): TENANT_READ,
     # cable_labels
     ("GET", "/cabling/labels"): TENANT_READ,
+    ("GET", "/cabling/labels/choices"): TENANT_READ,
     ("PUT", "/cabling/labels"): TENANT_MANAGE,
     ("DELETE", "/cabling/labels/{label_id}"): TENANT_MANAGE,
     ("GET", "/cabling/transceivers"): TENANT_READ,
@@ -115,6 +116,9 @@ TENANT_ROUTE_CAPABILITIES: dict[tuple[str, str], str] = {
     ("GET", "/jobs/daily"): TENANT_READ,
     ("GET", "/jobs/{run_id}"): TENANT_READ,
     ("POST", "/jobs/{run_id}/cancel"): TENANT_MANAGE,
+    # layer_plans - Plaene je Schicht L1/L2/L3 (1.23.0, ADR 0067 Nachtrag)
+    ("GET", "/network-plans/{layer}"): TENANT_READ,
+    ("GET", "/network-plans/{layer}/export"): TENANT_READ,
     # modules
     ("GET", "/modules"): TENANT_READ,
     ("PUT", "/modules/{key}"): TENANT_MANAGE,
@@ -224,6 +228,9 @@ TENANT_ROUTE_CAPABILITIES: dict[tuple[str, str], str] = {
     # vpn
     ("GET", "/vpn/tunnels"): TENANT_READ,
     ("GET", "/vpn/tunnels/{tunnel_id}"): TENANT_READ,
+    # Kopplung der Tunnel von Hand (1.23.0, ADR 0063 Nachtrag): Laufzeitdaten, kein Geraet
+    ("PUT", "/vpn/pairs"): TENANT_MANAGE,
+    ("DELETE", "/vpn/pairs/{pair_id}"): TENANT_MANAGE,
     # zones
     ("GET", "/zones"): TENANT_READ,
     ("POST", "/zones"): TENANT_MANAGE,

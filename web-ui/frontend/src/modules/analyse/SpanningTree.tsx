@@ -2,7 +2,7 @@
 // Topologie – Root, Switches mit Root-Port und Kosten, Ports mit Rolle und Zustand, blockierte Ports hervorgehoben (Reserve
 // bzw. unerwartet) – als Liste und einfacher Baum; Soll-Root je VLAN-Bereich bzw. Standort (Laufzeitdaten, operator) und die
 // Schwelle der Topologieänderungen; Switches mit Modus, err-disabled (BPDU-Guard) und Topologieänderungen. Gelesen werden
-// Cisco IOS/IOS-XE und NX-OS; andere Plattformen werden gezählt (keine stille Grenze). Rein lesend gegenüber den Geräten.
+// Cisco IOS/IOS-XE, NX-OS und (seit 1.23.0) Catalyst 1200/1300; andere Plattformen werden gezählt (keine stille Grenze). Rein lesend gegenüber den Geräten.
 import { useEffect, useMemo, useState } from "react";
 import type { ViewParams } from "../types";
 import { useDebounced } from "../../Objects";
@@ -41,13 +41,14 @@ const STATUS: Record<StpStatus, [string, string, string]> = {
     "warn",
     L("nicht unterstützt", "not supported"),
     L(
-      "Plattform ohne Spanning Tree in Automato (gelesen werden Cisco IOS/IOS-XE und NX-OS)",
-      "platform without Spanning Tree in Automato (Cisco IOS/IOS-XE and NX-OS are read)",
+      "Plattform ohne Spanning Tree in Automato (gelesen werden Cisco IOS/IOS-XE, NX-OS und Catalyst 1200/1300)",
+      "platform without Spanning Tree in Automato (Cisco IOS/IOS-XE, NX-OS and Catalyst 1200/1300 are read)",
     ),
   ],
   unreadable: ["crit", L("nicht lesbar", "not readable"), L("Befehl abgelehnt bzw. nicht gelesen", "command refused or not read")],
 };
-const MODE: Record<string, string> = { pvst: "PVST+", "rapid-pvst": "Rapid-PVST+", mst: "MST" };
+// rstp/stp: Catalyst 1200/1300 mit einem Baum für alle VLANs (1.23.0)
+const MODE: Record<string, string> = { pvst: "PVST+", "rapid-pvst": "Rapid-PVST+", mst: "MST", rstp: "RSTP", stp: "STP" };
 const ROLE: Record<string, string> = {
   root: "Root",
   designated: "Designated",
@@ -147,13 +148,13 @@ export default function SpanningTree({
           <>
             Spanning Tree der Switches von „{tenantLabel}“ je VLAN bzw. MST-Instanz: Root, Weg zur Root, Ports mit Rolle und
             Zustand, blockierte Ports (Reserve zwischen Switches bzw. unerwartet), Modus, err-disabled durch BPDU-Guard und
-            Topologieänderungen. Gelesen werden Cisco IOS/IOS-XE und NX-OS; den Soll-Root je VLAN-Bereich bzw. Standort legt
+            Topologieänderungen. Gelesen werden Cisco IOS/IOS-XE, NX-OS und Catalyst 1200/1300; den Soll-Root je VLAN-Bereich bzw. Standort legt
             ihr hier fest. Rein lesend gegenüber den Geräten.
           </>,
           <>
             Spanning Tree of the switches of “{tenantLabel}” per VLAN or MST instance: root, path to the root, ports with role
             and state, blocked ports (backup path between switches or unexpected), mode, err-disabled by BPDU guard and topology
-            changes. Cisco IOS/IOS-XE and NX-OS are read; you define the target root per VLAN range or site here. Read-only
+            changes. Cisco IOS/IOS-XE, NX-OS and Catalyst 1200/1300 are read; you define the target root per VLAN range or site here. Read-only
             towards the devices.
           </>,
         )}
@@ -207,8 +208,8 @@ export default function SpanningTree({
           {s.switches === 0 && (
             <Note>
               {L(
-                "Noch kein Spanning Tree gelesen. Seit 1.19.0 liest jeder Lauf der Switches (Cisco IOS/IOS-XE, NX-OS) den Spanning Tree mit – Switches neu einlesen.",
-                "No Spanning Tree read yet. Since 1.19.0 every run of the switches (Cisco IOS/IOS-XE, NX-OS) also reads the Spanning Tree – collect the switches again.",
+                "Noch kein Spanning Tree gelesen. Seit 1.19.0 liest jeder Lauf der Switches (Cisco IOS/IOS-XE, NX-OS, seit 1.23.0 Catalyst 1200/1300) den Spanning Tree mit – Switches neu einlesen.",
+                "No Spanning Tree read yet. Since 1.19.0 every run of the switches (Cisco IOS/IOS-XE, NX-OS, since 1.23.0 Catalyst 1200/1300) also reads the Spanning Tree – collect the switches again.",
               )}
             </Note>
           )}

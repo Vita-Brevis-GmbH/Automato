@@ -164,6 +164,7 @@ def inventory(
             device=name, port=local, protocol="lldp",
             remote_name=device_name(r.get("neighbor_name")) or (r.get("chassis_id") or "?"),
             remote_port=port_id or None, remote_ip=_ip(r.get("mgmt_address")),
+            remote_chassis=(r.get("chassis_id") or "").strip()[:100] or None,  # 1.23.0
             remote_platform=desc[:200] or None, remote_description=desc[:500] or None,
             remote_caps=[c.lower() for c in re.split(r"[\s,]+", r.get("capabilities") or "") if c],
         ))  # fmt: skip

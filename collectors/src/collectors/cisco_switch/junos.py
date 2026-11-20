@@ -244,6 +244,7 @@ def inventory(
             device=name, port=physical(local), protocol="lldp",
             remote_name=v(n, "lldp-remote-system-name") or v(n, "lldp-remote-chassis-id") or "?",
             remote_port=remote_port,
+            remote_chassis=(v(n, "lldp-remote-chassis-id") or "")[:100] or None,  # 1.23.0
         ))  # fmt: skip
     first = {n.port: n for n in reversed(neighbors)}
 

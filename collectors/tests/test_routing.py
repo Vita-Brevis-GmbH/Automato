@@ -463,3 +463,31 @@ def test_fortigate_vrf_und_management_getrennt():
         [{"name": "port9", "ip": "10.8.0.1 255.255.255.0", **interfaces[2]}], [], {}, "fw-01"
     )
     assert inv.interfaces[0].ips == ["10.8.0.1/24", "10.9.0.2/24"]  # Sekundaer-IP dabei
+
+
+def test_fortigate_ohne_bgp_kein_teilfehler(monkeypatch):
+    """1.23.0 (Anwender: „FortiGate ohne aktiviertem BGP, sollte nicht angezeigt werden“):
+    `router bgp` mit AS 0 und ohne Nachbarn - der Monitor wird nicht nach BGP gefragt (manche
+    FortiOS antworten dann mit einem Fehler), nichts fehlt, kein BGP-Prozess. Ein echter
+    Lesefehler bleibt ein Teilfehler."""
+    import collectors.fortigate.tasks as t
+
+    monkeypatch.setitem(CMDB, "router/bgp", {"as": "0", "router-id": "0.0.0.0", "neighbor": []})
+    seen: list = []
+    d = _fgt(denied={"router/bgp/paths", "router/bgp/neighbors"}, seen=seen).gather()
+    assert not [p for p, _ in seen if "/monitor/router/bgp" in p]
+    inv = fgt.normalize(d["vdoms"], d["ha"], "fw-a")
+    assert inv.contexts[0].missing == [] and inv.bgp == [] and inv.peers == []
+    assert t._vdom_message(d) is None
+    # BGP konfiguriert: der Monitor wird gefragt, ohne Recht ein Teilfehler wie bisher
+    monkeypatch.setitem(CMDB, "router/bgp", {"as": 65001, "neighbor": []})
+    d = _fgt(denied={"router/bgp/paths"}).gather()
+    assert fgt.normalize(d["vdoms"], d["ha"], "fw-a").contexts[0].missing == [
+        "BGP-Pfade IPv4 (HTTP 403)"
+    ]
+    # Konfiguration nicht lesbar: wie bisher gelesen, BGP-Konfiguration fehlt
+    d = _fgt(denied={"router/bgp", "router/bgp/paths"}).gather()
+    missing = fgt.normalize(d["vdoms"], d["ha"], "fw-a").contexts[0].missing
+    assert missing == ["BGP-Pfade IPv4 (HTTP 403)", "BGP-Konfiguration (HTTP 403)"]
+    assert fgt.bgp_configured({"as": 0}) is False and fgt.bgp_configured([]) is None
+    assert fgt.bgp_configured([{"as": "0", "neighbor-group": [{"name": "G"}]}]) is True

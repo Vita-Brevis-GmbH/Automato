@@ -1,7 +1,7 @@
 // Modul Analyse (ADR 0036): Routing, statische Routen und VPN-Tunnel (1.19.0), Verkabelung, Spanning Tree (1.19.0),
 // Reservierungen und AS-Nummern (1.19.0, ADR 0066), Abgleich mit dem IPAM und Datenqualität. Seit 1.19.0 (ADR 0067) stehen
 // die Ansichten in der Navigation unter ihrer Netzwerkschicht (`places`): L1 Verkabelung, L2 VLANs/Spanning Tree,
-// L3 Routing/statisch/BGP/AS, L4–7 VPN; der Abgleich bleibt übergreifend.
+// L3 Routing/statisch/BGP/AS, L4–7 VPN; der Abgleich bleibt übergreifend. Seit 1.23.0 je Schicht L1–L3 ein Plan (`plaene`).
 import { lazy } from "react";
 import { L } from "../../i18n";
 import type { ViewEntry } from "../types";
@@ -15,6 +15,7 @@ const SpanningTree = lazy(() => import("./SpanningTree")); // 1.19.0
 const Reservations = lazy(() => import("./Reservations")); // 1.19.0, ADR 0066
 const AsNumbers = lazy(() => import("./AsNumbers")); // 1.19.0, ADR 0066
 const Vlans = lazy(() => import("./Vlans")); // 1.19.0, ADR 0067 (vorher Reiter der Verkabelung)
+const LayerPlan = lazy(() => import("./LayerPlan")); // 1.23.0, ADR 0067 Nachtrag: Pläne je Schicht
 
 export const VIEWS: ViewEntry[] = [
   {
@@ -56,7 +57,9 @@ export const VIEWS: ViewEntry[] = [
     section: "doc",
     order: 65,
     places: [{ slug: "vpn", layer: "l4-7", label: L("VPN-Tunnel", "VPN tunnels"), icon: "vpn", order: 450 }],
-    render: (p) => <VpnTunnels key={p.paramsKey} tenantId={p.tenantId} tenantLabel={p.tenantLabel} params={p.params} go={p.go} />,
+    render: (p) => (
+      <VpnTunnels key={p.paramsKey} tenantId={p.tenantId} tenantLabel={p.tenantLabel} params={p.params} go={p.go} canEdit={p.me.isAdmin || p.me.isOperator} />
+    ),
   },
   {
     key: "verkabelung",
@@ -136,6 +139,21 @@ export const VIEWS: ViewEntry[] = [
         go={p.go}
       />
     ),
+  },
+  // 1.23.0 (ADR 0067 Nachtrag 1.23.0, Anwender 2026-11-20): je Schicht ein Plan für den ganzen Mandanten, Filter nach Standort
+  {
+    key: "plaene",
+    module: "analyse",
+    label: L("Pläne", "Plans"),
+    icon: "net",
+    section: "doc",
+    order: 69,
+    places: [
+      { slug: "plan-physik", layer: "l1", label: L("L1-Plan", "L1 plan"), icon: "design", order: 105, params: { plan: "l1" } },
+      { slug: "plan-switching", layer: "l2", label: L("L2-Plan", "L2 plan"), icon: "design", order: 205, params: { plan: "l2" } },
+      { slug: "plan-routing", layer: "l3", label: L("L3-Plan", "L3 plan"), icon: "design", order: 305, params: { plan: "l3" } },
+    ],
+    render: (p) => <LayerPlan key={p.paramsKey} tenantId={p.tenantId} tenantLabel={p.tenantLabel} params={p.params} />,
   },
   {
     key: "abgleich",

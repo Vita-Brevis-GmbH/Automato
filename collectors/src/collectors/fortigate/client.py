@@ -60,6 +60,10 @@ MONITOR_PAGE = 1000
 ROUTE_LIMIT = 50_000
 
 
+# BGP-Tabellen des Monitors - ohne konfiguriertes BGP nicht gefragt (1.23.0)
+_BGP_MONITOR = ("bgp_paths4", "bgp_paths6", "bgp_neighbors4", "bgp_neighbors6")
+
+
 class TooLarge(ValueError):
     """Tabelle groesser als ROUTE_LIMIT (z. B. volle Internet-Tabelle per BGP)."""
 
@@ -137,6 +141,8 @@ class FortiGateClient:
         """Hostname (cmdb system/global) + Modell/Seriennummer/Version (monitor, optional)."""
         info: dict[str, Any] = {}
         glob = self._get("system/global")
+        if isinstance(glob, list):  # Einzeltabelle je nach FortiOS als Liste mit einem Eintrag
+            glob = glob[0] if glob and isinstance(glob[0], dict) else {}
         if isinstance(glob, dict):
             info["hostname"] = glob.get("hostname")
             # ADR 0071 Nachtrag (P-7, nur lesend): Verkehr, der am selben Interface ein- und
@@ -156,6 +162,10 @@ class FortiGateClient:
                 serial=body.get("serial"),
                 version=body.get("version"),
             )
+            # 1.23.0: Hostname auch aus dem Status - so heisst die FortiGate im LLDP der Switches
+            # (Anwender: „die Firewalls werden nicht in der Verkabelung erkannt“)
+            if not info.get("hostname") and results.get("hostname"):
+                info["hostname"] = results["hostname"]
         except (httpx.HTTPError, NotJson, AttributeError):
             pass  # Monitor-API im Profil nicht freigegeben/anders: ohne Modell/Seriennummer
         return info
@@ -259,7 +269,17 @@ class FortiGateClient:
     def routing_tables(self, vdom: str | None) -> dict[str, Any]:
         """Routing eines VDOMs: wirksame Tabelle, BGP-Pfade und -Nachbarn, statische und
         Policy-Routen, SD-WAN. Ohne Leserecht (401/403) bzw. zu gross steht die Tabelle in
-        `missing`; fehlt sie (400/404/405, andere Version, nicht konfiguriert), bleibt sie leer."""
+        `missing`; fehlt sie (400/404/405, andere Version, nicht konfiguriert), bleibt sie leer.
+
+        BGP nicht konfiguriert (1.23.0, Anwender: „FortiGate ohne aktiviertem BGP, sollte nicht
+        angezeigt werden“): sagt die gelesene Konfiguration `router bgp` „kein AS, keine
+        Nachbarn“, gibt es keine BGP-Pfade und -Nachbarn - der Monitor wird dann nicht gefragt
+        (manche FortiOS antworten darauf mit einem Fehler), nichts davon ist ein Teilfehler. Ist
+        die Konfiguration nicht lesbar, wird wie bisher gelesen."""
+        from collectors.fortigate.routing import bgp_configured
+
+        bgp_cfg, bgp_reason = _optional_read(lambda: self._get("router/bgp", vdom))
+        bgp_off = bgp_reason is None and bgp_configured(bgp_cfg) is False
         reads = {
             "rib4": lambda: self._monitor_rows("router/ipv4", vdom),
             "rib6": lambda: self._monitor_rows("router/ipv6", vdom),
@@ -272,8 +292,8 @@ class FortiGateClient:
             "policy4": lambda: self._get("router/policy", vdom),
             "policy6": lambda: self._get("router/policy6", vdom),
             "sdwan": lambda: self._get("system/sdwan", vdom),
-            # BGP-Konfiguration und Filter (0.113.0, ADR 0041) - Soll gegen die gelernten Pfade
-            "bgp_config": lambda: self._get("router/bgp", vdom),
+            # BGP-Konfiguration und Filter (0.113.0, ADR 0041) - Soll gegen die gelernten Pfade;
+            # oben schon gelesen (1.23.0: BGP nicht konfiguriert)
             "prefix_lists4": lambda: self._get("router/prefix-list", vdom),
             "prefix_lists6": lambda: self._get("router/prefix-list6", vdom),
             "route_maps": lambda: self._get("router/route-map", vdom),
@@ -290,9 +310,15 @@ class FortiGateClient:
         }
         out: dict[str, Any] = {"missing": []}
         for key, read in reads.items():
+            if bgp_off and key in _BGP_MONITOR:
+                out[key] = []
+                continue
             out[key], reason = _optional_read(read)
             if reason:
                 out["missing"].append(f"{routing_label(key)} ({reason})")
+        out["bgp_config"] = bgp_cfg
+        if bgp_reason:
+            out["missing"].append(f"{routing_label('bgp_config')} ({bgp_reason})")
         return out
 
     def ha(self) -> dict[str, Any]:
@@ -308,6 +334,33 @@ class FortiGateClient:
                 out["missing"].append(f"HA {key} ({reason})")
         if not out["sync"]:  # FortiOS bis 7.0: config system cluster-sync
             out["sync"], _ = _optional_read(lambda: self._get("system/cluster-sync"))
+        return out
+
+    def lldp(self, vdoms: list[str | None]) -> dict[str, Any]:
+        """LLDP der FortiGate (1.23.0, nur lesend, Monitor-API): die Nachbarn, die sie an ihren
+        Interfaces hoert (`network/lldp/neighbors`), und die MAC je Interface
+        (`system/interface`) - beides je VDOM, zusammengefuehrt. Damit erkennt die Verkabelung die
+        FortiGate auch ueber die Chassis-ID bzw. Port-ID (MAC) der Switches. Fehlt die Funktion
+        (aeltere FortiOS, LLDP aus), bleibt es leer; ohne Leserecht steht es in `missing` - ein
+        Hinweis, kein Teilfehler (Regeln, Routing und Inventar sind vollstaendig)."""
+        out: dict[str, Any] = {"neighbors": [], "macs": {}, "missing": []}
+        seen: set[str] = set()
+        for vdom in vdoms or [None]:
+            rows, reason = _optional_read(lambda v=vdom: self._monitor("network/lldp/neighbors", v))
+            if reason and f"LLDP-Nachbarn ({reason})" not in out["missing"]:
+                out["missing"].append(f"LLDP-Nachbarn ({reason})")
+            for row in rows if isinstance(rows, list) else []:
+                key = json.dumps(row, sort_keys=True, default=str)
+                if isinstance(row, dict) and key not in seen:
+                    seen.add(key)
+                    out["neighbors"].append(row)
+            ports, reason = _optional_read(lambda v=vdom: self._monitor("system/interface", v))
+            if reason and f"Interface-MACs ({reason})" not in out["missing"]:
+                out["missing"].append(f"Interface-MACs ({reason})")
+            items = list(ports.values()) if isinstance(ports, dict) else ports  # je Name bzw. Liste
+            for p in items if isinstance(items, list) else []:
+                if isinstance(p, dict) and p.get("name") and p.get("mac"):
+                    out["macs"].setdefault(str(p["name"]), str(p["mac"]))
         return out
 
     def ippools(self, vdom: str | None = None) -> list[dict[str, Any]]:
@@ -381,6 +434,7 @@ class FortiGateClient:
         skipped: list[dict[str, str]] = []
         interfaces: dict[str, dict[str, Any]] = {}
         denied: httpx.HTTPStatusError | None = None
+        queried: list[str | None] = []
         for name in self.vdoms():
             try:
                 tables = self.vdom_tables(name)
@@ -397,6 +451,7 @@ class FortiGateClient:
                 if isinstance(iface, dict) and iface.get("name"):
                     interfaces.setdefault(iface["name"], {"vdom": vdom, **iface})
             vdoms.append({"vdom": vdom, **tables, "routing": self.routing_tables(name)})
+            queried.append(name)  # wie abgefragt (ohne Namen: Standard-VDOM des Kontos)
         if not vdoms and denied is not None:
             raise denied
         return {
@@ -405,4 +460,5 @@ class FortiGateClient:
             "interfaces": list(interfaces.values()),
             "ha": self.ha(),
             "system": self.system(),
+            "lldp": self.lldp(queried),
         }

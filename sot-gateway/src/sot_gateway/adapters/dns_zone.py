@@ -141,6 +141,9 @@ class DnsZoneAdapter:
         self._transfer = transfer or _axfr
         self._resolve = resolve or _resolve
         self._address: str | None = None
+        # Eintraege je uebertragener Zone (1.23.0) - auch 0: eine Reverse-Zone nur mit SOA/NS
+        # ist gelesen, ihre Adressen haben keinen PTR (statt „Zone nicht gelesen“)
+        self.zone_counts: dict[str, int] = {}
 
     @classmethod
     def from_url(cls, base_url: str, zones: str | Iterable[str], **kw) -> "DnsZoneAdapter":
@@ -174,7 +177,9 @@ class DnsZoneAdapter:
         aliases: list[tuple[str, str, str]] = []  # (Zone, Alias, Ziel)
         out: list[ReferenceRecord] = []
         for zone in self.zones:
+            self.zone_counts[zone] = 0
             for kind, rdtype, owner, data in self._zone_records(zone):
+                self.zone_counts[zone] += 1
                 if kind == "cname":
                     aliases.append((zone, owner, data))
                     continue

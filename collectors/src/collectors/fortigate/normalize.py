@@ -16,6 +16,7 @@ IP-Pools, Services und Service-Gruppen, jeweils mit aufgeloesten Werten, Komment
 """
 
 import ipaddress
+import re
 from typing import Any
 
 from collectors.common.dto import (
@@ -23,6 +24,7 @@ from collectors.common.dto import (
     NormalizedDevice,
     NormalizedInterface,
     NormalizedNat,
+    NormalizedNeighbor,
     NormalizedObject,
     NormalizedRule,
     NormalizedSubnet,
@@ -863,15 +865,90 @@ def sdwan_zones(cfg, zones: list[dict] | None = None) -> list[dict]:
     return [{"name": z, "interface": members} for z, members in out.items()]
 
 
+def _first(row: dict, *keys: str) -> str:
+    """Erstes belegte Feld (Text; `{"value": …}` bzw. `{"id": …}` ausgepackt)."""
+    for key in keys:
+        value = row.get(key)
+        if isinstance(value, dict):
+            value = value.get("value") or value.get("id") or value.get("name")
+        if value not in (None, "", []):
+            return str(value).strip()
+    return ""
+
+
+def _lldp_ip(row: dict) -> str | None:
+    """Management-Adresse eines LLDP-Nachbarn - IPv4 vor IPv6."""
+    found: list[str] = []
+    for item in row.get("addresses") or row.get("management_addresses") or []:
+        text = _first(item, "address", "addr", "ip") if isinstance(item, dict) else str(item)
+        found.append(text)
+    found.append(_first(row, "management_address", "mgmt_address", "mgmt_ip", "address"))
+    ips = []
+    for text in found:
+        try:
+            ips.append(ipaddress.ip_address(text.split("/")[0]))
+        except ValueError:
+            continue
+    ips.sort(key=lambda ip: ip.version)
+    return str(ips[0]) if ips else None
+
+
+def lldp_neighbors(rows: list[dict] | None, device: str) -> list[NormalizedNeighbor]:
+    """LLDP-Nachbarn der FortiGate (1.23.0, Monitor `network/lldp/neighbors`) -> Nachbarn wie
+    die der Switches: eigenes Interface, Systemname (sonst Chassis-ID), Port-ID (als MAC: die
+    Port-Beschreibung), Management-Adresse, Faehigkeiten. Die Feldnamen unterscheiden sich je
+    FortiOS - gelesen wird, was belegt ist; ein Nachbar ohne eigenes Interface faellt weg."""
+    out: list[NormalizedNeighbor] = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        port = _first(row, "port", "local_port", "interface", "port_name", "local_interface")
+        if not port:
+            continue
+        chassis = _first(row, "chassis_id", "chassis", "mac")
+        remote_port = _first(row, "port_id", "remote_port", "port_id_value")
+        desc_port = _first(row, "port_description", "port_desc")
+        if desc_port and (not remote_port or _is_mac(remote_port)):
+            remote_port = desc_port
+        caps = row.get("enabled_capabilities") or row.get("capabilities") or []
+        if isinstance(caps, str):
+            caps = [c for c in caps.replace(",", " ").split() if c]
+        caps = [str(c.get("name") if isinstance(c, dict) else c).lower() for c in caps]
+        desc = _first(row, "system_description", "system_desc", "description")
+        out.append(NormalizedNeighbor(
+            device=device, port=port, protocol="lldp",
+            remote_name=_first(row, "system_name", "sysname", "name") or chassis or "?",
+            remote_port=remote_port or None, remote_ip=_lldp_ip(row),
+            remote_platform=desc.splitlines()[0][:200] if desc else None,
+            remote_caps=[c for c in caps if c], remote_description=desc[:500] or None,
+            remote_chassis=chassis[:100] or None,
+        ))  # fmt: skip
+    return out
+
+
+_MAC = re.compile(
+    r"[0-9a-f]{2}([:-]?)(?:[0-9a-f]{2}\1){4}[0-9a-f]{2}|[0-9a-f]{4}(?:\.[0-9a-f]{4}){2}"
+)
+
+
+def _is_mac(text: str) -> bool:
+    return bool(_MAC.fullmatch(text.strip().lower()))
+
+
 def normalize_inventory(
     interfaces: list[dict] | None,
     zones: list[dict] | None,
     system: dict | None,
     device_name: str,
+    lldp: dict | None = None,
 ) -> NetworkInventory:
-    """FortiGate-Interfaces/VLAN-Interfaces/Zonen -> Netzinventar (read-only gelesen)."""
+    """FortiGate-Interfaces/VLAN-Interfaces/Zonen -> Netzinventar (read-only gelesen). Seit
+    1.23.0 mit LLDP (`FortiGateClient.lldp`): MAC je Interface (`attrs.mac`) und die Nachbarn
+    der FortiGate - Grundlage, sie in der Verkabelung zu erkennen."""
     system = system or {}
     device = system.get("hostname") or device_name
+    lldp = lldp or {}
+    macs = lldp.get("macs") or {}
     zone_of = {
         m.get("interface-name"): z["name"]
         for z in zones or []
@@ -916,6 +993,7 @@ def normalize_inventory(
                 zone=zone_of.get(name),
                 vdom=_vdom_name(i),
                 role=_role(i),
+                attrs={"mac": str(macs[name]).lower()} if macs.get(name) else None,
             )
         )
         if vid is not None and vid not in vlans:
@@ -946,5 +1024,9 @@ def normalize_inventory(
         mgmt_ip=_mgmt_ip(items),
     )
     return NetworkInventory(
-        devices=[dev], interfaces=out_ifaces, vlans=list(vlans.values()), subnets=subnets
+        devices=[dev],
+        interfaces=out_ifaces,
+        vlans=list(vlans.values()),
+        subnets=subnets,
+        neighbors=lldp_neighbors(lldp.get("neighbors"), device),
     )

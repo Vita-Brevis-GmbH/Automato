@@ -53,7 +53,11 @@ Passwörter und Schlüssel (HA, FGSP, BGP-Peers) werden nie gelesen. Seit 0.113.
 dazu die BGP-Konfiguration je VDOM (`router bgp`: Filter je Nachbar, network, aggregate,
 redistribute) mit Prefix-Listen, Route-Maps und Access-Listen sowie die Route Control der
 L3Outs – dafür braucht das Profil Lesezugriff auf die Router-Konfiguration, nicht nur den
-Monitor; fehlt er, steht „BGP-Konfiguration“ als nicht lesbar in der Lauf-Meldung.
+Monitor; fehlt er, steht „BGP-Konfiguration“ als nicht lesbar in der Lauf-Meldung. Seit 1.23.0
+gilt eine FortiGate ohne BGP (Konfiguration ohne AS bzw. AS 0 und ohne Nachbarn) nicht mehr als
+„nur teilweise gelesen“: BGP-Pfade und -Nachbarn werden dann nicht abgefragt, der Lauf ist
+vollständig. Nur ein echter Lesefehler (z. B. HTTP 403 bei konfiguriertem BGP) bleibt ein
+Teilfehler. Die alte Meldung verschwindet mit dem nächsten Lauf der FortiGate.
 
 **Zeitgesteuert:** Mit einem Zeitplan am Quellsystem legt der Orchestrator zum Termin selbst
 einen Lauf an (`AUTOMATO_SCHEDULER_ENABLED=true`, in docker-compose Standard). Wie „Jetzt
@@ -102,9 +106,9 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
 
 **Navigation nach Netzwerkschichten** (seit 1.19.0, ADR 0067): unter *Dokumentation* das
 Übergreifende (Übersicht, Applikationen, Weg-Suche, **Wege vergleichen**, Findings, Abgleich,
-Netzwerkdesign), darunter je Schicht ihre Stellen – **L1 · Physik** (Verkabelung, Ports,
-Transceiver, Kabelnummern), **L2 · Switching** (VLANs, Spanning Tree, VLAN-Reservierungen),
-**L3 · Routing** (Netze, VRF, Routing, Statische Routen, BGP, AS-Nummern, AS-Reservierungen),
+Netzwerkdesign), darunter je Schicht ihre Stellen – **L1 · Physik** (L1-Plan, Verkabelung, Ports,
+Transceiver, Kabelnummern), **L2 · Switching** (L2-Plan, VLANs, Spanning Tree, VLAN-Reservierungen),
+**L3 · Routing** (L3-Plan, Netze, VRF, Routing, Statische Routen, BGP, AS-Nummern, AS-Reservierungen),
 **L4–7 · Firewall & Dienste** (Regeln & Contracts, Objekte & Inventar, NAT / VIPs, Load Balancer,
 VPN-Tunnel) – und die *Administration*. Eine Stelle ist eine Ansicht bzw. ein Reiter davon (z. B.
 BGP = Routing, Reiter BGP-Nachbarn); die Adresse lautet `#<schicht>/<stelle>` (`#l3/bgp`,
@@ -112,6 +116,31 @@ BGP = Routing, Reiter BGP-Nachbarn); die Adresse lautet `#<schicht>/<stelle>` (`
 `#verkabelung?tab=vlans`) leiten auf die neue Stelle um – Lesezeichen und Links in der Doku
 gelten weiter. Module je Mandant schalten wie bisher (Analyse aus blendet L1, L2 und die Stellen
 der Analyse in L3/L4–7 aus); die API-Pfade sind unverändert.
+
+**Pläne je Schicht** (seit 1.23.0, ADR 0067 Nachtrag 1.23.0, Modul Analyse): je Schicht als erste
+Stelle ein Plan für den **ganzen Mandanten**, gezeichnet aus den gelesenen Daten –
+**L1-Plan** (`#l1/plan-physik`: Geräte der Verkabelung inkl. ESXi-Hosts und Nachbarn aus CDP/LLDP,
+je Kabel die Ports beider Enden und die Kabelnummer aus Automato bzw. NetBox, ein Port-Channel als
+eine Linie mit seinen Mitgliedern, Kabel nur in NetBox gestrichelt, gelesene Geräte ohne Kabel
+„kein Kabel gelesen“), **L2-Plan** (`#l2/plan-switching`: weiterleitende Geräte mit Trunks bzw.
+Port-Channels und den erlaubten VLANs beider Enden, gekürzt mit „+n“, Root je VLAN bzw.
+MST-Instanz, blockierte Ports aus dem Spanning Tree, Switches ohne gelesenen Spanning Tree gezählt)
+und **L3-Plan** (`#l3/plan-routing`: Firewalls/VDOMs, gelesene Router und ACI-VRFs, Transfernetze
+und Segmente, Netze an einem Knoten – höchstens 8 je Knoten, der Rest als „+n Netze“ –, Router
+und Anbindungen nach aussen, statische Routen und BGP an den Linien, IPsec-Tunnel als eigene Linie
+zur gelesenen Gegenstelle bzw. zu ihrer Adresse). **Standort** oben wählen (Vorgabe: alle; die
+Wahl steht in der Adresse, z. B. `#l3/plan-routing?site=3`, `site=0` = ohne Standort): ein
+gelesenes Gerät gehört zum Standort seines Quellsystems, Nicht-Gelesenes zum Standort der Geräte,
+an denen es hängt; Nachbarn an anderen Standorten erscheinen blass. Je Standort ein Rahmen.
+**Ebenen** (Ports, Kabelnummern, VLANs, Spanning Tree, Netze, statische Routen, BGP, IPsec,
+Endgeräte …) blendet die Leiste ein und aus (je Browser gemerkt). Klick auf ein Element bzw. eine
+Linie zeigt die Angaben mit Link in die Detailansicht (Verkabelung, Ports, Spanning Tree, Routing,
+Statische Routen, VPN-Tunnel, Netze). **Grenze:** höchstens 250 Elemente und 1200 Linien je Plan;
+was darüber liegt, steht je Art gezählt über dem Plan („Standort wählen“). **Export draw.io**: wie
+in der Ansicht, die Ebenen als Ebenen in draw.io (ausgeblendete kommen ausgeblendet mit), Dateiname
+`plan-<schicht>-<physik|switching|routing>-<standort|alle|ohne-standort>-<datum>.drawio`. Lesen
+für Betreuer und Mandanten-Benutzer (`mandant.read`), nicht für Kunden-Benutzer (wie die
+Verkabelung); rein lesend.
 
 **Wege vergleichen** (seit 1.19.0, ADR 0067, Modul „Wege vergleichen“, braucht Analyse und
 Wegsucher): ein L3-Weg gegen L1/L2 – je Abschnitt vom Ausgang eines Hops bis zum Eingang des
@@ -940,6 +969,28 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     der Gegenstelle einlesen oder den Tunnel als Anbindung (Partner) erfassen – „Als Anbindung
     erfassen“ am Weg füllt Interface und Gegenstelle vor. Im Netzwerkplan ist der Tunnel ein
     eigener Knoten zwischen den Firewalls.
+  - **Kopplung** (1.23.0, ADR 0063 Nachtrag 1.23.0): sind beide Enden gelesen, sind die Tunnel
+    **ein** Übergang zwischen den Firewalls – der Weg geht durch den Tunnel auf der anderen
+    FortiGate weiter (Eingang = ihr Tunnel, ihre Policies prüfen ihn), in der Topologie hängen
+    die Standorte über eine Kante „VPN-Tunnel (IPsec)“ zusammen. In der Spalte „Gegenstelle“ steht
+    die andere Firewall mit ihrem Tunnel (Klick öffnet ihn) und der Herkunft:
+    - **automatisch**, wo es belegt und eindeutig ist: die statische Seite zeigt auf eine Adresse
+      der anderen FortiGate (bzw. auf eine VIP einer gelesenen FortiGate davor) und dort zeigt ein
+      Tunnel zurück bzw. ein Dial-up-Tunnel auf diesem Interface hat gespiegelte Phase-2-Selektoren;
+      die Gegenstelle liegt hinter NAT und genau ein Tunnel der anderen FortiGate zeigt auf uns;
+      eine verbundene Dial-up-Gegenstelle kommt von der anderen FortiGate;
+    - **von Hand**: was nicht eindeutig ist (z. B. „einseitig dynamisch“ mit NAT davor), steht als
+      „Vorschlag zum Koppeln“ in der Liste. Im Tunnel unter „Kopplung“ die Vorschläge (nicht
+      eindeutige Treffer, gespiegelte Selektoren) mit „Koppeln“ bzw. „Tunnel einer anderen
+      FortiGate wählen …“ → „Von Hand koppeln“ (Operator, Admin; Mandanten-Benutzer mit Recht
+      „anpassen“). „Lösen“ entfernt eine Kopplung von Hand bzw. setzt eine automatische außer
+      Kraft („wieder zulassen“ hebt das auf). Ein statischer Tunnel hat höchstens eine Gegenstelle,
+      zwei Dial-up-Tunnel lassen sich nicht koppeln.
+    - Die Kopplung ist eine Angabe in Automato (Audit `vpn_pair.*`), nichts geht an die Firewall.
+      Sie gilt über die Läufe (Firewall, VDOM, Tunnelname); liefert ein Lauf einen gekoppelten
+      Tunnel nicht mehr, steht oben „Kopplung von Hand ohne gelesenen Tunnel“ mit „Kopplung
+      entfernen“. Selektoren und Zustand gelten weiter (ohne passende Phase 2 bzw. mit Tunnel down
+      verworfen). Doku und Verbindungen rechnen nach einer Kopplung neu.
   - **Befunde** (Prüfung „VPN-Tunnel (IPsec)“): Tunnel bzw. Phase 2 down, Selektor deckt eine
     Route über den Tunnel nur teilweise, Route über den Tunnel ohne passenden Selektor.
 - **AS-Nummern** (1.19.0, ADR 0066, Modul Analyse): die AS-Nummern im Routing einzeln, nur aus den
@@ -964,6 +1015,22 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   fehlt“ stehen. Nach NetBox nur über den NetBox-Sync (Abschnitt *Reservierungen*).
 - **Verkabelung** (0.62.0, ADR 0025): welches Gerät an welchem Port welches anderen hängt –
   abgeleitet aus CDP/LLDP aller gelesenen Geräte (Switches & Router, ACI-Leafs), nichts von Hand.
+  **Catalyst 1200/1300** (Business-CLI wie Cisco Business 350, Firmware 3.x/4.x; seit 0.68.0,
+  1.23.0 erweitert): Automato erkennt die Plattform an `show version` (`Active-image:`) und liest
+  sie immer in einer **Sitzung wie von Hand im Terminal** (Anmeldung, `terminal datadump`, dann
+  nur die `show`-Befehle) – auch wenn die Firmware Exec annimmt (bis 1.22.0 las Automato dann per
+  Exec, und der Switch meldete für MAC-Tabelle und ARP „Unrecognized command“). Gelesen werden
+  `show system`, `show inventory`, `show interfaces status`/`description`/`port-channel`,
+  `show vlan`, `show lldp neighbors`, `show mac address-table`, `show arp`,
+  `show ipv6 neighbors all`, `show spanning-tree` und `show spanning-tree detail`.
+  **Recht des Lesekontos:** MAC-Tabelle, ARP und Spanning Tree zeigt diese CLI laut
+  CLI-Referenz nur im **Privileged EXEC** (Prompt `#`); ein Konto der Stufe 1 (Read-Only CLI)
+  steht nach der Anmeldung im User EXEC (Prompt `>`) und sieht nur Gerät, Ports, VLANs und LLDP.
+  **Verbindung prüfen** nennt dann „Stufe 1 (Prompt „>“): MAC-Tabelle, ARP und Spanning Tree nicht
+  lesbar“, der Lauf je Befehl „… im User EXEC (Prompt „>“, Stufe 1) nicht verfügbar …“ und der
+  Befund *teilweise gelesen* „Recht des Switch-Kontos prüfen“. Automato wechselt nie selbst die
+  Stufe (`enable` sendet es nicht). Prüfen von Hand: mit dem Lesekonto anmelden, Prompt ansehen,
+  `show mac address-table` eingeben.
   Seit 0.68.0 auch Catalyst 1200/1300 und Juniper MX/EX/QFX; ein MX steht als **Router** da
   (in der L2-Sicht ein Endgerät, kein Switch), seine Interface-Netze im Inventar. Seit 0.94.0
   auch **Arista EOS** (Konto mit Rolle `network-operator`) und **HPE Aruba CX/AOS-CX** (Konto
@@ -974,6 +1041,24 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   getrennt („link-local …“) und zählen nicht als Identität. „Wo hängt …“ findet Geräte auch über
   eine IPv6- bzw. Link-local-Adresse. Ältere Software ohne den IPv6-Befehl: kein Hinweis, der
   Teil bleibt leer.
+  **Firewalls (FortiGate) in der Verkabelung** (seit 1.23.0, Anwender: „die Firewalls werden nicht
+  in der Verkabelung erkannt, LLDP ist aktiv“): meldet ein Switch per LLDP eine Gegenstelle, ordnet
+  Automato sie der gelesenen FortiGate zu über den Hostnamen (aus `system global` bzw. dem
+  Systemstatus – nicht der Name des Quellsystems), die Hostnamen und Seriennummern der
+  HA-Mitglieder, die Chassis-ID bzw. Port-ID als MAC eines Interfaces, die Port-ID als
+  Interface-Name bzw. -Alias und zuletzt die Management-Adresse (eindeutige Interface-Adresse). Ein
+  zweites HA-Mitglied steht mit seinem eigenen Namen als Firewall da (`ha_of` in
+  `GET /cabling/devices`), seine Ports nur dem Namen nach – die Konfiguration am Port und Kabel nach NetBox bleiben beim
+  gelesenen Gerät. Zusätzlich liest der FortiGate-Lauf – nur lesend, Monitor-API – die
+  LLDP-Nachbarn der FortiGate selbst (`network/lldp/neighbors`) und die MAC je Interface
+  (`system/interface`); hört die FortiGate den Switch ebenfalls, ist die Verbindung
+  **beidseitig**. Leserecht: im Admin-Profil des REST-API-Kontos **Netzwerk (`netgrp`) lesen**
+  (in einem Read-only-Profil mit allen Bereichen auf „Lesen“ enthalten). Fehlt es, steht „Hinweise: LLDP der FortiGate nicht abgefragt
+  (… HTTP 403) …“ im Lauf – ein Hinweis, kein Teilfehler; die Zuordnung über Hostname und Port
+  bleibt. Was sich nicht zuordnen lässt, bleibt als nicht gelesenes Gerät sichtbar; meldet es
+  sich als FortiGate (Systembeschreibung), steht es als **Firewall** da. Gegenstellen nur mit
+  Chassis-ID (MAC) sind je MAC ein eigenes Gerät. Nach dem Update FortiGates und Switches neu
+  einlesen (die Chassis-ID speichert Automato erst ab dem nächsten Lauf der Switches).
   Oben die Kennzahlen (gelesene Geräte, Switches, Verbindungen je Zustand, Abweichungen,
   Gegenstellen ohne CDP/LLDP, seit 0.63.0 Endpunkte), darunter die Reiter:
   - **Plan** (0.64.0, ADR 0025 Nr. 9): die L2-Sicht als Zeichnung – oben der Kern (Spines bzw.
@@ -986,7 +1071,9 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     - **VLAN hervorheben:** Linien grün (lässt das VLAN durch), rot gestrichelt (sperrt es),
       orange (nur ein Teil der Kabel), grau gepunktet (unbekannt); Geräte, die das VLAN nutzen
       (verbundene Access-Ports, SVI, Firewall-Subinterface), grün umrandet; darüber „durchgehend“
-      bzw. „getrennt in N Inseln“.
+      bzw. „getrennt in N Inseln“ – seit 1.23.0 nur innerhalb einer L2-Domäne; dieselbe
+      VLAN-Nummer an getrennten Standorten bzw. Systemen heisst „in N getrennten L2-Domänen …
+      (normal)“.
     - Seit 0.65.0 (ADR 0025 Nr. 10): **vPC-Paare** nebeneinander im gestrichelten Rahmen
       „vPC-Domäne n“ (zusammen ein logischer Switch). **Spanning Tree**: Kabel mit blockierten
       VLANs gestrichelt und beschriftet („STP 30“), mit VLAN violett gestrichelt = *Reserve*
@@ -1035,6 +1122,19 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
       Kurzform des Ports bzw. Gross-/Kleinschreibung und Domäne des Geräts sind dasselbe Paar.
       Ändern bzw. „In Automato löschen“ im selben Dialog; was in NetBox steht, bleibt. Audit
       `cable_label.set`/`.deleted`; die Befunde der Prüfung „Kabel“ rechnen gleich neu. Kein CSV.
+    - **Gerät und Port wählen** (1.23.0): je Ende zuerst das **Gerät** mit Suche (Liste mit
+      Herkunft: *gelesen* zuerst, dann *CDP/LLDP* – nur von Nachbarn gemeldet –, *NetBox* – nur am
+      Kabel in NetBox –, *frei erfasst*), dann den **Port** dieses Geräts. An einem gelesenen Gerät
+      nur seine gelesenen Ports (Auswahlliste, ohne VLAN-Interfaces, Port-Channel, Loopbacks,
+      Tunnel); die API lehnt für ein neues Paar einen nicht gelesenen Port ab („Port aus der Liste
+      wählen“). Ist der Port gewählt, steht die **bekannte Gegenstelle** als Vorschlag darunter
+      (CDP/LLDP, Kabel in NetBox, frühere Erfassung, mit deren Nummer) und wird in ein leeres Ende
+      eingetragen – änderbar, ein Klick übernimmt einen anderen Vorschlag. **Frei** eingeben lässt
+      sich nur, was Automato nicht liest (z. B. ein Patchpanel) bzw. ein Port eines nur gemeldeten
+      Geräts – gekennzeichnet mit „frei“, im Dialog und im Reiter Kabelnummern. Am Port
+      („+ Nummer“) bleibt Ende A fest; Enden einer Verbindung bzw. einer bestehenden Erfassung
+      bleiben fest. Bestehende Erfassungen und Kabel in NetBox bleiben änderbar, auch wenn ein
+      Port nicht (mehr) gelesen wird.
     - Die Nummern aus NetBox kommen mit dem nächsten Lauf der Referenzquelle NetBox (Lese-Token
       mit Leserecht auf Kabel, wie die übrigen Objekte). Fehlt das Recht, steht „Kabel nicht
       gelesen (HTTP 403)“ im Lauf; Kabel mit anderen Enden (Patchpanel, Circuit, mehrere Ports)
@@ -1081,7 +1181,14 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     einzigen Kabel zu den Switches), *L2: alle Kabel am selben Switch* (ESXi Warnung, Switch
     Information), *L2: Switch als einzelner Ausfallpunkt* (ohne ihn zerfällt das Netz),
     *Port-Channel unvollständig* (Mitglied nicht verbunden), *VLAN getrennt* (VLAN an Access-Ports
-    bzw. SVI mehrerer Switches, die Trunks dazwischen sperren es).
+    bzw. SVI mehrerer Switches, die Trunks dazwischen sperren es). Seit 1.23.0 nur innerhalb
+    einer **L2-Domäne**: gleicher Standort (des Quellsystems, wie die VLANs je Standort) und
+    Switches, die über Kabel zusammenhängen – nicht durch Endgeräte und nicht durch das
+    ACI-Fabric (dort entscheidet die Bridge Domain, nicht die VLAN-Nummer). Dieselbe VLAN-Nummer
+    an zwei Standorten bzw. auf zwei getrennten Systemen (z. B. 10 Mgmt, 50 Clients überall) ist
+    kein Befund; je Domäne mit Trennung ein Befund. „Wege vergleichen“ prüft das VLAN durch das
+    ACI-Fabric ebenso nicht mehr als Nummer: hinter dem Fabric gilt das VLAN des Eingangs, sonst
+    zählt der Teil als „im ACI-Fabric“.
     Seit 1.19.0 (Prüfung „Kabel: NetBox, Kabelnummer, Duplex“): **Nachbar passt nicht zu
     NetBox** (CDP/LLDP meldet am Port eines Kabels in NetBox eine andere Gegenstelle),
     **Kabelnummer NetBox ≠ Automato** und **Duplex nicht voll** (nur, wenn beide Enden gelesen
@@ -1094,7 +1201,8 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     ungenutzten Peer („… (vPC-Peer) nicht genutzt“).
     Für Spanning Tree und den vPC-Status braucht das Konto zusätzlich `show spanning-tree`
     (IOS privilege 1 bzw. NX-OS `network-operator` dürfen das); die Agenten holen den Befehl
-    mit dem Selbst-Update.
+    mit dem Selbst-Update. Seit 1.23.0 auch Catalyst 1200/1300 (STP, RSTP, Rapid-PVST, MSTP;
+    `show spanning-tree` und `show spanning-tree detail`, Konto im Privileged EXEC).
   - Nicht für Kunden-Benutzer (Infrastruktur).
 - **Applikationen** (ADR 0012): *Applikationen* mit Kürzel, externem und internem Namen,
   Verwendungszweck (Dev/Test/Prod), Verantwortlichen, Kritikalität, Standort und Mitgliedern
@@ -2129,7 +2237,8 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   „Cisco-Switches“): **SSH-Benutzer/
   Passwort** eines Kontos, das nur lesen darf (IOS/IOS-XE privilege 1 bzw. eine Parser-View mit
   den `show`-Befehlen des Lesevertrags, NX-OS Rolle `network-operator`, seit 0.68.0 Junos-Klasse
-  `read-only`, Catalyst 1200/1300 Stufe 1) und statt der Adresse
+  `read-only`, Catalyst 1200/1300 ein Konto im Privileged EXEC – siehe „Catalyst 1200/1300“
+  unter *Verkabelung*) und statt der Adresse
   die **Switches** (eine Adresse je Zeile, `host` bzw. `host:port`, bis 1000) – ein Quellsystem
   ist eine Gruppe von Switches mit demselben Konto, gemischt aus Catalyst 9200L/9300/3650/4500
   (IOS/IOS-XE), Nexus 9000 (NX-OS), Catalyst 1200/1300 (Business-CLI, gelesen über eine
@@ -2183,7 +2292,12 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   - *IP nicht in NetBox* je Quelle (A-Records auf IPs, die die gelesene NetBox nicht kennt, nur
     gezählt);
   - *nicht geprüft* je Quelle (nicht gelesen, letzter Lauf fehlgeschlagen, Zonen ohne Einträge,
-    Rückwärtszone fehlt, NetBox nicht gelesen).
+    Rückwärtszone fehlt, NetBox nicht gelesen). Seit 1.23.0 gilt eine Zone als gelesen, wenn der
+    Lauf sie übertragen hat – auch ohne Einträge (eine Reverse-Zone nur mit SOA/NS). Die Meldung
+    unterscheidet: *ohne eingetragene Rückwärtszone*, *eingetragen, aber noch nicht gelesen*
+    (Zone nach dem letzten Lauf eingetragen – neu einlesen) und **PTR fehlt** (Zone gelesen, aber
+    ohne PTR für diese Adressen, mit Liste). Läufe vor 1.23.0 nennen die übertragenen Zonen nicht –
+    bis zum nächsten Lauf gilt die alte Meldung „Zonen ohne Einträge bzw. noch nicht gelesen“.
   Die **Reverse-Zonen** (z. B. `20.10.in-addr.arpa`) gehören mit in den Lesebereich und brauchen
   die Freigabe für den Zonentransfer ebenfalls. Ohne sie ist der PTR nicht prüfbar, und bei IPs mit
   mehreren A-Records kann der Sync keinen Namen wählen.

@@ -9,9 +9,12 @@
 - **A-Record auf eine IP, die NetBox nicht kennt** (`dns_ip_unknown`, je AD-DNS-Quelle, Hinweis):
   nur gezaehlt (Anzahl, Beispiele, Anzahl je Zone) - der NetBox-Sync legt keine IP an.
 - **Nicht pruefbar** (`dns_unchecked`, je AD-DNS-Quelle, Hinweis): Quelle nicht gelesen bzw. ihr
-  letzter Lauf fehlgeschlagen, Zonen ohne Eintraege, A-Records ohne gelesene Rueckwaertszone
-  (PTR nicht pruefbar, davon mit mehreren A-Records: der Sync entscheidet nicht), PTR auf Namen
-  ausserhalb der gelesenen Zonen, NetBox nicht gelesen (keine stillen Grenzen, ADR 0048).
+  letzter Lauf fehlgeschlagen, eingetragene, aber noch nicht gelesene Zonen, A-Records ohne
+  Rueckwaertszone - seit 1.23.0 getrennt: keine eingetragen (`no_reverse`) bzw. eingetragen, aber
+  noch nicht gelesen (`reverse_unread`); davon mit mehreren A-Records: der Sync entscheidet nicht -,
+  PTR auf Namen ausserhalb der gelesenen Zonen, NetBox nicht gelesen (keine stillen Grenzen,
+  ADR 0048). Dazu (1.23.0) **PTR fehlt** (`no_ptr`): A-Records in einer gelesenen
+  Rueckwaertszone ohne PTR (z. B. Zone nur mit SOA/NS), mit Liste.
 
 Gespeichert wird nur Struktur (IPs, Namen, Zaehler); die Saetze entstehen beim Abruf in der
 Sprache der Anfrage. Nur lesend.
@@ -149,16 +152,28 @@ def unchecked_issues(session: Session, tenant_id: int, cx=None) -> list[Issue]:
             d["state"] = "stale"
         if s.failed:
             d["message"] = s.failed
-        if s.empty:
-            d["empty"] = s.empty
+        if s.empty:  # mit uebertragenen Zonen (1.23.0): eingetragen, aber noch nicht gelesen
+            d["unread_zones" if s.moved else "empty"] = s.empty
         if s.read:
             ips = [ip for ip, sids in m.a_sources.items() if s.id in sids]
-            no_rev = sorted((ip for ip in ips if not m.reverse_read(ip)), key=_sort)
-            if no_rev:
-                nets = list(dict.fromkeys(_net(ip) for ip in no_rev))
-                d["no_reverse"] = len(no_rev)
-                d["no_reverse_nets"] = nets[:_LIST]
-                d["no_reverse_several"] = sum(1 for ip in no_rev if len(m.a.get(ip, ())) > 1)
+            missing = sorted((ip for ip in ips if not m.reverse_read(ip)), key=_sort)
+            unread = [ip for ip in missing if m.reverse_configured(ip)]  # eingetragen, ungelesen
+            no_rev = [ip for ip in missing if not m.reverse_configured(ip)]
+            for key, part in (("no_reverse", no_rev), ("reverse_unread", unread)):
+                if part:
+                    nets = list(dict.fromkeys(_net(ip) for ip in part))
+                    d[key] = len(part)
+                    d[f"{key}_nets"] = nets[:_LIST]
+                    d[f"{key}_several"] = sum(1 for ip in part if len(m.a.get(ip, ())) > 1)
+            # PTR fehlt (1.23.0): Rueckwaertszone gelesen, aber kein PTR fuer die Adresse
+            no_ptr = sorted((ip for ip in ips if m.reverse_read(ip) and not m.ptr.get(ip)),
+                            key=_sort)  # fmt: skip
+            if no_ptr:
+                d["no_ptr"] = len(no_ptr)
+                d["no_ptr_examples"] = no_ptr[:_LIST]
+                d["no_ptr_zones"] = list(dict.fromkeys(m.reverse_zone(ip) or "" for ip in no_ptr))[
+                    :_LIST
+                ]
             outside = sorted({p for ip, sids in m.ptr_sources.items() if s.id in sids
                               for p in m.ptr[ip] - m.a.get(ip, set())
                               if not m.hosts.get(p) and not m.forward_read(p)})  # fmt: skip
@@ -280,26 +295,56 @@ def _unchecked(subject: str, d: dict) -> tuple[str, str]:
                 f"last run failed{msg} – the last collected data applies",
             )
         )
-    if d.get("empty"):
+    if d.get("empty"):  # Lauf ohne Angabe der uebertragenen Zonen (vor 1.23.0)
         why.append(
             L(
                 f"Zonen ohne Einträge bzw. noch nicht gelesen: {_list(d['empty'])}",
                 f"zones without entries or not collected yet: {_list(d['empty'])}",
             )
         )
-    if d.get("no_reverse"):
-        several = d.get("no_reverse_several") or 0
+    if d.get("unread_zones"):
+        why.append(
+            L(
+                f"Zonen eingetragen, aber noch nicht gelesen: {_list(d['unread_zones'])}",
+                f"zones entered but not collected yet: {_list(d['unread_zones'])}",
+            )
+        )
+    for key in ("no_reverse", "reverse_unread"):
+        if not d.get(key):
+            continue
+        several = d.get(f"{key}_several") or 0
         more = L(f", davon {several} mit mehreren A-Records (der NetBox-Sync entscheidet dort "
                  "nicht)",
                  f", of which {several} with several A records (the NetBox sync does not decide "
                  "there)") if several else ""  # fmt: skip
-        nets = _list(d.get("no_reverse_nets"), 4)
+        nets, n = _list(d.get(f"{key}_nets"), 4), d[key]
+        if key == "no_reverse":
+            why.append(
+                L(
+                    f"{n} A-Records ohne eingetragene Rückwärtszone – PTR nicht prüfbar (z. B. "
+                    f"{nets}){more}",
+                    f"{n} A records without an entered reverse zone – PTR not checkable (e.g. "
+                    f"{nets}){more}",
+                )
+            )
+        else:
+            why.append(
+                L(
+                    f"{n} A-Records in einer eingetragenen, aber noch nicht gelesenen "
+                    f"Rückwärtszone – PTR nicht prüfbar (z. B. {nets}){more}",
+                    f"{n} A records in an entered reverse zone not collected yet – PTR not "
+                    f"checkable (e.g. {nets}){more}",
+                )
+            )
+    if d.get("no_ptr"):
+        zones = _list([z for z in d.get("no_ptr_zones") or [] if z], 3)
+        at = L(f" in {zones}", f" in {zones}") if zones else ""
         why.append(
             L(
-                f"{d['no_reverse']} A-Records ohne gelesene Rückwärtszone – PTR nicht "
-                f"prüfbar (z. B. {nets}){more}",
-                f"{d['no_reverse']} A records without a collected reverse zone – PTR not "
-                f"checkable (e.g. {nets}){more}",
+                f"PTR fehlt für {d['no_ptr']} A-Records – Rückwärtszone gelesen{at}, aber ohne "
+                f"PTR für diese Adressen: {_list(d.get('no_ptr_examples'), 8)}",
+                f"PTR missing for {d['no_ptr']} A records – reverse zone collected{at}, but "
+                f"without a PTR for these addresses: {_list(d.get('no_ptr_examples'), 8)}",
             )
         )
     if d.get("ptr_outside"):
@@ -324,10 +369,13 @@ def _unchecked(subject: str, d: dict) -> tuple[str, str]:
     hint = L(
         "Grenze der Prüfung, kein Fehler: Quelle lesen (Läufe); Zonentransfer auch für die "
         "Reverse-Zonen freigeben und sie am Quellsystem eintragen (je Zeile, z. B. "
-        "20.10.in-addr.arpa); Zonen der PTR-Ziele mitlesen; NetBox als Referenzquelle lesen.",
+        "20.10.in-addr.arpa); Zonen der PTR-Ziele mitlesen; NetBox als Referenzquelle lesen. "
+        "„PTR fehlt“: die Zone ist gelesen, hat aber für diese Adressen keinen PTR – im DNS "
+        "anlegen, wo Werkzeuge per Rückwärtsauflösung benennen sollen.",
         "Limit of the check, not an error: collect the source (runs); allow the zone transfer "
         "also for the reverse zones and enter them on the source system (one per line, e.g. "
         "20.10.in-addr.arpa); also collect the zones of the PTR targets; collect NetBox as a "
-        "reference source.",
+        "reference source. “PTR missing”: the zone is collected but has no PTR for these "
+        "addresses – create it in the DNS where tools should name by reverse lookup.",
     )
     return text, hint

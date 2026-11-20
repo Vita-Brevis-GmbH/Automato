@@ -2,15 +2,21 @@
 // Automato), Dialog zum Erfassen je Port-Paar, Transceiver je Port und der Reiter „Kabelnummern“.
 // Erfasst wird nur in Automato (Operator); nach NetBox schreibt allein der NetBox-Sync (Vorschau →
 // Übernehmen, je Kabel bestätigt). Die Geräte liest Automato nur.
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { L } from "../../i18n";
 import { Dash, Empty, ErrorBox, Loading, Modal, Note } from "../../ui";
 import {
   CableLabelInfo,
   CableLabelRow,
   CableLabelSummary,
+  ChoiceOrigin,
   deleteCableLabel,
+  DeviceChoice,
   fetchCableLabels,
+  fetchLabelDevices,
+  fetchLabelPorts,
+  PeerChoice,
+  PortChoice,
   PortRef,
   saveCableLabel,
   Transceiver,
@@ -91,7 +97,255 @@ export function TransceiverStatusChip({ status, count }: { status: TransceiverSt
   );
 }
 
-// Dialog: Kabelnummer eines Port-Paars erfassen, ändern bzw. löschen (eine Erfassung je Paar)
+// Herkunft eines Geräts in der Auswahl (1.23.0): Chip-Klasse, Text, Erklärung
+const DEVICE_ORIGIN: Record<ChoiceOrigin, [string, string, string]> = {
+  inventory: ["ok", L("gelesen", "read"), L("von Automato gelesen – nur seine gelesenen Ports sind wählbar", "read by Automato – only its read ports can be chosen")],
+  neighbor: ["info", "CDP/LLDP", L("nur von Nachbarn gemeldet – gemeldete Ports wählbar, weitere frei", "only reported by neighbors – reported ports can be chosen, others free")],
+  netbox: ["na", "NetBox", L("nur am Kabel in NetBox – Port frei", "only at a cable in NetBox – port free")],
+  free: ["warn", L("frei erfasst", "entered freely"), L("früher frei erfasst (kein gelesenes Gerät, z. B. Patchpanel)", "entered freely before (no read device, e.g. patch panel)")],
+};
+const VIA: Record<string, string> = { cdp: "CDP", lldp: "LLDP", netbox: "NetBox", automato: "Automato" };
+
+export function FreeChip({ title }: { title?: string }) {
+  return (
+    <span
+      className="chip warn cl-free"
+      title={title ?? L("kein gelesenes Gerät – frei erfasst (z. B. Patchpanel)", "no read device – entered freely (e.g. patch panel)")}
+    >
+      {L("frei", "free")}
+    </span>
+  );
+}
+
+const sameEnd = (x: Partial<PortRef>, y: Partial<PortRef>) =>
+  !!x.device && !!y.device && x.device.toLowerCase() === y.device.toLowerCase() && (x.port ?? "").toLowerCase() === (y.port ?? "").toLowerCase();
+
+// Ein Ende: Gerät mit Suche (gelesene zuerst), dann die Ports dieses Geräts; frei nur ohne gelesenes Gerät
+function EndPicker({
+  end,
+  title,
+  tenantId,
+  value,
+  locked,
+  onChange,
+  onPorts,
+}: {
+  end: "a" | "b";
+  title: string;
+  tenantId: number;
+  value: { device: string; port: string };
+  locked: boolean;
+  onChange: (v: { device: string; port: string }) => void;
+  onPorts: (ports: PortChoice[] | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [found, setFound] = useState<{ total: number; items: DeviceChoice[] } | null>(null);
+  const [loaded, setLoaded] = useState<{ name: string; device: DeviceChoice | null; ports: PortChoice[] } | null>(null);
+  const blur = useRef<number | undefined>(undefined);
+  // Treffer der Gerätesuche
+  useEffect(() => {
+    if (locked || !open) return;
+    let live = true;
+    const t = setTimeout(() => {
+      fetchLabelDevices(tenantId, value.device.trim())
+        .then((d) => live && setFound(d))
+        .catch(() => live && setFound(null));
+    }, 150);
+    return () => {
+      live = false;
+      clearTimeout(t);
+    };
+  }, [tenantId, value.device, open, locked]);
+  // Ports des Geräts (auch bei festem Ende: für den Vorschlag der Gegenstelle)
+  useEffect(() => {
+    const name = value.device.trim();
+    if (!name) {
+      setLoaded(null);
+      return;
+    }
+    let live = true;
+    const t = setTimeout(() => {
+      fetchLabelPorts(tenantId, name)
+        .then((d) => live && setLoaded({ name, ...d }))
+        .catch(() => live && setLoaded(null));
+    }, 200);
+    return () => {
+      live = false;
+      clearTimeout(t);
+    };
+  }, [tenantId, value.device]);
+  const info = loaded && loaded.name === value.device.trim() ? loaded : null; // nur zum eingegebenen Namen
+  const ports = info?.device ? info.ports : null;
+  useEffect(() => onPorts(ports), [ports]); // eslint-disable-line react-hooks/exhaustive-deps
+  const dev = info?.device ?? null;
+  const known = ports?.some((p) => p.name.toLowerCase() === value.port.trim().toLowerCase()) ?? false;
+  const listOnly = !!dev && !dev.free_ports; // gelesenes Gerät: nur seine Ports
+  const unknownDevice = !!value.device.trim() && info !== null && !dev;
+  const port = ports?.find((p) => p.name.toLowerCase() === value.port.trim().toLowerCase());
+  return (
+    <fieldset className="cl-end" data-end={end} style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "6px 10px 8px", margin: "0 0 10px" }}>
+      <legend style={{ fontSize: 12, fontWeight: 600, padding: "0 4px" }}>{title}</legend>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-start" }}>
+        <div className="field" style={{ flex: "1 1 200px", position: "relative", marginBottom: 0 }}>
+          <label htmlFor={`cl-${end}-device`}>
+            {L("Gerät", "Device")}{" "}
+            {dev && (
+              <span className={`chip ${DEVICE_ORIGIN[dev.origin][0]} cl-origin`} data-origin={dev.origin} title={DEVICE_ORIGIN[dev.origin][2]}>
+                {DEVICE_ORIGIN[dev.origin][1]}
+              </span>
+            )}
+            {unknownDevice && <FreeChip />}
+          </label>
+          <input
+            id={`cl-${end}-device`}
+            className="input mono"
+            value={value.device}
+            readOnly={locked}
+            maxLength={200}
+            autoComplete="off"
+            placeholder={locked ? undefined : L("Gerät suchen …", "Search device …")}
+            role={locked ? undefined : "combobox"}
+            aria-expanded={locked ? undefined : open}
+            onChange={(e) => {
+              onChange({ device: e.target.value, port: "" });
+              setOpen(true);
+            }}
+            onFocus={() => {
+              if (locked) return;
+              window.clearTimeout(blur.current);
+              setOpen(true);
+            }}
+            onBlur={() => {
+              blur.current = window.setTimeout(() => setOpen(false), 150);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Escape" && open) {
+                e.stopPropagation();
+                setOpen(false);
+              }
+            }}
+          />
+          {open && !locked && found && (
+            <div className="menu suggest cl-devices" id={`cl-${end}-devices`} role="listbox" aria-label={L("Geräte", "Devices")} style={{ maxHeight: 260 }}>
+              {found.items.map((d) => (
+                <button
+                  key={d.name}
+                  type="button"
+                  role="option"
+                  aria-selected={d.name === value.device}
+                  className="cl-device-option"
+                  data-name={d.name}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    onChange({ device: d.name, port: "" });
+                    setOpen(false);
+                  }}
+                >
+                  <b>{d.name}</b>{" "}
+                  <span className={`chip ${DEVICE_ORIGIN[d.origin][0]}`} title={DEVICE_ORIGIN[d.origin][2]}>
+                    {DEVICE_ORIGIN[d.origin][1]}
+                  </span>{" "}
+                  <span className="faint">
+                    {[d.kind && d.kind !== "unknown" ? d.kind : null, d.source, L(`${d.ports ?? 0} Ports`, `${d.ports ?? 0} ports`)].filter(Boolean).join(" · ")}
+                  </span>
+                </button>
+              ))}
+              {found.items.length === 0 && (
+                <div className="faint" style={{ padding: "6px 10px" }}>
+                  {L("kein gelesenes Gerät – wird frei erfasst (z. B. Patchpanel)", "no read device – entered freely (e.g. patch panel)")}
+                </div>
+              )}
+              {found.total > found.items.length && (
+                <div className="faint" style={{ padding: "6px 10px" }}>
+                  {L(`${found.items.length} von ${found.total} – genauer suchen`, `${found.items.length} of ${found.total} – refine the search`)}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+        <div className="field" style={{ flex: "1 1 160px", marginBottom: 0 }}>
+          <label htmlFor={`cl-${end}-port`}>
+            Port {!locked && value.port.trim() && !known && (dev || unknownDevice) && <FreeChip title={L("Port nicht gelesen – frei erfasst", "port not read – entered freely")} />}
+          </label>
+          {locked ? (
+            <input id={`cl-${end}-port`} className="input mono" value={value.port} readOnly maxLength={200} />
+          ) : listOnly ? (
+            <select id={`cl-${end}-port`} className="sel mono" value={known ? port!.name : value.port} onChange={(e) => onChange({ ...value, port: e.target.value })}>
+              <option value="">{L("– Port wählen –", "– choose port –")}</option>
+              {value.port && !known && (
+                <option value={value.port}>
+                  {value.port} {L("(nicht gelesen)", "(not read)")}
+                </option>
+              )}
+              {ports!.map((p) => (
+                <option key={p.name} value={p.name}>
+                  {[p.name, p.description, p.status, p.peers.length ? `→ ${p.peers[0].device} ${p.peers[0].port}` : null].filter(Boolean).join(" · ")}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <>
+              <input
+                id={`cl-${end}-port`}
+                className="input mono"
+                value={value.port}
+                maxLength={200}
+                list={ports?.length ? `cl-${end}-ports` : undefined}
+                placeholder={ports?.length ? L("wählen oder frei eingeben", "choose or enter freely") : L("frei eingeben", "enter freely")}
+                onChange={(e) => onChange({ ...value, port: e.target.value })}
+              />
+              {!!ports?.length && (
+                <datalist id={`cl-${end}-ports`}>
+                  {ports.map((p) => (
+                    <option key={p.name} value={p.name}>
+                      {p.description ?? undefined}
+                    </option>
+                  ))}
+                </datalist>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+      {listOnly && !locked && ports && ports.length === 0 && (
+        <div className="hint">{L("keine Ports gelesen", "no ports read")}</div>
+      )}
+      {port?.description && <div className="hint faint">{port.description}</div>}
+    </fieldset>
+  );
+}
+
+// Vorschläge der Gegenstelle eines Ports (CDP/LLDP, Kabel in NetBox, Erfassung) – übernehmen per Klick
+function PeerSuggestions({ to, peers, current, onPick }: { to: string; peers: PeerChoice[]; current: Partial<PortRef>; onPick: (p: PeerChoice) => void }) {
+  if (!peers.length) return null;
+  return (
+    <div className="hint cl-peers" style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", margin: "-4px 0 10px" }}>
+      <span>{L(`Gegenstelle für ${to}:`, `Peer for ${to}:`)}</span>
+      {peers.map((p) => {
+        const on = sameEnd(p, current);
+        return (
+          <button
+            key={`${p.device}|${p.port}`}
+            type="button"
+            className={`chip cl-peer${on ? " ok" : ""}`}
+            style={{ cursor: "pointer", fontFamily: "inherit" }}
+            data-device={p.device}
+            data-port={p.port}
+            disabled={on}
+            title={L("als Gegenstelle übernehmen", "use as peer")}
+            onClick={() => onPick(p)}
+          >
+            <b>{p.device}</b> <span className="mono">{p.port}</span> <span className="faint">({p.via.map((v) => VIA[v] ?? v).join(" · ")})</span>
+            {p.labels.length > 0 && <span className="mono"> · {p.labels.join(", ")}</span>}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// Dialog: Kabelnummer eines Port-Paars erfassen, ändern bzw. löschen (eine Erfassung je Paar). Gerät und
+// Port beider Enden aus Listen (1.23.0); fest sind Enden aus einer Verbindung bzw. einer bestehenden Erfassung.
 export function CableLabelDialog({
   tenantId,
   a,
@@ -105,24 +359,61 @@ export function CableLabelDialog({
   a: Partial<PortRef>;
   b: Partial<PortRef>;
   info?: CableLabelInfo | null;
-  fixed?: boolean; // Enden aus der Verbindung: nicht änderbar
+  // Enden nicht änderbar (nur vollständige): true = beide, "a" = nur Ende A (Port einer Zeile), false = keines
+  fixed?: boolean | "a";
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [ends, setEnds] = useState({ ad: a.device ?? "", ap: a.port ?? "", bd: b.device ?? "", bp: b.port ?? "" });
+  const [ends, setEnds] = useState({ a: { device: a.device ?? "", port: a.port ?? "" }, b: { device: b.device ?? "", port: b.port ?? "" } });
+  const [lock] = useState(() => ({
+    a: fixed !== false && !!a.device && !!a.port,
+    b: fixed === true && !!b.device && !!b.port,
+  }));
+  const [touched, setTouched] = useState({ a: !!(a.device || a.port), b: !!(b.device || b.port) });
+  const [peers, setPeers] = useState<{ a: PeerChoice[]; b: PeerChoice[] }>({ a: [], b: [] });
+  const [ports, setPorts] = useState<{ a: PortChoice[] | null; b: PortChoice[] | null }>({ a: null, b: null });
   const [label, setLabel] = useState(info?.automato?.label ?? "");
   const [note, setNote] = useState(info?.automato?.note ?? "");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<unknown>(null);
   const netbox = [...new Set((info?.netbox ?? []).map((c) => c.label).filter(Boolean))];
-  const ok = label.trim() && ends.ad.trim() && ends.ap.trim() && ends.bd.trim() && ends.bp.trim();
+  // Vorschläge je Ende: Gegenstellen des gewählten Ports
+  useEffect(() => {
+    const of = (side: "a" | "b") =>
+      ports[side]?.find((p) => p.name.toLowerCase() === ends[side].port.trim().toLowerCase())?.peers ?? [];
+    setPeers({ a: of("a"), b: of("b") });
+  }, [ports, ends]);
+  // leeres, offenes Ende: bekannte Gegenstelle vorschlagen (eintragen, änderbar)
+  useEffect(() => {
+    for (const [from, to] of [
+      ["a", "b"],
+      ["b", "a"],
+    ] as const) {
+      const first = peers[from][0];
+      if (first && !lock[to] && !touched[to] && !ends[to].device && !ends[to].port) {
+        setEnds((e) => ({ ...e, [to]: { device: first.device, port: first.port } }));
+        setTouched((t) => ({ ...t, [to]: true }));
+      }
+    }
+  }, [peers]); // eslint-disable-line react-hooks/exhaustive-deps
+  const known = [...peers.a.filter((p) => sameEnd(p, ends.b)), ...peers.b.filter((p) => sameEnd(p, ends.a))].flatMap((p) => p.labels);
+  const existing = [...new Set(known)].filter((x) => x !== info?.automato?.label && !netbox.includes(x));
+  const ok = label.trim() && ends.a.device.trim() && ends.a.port.trim() && ends.b.device.trim() && ends.b.port.trim();
   const save = async (ev?: FormEvent) => {
     ev?.preventDefault();
     if (!ok) return;
     setBusy(true);
     setErr(null);
     try {
-      await saveCableLabel({ tenant_id: tenantId, a_device: ends.ad, a_port: ends.ap, b_device: ends.bd, b_port: ends.bp, label, note: note || null });
+      await saveCableLabel({
+        tenant_id: tenantId,
+        a_device: ends.a.device,
+        a_port: ends.a.port,
+        b_device: ends.b.device,
+        b_port: ends.b.port,
+        label,
+        note: note || null,
+      });
       onSaved();
     } catch (e) {
       setErr(e);
@@ -142,12 +433,32 @@ export function CableLabelDialog({
       setBusy(false);
     }
   };
-  const field = (id: string, label: string, key: keyof typeof ends) => (
-    <div className="field">
-      <label htmlFor={id}>{label}</label>
-      <input id={id} className="input mono" value={ends[key]} readOnly={fixed} maxLength={200} onChange={(e) => setEnds({ ...ends, [key]: e.target.value })} />
-    </div>
+  const picker = (side: "a" | "b", title: string) => (
+    <EndPicker
+      end={side}
+      title={title}
+      tenantId={tenantId}
+      value={ends[side]}
+      locked={lock[side]}
+      onChange={(v) => {
+        setEnds((e) => ({ ...e, [side]: v }));
+        setTouched((t) => ({ ...t, [side]: true }));
+      }}
+      onPorts={(p) => setPorts((x) => ({ ...x, [side]: p }))}
+    />
   );
+  const suggest = (from: "a" | "b", to: "a" | "b", toTitle: string) =>
+    !lock[to] && (
+      <PeerSuggestions
+        to={toTitle}
+        peers={peers[from]}
+        current={ends[to]}
+        onPick={(p) => {
+          setEnds((e) => ({ ...e, [to]: { device: p.device, port: p.port } }));
+          setTouched((t) => ({ ...t, [to]: true }));
+        }}
+      />
+    );
   return (
     <Modal
       title={info?.automato ? L("Kabelnummer ändern", "Change cable number") : L("Kabelnummer erfassen", "Capture cable number")}
@@ -170,20 +481,21 @@ export function CableLabelDialog({
     >
       <form id="cable-label-dialog" onSubmit={save}>
         <ErrorBox error={err} onClose={() => setErr(null)} />
-        <div className="inline-form" style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          {field("cl-a-device", L("Gerät A", "Device A"), "ad")}
-          {field("cl-a-port", "Port A", "ap")}
-        </div>
-        <div className="inline-form" style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          {field("cl-b-device", L("Gerät B", "Device B"), "bd")}
-          {field("cl-b-port", "Port B", "bp")}
-        </div>
+        {picker("a", L("Ende A", "End A"))}
+        {suggest("a", "b", L("Ende B", "end B"))}
+        {picker("b", L("Ende B", "End B"))}
+        {suggest("b", "a", L("Ende A", "end A"))}
         <div className="field">
           <label htmlFor="cl-label">{L("Kabelnummer", "Cable number")}</label>
-          <input id="cl-label" className="input mono" value={label} maxLength={100} autoFocus placeholder={L("z. B. K-0815", "e.g. K-0815")} onChange={(e) => setLabel(e.target.value)} />
+          <input id="cl-label" className="input mono" value={label} maxLength={100} autoFocus={lock.a && lock.b} placeholder={L("z. B. K-0815", "e.g. K-0815")} onChange={(e) => setLabel(e.target.value)} />
           {netbox.length > 0 && (
             <div className="hint">
               {L("In NetBox:", "In NetBox:")} <b className="mono">{netbox.join(", ")}</b>
+            </div>
+          )}
+          {existing.length > 0 && (
+            <div className="hint cl-existing">
+              {L("Für dieses Paar bekannt:", "Known for this pair:")} <b className="mono">{existing.join(", ")}</b>
             </div>
           )}
         </div>
@@ -193,8 +505,8 @@ export function CableLabelDialog({
         </div>
         <Note>
           {L(
-            "Gespeichert wird in Automato, je Port-Paar eine Nummer (Lang- und Kurzform des Ports sind dasselbe Paar). Nach NetBox schreibt sie der NetBox-Sync (Abschnitt Verkabelung) als Label des Kabels – an bestehenden Kabeln nur, wenn Sie es dort bestätigen. Was nur in NetBox steht, bleibt.",
-            "Stored in Automato, one number per port pair (long and short form of the port are the same pair). The NetBox sync (cabling section) writes it as the label of the cable – on existing cables only if you confirm it there. What is only in NetBox stays.",
+            "Gerät und Port wählen Sie aus den gelesenen Geräten; bekannte Gegenstellen (CDP/LLDP, Kabel in NetBox) werden vorgeschlagen. Frei eingeben lässt sich nur, was Automato nicht liest (z. B. ein Patchpanel) – gekennzeichnet mit „frei“. Gespeichert wird in Automato, je Port-Paar eine Nummer (Lang- und Kurzform des Ports sind dasselbe Paar). Nach NetBox schreibt sie der NetBox-Sync (Abschnitt Verkabelung) als Label des Kabels – an bestehenden Kabeln nur, wenn Sie es dort bestätigen. Was nur in NetBox steht, bleibt.",
+            "Choose device and port from the read devices; known peers (CDP/LLDP, cables in NetBox) are suggested. Only what Automato does not read (e.g. a patch panel) can be entered freely – marked “free”. Stored in Automato, one number per port pair (long and short form of the port are the same pair). The NetBox sync (cabling section) writes it as the label of the cable – on existing cables only if you confirm it there. What is only in NetBox stays.",
           )}
         </Note>
       </form>
@@ -288,11 +600,11 @@ export function CableLabelsTab({ tenantId, canEdit, initialQ }: { tenantId: numb
               {data.items.map((r) => (
                 <tr key={r.pair} data-pair={r.pair} className={r.neighbor === "mismatch" ? "row-crit" : undefined}>
                   <td className="nowrap">
-                    <b>{r.a.device}</b> <span className="mono">{r.a.port}</span>
+                    <b>{r.a.device}</b> <span className="mono">{r.a.port}</span> {r.a.free && <FreeChip />}
                   </td>
                   <td className="faint">↔</td>
                   <td className="nowrap">
-                    <b>{r.b.device}</b> <span className="mono">{r.b.port}</span>
+                    <b>{r.b.device}</b> <span className="mono">{r.b.port}</span> {r.b.free && <FreeChip />}
                   </td>
                   <td>
                     <LabelCell info={r} onEdit={canEdit ? () => setEdit({ row: r }) : undefined} />

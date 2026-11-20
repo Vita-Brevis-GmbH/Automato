@@ -18,9 +18,14 @@ keine Rueckfragen):
   (NX-OS): gesperrte Ports mit Grund (`bpduguard`, `BPDUGuard errDisable`). Fehlt der Befehl,
   zaehlen die Ports mit Status err-disabled aus `show interfaces status` ohne Grund.
 
-Andere Plattformen (Catalyst 1200/1300, Junos, Arista EOS, Aruba CX, SNMPv3) liest Automato hier
-nicht - der Switch steht dann mit Status `unsupported` im Ergebnis und wird in der Ansicht
-gezaehlt (keine stille Grenze).
+Seit 1.23.0 auch Catalyst 1200/1300 (Business-CLI, Anwender 2026-11-20: „Spanningtree bei Cisco
+Catalyst 1300 wird nicht erkannt, Rapid per vlan spanningtree“): `show spanning-tree` und
+`show spanning-tree detail` in der Form dieser CLI (`cbs.stp_tree`/`stp_detail`); err-disabled
+aus dem Status der Ports. Steht das Konto im User EXEC (Prompt `>`), nennt der Hinweis das.
+
+Andere Plattformen (Junos, Arista EOS, Aruba CX, SNMPv3) liest Automato hier nicht - der Switch
+steht dann mit Status `unsupported` im Ergebnis und wird in der Ansicht gezaehlt (keine stille
+Grenze).
 """
 
 import re
@@ -37,7 +42,7 @@ COMMANDS: dict[str, tuple[str, ...]] = {
     p: (DETAIL, MST_CONFIG, ERRDISABLED[p]) for p in ERRDISABLED
 }
 OWN = frozenset(c for cmds in COMMANDS.values() for c in cmds)
-SUPPORTED = frozenset(COMMANDS)
+SUPPORTED = frozenset(COMMANDS) | {"cbs"}  # 1.23.0: Business-CLI (eigene Auswertung in `cbs`)
 
 PROTOCOL_MODE = {"ieee": "pvst", "rstp": "rapid-pvst", "mstp": "mst"}
 ROLES = {"root": "root", "desg": "designated", "altn": "alternate", "back": "backup",
@@ -292,10 +297,15 @@ def _error(text: str | None) -> str | None:
 
 
 def inventory(
-    device: str, platform: str, outputs: dict[str, str], statuses: dict[str, str] | None = None
+    device: str,
+    platform: str,
+    outputs: dict[str, str],
+    statuses: dict[str, str] | None = None,
+    privilege: str | None = None,
 ) -> tuple[NormalizedStpDevice, list[NormalizedStp]]:
     """Spanning Tree eines Switches -> (Geraet mit Modus, Status und err-disabled, Instanzen).
-    `statuses`: Port -> Status aus `show interfaces status` (Rueckfall fuer err-disabled)."""
+    `statuses`: Port -> Status aus `show interfaces status` (Rueckfall fuer err-disabled);
+    `privilege`: Stufe der Sitzung (`user` = Prompt `>`, 1.23.0) fuer den Hinweis."""
     if platform not in SUPPORTED:
         return NormalizedStpDevice(device=device, status="unsupported"), []
     tree_text = outputs.get(TREE)
@@ -304,9 +314,21 @@ def inventory(
                                    note=f"{TREE}: nicht gelesen"), []  # fmt: skip
     error = _error(tree_text)
     if error and not _NO_STP.search(error):
-        return NormalizedStpDevice(device=device, status="unreadable", note=f"{TREE}: {error}"), []
-    trees = [] if error else parse_tree(tree_text)
-    detail = {} if _error(outputs.get(DETAIL)) else parse_detail(outputs.get(DETAIL, ""))
+        why = ""
+        if platform == "cbs" and privilege == "user":
+            from collectors.cisco_switch.cbs import rights
+
+            why = rights(error)
+        return NormalizedStpDevice(device=device, status="unreadable",
+                                   note=f"{TREE}: {error}{why}"), []  # fmt: skip
+    if platform == "cbs":  # 1.23.0: eigene Form der Business-CLI
+        from collectors.cisco_switch import cbs
+
+        trees = [] if error else cbs.stp_tree(tree_text)
+        detail = {} if _error(outputs.get(DETAIL)) else cbs.stp_detail(outputs.get(DETAIL, ""))
+    else:
+        trees = [] if error else parse_tree(tree_text)
+        detail = {} if _error(outputs.get(DETAIL)) else parse_detail(outputs.get(DETAIL, ""))
     mst = parse_mst("" if _error(outputs.get(MST_CONFIG)) else outputs.get(MST_CONFIG, ""))
     instances: list[NormalizedStp] = []
     for t in trees:
@@ -322,7 +344,7 @@ def inventory(
         instances.append(NormalizedStp(
             device=device, instance=_name(t["kind"], t["number"]),
             vlan=t["number"] if t["kind"] == "vlan" else None, mst=mst_no,
-            vlans=mst["instances"].get(mst_no) if mst_no is not None else None,
+            vlans=(mst["instances"].get(mst_no) or t.get("vlans")) if mst_no is not None else None,
             protocol=t["protocol"], root_priority=t["root_priority"], root_mac=t["root_mac"],
             root_cost=0 if is_root else t["root_cost"],
             root_port=None if is_root else t["root_port"], is_root=is_root,
@@ -331,8 +353,8 @@ def inventory(
             tc_count=d.get("tc_count"), tc_ago=d.get("tc_ago"), tc_from=d.get("tc_from"),
             ports=t["ports"],
         ))  # fmt: skip
-    modes = {PROTOCOL_MODE.get(i.protocol or "") for i in instances} - {None}
-    errtext = outputs.get(ERRDISABLED[platform])
+    modes = {t.get("mode") or PROTOCOL_MODE.get(t.get("protocol") or "") for t in trees} - {None}
+    errtext = outputs.get(ERRDISABLED[platform]) if platform in ERRDISABLED else None
     if errtext is not None and not _error(errtext):
         errdisabled = parse_errdisabled(errtext)
     else:  # Befehl fehlt: Ports mit Status err-disabled ohne Grund
@@ -358,6 +380,7 @@ def add(inv, part, sw: dict) -> None:
         return
     name = part.devices[0].name
     statuses = {i.name: i.status or "" for i in part.interfaces}
-    dev, instances = inventory(name, sw.get("platform") or "", sw.get("outputs") or {}, statuses)
+    dev, instances = inventory(name, sw.get("platform") or "", sw.get("outputs") or {}, statuses,
+                               sw.get("privilege"))  # fmt: skip
     inv.stp_devices.append(dev)
     inv.stp.extend(instances)

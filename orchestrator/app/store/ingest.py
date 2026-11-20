@@ -560,7 +560,14 @@ def _replace_inventory(session: Session, run, inv: NetworkInventory) -> None:
         for name in dict.fromkeys([*inv.vrfs, *leaks])
     ]
     rows += [  # CDP/LLDP (Switches, 0.62.0)
-        InvNeighbor(**base, **{**n.model_dump(), "remote_caps": n.remote_caps or None})
+        InvNeighbor(
+            **base,
+            **{
+                **n.model_dump(),
+                "remote_caps": n.remote_caps or None,
+                "remote_chassis": _cut(n.remote_chassis, 100),
+            },
+        )
         for n in inv.neighbors
     ]
     rows += _transceivers(base, inv, rows)  # Transceiver der Switches (1.19.0)

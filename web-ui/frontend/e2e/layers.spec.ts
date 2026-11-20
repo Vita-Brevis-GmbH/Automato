@@ -4,9 +4,9 @@ import { expect, test } from "./fixtures";
 
 // Schicht -> Stellen in der Reihenfolge der Navigation (Mandant „Kunde A“, Admin)
 const NAV: [string, string, string[]][] = [
-  ["l1", "L1 · Physik", ["Verkabelung", "Ports", "Transceiver", "Kabelnummern"]],
-  ["l2", "L2 · Switching", ["VLANs", "Spanning Tree", "VLAN-Reservierungen"]],
-  ["l3", "L3 · Routing", ["Netze", "VRF", "Routing", "Statische Routen", "BGP", "AS-Nummern", "AS-Reservierungen"]],
+  ["l1", "L1 · Physik", ["L1-Plan", "Verkabelung", "Ports", "Transceiver", "Kabelnummern"]],
+  ["l2", "L2 · Switching", ["L2-Plan", "VLANs", "Spanning Tree", "VLAN-Reservierungen"]],
+  ["l3", "L3 · Routing", ["L3-Plan", "Netze", "VRF", "Routing", "Statische Routen", "BGP", "AS-Nummern", "AS-Reservierungen"]],
   ["l4-7", "L4–7 · Firewall & Dienste", ["Regeln & Contracts", "Objekte & Inventar", "NAT / VIPs", "Load Balancer", "VPN-Tunnel"]],
 ];
 

@@ -106,6 +106,203 @@ Aging time is 300 sec
 vlan 1                 10.0.1.1          00:3a:9c:00:00:01   dynamic
 vlan 10                10.10.0.21        00:50:56:01:00:01   dynamic
 """,
+    # 1.23.0: Spanning Tree Rapid-PVST (Form wie Firmware 4.1, Namen erfunden)
+    "show spanning-tree": """
+
+Spanning tree enabled mode: Rapid-PVST
+Default port cost method:   long
+Loopback guard:             Disabled
+
+VLAN 1
+Root ID        Priority:   4096
+               Address:    00:3a:9c:00:00:01
+               Path Cost:  2000
+               Root Port:  te1/0/1
+               Hello Time: 2 sec Max Age: 20 sec Forward Delay: 15 sec
+
+
+Bridge ID      Priority:   32768
+               Address:    e0:5f:b9:00:00:01
+               Hello Time: 2 sec Max Age: 20 sec Forward Delay: 15 sec
+
+
+Name      State     Prio.Nbr  Cost      Sts    Role      PortFast Type
+--------- --------- --------- --------- ------ --------- -------- --------------
+ gi1/0/1   enabled    128.1     20000    Frw     Desg      Yes    P2P (rpvst)
+ te1/0/1   enabled    128.25    2000     Frw     Root      No     P2P (rpvst)
+ te1/0/2   enabled    128.26    2000     Blk     Altn      No     P2P (rpvst)
+ Po1       enabled    128.1000  10000    Frw     Desg      No     P2P (rpvst)
+
+* Port Type or PVID Inconsistency
+
+VLAN 10
+Root ID        Priority:   24586
+               Address:    e0:5f:b9:00:00:01
+               This switch is the root
+               Hello Time: 2 sec Max Age: 20 sec Forward Delay: 15 sec
+
+
+Bridge ID      Priority:   24586
+               Address:    e0:5f:b9:00:00:01
+               Hello Time: 2 sec Max Age: 20 sec Forward Delay: 15 sec
+
+
+Name      State     Prio.Nbr  Cost      Sts    Role      PortFast Type
+--------- --------- --------- --------- ------ --------- -------- --------------
+ gi1/0/1   enabled    128.1     20000    Frw     Desg      Yes    P2P (rpvst)
+ te1/0/1   enabled    128.25    2000     Frw     Desg      No     P2P (rpvst)
+ te1/0/2   enabled    128.26    2000     Frw     Desg      No    *P2P (rpvst)
+
+* Port Type or PVID Inconsistency
+""",
+    "show spanning-tree detail": """
+
+Spanning tree enabled mode: Rapid-PVST
+Default port cost method:   long
+Loopback guard:             Disabled
+
+VLAN 1
+Root ID        Priority:   4096
+               Address:    00:3a:9c:00:00:01
+               Path Cost:  2000
+               Root Port:  te1/0/1
+               Hello Time: 2 sec Max Age: 20 sec Forward Delay: 15 sec
+
+
+Bridge ID      Priority:   32768
+               Address:    e0:5f:b9:00:00:01
+               Hello Time: 2 sec Max Age: 20 sec Forward Delay: 15 sec
+
+               Number of topology changes: 7 last change occurred: 2d18h ago
+               Times: hold: 1, topology change: 35, notification: 2
+                      hello: 2, max age: 20, forward delay: 15
+
+VLAN 10
+Root ID        Priority:   24586
+               Address:    e0:5f:b9:00:00:01
+               This switch is the root
+               Hello Time: 2 sec Max Age: 20 sec Forward Delay: 15 sec
+
+
+Bridge ID      Priority:   24586
+               Address:    e0:5f:b9:00:00:01
+               Hello Time: 2 sec Max Age: 20 sec Forward Delay: 15 sec
+
+               Number of topology changes: 55 last change occurred: 01010145 ago
+               Times: hold: 1, topology change: 35, notification: 2
+                      hello: 2, max age: 20, forward delay: 15
+""",
+}
+
+# 1.23.0: Catalyst 1300 mit Firmware 4.1 - Ausgaben aus der Rueckmeldung des Anwenders
+# (2026-11-20), anonymisiert (Namen, MACs, Adressen ersetzt; Form unveraendert)
+C1300_FW41 = {
+    "show version": """
+Active-image: flash://system/images/image_4.1.3.36.bin
+  Version: 4.1.3.36
+  MD5 Digest: 00000000000000000000000000000000
+  Date: 19-May-2024
+  Time: 08:17:26
+Inactive-image: flash://system/images/_image_4.1.3.36.bin
+  Version: 4.1.3.36
+  MD5 Digest: 00000000000000000000000000000000
+  Date: 19-May-2024
+  Time: 08:17:26
+""",
+    "show spanning-tree": """
+
+Spanning tree enabled mode: Rapid-PVST
+Default port cost method:   long
+Loopback guard:             Disabled
+
+VLAN 1
+Root ID        Priority:   32768
+               Address:    02:00:00:00:01:7d
+               Path Cost:  1000
+               Root Port:  Po2
+               Hello Time: 2 sec Max Age: 20 sec Forward Delay: 15 sec
+
+
+Bridge ID      Priority:   32768
+               Address:    02:00:00:00:02:51
+               Hello Time: 2 sec Max Age: 20 sec Forward Delay: 15 sec
+
+
+Name      State     Prio.Nbr  Cost      Sts    Role      PortFast Type
+--------- --------- --------- --------- ------ --------- -------- --------------
+ gi1/0/1   enabled    128.1     20000    Frw     Desg      Yes    P2P (rpvst)
+
+* Port Type or PVID Inconsistency
+""",
+    "show spanning-tree detail": """
+
+Spanning tree enabled mode: Rapid-PVST
+Default port cost method:   long
+Loopback guard:             Disabled
+
+VLAN 1
+Root ID        Priority:   32768
+               Address:    02:00:00:00:01:7d
+               Path Cost:  1000
+               Root Port:  Po2
+               Hello Time: 2 sec Max Age: 20 sec Forward Delay: 15 sec
+
+
+Bridge ID      Priority:   32768
+               Address:    02:00:00:00:02:51
+               Hello Time: 2 sec Max Age: 20 sec Forward Delay: 15 sec
+
+               Number of topology changes: 55 last change occurred: 01010145 ago
+               Times: hold: 1, topology change: 35, notification: 2
+                      hello: 2, max age: 20, forward delay: 15
+""",
+    "show mac address-table": """Flags: I - Internal usage VLAN
+Aging time is 300 sec
+
+    Vlan          Mac Address         Port       Type
+------------ --------------------- ---------- ----------
+     1         02:00:00:00:02:51       0         self
+     1         02:00:00:00:10:66    gi1/0/18   dynamic
+     1         02:00:00:00:20:56    gi1/0/23   dynamic
+     10        02:00:00:00:30:36      Po1      dynamic
+     10        02:00:00:00:30:ab      Po1      dynamic
+     10        02:00:00:00:40:87    gi1/0/19   dynamic
+     10        02:00:00:00:50:f6    gi1/0/9    dynamic
+     10        02:00:00:00:01:7d      Po1      dynamic
+     10        02:00:00:00:60:50    gi1/0/1    dynamic
+     10        02:00:00:00:20:55    gi1/0/22   dynamic
+     30        02:00:00:00:70:f4      Po1      dynamic
+""",
+    "show arp": """
+Total number of entries: 3
+
+
+  VLAN    Interface     IP address          HW address         status
+--------------------- --------------- ------------------- ---------------
+vlan 10    gi1/0/22   10.10.0.1       02:00:00:00:20:55   dynamic
+vlan 10    Po1        10.10.0.16      02:00:00:00:30:8e   dynamic
+vlan 10    Po1        10.10.0.17      02:00:00:00:30:5c   dynamic
+
+""",
+    "show lldp neighbors": """
+System capability legend:
+B - Bridge; R - Router; W - Wlan Access Point; T - telephone;
+D - DOCSIS Cable Device; H - Host; r - Repeater;
+TP - Two Ports MAC Relay; S - S-VLAN; C - C-VLAN; O - Other
+
+  Port        Device ID         Port ID          System Name    Capabilities  TTL
+--------- ----------------- ----------------- ----------------- ------------ -----
+gi1/0/1   02:00:00:00:60:50 02:00:00:00:60:50  wap-a2              B, R, W     109
+gi1/0/2     PC-A1           02:00:00:00:61:ee                        O       3070
+gi1/0/9   02:00:00:00:50:f0 02:00:00:00:50:f0                        O        106
+gi1/0/12  02:00:00:00:62:c0 02:00:00:00:62:c0  wap-a1              B, R, W     105
+gi1/0/18  02:00:00:00:10:5e        gi8          switch312c5e        B, R      114
+gi1/0/21  02:00:00:00:01:7d     gi1/0/24       sw-a2                B, R      106
+gi1/0/22  02:00:00:00:20:53    Management      fw-a1                R        99
+gi1/0/23  02:00:00:00:20:53     internal4      fw-a1                R        106
+gi1/0/24  02:00:00:00:20:53     internal1      fw-a1                R        99
+te1/0/1   02:00:00:00:01:7d      te1/0/3       sw-a2                B, R      109
+""",
 }
 
 

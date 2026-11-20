@@ -17,7 +17,10 @@ Geraete ohne Exec (Catalyst 1200/1300 und andere mit Business-CLI) liest seit 0.
 **begrenzte Sitzung** (`_Shell`): Terminal mit Prompt, Anmeldung in der Sitzung („User Name:“),
 danach nur die Zeilen der Positivliste - die `show`-Befehle und je Plattform ein Befehl, der den
 Seitenumbruch nur fuer diese Sitzung abschaltet (`SESSION`); bei „More“ ein Leerzeichen. Nie
-Konfigurationsmodus, nie eine Antwort auf Rueckfragen.
+Konfigurationsmodus, nie eine Antwort auf Rueckfragen. Seit 1.23.0 liest der Client die
+Business-CLI immer in dieser Sitzung (`SESSION_ONLY`), auch wenn das Geraet `show version` per
+Exec beantwortet (Firmware 4.x) - so wie von Hand im Terminal; der Prompt (`#` bzw. `>`) sagt,
+ob das Konto im Privileged EXEC steht (`privilege`).
 
 Seit 1.9.0 (Anwender: „Der Switchrun geht auch sehr lange“): viele IOS-Switches schliessen die
 Verbindung nach jedem Exec - bisher je Befehl eine neue Anmeldung (bis zu 17 je Switch). Merkt
@@ -95,6 +98,9 @@ COMMANDS: dict[str, tuple[str, ...]] = {
         "show mac address-table",
         "show arp",
         "show ipv6 neighbors all",  # 0.94.0
+        # 1.23.0: Spanning Tree (STP, RSTP, Rapid-PVST, MSTP; `cbs.stp_tree`/`stp_detail`)
+        "show spanning-tree",
+        "show spanning-tree detail",
     ),
     # 0.68.0: Juniper Junos (MX, EX, QFX) - strukturiert als JSON, `no-more` ohne Seiten
     "junos": (
@@ -140,6 +146,11 @@ ALLOWED = frozenset(c for cmds in COMMANDS.values() for c in cmds) | routing.ALL
 SESSION: dict[str, str] = {"cbs": "terminal datadump", "ios": "terminal length 0",
                            "nxos": "terminal length 0", "eos": "terminal length 0",
                            "aoscx": "no page"}  # fmt: skip
+# 1.23.0: Plattformen, die Automato nach `show version` immer in der begrenzten Sitzung liest -
+# wie von Hand im Terminal. Catalyst 1200/1300 mit Firmware 4.x nehmen teils Exec an; Anwender
+# 2026-11-20: „show mac address-table: Unrecognized command; show arp: Unrecognized command“ bei
+# Switches, auf denen die Befehle von Hand gehen. Geht die Sitzung nicht, bleibt es beim Exec.
+SESSION_ONLY = frozenset({"cbs"})
 MAX_OUTPUT = 32 * 1024 * 1024  # je Befehl
 COMMAND_TIMEOUT = 120.0  # Sekunden je Befehl
 # Erster Exec-Aufruf (`show version`): kommen so lange gar keine Daten, die begrenzte Sitzung
@@ -215,11 +226,20 @@ class SwitchClient:
         self._session_tried = False  # Wechsel nach dem Exec einmal versucht (gescheitert: Exec)
         self._served = 0  # gelungene Exec-Aufrufe auf der aktuellen Verbindung
         self.platform: str | None = None  # aus `prepare` - fuer `SESSION` beim spaeteren Wechsel
+        self.prompt: str | None = None  # Prompt der Sitzung (`sw-a1#` bzw. `sw-a1>`), Exec: None
         self.cut: set[str] = set()  # Routing-Ausgaben, die bei MAX_OUTPUT abgeschnitten wurden
 
     @property
     def mode(self) -> str:
         return "shell" if self._in_session else "exec"
+
+    @property
+    def privilege(self) -> str | None:
+        """Stufe der Sitzung nach dem Prompt (1.23.0): `user` (`>`, User EXEC), `privileged`
+        (`#`); per Exec unbekannt (None)."""
+        if not self._in_session or not self.prompt:
+            return None
+        return "user" if self.prompt.endswith(">") else "privileged"
 
     # -- Verbindung ------------------------------------------------------------------------
 
@@ -295,6 +315,22 @@ class SwitchClient:
         self.platform = platform
         if self._shell is not None and platform in SESSION:
             self._shell.run(SESSION[platform], session=True)
+        elif platform in SESSION_ONLY and not self._in_session:
+            self._to_session()
+
+    def _to_session(self) -> None:
+        """Nach dem Exec in die begrenzte Sitzung wechseln (`SESSION_ONLY`, 1.23.0). Geht das
+        nicht (kein Terminal, kein Prompt, Anmeldung in der Sitzung abgelehnt), bleibt es beim
+        Exec - nur ein geaenderter Host-Schluessel bricht ab."""
+        self._session_tried = True
+        try:
+            self._open_session(SHELL_LOGIN_TIMEOUT)
+        except HostKeyChanged:
+            raise
+        except Exception:  # noqa: BLE001 - keine Sitzung: beim Exec bleiben
+            self._in_session = False
+            self.prompt = None
+            self.close()
 
     def run(self, command: str, timeout: float = COMMAND_TIMEOUT) -> str:
         """Erlaubten `show`-Befehl ausfuehren und die Ausgabe zurueckgeben. Manche Switches
@@ -365,6 +401,7 @@ class SwitchClient:
         self._in_session = True
         self._shell = _Shell(self._ssh.get_transport(), self.username, self.password,
                              self.timeout, login_timeout)  # fmt: skip
+        self.prompt = self._shell.prompt
         if self.platform in SESSION:
             self._shell.run(SESSION[self.platform], session=True)
 

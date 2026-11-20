@@ -117,6 +117,7 @@ from app.models.topology import (
 )
 from app.models.verwaltung import CockpitCustomer, CockpitTenant
 from app.models.virtual import Portgroup, Vm, VmIp, VmNic
+from app.models.vpn_pair import VpnPair
 from app.models.zone import Zone
 
 __all__ = [
@@ -233,6 +234,7 @@ __all__ = [
     "Vm",
     "VmIp",
     "VmNic",
+    "VpnPair",
     "Zone",
     "ZonePolicy",
     "ZonePlanArrangement",

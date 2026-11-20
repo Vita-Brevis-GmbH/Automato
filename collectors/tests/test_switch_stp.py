@@ -3,6 +3,7 @@
 err-disabled durch BPDU-Guard, nicht unterstuetzte Plattformen und Befehle nur lesend."""
 
 import pytest
+import switch_products as sp
 from sot_gateway.readonly import ReadOnlyViolation
 
 from collectors.cisco_switch import client as sc
@@ -247,7 +248,7 @@ def test_aus_nicht_lesbar_und_nicht_unterstuetzt():
     assert bad.status == "unreadable" and "Invalid command" in bad.note
     missing, _ = stp.inventory("sw-c", "ios", {})
     assert missing.status == "unreadable"
-    for platform in ("cbs", "junos", "eos", "aoscx", "snmp"):
+    for platform in ("junos", "eos", "aoscx", "snmp"):  # seit 1.23.0 ohne Catalyst 1200/1300
         dev, inst = stp.inventory("sw-x", platform, {stp.TREE: IOS_PVST})
         assert (dev.status, inst) == ("unsupported", [])
 
@@ -295,3 +296,64 @@ def test_befehle_nur_lesend():
             assert cmd.startswith("show ") and cmd in sc.ALLOWED
     with pytest.raises(ReadOnlyViolation):
         sc.SwitchClient("10.0.0.1", "ro", "pw")._run("spanning-tree mode mst", 1.0)
+
+
+# -- Catalyst 1200/1300 (1.23.0, Anwender 2026-11-20: „Rapid per vlan spanningtree“) ---------------
+
+CBS_RSTP = """
+Spanning tree enabled mode: RSTP
+Default port cost method:   long
+Loopback guard:             Disabled
+
+Root ID        Priority:   32768
+               Address:    02:00:00:00:02:51
+               This switch is the root
+               Hello Time: 2 sec Max Age: 20 sec Forward Delay: 15 sec
+
+Name      State     Prio.Nbr  Cost      Sts    Role      PortFast Type
+--------- --------- --------- --------- ------ --------- -------- --------------
+ gi1/0/1   enabled    128.1     20000    Frw     Desg      No     P2P (RSTP)
+ gi1/0/2   enabled    128.2     20000    Dsbl    Dsbl      No          -
+"""
+
+
+def test_catalyst_1300_rapid_pvst():
+    dev, inst = stp.inventory("acc-1300-01", "cbs", sp.C1300, {"Gi1/0/1": "up"})
+    assert (dev.status, dev.mode, dev.note) == ("read", "rapid-pvst", None)
+    by = {i.instance: i for i in inst}
+    v1, v10 = by["VLAN0001"], by["VLAN0010"]
+    assert (v1.vlan, v1.protocol, v1.is_root, v1.root_mac, v1.root_cost, v1.root_port) == (
+        1, "rstp", False, "00:3a:9c:00:00:01", 2000, "Te1/0/1")  # fmt: skip
+    assert (v1.bridge_priority, v1.bridge_mac, v1.tc_count, v1.tc_ago) == (
+        32768, "e0:5f:b9:00:00:01", 7, (2 * 24 + 18) * 3600)  # fmt: skip
+    ports = {p.port: p for p in v1.ports}
+    assert set(ports) == {"Gi1/0/1", "Te1/0/1", "Te1/0/2", "Po1"}  # Port-Channel als Port
+    assert (ports["Te1/0/2"].role, ports["Te1/0/2"].state) == ("alternate", "blocking")
+    assert (ports["Te1/0/1"].role, ports["Gi1/0/1"].type) == ("root", "P2P Edge (rpvst)")
+    assert ports["Po1"].priority == "128.1000"
+    assert (v10.is_root, v10.root_cost, v10.root_port, v10.tc_count, v10.tc_ago) == (
+        True, 0, None, 55, None)  # fmt: skip
+    assert {p.port: p.inconsistent for p in v10.ports}["Te1/0/2"] == "TYPE/PVID_Inc"
+    # blockierte VLANs bzw. Root-Port je Port wie bei IOS (attrs)
+    sw = {"host": "10.0.1.30", "platform": "cbs", "outputs": sp.C1300, "notes": []}
+    inv = normalize({"switches": [sw]})
+    ifs = {i.name: i.attrs or {} for i in inv.interfaces}
+    assert ifs["Te1/0/2"].get("stp_blocked") == "1" and ifs["Te1/0/1"].get("stp_root") == "1"
+    assert [d.status for d in inv.stp_devices] == ["read"] and len(inv.stp) == 2
+
+
+def test_catalyst_1300_rstp_aus_und_stufe_1():
+    dev, inst = stp.inventory("sw-a", "cbs", {stp.TREE: CBS_RSTP})
+    assert (dev.status, dev.mode) == ("read", "rstp")
+    (one,) = inst
+    assert (one.instance, one.mst, one.vlans, one.is_root, one.root_cost) == (
+        "MST0", 0, "1-4094", True, 0)  # fmt: skip
+    assert one.bridge_mac == "02:00:00:00:02:51"
+    assert [(p.port, p.state, p.type) for p in one.ports] == [
+        ("Gi1/0/1", "forwarding", "P2P (RSTP)"), ("Gi1/0/2", "disabled", None)]  # fmt: skip
+    off, inst = stp.inventory("sw-b", "cbs", {stp.TREE: "\nSpanning tree disabled\n"})
+    assert (off.status, inst) == ("off", [])
+    bad, _ = stp.inventory("sw-c", "cbs", {stp.TREE: "% Unrecognized command\n"}, privilege="user")
+    assert bad.status == "unreadable" and "Privileged EXEC" in bad.note
+    bad, _ = stp.inventory("sw-d", "cbs", {stp.TREE: "% Unrecognized command\n"})
+    assert bad.note == "show spanning-tree: Unrecognized command"  # Prompt `#`: kein Rechte-Text

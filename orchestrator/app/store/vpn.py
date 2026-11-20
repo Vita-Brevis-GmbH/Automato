@@ -224,6 +224,18 @@ class Index:
         self._addrs: dict[str, list[tuple[int, str | None, str]]] | None = None
         self._firewalls: set[int] | None = None
         self._own: dict[tuple[int, str], set[str]] | None = None
+        self._pairing = None  # vpn_kopplung.Pairing (1.23.0), erst bei Bedarf
+
+    def pairing(self):
+        """Kopplungen der Tunnel (1.23.0, `store/vpn_kopplung.py`): automatisch erkannt bzw.
+        von Hand - einmal je Index."""
+        if self._pairing is None:
+            from app.store import vpn_kopplung  # spaet: vpn_kopplung -> vpn
+
+            self._pairing = vpn_kopplung.Pairing(
+                self, vpn_kopplung.rows(self.session, self.tenant_id) if self.tunnels else []
+            )
+        return self._pairing
 
     def __bool__(self) -> bool:
         return bool(self.tunnels)
@@ -282,55 +294,57 @@ class Index:
                     self._own[(sid, name)].add(ip)
         return self._own.get((t.source_system_id, t.interface or ""), set())
 
-    def _direct(self, t: Tunnel) -> bool:
-        """Ist die Gegenstelle direkt eine Adresse einer gelesenen FortiGate?"""
-        if t.kind == "dialup" or not t.remote_gw:
-            return False
-        return any(sid != t.source_system_id and sid in self.firewalls()
-                   for sid, _vdom, _name in self.addresses().get(t.remote_gw, []))  # fmt: skip
-
-    def far(self, t: Tunnel, inst: dict | None = None, owners=None) -> list[dict]:
+    def far(self, t: Tunnel, inst: dict | None = None, owners=None, dst=None) -> list[dict]:
         """Gelesene Gegenstelle(n): je Treffer Quellsystem, VDOM, Tunnel dort (bzw. None) und
-        wie gefunden (`gw` = Adresse der Gegenstelle, `reverse` = deren Tunnel zeigt auf eine
-        eigene Adresse). `owners(ip)` -> [(Quellsystem, VDOM, Interface)] (Graph der Wege),
-        sonst die Interfaces aller gelesenen Geraete. Leer = Gegenstelle nicht gelesen."""
+        wie gefunden (`how`: `gw` Adresse der Gegenstelle, `vip` VIP davor, `reverse` deren
+        Tunnel zeigt auf eine eigene Adresse, `dialup` verbundene Gegenstelle, `manual` von Hand)
+        mit der Kopplung (`pair`: `auto` | `manual`, 1.23.0). Gekoppelte Tunnel gehen vor
+        (`vpn_kopplung`); sonst die FortiGate, der die Adresse der Gegenstelle gehoert - Tunnel
+        dort nicht eindeutig: None. `owners(ip)` -> [(Quellsystem, VDOM, Interface)] (Graph der
+        Wege), sonst die Interfaces aller gelesenen Geraete; `dst` waehlt bei Dial-up das
+        Gegenstueck. Leer = Gegenstelle nicht gelesen."""
+        pairing = self.pairing()
+        link = pairing.partner(t, inst, dst)
+        if link is not None:
+            x = link.other(t)
+            return [{"source_system_id": x.source_system_id, "context": x.context,
+                     "tunnel": x.name, "interface": x.interface, "how": link.how_for(t),
+                     "pair": link.origin}]  # fmt: skip
         gw = (inst or {}).get("remote_gw") if t.kind == "dialup" else t.remote_gw
-        mine = self.own(t)
         found: list[dict] = []
         if gw:
             uses = owners(gw) if owners is not None else self.addresses().get(gw, [])
             for sid, vdom, iface in uses:
                 if sid == t.source_system_id or sid not in self.firewalls():
                     continue
-                there = [x for x in self.by_sid.get(sid, []) if vdom in (None, x.context)]
-                match = ([x for x in there if x.remote_gw and x.remote_gw in mine]
-                         or [x for x in there if x.kind == "dialup" and x.interface == iface]
-                         or [x for x in there if x.interface == iface])  # fmt: skip
-                for x in match[:1] or [None]:
-                    found.append({"source_system_id": sid, "context": x.context if x else vdom,
-                                  "tunnel": x.name if x else None, "interface": iface,
-                                  "how": "gw"})  # fmt: skip
-        # NAT vor der Gegenstelle: ihr Tunnel zeigt auf uns (nicht bei Dial-up - welche der
-        # Gegenstellen gemeint ist, sagt nur ihre Adresse)
-        if not found and mine and t.kind != "dialup":
-            for x in self.tunnels:
-                if x.source_system_id == t.source_system_id or x.remote_gw not in mine:
-                    continue
-                # Tunnel dieser Firewall, deren Gegenstueck x sein koennte (gleiche eigene
-                # Adresse, Gegenstelle nicht direkt gelesen) - mehrere: nur ueber die Selektoren
-                rivals = [o for o in self.by_sid[t.source_system_id]
-                          if x.remote_gw in self.own(o) and not self._direct(o)]  # fmt: skip
-                if len(rivals) > 1:
-                    rivals = [o for o in rivals if _fits(o, x)]
-                if rivals != [t]:
-                    continue  # nicht eindeutig: der Weg endet sichtbar an der Gegenstelle
-                found.append({"source_system_id": x.source_system_id, "context": x.context,
-                              "tunnel": x.name, "interface": x.interface,
-                              "how": "reverse"})  # fmt: skip
-        out: list[dict] = []
-        for f in found:
-            if f not in out:
-                out.append(f)
+                entry = {"source_system_id": sid, "context": vdom, "tunnel": None,
+                         "interface": iface, "how": "gw"}  # fmt: skip
+                if vdom is None:  # eine FortiGate ohne VDOM: ihr einziger Kontext
+                    ctxs = {x.context for x in self.by_sid.get(sid, [])}
+                    entry["context"] = next(iter(ctxs)) if len(ctxs) == 1 else None
+                open_ = [h for h in pairing.suggestions(t) if h.tunnel.source_system_id == sid]
+                if open_:
+                    entry["open"] = len(open_)  # nicht eindeutig: in der Ansicht koppeln
+                if entry not in found:
+                    found.append(entry)
+        return found
+
+    def peers(self, t: Tunnel) -> list[dict]:
+        """Gegenstellen eines Tunnels fuer die Ansicht: alle Kopplungen (Dial-up: je
+        gekoppelter Gegenstelle), sonst wie im Weg (`far`, Dial-up je verbundener)."""
+        links = self.pairing().of(t)
+        out = [{"source_system_id": k.other(t).source_system_id, "context": k.other(t).context,
+                "tunnel": k.other(t).name, "interface": k.other(t).interface, "how": k.how_for(t),
+                "pair": k.origin, "pair_id": k.pair_id, "tunnel_id": k.other(t).id,
+                "ref": k.other(t).ref} for k in links]  # fmt: skip
+        if t.kind != "dialup":
+            return out or self.far(t)
+        for i in t.instances:
+            if any(self.pairing().partner(t, i) is k for k in links):
+                continue
+            for p in self.far(t, i):
+                if p not in out:
+                    out.append(p)
         return out
 
     # -- Routen ueber die Tunnel -------------------------------------------------------------
@@ -443,6 +457,10 @@ def step(t: Tunnel, inst: dict | None, dst, peers: list[dict], labels) -> dict:
         out["peer"] = {"key": f"{key[0]}|{key[1]}", "source_system_id": key[0],
                        "context": key[1], "label": labels(key), "tunnel": first.get("tunnel"),
                        "how": first["how"]}  # fmt: skip
+        # Kopplung (1.23.0): automatisch bzw. von Hand; nicht eindeutig: Zahl der Vorschlaege
+        for k in ("pair", "open"):
+            if first.get(k):
+                out["peer"][k] = first[k]
     out["id"] = pair_id(t, first)
     return {k: v for k, v in out.items() if v not in (None, "")}
 
@@ -452,11 +470,26 @@ def how_text(v: dict) -> str:
     gw = f" ({L('Gegenstelle', 'peer')} {v['remote_gw']})" if v.get("remote_gw") else ""
     peer = v.get("peer") or {}
     tail = ""
-    if peer and not peer.get("tunnel"):
+    if peer and not peer.get("tunnel") and peer.get("open"):
+        tail = L(" – Tunnel dort nicht eindeutig, in „VPN-Tunnel“ koppeln",
+                 " – tunnel there not unique, couple it in “VPN tunnels”")  # fmt: skip
+    elif peer and not peer.get("tunnel"):
         tail = L(" – dort kein passender Tunnel gelesen", " – no matching tunnel read there")
     elif peer.get("how") == "reverse":
         tail = L(" – erkannt am Tunnel der Gegenstelle (NAT davor?)",
                  " – recognized by the tunnel of the peer (NAT in front?)")  # fmt: skip
+    elif peer.get("how") == "vip":
+        tail = L(" – erkannt an der VIP vor der Gegenstelle",
+                 " – recognized by the VIP in front of the peer")  # fmt: skip
+    elif peer.get("how") == "spoke":
+        tail = L(" – erkannt am statischen Tunnel der Gegenstelle",
+                 " – recognized by the static tunnel of the peer")  # fmt: skip
+    elif peer.get("how") == "dialup":
+        tail = L(" – erkannt an der verbundenen Dial-up-Gegenstelle",
+                 " – recognized by the connected dial-up peer")  # fmt: skip
+    elif peer.get("pair") == "manual":
+        tail = L(f" – von Hand gekoppelt mit {peer['tunnel']}",
+                 f" – coupled manually with {peer['tunnel']}")  # fmt: skip
     return L(f"über VPN {v['name']}{gw}{tail}", f"via VPN {v['name']}{gw}{tail}")
 
 
@@ -508,10 +541,13 @@ def hop(g, key, found: tuple[Tunnel, dict | None], dst, egress: dict, nxt: list)
 
     peers = []
     if not nxt:
-        peers = [p for p in index.far(t, inst, owners)
+        peers = [p for p in index.far(t, inst, owners, dst)
                  if (p["source_system_id"], p["context"]) in g.nodes]  # fmt: skip
     else:  # Next-Hop gehoert einer gelesenen Firewall (Adresse im Tunnel): sie ist die Gegenstelle
-        peers = [{"source_system_id": k[0], "context": k[1], "tunnel": i, "how": "gw"}
+        link = index.pairing().partner(t, inst, dst)
+        x = link.other(t) if link is not None else None
+        peers = [{"source_system_id": k[0], "context": k[1], "tunnel": i, "how": "gw",
+                  **({"pair": link.origin} if x is not None and x.key == k else {})}
                  for k, i, _how in nxt]  # fmt: skip
     v = step(t, inst, dst, peers, lambda k: g.nodes[k].label if k in g.nodes else None)
     egress["vpn"] = v
@@ -540,10 +576,7 @@ def _check(t: Tunnel, routes: list[dict]) -> list[dict]:
 
 def summary_of(t: Tunnel, index: Index, routes: list[dict], labels: dict[int, str]) -> dict:
     """Tunnel fuer Liste und Detail."""
-    if t.kind == "dialup":  # je verbundene Gegenstelle
-        peers = [p for i in t.instances for p in index.far(t, i)]
-    else:
-        peers = index.far(t)
+    peers = index.peers(t)  # Kopplungen (1.23.0), sonst nach der Adresse der Gegenstelle
     checked = _check(t, routes)
     p2 = list(t.phase2)
     up = sum(1 for p in p2 if p.get("status") == "up")
@@ -575,6 +608,8 @@ def summary_of(t: Tunnel, index: Index, routes: list[dict], labels: dict[int, st
             }
             for p in peers
         ],
+        # Vorschlaege fuer eine Kopplung von Hand (1.23.0): nicht eindeutig bzw. gespiegelt
+        "suggestions": len(index.pairing().suggestions(t)),
         "proposal": t.attrs.get("proposal"),
     }
 
@@ -619,10 +654,20 @@ def listing(session: Session, tenant_id: int, q: str | None = None, status: str 
             missing.append({"source_system_id": c.source_system_id,
                             "source": labels.get(c.source_system_id), "context": c.context,
                             "missing": gone})  # fmt: skip
-    return {"tunnels": items, "total": len(items), "counts": counts, "missing": missing}
+    orphans = [_orphan(r, labels) for r in index.pairing().orphans
+               if keep is None or any(keep(e[0], e[1]) for e in r.ends)]  # fmt: skip
+    return {"tunnels": items, "total": len(items), "counts": counts, "missing": missing,
+            "orphans": orphans}  # fmt: skip
 
 
-def detail(session: Session, tenant_id: int, tunnel_id: int) -> dict | None:
+def _orphan(r, labels: dict[int, str]) -> dict:
+    """Kopplung von Hand, deren Tunnel ein Lauf nicht mehr liefert (1.23.0): sichtbar, loesbar."""
+    return {"pair_id": r.id, "mode": r.mode,
+            "ends": [{"source_system_id": e[0], "source": labels.get(e[0], f"#{e[0]}"),
+                      "context": e[1], "tunnel": e[2]} for e in r.ends]}  # fmt: skip
+
+
+def detail(session: Session, tenant_id: int, tunnel_id: int, keep=None) -> dict | None:
     """Ein Tunnel mit Phase 2, Dial-up-Gegenstellen, Routen ueber den Tunnel (mit Selektor),
     Netzen dahinter und der gelesenen Gegenstelle."""
     index = Index(session, tenant_id)
@@ -640,8 +685,45 @@ def detail(session: Session, tenant_id: int, tunnel_id: int) -> dict | None:
         "behind": index.behind(t, routes),
         "unresolved": t.unresolved,
         "attrs": t.attrs,
+        **_pairing_detail(t, index, labels, keep),
     }
     return out
+
+
+def _where(labels: dict[int, str], x: Tunnel) -> str:
+    vdom = f" · VDOM {x.context}" if x.context not in (None, "root") else ""
+    return labels.get(x.source_system_id, f"#{x.source_system_id}") + vdom
+
+
+def _pairing_detail(t: Tunnel, index: Index, labels: dict[int, str], keep=None) -> dict:
+    """Kopplung im Detail (1.23.0): Vorschlaege, von Hand geloeste automatische Kopplungen und
+    die Tunnel anderer FortiGates, mit denen sich der Tunnel koppeln laesst."""
+    from app.store import vpn_kopplung
+
+    pairing = index.pairing()
+
+    def ref(x: Tunnel) -> dict:
+        return {"tunnel_id": x.id, "ref": x.ref, "source_system_id": x.source_system_id,
+                "context": x.context, "tunnel": x.name, "kind": x.kind,
+                "label": _where(labels, x)}  # fmt: skip
+
+    seen = keep or (lambda _sid, _ctx: True)
+    suggestions = [{**ref(h.tunnel), "why": h.why, "exact": h.exact,
+                    "text": vpn_kopplung.why_text(h.why, h.exact)}
+                   for h in pairing.suggestions(t)
+                   if seen(h.tunnel.source_system_id, h.tunnel.context)]  # fmt: skip
+    separated = []
+    for ends, pid in pairing.separated.items():
+        if vpn_kopplung.end_of(t) in ends:
+            other = next(pairing.by_end[e] for e in ends if e != vpn_kopplung.end_of(t))
+            separated.append({**ref(other), "pair_id": pid})
+    taken = {vpn_kopplung.end_of(k.other(t)) for k in pairing.of(t)}
+    choices = [ref(x) for x in index.tunnels
+               if x.source_system_id != t.source_system_id
+               and not (t.kind == "dialup" and x.kind == "dialup")
+               and vpn_kopplung.end_of(x) not in taken
+               and seen(x.source_system_id, x.context)]  # fmt: skip
+    return {"suggestion_list": suggestions, "separated": separated, "choices": choices}
 
 
 # -- Pruefung -------------------------------------------------------------------------------

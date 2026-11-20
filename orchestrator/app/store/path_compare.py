@@ -458,7 +458,12 @@ class Comparer:
     def _vlan(self, sec: Section, chain, vlan: int, to_vlan: int | None,
               b_port: str | None) -> None:  # fmt: skip
         c = sec.checks["vlan"]
-        if to_vlan is not None and to_vlan != vlan:
+        # durch das ACI-Fabric (1.23.0): dort gilt die Bridge Domain, nicht die VLAN-Nummer - hinter
+        # dem Fabric darf das VLAN anders heissen; geprueft wird mit dem VLAN des Eingangs, sonst
+        # zaehlt der Teil als „im ACI-Fabric“ (nie als Abweichung)
+        fabric = self.topo.fabric
+        crossed = any(fabric(mine.device.key) for _lk, mine, _other in chain[1:])
+        if to_vlan is not None and to_vlan != vlan and not crossed:
             c.state = DEVIATION
             c.items.append(
                 {
@@ -468,21 +473,30 @@ class Comparer:
                     "port": b_port or sec.b.get("interface"),
                 }
             )
-        for lk, _mine, _other in chain:
+        after = False
+        for n, (lk, mine, other) in enumerate(chain):
+            after = after or (n > 0 and fabric(mine.device.key))  # aus dem Fabric heraus
+            want = vlan
+            if after:
+                if fabric(other.device.key) or to_vlan is None:
+                    c.miss("fabric")
+                    continue
+                want = to_vlan
             c.count += 1
-            ok = l2_topo.link_allows(lk, vlan)
+            ok = l2_topo.link_allows(lk, want)
             if ok is None:
                 c.miss("vlan_ports")
                 continue
             if ok is False:
                 c.state = DEVIATION
                 ports = [_port_out(e) for e in (lk.a, lk.b)
-                         if l2_topo.allows(e.iface, vlan) is False]  # fmt: skip
+                         if l2_topo.allows(e.iface, want) is False]  # fmt: skip
                 c.items.append({"kind": "not_allowed", "link": lk.id, "ports": ports})
-        if b_port and chain:  # Port des Endpunkts selbst
+        last = to_vlan if crossed else vlan
+        if b_port and chain and last is not None:  # Port des Endpunkts selbst
             end = chain[-1][2]
             port = self.cab.ifaces.get((end.device.key, port_key(b_port)))
-            if port is not None and l2_topo.allows(port, vlan) is False:
+            if port is not None and l2_topo.allows(port, last) is False:
                 c.state = DEVIATION
                 c.items.append(
                     {
