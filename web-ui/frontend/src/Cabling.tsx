@@ -403,6 +403,7 @@ function DevicesTab({ items, onOpen }: { items: Device[]; onOpen: (key: string, 
               <tr key={d.key} className="clickable" onClick={() => onOpen(d.key, d.kind === "switch" ? "ports" : "links")}>
                 <td className="nowrap">
                   <b>{d.name}</b> {d.mgmt_ip && <span className="faint mono">{d.mgmt_ip}</span>}
+                  {d.ha_of && <span className="faint">{L(` HA-Mitglied von ${d.ha_of}`, ` HA member of ${d.ha_of}`)}</span>}
                   <SharedChip shared={d.shared} />
                 </td>
                 <td>{KIND[d.kind] ?? d.kind}</td>
@@ -1147,16 +1148,25 @@ function PlanTab({ tenantId, onEndpoints }: { tenantId: number; onEndpoints?: (d
           </div>
         )}
         {plan?.vlan && (
-          <div className={`note ${plan.vlan.islands.length > 1 ? "warn" : ""}`} id="cabling-vlan-islands">
+          <div className={`note ${(plan.vlan.split ?? []).length > 0 ? "warn" : ""}`} id="cabling-vlan-islands">
             VLAN {plan.vlan.vid}:{" "}
             {plan.vlan.present.length === 0
               ? L("an keinem Access-Port bzw. SVI der gelesenen Switches", "on no access port or SVI of the read switches")
-              : plan.vlan.islands.length > 1
-                ? L(
-                    `getrennt in ${plan.vlan.islands.length} Inseln – ${plan.vlan.islands.map((i) => i.join(", ")).join(" | ")}`,
-                    `split into ${plan.vlan.islands.length} islands – ${plan.vlan.islands.map((i) => i.join(", ")).join(" | ")}`,
-                  )
-                : L(`durchgehend (${plan.vlan.present.join(", ")})`, `continuous (${plan.vlan.present.join(", ")})`)}
+              : (plan.vlan.split ?? []).length > 0
+                ? (plan.vlan.split ?? [])
+                    .map((parts) =>
+                      L(
+                        `getrennt in ${parts.length} Inseln – ${parts.map((i) => i.join(", ")).join(" | ")}`,
+                        `split into ${parts.length} islands – ${parts.map((i) => i.join(", ")).join(" | ")}`,
+                      ),
+                    )
+                    .join("; ")
+                : plan.vlan.islands.length > 1
+                  ? L(
+                      `in ${plan.vlan.islands.length} getrennten L2-Domänen (Standorte bzw. Systeme ohne Kabel dazwischen, normal) – ${plan.vlan.islands.map((i) => i.join(", ")).join(" | ")}`,
+                      `in ${plan.vlan.islands.length} separate L2 domains (sites or systems without cables in between, normal) – ${plan.vlan.islands.map((i) => i.join(", ")).join(" | ")}`,
+                    )
+                  : L(`durchgehend (${plan.vlan.present.join(", ")})`, `continuous (${plan.vlan.present.join(", ")})`)}
           </div>
         )}
         {plan === null ? (

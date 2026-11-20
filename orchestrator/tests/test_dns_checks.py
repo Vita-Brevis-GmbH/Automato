@@ -113,7 +113,14 @@ def test_nicht_pruefbar_wird_ausgewiesen(client):
     assert "state" not in d and "netbox_unread" not in d
     msg = unchecked["message"]
     assert msg.startswith("DNS aus dem AD (ad) nicht ganz geprüft: Zonen ohne Einträge")
-    assert "1 A-Records ohne gelesene Rückwärtszone – PTR nicht prüfbar (z. B. 10.30.0.0/24)" in msg
+    # 1.23.0: keine Rueckwaertszone eingetragen (statt „ohne gelesene“)
+    assert (
+        "1 A-Records ohne eingetragene Rückwärtszone – PTR nicht prüfbar (z. B. 10.30.0.0/24)"
+        in msg
+    )
+    # gelesene Zone, aber ohne PTR fuer diese Adressen: PTR fehlt (mit Liste)
+    assert d["no_ptr_examples"] == ["10.20.0.50", "10.20.0.99"]
+    assert "PTR fehlt für 2 A-Records – Rückwärtszone gelesen in 20.10.in-addr.arpa" in msg
     assert "davon 1 mit mehreren A-Records" in msg and "Grenze der Prüfung" in unchecked["hint"]
 
     # letzter Lauf fehlgeschlagen; NetBox angelegt, aber nicht gelesen; zweite Quelle nie gelesen
@@ -160,3 +167,47 @@ def test_texte_robust():
     for ftype in ("dns_ptr_mismatch", "dns_ip_unknown", "dns_unchecked"):
         msg, hint = explain(ftype, "x", None)
         assert msg and hint
+
+
+def test_leere_rueckwaertszone_ist_gelesen(client):
+    """1.23.0 (Anwender: „ohne gelesene Rückwärtszone“, obwohl eingetragen und im DC vorhanden):
+    eine uebertragene Reverse-Zone nur mit SOA/NS (0 Eintraege) ist gelesen - ihre Adressen haben
+    keinen PTR („PTR fehlt“, mit Liste), statt „nicht prüfbar“. Eingetragen, aber noch nicht
+    uebertragen: „eingetragen, aber noch nicht gelesen“; gar nicht eingetragen: „ohne eingetragene
+    Rückwärtszone“. Aeltere Laeufe ohne Angabe der Zonen wie bisher."""
+    tid = _tenant(client)
+    ad = _system(client, tid, name="ad", platform="ad_dns", base_url="dc01.example.ch",
+                 read_scope="example.ch\n8.20.10.in-addr.arpa\n9.20.10.in-addr.arpa")  # fmt: skip
+    records = [
+        {"kind": "a_record", "value": "10.20.8.15", "dns_name": "srv15.example.ch", "attrs": Z},
+        {"kind": "a_record", "value": "10.20.8.16", "dns_name": "srv16.example.ch", "attrs": Z},
+        {"kind": "a_record", "value": "10.20.9.5", "dns_name": "srv95.example.ch", "attrs": Z},
+        {"kind": "a_record", "value": "10.40.0.5", "dns_name": "fern.example.ch", "attrs": Z},
+    ]  # fmt: skip
+    body = {"platform": "ad_dns", "tenant_id": tid, "source_system_id": ad["id"]}
+    run_id = client.post("/jobs/collect", json=body).json()["run_id"]
+    r = client.post(f"/internal/collector-runs/{run_id}/references", headers=TOKEN,
+                    json={"records": records})  # fmt: skip
+    assert r.status_code == 204, r.text
+    # 9.20.10.in-addr.arpa erst nach dem Lauf eingetragen: nicht uebertragen
+    result = {"status": "completed", "reference_count": 4,
+              "zones": {"example.ch": 4, "8.20.10.in-addr.arpa": 0}}  # fmt: skip
+    r = client.post(f"/internal/collector-runs/{run_id}/result", headers=TOKEN, json=result)
+    assert r.status_code == 200 and r.json()["status"] == "completed", r.text
+    (f,) = _findings(client, tid, "dns_unchecked").values()
+    d = f["detail"]
+    assert d["no_ptr"] == 2 and d["no_ptr_examples"] == ["10.20.8.15", "10.20.8.16"]
+    assert d["no_ptr_zones"] == ["8.20.10.in-addr.arpa"]
+    assert d["reverse_unread"] == 1 and d["reverse_unread_nets"] == ["10.20.9.0/24"]
+    assert d["no_reverse"] == 1 and d["no_reverse_nets"] == ["10.40.0.0/24"]
+    assert d["unread_zones"] == ["9.20.10.in-addr.arpa"] and "empty" not in d
+    msg = f["message"]
+    assert "10.20.8.0/24" not in msg  # die gelesene Zone ist nicht „ohne Rückwärtszone“
+    assert ("PTR fehlt für 2 A-Records – Rückwärtszone gelesen in 8.20.10.in-addr.arpa, aber "
+            "ohne PTR für diese Adressen: 10.20.8.15, 10.20.8.16") in msg  # fmt: skip
+    assert ("1 A-Records in einer eingetragenen, aber noch nicht gelesenen Rückwärtszone – PTR "
+            "nicht prüfbar (z. B. 10.20.9.0/24)") in msg  # fmt: skip
+    assert "1 A-Records ohne eingetragene Rückwärtszone" in msg
+    assert "Zonen eingetragen, aber noch nicht gelesen: 9.20.10.in-addr.arpa" in msg
+    en = _findings(client, tid, "dns_unchecked", EN)["ad"]["message"]
+    assert "PTR missing for 2 A records – reverse zone collected in 8.20.10.in-addr.arpa" in en

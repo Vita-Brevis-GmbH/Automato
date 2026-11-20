@@ -53,9 +53,28 @@ def port_key(name: str | None) -> str:
     return text
 
 
+_MAC = re.compile(
+    r"[0-9a-f]{2}([:-]?)(?:[0-9a-f]{2}\1){4}[0-9a-f]{2}|[0-9a-f]{4}(?:\.[0-9a-f]{4}){2}"
+)
+
+
+def mac_key(text: str | None) -> str | None:
+    """MAC in jeder Schreibweise (`02:00:00:00:20:53`, `0200.0000.2053`, `020000002053`) ->
+    `02:00:00:00:20:53`; sonst None (1.23.0)."""
+    value = (text or "").strip().lower()
+    if not _MAC.fullmatch(value):
+        return None
+    digits = re.sub(r"[^0-9a-f]", "", value)
+    return ":".join(digits[i : i + 2] for i in range(0, 12, 2))
+
+
 def device_key(name: str | None) -> str:
     """Geraetename zum Vergleich: klein, ohne Seriennummer in Klammern und ohne Domaene
-    (`sw-core-01(FDO123)`, `sw-acc-01.example.ch` -> `sw-core-01`, `sw-acc-01`)."""
+    (`sw-core-01(FDO123)`, `sw-acc-01.example.ch` -> `sw-core-01`, `sw-acc-01`). Eine MAC (Gegen-
+    stelle nur mit Chassis-ID) bleibt ganz (1.23.0: `0200.0000.2053` ist keine Domaene)."""
+    mac = mac_key(name)
+    if mac:
+        return mac
     text = re.sub(r"\(.*?\)\s*$", "", (name or "").strip()).lower()
     try:
         ipaddress.ip_address(text)
@@ -120,6 +139,8 @@ class Device:
     # wie der Nachbar sich meldet (CDP/LLDP): Plattform und Faehigkeiten (Switch, Router, Phone)
     remote_platform: str | None = None
     caps: set[str] = field(default_factory=set)
+    # HA-Mitglied (1.23.0): Name des gelesenen Geraets (Cluster), dessen Konfiguration es teilt
+    ha_of: str | None = None
 
     @property
     def switching(self) -> bool:
@@ -242,18 +263,36 @@ class Link:
         }
 
 
-# Quellen, deren Geraete Nachbarn aus CDP/LLDP liefern - seit 1.8.0 auch das vCenter (Hosts)
+# Quellen, deren Geraete Nachbarn aus CDP/LLDP liefern - seit 1.8.0 auch das vCenter (Hosts);
+# seit 1.23.0 jede Quelle, die Nachbarn geliefert hat (FortiGate mit LLDP)
 _NEIGHBOR_PLATFORMS = (Platform.CISCO_SWITCH, Platform.CISCO_ACI, Platform.VMWARE)
+# Gegenstelle, die sich per LLDP/CDP als FortiGate meldet, aber nicht zugeordnet ist: Firewall
+_FIREWALL_TEXT = re.compile(r"fortigate|fortios|fortiwifi", re.I)
 
 
 class Cabling:
-    """Geraete und Verbindungen eines Mandanten."""
+    """Geraete und Verbindungen eines Mandanten.
+
+    Gegenstelle eines Nachbarn (1.23.0, Anwender: „die Firewalls werden nicht in der Verkabelung
+    erkannt, LLDP ist aktiv“): zuerst der Name (Systemname bzw. Hostname), dann weitere Namen
+    eines gelesenen Geraets (HA-Mitglieder mit ihrem Hostnamen, Seriennummern), die Chassis-ID
+    bzw. ein Name als MAC (MAC eines gelesenen Interfaces), zuletzt die Management-Adresse
+    (Management-IP bzw. eindeutige Interface-Adresse eines gelesenen Geraets). Der Port der
+    Gegenstelle: Name (Lang-/Kurzform), MAC des Interfaces, eindeutige Beschreibung. Was so nicht
+    zuzuordnen ist, bleibt als nicht gelesenes Geraet sichtbar - nie still verworfen."""
 
     def __init__(self, session: Session, tenant_id: int):
         self.devices: dict[str, Device] = {}
         self.by_ip: dict[str, Device] = {}
+        self.alias: dict[str, Device] = {}  # weitere Namen (HA-Mitglied, Seriennummer)
+        self.by_mac: dict[str, tuple[Device, str]] = {}  # MAC eines Interfaces -> (Geraet, Port)
+        self.owner: dict[str, str] = {}  # HA-Mitglied -> Geraet mit den Interfaces
+        self.by_descr: dict[tuple[str, str], str | None] = {}  # (Geraet, Beschreibung) -> Port
         sources = {s.id: s for s in session.scalars(
             select(SourceSystem).where(SourceSystem.tenant_id == tenant_id))}  # fmt: skip
+        neighbors = list(session.scalars(
+            select(InvNeighbor).where(InvNeighbor.tenant_id == tenant_id)))  # fmt: skip
+        reporting = {n.source_system_id for n in neighbors}
         for d in session.scalars(select(InvDevice).where(InvDevice.tenant_id == tenant_id)):
             src = sources.get(d.source_system_id)
             dev = Device(
@@ -261,33 +300,94 @@ class Cabling:
                 source_system_id=d.source_system_id, source=src.name if src else None,
                 platform=src.platform.value if src else None, model=d.model, version=d.version,
                 mgmt_ip=d.mgmt_ip, read=True,
-                reports=src is not None and src.platform in _NEIGHBOR_PLATFORMS,
+                reports=src is not None and (src.platform in _NEIGHBOR_PLATFORMS
+                                             or src.id in reporting),
             )  # fmt: skip
             self.devices.setdefault(dev.key, dev)
             if d.mgmt_ip:
                 self.by_ip.setdefault(d.mgmt_ip, self.devices[dev.key])
+            if d.serial:
+                self.alias.setdefault(d.serial.strip().lower(), self.devices[dev.key])
         self._esxi(session, tenant_id)
+        self._ha(session, tenant_id)
         self.ifaces: dict[tuple[str, str], InvInterface] = {}
         self.ports: list[InvInterface] = []
         for i in session.scalars(select(InvInterface).where(InvInterface.tenant_id == tenant_id)):
             self.ports.append(i)
             self.ifaces.setdefault((device_key(i.device), port_key(i.name)), i)
+        self._port_index()
         self.switch_sources = {sid for sid, s in sources.items()
                                if s.platform is Platform.CISCO_SWITCH}  # fmt: skip
         self.links: dict[str, Link] = {}
         claimed: set[tuple[str, str]] = set()
-        for n in session.scalars(select(InvNeighbor).where(InvNeighbor.tenant_id == tenant_id)):
+        for n in neighbors:
             claimed.add((device_key(n.device), port_key(n.port)))
-            self._claim(n.device, n.port, n.remote_name, n.remote_port, n.remote_ip, n.protocol)
-            remote = self.device(n.remote_name, n.remote_ip)
+            self._claim(n.device, n.port, n.remote_name, n.remote_port, n.remote_ip, n.protocol,
+                        n.remote_chassis)  # fmt: skip
+            remote = self.device(n.remote_name, n.remote_ip, n.remote_chassis)
             if not remote.read:  # Plattform/Faehigkeiten nur fuer Geraete ohne eigene Daten
                 remote.remote_platform = remote.remote_platform or n.remote_platform
                 remote.caps |= {c.strip(",").lower() for c in n.remote_caps or [] if c}
+                said = " ".join(x for x in (n.remote_platform, n.remote_description) if x)
+                if remote.kind == "unknown" and _FIREWALL_TEXT.search(said):
+                    remote.kind = "firewall"  # FortiGate, die Automato nicht liest (1.23.0)
         for i in self.ports:  # ACI-Leafs u. a.: Nachbar am Port (ohne eigene Nachbar-Tabelle)
             if i.neighbor and (device_key(i.device), port_key(i.name)) not in claimed:
                 self._claim(i.device, i.name, i.neighbor, i.neighbor_port, None, "lldp")
         for link in self.links.values():
             link.issues = self._check(link)
+
+    def _ha(self, session: Session, tenant_id: int) -> None:
+        """HA-Cluster (1.23.0): jedes Mitglied meldet sich per LLDP mit seinem eigenen Hostnamen,
+        gelesen wird der Cluster (ein Geraet). Ein Mitglied mit anderem Namen steht als eigenes
+        Geraet da (Art und Quelle des Clusters, `ha_of`); seine Ports kennt Automato aus der
+        gemeinsamen Konfiguration nur dem Namen nach - die Konfiguration am Port (und damit
+        Kabel nach NetBox) bleibt beim gelesenen Geraet. Seriennummern der Mitglieder sind weitere
+        Namen."""
+        from app.models import TopoHa
+
+        for ha in session.scalars(select(TopoHa).where(TopoHa.tenant_id == tenant_id)):
+            base = self.devices.get(device_key(ha.node))
+            if base is None or not base.read:
+                continue
+            for m in ha.members or []:
+                if not isinstance(m, dict):
+                    continue
+                name = str(m.get("hostname") or "").strip()
+                member = base
+                if name and device_key(name) != base.key:
+                    key = device_key(name)
+                    member = self.devices.get(key) or Device(
+                        key=key, name=name, kind=base.kind,
+                        source_system_id=base.source_system_id, source=base.source,
+                        platform=base.platform, model=base.model, version=base.version,
+                        read=True, ha_of=base.name)  # fmt: skip
+                    self.devices.setdefault(key, member)
+                    if member.ha_of == base.name:
+                        self.owner[key] = base.key
+                if m.get("serial"):
+                    self.alias.setdefault(str(m["serial"]).strip().lower(), member)
+
+    def _port_index(self) -> None:
+        """MAC und Beschreibung je Port sowie eindeutige Interface-Adressen gelesener Geraete
+        (1.23.0) - zum Zuordnen einer Gegenstelle, deren Name nicht passt."""
+        ips: dict[str, set[str]] = defaultdict(set)
+        for i in self.ports:
+            dev = self.devices.get(device_key(i.device))
+            if dev is None or not dev.read:
+                continue
+            mac = mac_key((i.attrs or {}).get("mac"))
+            if mac:
+                self.by_mac.setdefault(mac, (dev, i.name))
+            text = (i.description or "").strip().lower()
+            if text:
+                k = (dev.key, text)
+                self.by_descr[k] = i.name if k not in self.by_descr else None  # nur eindeutig
+            for ip in i.ips or []:
+                ips[str(ip).split("/")[0]].add(dev.key)
+        for ip, keys in ips.items():
+            if len(keys) == 1:
+                self.by_ip.setdefault(ip, self.devices[next(iter(keys))])
 
     def _esxi(self, session: Session, tenant_id: int) -> None:
         """ESXi-Hosts nur aus den VMs (Host der VM, nicht gelesen). Seit 1.8.0 steht ein Host
@@ -303,24 +403,47 @@ class Cabling:
             key = device_key(host)
             self.devices.setdefault(key, Device(key=key, name=host, kind="esxi", source="vCenter"))
 
-    def device(self, name: str, ip: str | None = None) -> Device:
+    def device(self, name: str, ip: str | None = None, chassis: str | None = None) -> Device:
+        """Geraet zu einem Namen - auch ueber weitere Namen, Chassis-ID/MAC und Adresse (1.23.0);
+        sonst ein nicht gelesenes Geraet unter diesem Namen."""
         key = device_key(name)
         if key in self.devices:
             return self.devices[key]
-        if ip and ip in self.by_ip:
-            return self.by_ip[ip]
+        found = self.alias.get(key) or self.alias.get((name or "").strip().lower())
+        for mac in (mac_key(name), mac_key(chassis)):
+            if found is None and mac and mac in self.by_mac:
+                found = self.by_mac[mac][0]
+        if found is None and chassis:
+            found = self.alias.get(chassis.strip().lower())
+        if found is None and ip and ip in self.by_ip:
+            found = self.by_ip[ip]
+        if found is not None:
+            return found
         dev = Device(key=key, name=name, kind="unknown", mgmt_ip=ip)
         self.devices[key] = dev
         return dev
 
     def _end(self, dev: Device, port: str | None) -> End:
-        iface = self.ifaces.get((dev.key, port_key(port))) if port else None
-        return End(dev, iface.name if iface is not None else port, iface)
+        owner = self.owner.get(dev.key, dev.key)
+        iface = self.ifaces.get((owner, port_key(port))) if port else None
+        name = iface.name if iface is not None else port
+        if iface is None and port and dev.read:
+            mac = mac_key(port)  # Port-ID als MAC bzw. Beschreibung statt Name (1.23.0)
+            hit = self.by_mac.get(mac) if mac else None
+            if hit is not None and hit[0].key == owner:
+                name = hit[1]
+            elif (owner, port.strip().lower()) in self.by_descr:
+                name = self.by_descr[(owner, port.strip().lower())] or port
+            iface = self.ifaces.get((owner, port_key(name)))
+        if owner != dev.key:
+            iface = None  # HA-Mitglied: Konfiguration am Port nur beim gelesenen Geraet
+        return End(dev, iface.name if iface is not None else name, iface)
 
     def _claim(self, local: str, port: str, remote: str, remote_port: str | None,
-               remote_ip: str | None, protocol: str) -> None:  # fmt: skip
+               remote_ip: str | None, protocol: str,
+               remote_chassis: str | None = None) -> None:  # fmt: skip
         a = self._end(self.device(local), port)
-        b = self._end(self.device(remote, remote_ip), remote_port)
+        b = self._end(self.device(remote, remote_ip, remote_chassis), remote_port)
         if a.device.key == b.device.key:
             return  # eigener Port (z. B. Loopback-Test)
         first, second = sorted((a, b), key=lambda e: e.key)

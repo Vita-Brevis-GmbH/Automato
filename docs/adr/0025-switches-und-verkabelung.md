@@ -330,3 +330,26 @@ Secrets, Open Source bevorzugt.
 - **Viele Topologieänderungen**: aus dem Verlauf der Zähler je Lauf (8 Tage) die Änderungen der
   letzten 24 h; liegen Läufe weiter auseinander, umgerechnet auf 24 h, kürzer nicht hochgerechnet.
   Schwelle 10 je 24 h als Vorgabe im Code, je Mandant in der App einstellbar (`stp_setting`).
+
+## Nachtrag 1.23.0 – Gegenstelle über alle Merkmale, VLAN getrennt je L2-Domäne
+
+Anwender 2026-11-20 (Test von 1.22.0): „die Firewalls werden nicht in der Verkabelung erkannt,
+LLDP ist aktiv“ und „VLAN getrennt, obwohl sie an verschiedenen Standorten ist … auf zwei
+getrennte Systeme ist das gleiche VLAN zu brauchen normal“.
+
+- **Gegenstelle zuordnen** (`store/cabling`): nach dem Namen auch über weitere Namen eines
+  gelesenen Geräts (Hostnamen und Seriennummern der HA-Mitglieder aus `topo_ha`), die Chassis-ID
+  (neu `inv_neighbor.remote_chassis`, Migration 0099) bzw. einen Namen als MAC gegen die MAC je
+  Interface (`inv_interface.attrs.mac`), zuletzt die Management-Adresse (Management-IP bzw.
+  eindeutige Interface-Adresse). Der Port: Name, MAC des Interfaces, eindeutige Beschreibung. Ein
+  HA-Mitglied mit eigenem Namen ist ein eigenes Gerät (`ha_of`) ohne Port-Konfiguration – Kabel
+  nach NetBox nur am gelesenen Gerät. Nicht Zuordenbares bleibt als nicht gelesenes Gerät, eine
+  MAC als Name ist kein Domänenname (je MAC ein Gerät).
+- **LLDP der FortiGate** (nur lesend, Monitor-API `network/lldp/neighbors`, `system/interface`):
+  die FortiGate liefert Nachbarn wie ein Switch; eine Quelle, die Nachbarn geliefert hat, gilt als
+  meldend (beidseitig bzw. einseitig). Ohne Leserecht ein Hinweis, kein Teilfehler.
+- **VLAN getrennt** (`vlan_split`) nur innerhalb einer L2-Domäne: gleicher Standort (des
+  Quellsystems) und über Kabel zusammenhängende Switches – nicht durch Endgeräte und nicht durch
+  das ACI-Fabric (dort gilt die Bridge Domain, nicht die VLAN-Nummer). Inseln derselben
+  VLAN-Nummer in verschiedenen Domänen sind normal, kein Befund. „Wege vergleichen“ prüft hinter
+  dem ACI-Fabric mit dem VLAN des Eingangs bzw. zählt den Teil als „im ACI-Fabric“.

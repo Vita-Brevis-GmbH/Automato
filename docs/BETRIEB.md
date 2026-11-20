@@ -53,7 +53,11 @@ Passwörter und Schlüssel (HA, FGSP, BGP-Peers) werden nie gelesen. Seit 0.113.
 dazu die BGP-Konfiguration je VDOM (`router bgp`: Filter je Nachbar, network, aggregate,
 redistribute) mit Prefix-Listen, Route-Maps und Access-Listen sowie die Route Control der
 L3Outs – dafür braucht das Profil Lesezugriff auf die Router-Konfiguration, nicht nur den
-Monitor; fehlt er, steht „BGP-Konfiguration“ als nicht lesbar in der Lauf-Meldung.
+Monitor; fehlt er, steht „BGP-Konfiguration“ als nicht lesbar in der Lauf-Meldung. Seit 1.23.0
+gilt eine FortiGate ohne BGP (Konfiguration ohne AS bzw. AS 0 und ohne Nachbarn) nicht mehr als
+„nur teilweise gelesen“: BGP-Pfade und -Nachbarn werden dann nicht abgefragt, der Lauf ist
+vollständig. Nur ein echter Lesefehler (z. B. HTTP 403 bei konfiguriertem BGP) bleibt ein
+Teilfehler. Die alte Meldung verschwindet mit dem nächsten Lauf der FortiGate.
 
 **Zeitgesteuert:** Mit einem Zeitplan am Quellsystem legt der Orchestrator zum Termin selbst
 einen Lauf an (`AUTOMATO_SCHEDULER_ENABLED=true`, in docker-compose Standard). Wie „Jetzt
@@ -974,6 +978,24 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   getrennt („link-local …“) und zählen nicht als Identität. „Wo hängt …“ findet Geräte auch über
   eine IPv6- bzw. Link-local-Adresse. Ältere Software ohne den IPv6-Befehl: kein Hinweis, der
   Teil bleibt leer.
+  **Firewalls (FortiGate) in der Verkabelung** (seit 1.23.0, Anwender: „die Firewalls werden nicht
+  in der Verkabelung erkannt, LLDP ist aktiv“): meldet ein Switch per LLDP eine Gegenstelle, ordnet
+  Automato sie der gelesenen FortiGate zu über den Hostnamen (aus `system global` bzw. dem
+  Systemstatus – nicht der Name des Quellsystems), die Hostnamen und Seriennummern der
+  HA-Mitglieder, die Chassis-ID bzw. Port-ID als MAC eines Interfaces, die Port-ID als
+  Interface-Name bzw. -Alias und zuletzt die Management-Adresse (eindeutige Interface-Adresse). Ein
+  zweites HA-Mitglied steht mit seinem eigenen Namen als Firewall da (`ha_of` in
+  `GET /cabling/devices`), seine Ports nur dem Namen nach – die Konfiguration am Port und Kabel nach NetBox bleiben beim
+  gelesenen Gerät. Zusätzlich liest der FortiGate-Lauf – nur lesend, Monitor-API – die
+  LLDP-Nachbarn der FortiGate selbst (`network/lldp/neighbors`) und die MAC je Interface
+  (`system/interface`); hört die FortiGate den Switch ebenfalls, ist die Verbindung
+  **beidseitig**. Leserecht: im Admin-Profil des REST-API-Kontos **Netzwerk (`netgrp`) lesen**
+  (in einem Read-only-Profil mit allen Bereichen auf „Lesen“ enthalten). Fehlt es, steht „Hinweise: LLDP der FortiGate nicht abgefragt
+  (… HTTP 403) …“ im Lauf – ein Hinweis, kein Teilfehler; die Zuordnung über Hostname und Port
+  bleibt. Was sich nicht zuordnen lässt, bleibt als nicht gelesenes Gerät sichtbar; meldet es
+  sich als FortiGate (Systembeschreibung), steht es als **Firewall** da. Gegenstellen nur mit
+  Chassis-ID (MAC) sind je MAC ein eigenes Gerät. Nach dem Update FortiGates und Switches neu
+  einlesen (die Chassis-ID speichert Automato erst ab dem nächsten Lauf der Switches).
   Oben die Kennzahlen (gelesene Geräte, Switches, Verbindungen je Zustand, Abweichungen,
   Gegenstellen ohne CDP/LLDP, seit 0.63.0 Endpunkte), darunter die Reiter:
   - **Plan** (0.64.0, ADR 0025 Nr. 9): die L2-Sicht als Zeichnung – oben der Kern (Spines bzw.
@@ -986,7 +1008,9 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     - **VLAN hervorheben:** Linien grün (lässt das VLAN durch), rot gestrichelt (sperrt es),
       orange (nur ein Teil der Kabel), grau gepunktet (unbekannt); Geräte, die das VLAN nutzen
       (verbundene Access-Ports, SVI, Firewall-Subinterface), grün umrandet; darüber „durchgehend“
-      bzw. „getrennt in N Inseln“.
+      bzw. „getrennt in N Inseln“ – seit 1.23.0 nur innerhalb einer L2-Domäne; dieselbe
+      VLAN-Nummer an getrennten Standorten bzw. Systemen heisst „in N getrennten L2-Domänen …
+      (normal)“.
     - Seit 0.65.0 (ADR 0025 Nr. 10): **vPC-Paare** nebeneinander im gestrichelten Rahmen
       „vPC-Domäne n“ (zusammen ein logischer Switch). **Spanning Tree**: Kabel mit blockierten
       VLANs gestrichelt und beschriftet („STP 30“), mit VLAN violett gestrichelt = *Reserve*
@@ -1081,7 +1105,14 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     einzigen Kabel zu den Switches), *L2: alle Kabel am selben Switch* (ESXi Warnung, Switch
     Information), *L2: Switch als einzelner Ausfallpunkt* (ohne ihn zerfällt das Netz),
     *Port-Channel unvollständig* (Mitglied nicht verbunden), *VLAN getrennt* (VLAN an Access-Ports
-    bzw. SVI mehrerer Switches, die Trunks dazwischen sperren es).
+    bzw. SVI mehrerer Switches, die Trunks dazwischen sperren es). Seit 1.23.0 nur innerhalb
+    einer **L2-Domäne**: gleicher Standort (des Quellsystems, wie die VLANs je Standort) und
+    Switches, die über Kabel zusammenhängen – nicht durch Endgeräte und nicht durch das
+    ACI-Fabric (dort entscheidet die Bridge Domain, nicht die VLAN-Nummer). Dieselbe VLAN-Nummer
+    an zwei Standorten bzw. auf zwei getrennten Systemen (z. B. 10 Mgmt, 50 Clients überall) ist
+    kein Befund; je Domäne mit Trennung ein Befund. „Wege vergleichen“ prüft das VLAN durch das
+    ACI-Fabric ebenso nicht mehr als Nummer: hinter dem Fabric gilt das VLAN des Eingangs, sonst
+    zählt der Teil als „im ACI-Fabric“.
     Seit 1.19.0 (Prüfung „Kabel: NetBox, Kabelnummer, Duplex“): **Nachbar passt nicht zu
     NetBox** (CDP/LLDP meldet am Port eines Kabels in NetBox eine andere Gegenstelle),
     **Kabelnummer NetBox ≠ Automato** und **Duplex nicht voll** (nur, wenn beide Enden gelesen
@@ -2183,7 +2214,12 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   - *IP nicht in NetBox* je Quelle (A-Records auf IPs, die die gelesene NetBox nicht kennt, nur
     gezählt);
   - *nicht geprüft* je Quelle (nicht gelesen, letzter Lauf fehlgeschlagen, Zonen ohne Einträge,
-    Rückwärtszone fehlt, NetBox nicht gelesen).
+    Rückwärtszone fehlt, NetBox nicht gelesen). Seit 1.23.0 gilt eine Zone als gelesen, wenn der
+    Lauf sie übertragen hat – auch ohne Einträge (eine Reverse-Zone nur mit SOA/NS). Die Meldung
+    unterscheidet: *ohne eingetragene Rückwärtszone*, *eingetragen, aber noch nicht gelesen*
+    (Zone nach dem letzten Lauf eingetragen – neu einlesen) und **PTR fehlt** (Zone gelesen, aber
+    ohne PTR für diese Adressen, mit Liste). Läufe vor 1.23.0 nennen die übertragenen Zonen nicht –
+    bis zum nächsten Lauf gilt die alte Meldung „Zonen ohne Einträge bzw. noch nicht gelesen“.
   Die **Reverse-Zonen** (z. B. `20.10.in-addr.arpa`) gehören mit in den Lesebereich und brauchen
   die Freigabe für den Zonentransfer ebenfalls. Ohne sie ist der PTR nicht prüfbar, und bei IPs mit
   mehreren A-Records kann der Sync keinen Namen wählen.

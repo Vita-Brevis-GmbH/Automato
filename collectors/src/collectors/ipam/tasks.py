@@ -98,7 +98,13 @@ def collect_references(
         notes = getattr(adapter, "notes", None) or []  # NetBox: Kabel nicht lesbar (1.19.0)
         if notes:
             message += f" · Hinweise: {'; '.join(notes)}"
-        result = CollectorResult(status="completed", reference_count=total, message=message)
+        zones = getattr(adapter, "zone_counts", None)  # AD-DNS: je Zone, auch 0 (1.23.0)
+        result = CollectorResult(
+            status="completed",
+            reference_count=total,
+            message=message,
+            zones=dict(zones) if isinstance(zones, dict) else None,
+        )
     except Exception as exc:  # noqa: BLE001 - Fehler sichtbar an die interne API melden
         result = CollectorResult(
             status="failed", reference_count=total, message=diagnose.device_error(exc, platform)

@@ -4700,6 +4700,7 @@ export interface CablingDevice {
   model: string | null;
   version: string | null;
   mgmt_ip: string | null;
+  ha_of?: string | null; // HA-Mitglied des gelesenen Geräts (1.23.0)
   ports: number;
   connected: number;
   links: number;
@@ -4911,7 +4912,8 @@ export interface L2Plan {
   pairs: { a: string; b: string; domain: string }[]; // vPC-Paare (0.65.0)
   width: number;
   height: number;
-  vlan?: { vid: number; present: string[]; islands: string[][] };
+  // split (1.23.0): je L2-Domäne (Standort, über Kabel verbunden), in der das VLAN getrennt ist, die Inseln
+  vlan?: { vid: number; present: string[]; islands: string[][]; split?: string[][][] };
 }
 export interface L2Failure {
   devices: string[];

@@ -202,6 +202,7 @@ def inventory(
                 device=name, port=local, protocol="lldp",
                 remote_name=_col(r, "system name") or _col(r, "device id") or "?",
                 remote_port=_col(r, "port id") or None, remote_caps=caps,
+                remote_chassis=_col(r, "device id")[:100] or None,  # 1.23.0: Chassis-ID
             ))  # fmt: skip
     first = {n.port: n for n in reversed(neighbors)}
     interfaces = [_interface(name, e, first.get(e["name"])) for e in ports.values()]

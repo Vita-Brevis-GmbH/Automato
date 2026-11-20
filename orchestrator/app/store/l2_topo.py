@@ -18,7 +18,12 @@ Verbindung zum groessten verbleibenden Teil (meiste Switches)?
 
 **Befunde** (`checks`): Einzelkabel (`l2_single_link`), alle Kabel am selben Switch
 (`l2_single_switch`), Switch als einzelner Ausfallpunkt (`l2_single_point`), Port-Channel mit
-nicht verbundenen Mitgliedern (`lag_degraded`), VLAN in Inseln getrennt (`vlan_split`).
+nicht verbundenen Mitgliedern (`lag_degraded`), VLAN in Inseln getrennt (`vlan_split`) - seit
+1.23.0 nur innerhalb einer L2-Domaene (`domains`): gleicher Standort und ueber Kabel zwischen
+Switches verbunden (nicht ueber das ACI-Fabric - dort bestimmt die Bridge Domain, nicht die
+VLAN-Nummer, was zusammengehoert). Dieselbe VLAN-Nummer an getrennten Standorten bzw. Systemen
+ist normal (Anwender 2026-11-20: „VLANs werden teilweise der gleichen Funktion zugewiesen (10
+Mgmt, 50 Clients, 80 Server usw.)“).
 
 **Weg-Suche** (`annotate`): zwischen zwei Hops die Switches vom Ausgang (physischer Port hinter
 VLAN-Subinterface bzw. Aggregat) bis zum naechsten Geraet, im VLAN des Ausgangs; Quelle und Ziel
@@ -36,6 +41,7 @@ from app.store import cabling as cab_store
 from app.store.cabling import Cabling, Device, End, Link, device_key, port_key, vlan_set
 
 SWITCHING_KINDS = {"switch", "leaf", "spine"}
+FABRIC_KINDS = {"leaf", "spine", "controller"}  # ACI: L2-Domaene ist die Bridge Domain
 UP = {"connected", "up"}
 MAX_HOPS = 12
 X_STEP, Y_STEP = 190, 130
@@ -132,12 +138,71 @@ class L2:
             self.adj[b][a].append(link)
         self.devices = self.cab.devices
         self._members: dict[tuple[str, str], list[InvInterface]] | None = None
+        self._domains: dict[str, set[tuple[int, int]]] | None = None
 
     # Grundlagen ------------------------------------------------------------------------------
 
     def switching(self, key: str) -> bool:
         dev = self.devices.get(key)
         return dev is not None and dev.switching
+
+    def fabric(self, key: str) -> bool:
+        """Geraet des ACI-Fabrics (Leaf, Spine, APIC bzw. aus einer ACI-Quelle)."""
+        dev = self.devices.get(key)
+        return dev is not None and (dev.kind in FABRIC_KINDS or dev.platform == "cisco_aci")
+
+    def domains(self) -> dict[str, set[tuple[int, int]]]:
+        """L2-Domaenen je Geraet (1.23.0): (Standort, Teil) - Teil = Switches, die ueber Kabel
+        zusammenhaengen (gleich welches VLAN; weder durch Endgeraete noch durch das ACI-Fabric),
+        Standort = der des Quellsystems (`sites.source_sites`, wie die VLANs je Standort); ein
+        Endgeraet gehoert zu den Domaenen der Switches, an denen es haengt."""
+        if self._domains is not None:
+            return self._domains
+        from app.store import sites as site_store
+
+        site_of = site_store.source_sites(self.session, self.tenant_id)
+
+        def site(key: str) -> int:
+            dev = self.devices.get(key)
+            s = site_of.get(dev.source_system_id) if dev and dev.source_system_id else None
+            return s.id if s is not None else 0
+
+        part: dict[str, int] = {}
+        keys = sorted(set(self.adj) | {k for k, d in self.devices.items() if d.read})
+        for start in keys:
+            if start in part or not self.switching(start) or self.fabric(start):
+                continue
+            idx, queue = len(part) + 1, deque([start])
+            part[start] = idx
+            while queue:
+                cur = queue.popleft()
+                for nb in self.adj.get(cur, {}):
+                    if nb not in part and self.switching(nb) and not self.fabric(nb):
+                        part[nb] = idx
+                        queue.append(nb)
+        out: dict[str, set[tuple[int, int]]] = {}
+        for key in keys:
+            ids = {part[key]} if key in part else {part[nb] for nb in self.adj.get(key, {})
+                                                   if nb in part}  # fmt: skip
+            out[key] = {(site(key), i) for i in ids}
+        self._domains = out
+        return out
+
+    def vlan_split(self, vlan: int, present: set[str] | None = None) -> list[list[set[str]]]:
+        """Je L2-Domaene, in der das VLAN getrennt ist, ihre Inseln (mindestens zwei). Inseln in
+        verschiedenen Domaenen (Standorte, nicht verbundene Systeme, nur ueber das ACI-Fabric)
+        sind kein Befund (1.23.0)."""
+        doms = self.domains()
+        by_dom: dict[tuple[int, int], list[set[str]]] = defaultdict(list)
+        for island in self.vlan_islands(vlan, present):
+            parts: dict[tuple[int, int], set[str]] = defaultdict(set)
+            for key in island:
+                for d in doms.get(key) or {(-1, hash(key))}:  # ohne Domaene: allein
+                    parts[d].add(key)
+            for d, keys in parts.items():
+                by_dom[d].append(keys)
+        return [sorted(p, key=lambda s: (-len(s), sorted(s))) for _d, p in sorted(by_dom.items())
+                if len(p) > 1]  # fmt: skip
 
     # Spanning Tree und vPC (0.65.0) --------------------------------------------------------
 
@@ -352,8 +417,12 @@ class L2:
         if vlan:
             islands = self.vlan_islands(vlan, present)
             names = [[self._name(k) for k in sorted(p, key=self._name)] for p in islands]
+            # getrennt nur innerhalb einer L2-Domaene (1.23.0); Inseln in verschiedenen
+            # Domaenen (Standorte, nicht verbundene Systeme) sind normal
+            split = [[sorted(self._name(k) for k in p) for p in parts]
+                     for parts in self.vlan_split(vlan, present)]  # fmt: skip
             out["vlan"] = {"vid": vlan, "present": sorted(self._name(k) for k in present),
-                           "islands": names}  # fmt: skip
+                           "islands": names, "split": split}  # fmt: skip
         return out
 
     def _name(self, key: str) -> str:
@@ -590,15 +659,16 @@ class L2:
                 if digits:
                     vids.add(int(digits))
         for vid in sorted(v for v in vids if 1 < v < 4095 and not 1002 <= v <= 1005):
-            islands = self.vlan_islands(vid)
-            if len(islands) < 2:
-                continue
-            groups = [sorted(self._name(k) for k in p) for p in islands]
-            groups.sort(key=lambda g: (-len(g), g))
-            text = f"VLAN {vid} ist getrennt: " + " | ".join(", ".join(g) for g in groups)
-            first = self.devices.get(next(iter(sorted(islands[0]))))
-            out.append(self._issue("vlan_split", "warning", f"vlan|{vid}", first, text,
-                                   vlan=vid, islands=groups))  # fmt: skip
+            splits = self.vlan_split(vid)
+            for n, islands in enumerate(sorted(splits, key=lambda p: -sum(map(len, p)))):
+                groups = [sorted(self._name(k) for k in p) for p in islands]
+                groups.sort(key=lambda g: (-len(g), g))
+                text = f"VLAN {vid} ist getrennt: " + " | ".join(", ".join(g) for g in groups)
+                first = self.devices.get(min(min(p) for p in islands))
+                # je L2-Domaene ein Befund; der erste behaelt den bisherigen Schluessel
+                subject = f"vlan|{vid}" if n == 0 else f"vlan|{vid}|{groups[0][0]}"
+                out.append(self._issue("vlan_split", "warning", subject, first, text,
+                                       vlan=vid, islands=groups))  # fmt: skip
         return out
 
     # Weg-Suche -------------------------------------------------------------------------------

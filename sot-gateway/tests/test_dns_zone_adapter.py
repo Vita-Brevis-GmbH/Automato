@@ -278,3 +278,24 @@ def test_read_only_by_protocol():
         and n.value.attr == "query"
     }
     assert calls == {"xfr"}
+
+
+EMPTY_REVERSE = """
+$ORIGIN 8.20.10.in-addr.arpa.
+$TTL 3600
+@   IN SOA dc01.example.ch. hostmaster.example.ch. 3 900 600 86400 3600
+@   IN NS  dc01.example.ch.
+"""
+
+
+def test_zone_counts_include_empty_reverse_zone():
+    """1.23.0: je uebertragener Zone die Anzahl Eintraege, auch 0 - eine Reverse-Zone nur mit
+    SOA/NS ist gelesen (der Orchestrator wertet ihre Adressen als „PTR fehlt“)."""
+    srv = AxfrServer({"2.1.10.in-addr.arpa.": REVERSE, "8.20.10.in-addr.arpa.": EMPTY_REVERSE})
+    try:
+        adapter = _adapter(srv, zones=("2.1.10.in-addr.arpa", "8.20.10.in-addr.arpa"))
+        records = list(adapter.export())
+    finally:
+        srv.close()
+    assert len(records) == 2
+    assert adapter.zone_counts == {"2.1.10.in-addr.arpa": 2, "8.20.10.in-addr.arpa": 0}

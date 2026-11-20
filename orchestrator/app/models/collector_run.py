@@ -4,7 +4,7 @@ import enum
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, Enum, ForeignKey, String, Text
+from sqlalchemy import JSON, DateTime, Enum, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -55,3 +55,6 @@ class CollectorRun(Base):
     # einzige neu rechnet (ohne Fremdschluessel: geloeschte Applikation = nichts zu rechnen)
     scope: Mapped[str | None] = mapped_column(String(16), nullable=True)
     application_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
+    # AD-DNS (1.23.0, Migration 0099): Eintraege je uebertragener Zone, auch 0 - gelesen ist eine
+    # Zone, wenn der Lauf sie uebertragen hat; None = nicht geliefert (aeltere Laeufe)
+    zones: Mapped[dict | None] = mapped_column(JSON, nullable=True)

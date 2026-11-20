@@ -120,6 +120,9 @@ class InvNeighbor(_InventoryRow, Base):
     remote_platform: Mapped[str | None] = mapped_column(String(200), nullable=True)
     remote_caps: Mapped[list | None] = mapped_column(JSON, nullable=True)
     remote_description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # LLDP: Chassis-ID der Gegenstelle wie gemeldet (1.23.0, Migration 0099) - ordnet sie auch
+    # ohne passenden Systemnamen zu (MAC eines gelesenen Interfaces); None = nicht geliefert
+    remote_chassis: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
 
 class InvTransceiver(_InventoryRow, Base):

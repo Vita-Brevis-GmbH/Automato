@@ -454,6 +454,7 @@ def switch_inventory(
             remote_name=device_name(r.get("neighbor_name")) or (r.get("chassis_id") or "?"),
             remote_port=(remote_port or "").strip() or None,
             remote_ip=_ip(r.get("mgmt_address")),
+            remote_chassis=(r.get("chassis_id") or "").strip()[:100] or None,  # 1.23.0
             remote_platform=(r.get("platform") or "").strip() or None,
             remote_caps=[c for c in re.split(r"[\s,]+", r.get("capabilities") or "") if c],
             remote_description=(r.get("neighbor_description") or "").strip()[:500] or None,
