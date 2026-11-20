@@ -661,8 +661,8 @@ function loadLayers(): Layers {
 
 type Focus = { kind: "node" | "edge"; id: string } | null;
 
-// Zoom und Verschieben (0.74.0): Knöpfe, Strg/⌘ + Mausrad, Ziehen auf freier Fläche
-function usePanZoom(width: number) {
+// Zoom und Verschieben (0.74.0): Knöpfe, Strg/⌘ + Mausrad, Ziehen auf freier Fläche; auch für die Pläne je Schicht (1.23.0)
+export function usePanZoom(width: number) {
   const box = useRef<HTMLDivElement | null>(null);
   const [zoom, setZoom] = useState(1);
   const drag = useRef<{ x: number; y: number; left: number; top: number } | null>(null);

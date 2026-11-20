@@ -44,6 +44,7 @@ from app.api import cable_labels as cable_labels_api
 from app.api import freigaben as freigaben_api
 from app.api import inventory as inventory_api
 from app.api import kopplung as kopplung_api
+from app.api import layer_plans as layer_plans_api
 from app.api import modules as module_api
 from app.api import netbox_host as netbox_host_api
 from app.api import path_compare as path_compare_api
@@ -190,6 +191,9 @@ def create_app() -> FastAPI:
     app.include_router(data_quality.router, dependencies=[Depends(modules.guard("analyse"))])
     app.include_router(vpn.router, dependencies=[Depends(modules.guard("analyse"))])  # 1.19.0
     app.include_router(stp_api.router, dependencies=[Depends(modules.guard("analyse"))])  # 1.19.0
+    app.include_router(  # Plaene je Schicht L1/L2/L3 (1.23.0, ADR 0067 Nachtrag)
+        layer_plans_api.router, dependencies=[Depends(modules.guard("analyse"))]
+    )
     app.include_router(  # Reservierungen VLAN/AS (1.19.0, ADR 0066)
         reservations_api.router, dependencies=[Depends(modules.guard("analyse"))]
     )

@@ -102,9 +102,9 @@ Fehler zeigt das UI mit der Meldung des Orchestrators (z. B. „Keine Berechtigu
 
 **Navigation nach Netzwerkschichten** (seit 1.19.0, ADR 0067): unter *Dokumentation* das
 Übergreifende (Übersicht, Applikationen, Weg-Suche, **Wege vergleichen**, Findings, Abgleich,
-Netzwerkdesign), darunter je Schicht ihre Stellen – **L1 · Physik** (Verkabelung, Ports,
-Transceiver, Kabelnummern), **L2 · Switching** (VLANs, Spanning Tree, VLAN-Reservierungen),
-**L3 · Routing** (Netze, VRF, Routing, Statische Routen, BGP, AS-Nummern, AS-Reservierungen),
+Netzwerkdesign), darunter je Schicht ihre Stellen – **L1 · Physik** (L1-Plan, Verkabelung, Ports,
+Transceiver, Kabelnummern), **L2 · Switching** (L2-Plan, VLANs, Spanning Tree, VLAN-Reservierungen),
+**L3 · Routing** (L3-Plan, Netze, VRF, Routing, Statische Routen, BGP, AS-Nummern, AS-Reservierungen),
 **L4–7 · Firewall & Dienste** (Regeln & Contracts, Objekte & Inventar, NAT / VIPs, Load Balancer,
 VPN-Tunnel) – und die *Administration*. Eine Stelle ist eine Ansicht bzw. ein Reiter davon (z. B.
 BGP = Routing, Reiter BGP-Nachbarn); die Adresse lautet `#<schicht>/<stelle>` (`#l3/bgp`,
@@ -112,6 +112,31 @@ BGP = Routing, Reiter BGP-Nachbarn); die Adresse lautet `#<schicht>/<stelle>` (`
 `#verkabelung?tab=vlans`) leiten auf die neue Stelle um – Lesezeichen und Links in der Doku
 gelten weiter. Module je Mandant schalten wie bisher (Analyse aus blendet L1, L2 und die Stellen
 der Analyse in L3/L4–7 aus); die API-Pfade sind unverändert.
+
+**Pläne je Schicht** (seit 1.23.0, ADR 0067 Nachtrag 1.23.0, Modul Analyse): je Schicht als erste
+Stelle ein Plan für den **ganzen Mandanten**, gezeichnet aus den gelesenen Daten –
+**L1-Plan** (`#l1/plan-physik`: Geräte der Verkabelung inkl. ESXi-Hosts und Nachbarn aus CDP/LLDP,
+je Kabel die Ports beider Enden und die Kabelnummer aus Automato bzw. NetBox, ein Port-Channel als
+eine Linie mit seinen Mitgliedern, Kabel nur in NetBox gestrichelt, gelesene Geräte ohne Kabel
+„kein Kabel gelesen“), **L2-Plan** (`#l2/plan-switching`: weiterleitende Geräte mit Trunks bzw.
+Port-Channels und den erlaubten VLANs beider Enden, gekürzt mit „+n“, Root je VLAN bzw.
+MST-Instanz, blockierte Ports aus dem Spanning Tree, Switches ohne gelesenen Spanning Tree gezählt)
+und **L3-Plan** (`#l3/plan-routing`: Firewalls/VDOMs, gelesene Router und ACI-VRFs, Transfernetze
+und Segmente, Netze an einem Knoten – höchstens 8 je Knoten, der Rest als „+n Netze“ –, Router
+und Anbindungen nach aussen, statische Routen und BGP an den Linien, IPsec-Tunnel als eigene Linie
+zur gelesenen Gegenstelle bzw. zu ihrer Adresse). **Standort** oben wählen (Vorgabe: alle; die
+Wahl steht in der Adresse, z. B. `#l3/plan-routing?site=3`, `site=0` = ohne Standort): ein
+gelesenes Gerät gehört zum Standort seines Quellsystems, Nicht-Gelesenes zum Standort der Geräte,
+an denen es hängt; Nachbarn an anderen Standorten erscheinen blass. Je Standort ein Rahmen.
+**Ebenen** (Ports, Kabelnummern, VLANs, Spanning Tree, Netze, statische Routen, BGP, IPsec,
+Endgeräte …) blendet die Leiste ein und aus (je Browser gemerkt). Klick auf ein Element bzw. eine
+Linie zeigt die Angaben mit Link in die Detailansicht (Verkabelung, Ports, Spanning Tree, Routing,
+Statische Routen, VPN-Tunnel, Netze). **Grenze:** höchstens 250 Elemente und 1200 Linien je Plan;
+was darüber liegt, steht je Art gezählt über dem Plan („Standort wählen“). **Export draw.io**: wie
+in der Ansicht, die Ebenen als Ebenen in draw.io (ausgeblendete kommen ausgeblendet mit), Dateiname
+`plan-<schicht>-<physik|switching|routing>-<standort|alle|ohne-standort>-<datum>.drawio`. Lesen
+für Betreuer und Mandanten-Benutzer (`mandant.read`), nicht für Kunden-Benutzer (wie die
+Verkabelung); rein lesend.
 
 **Wege vergleichen** (seit 1.19.0, ADR 0067, Modul „Wege vergleichen“, braucht Analyse und
 Wegsucher): ein L3-Weg gegen L1/L2 – je Abschnitt vom Ausgang eines Hops bis zum Eingang des

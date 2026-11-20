@@ -120,11 +120,11 @@ export default function Cabling({ tenantId, tenantLabel, canEdit = false, params
   tenantId: number | null;
   tenantLabel: string;
   canEdit?: boolean;
-  params?: Record<string, string>; // 1.19.0: `tab`, `q` (z. B. aus einem Befund)
+  params?: Record<string, string>; // 1.19.0: `tab`, `q` (z. B. aus einem Befund); 1.23.0: `device` (Schlüssel)
 }) {
   const [tab, setTab] = useState<Tab>(TABS.some((t) => t.key === params.tab) ? (params.tab as Tab) : "links");
   const [data, setData] = useState<{ summary: CablingSummary; items: CablingDevice[] } | null>(null);
-  const [device, setDevice] = useState("");
+  const [device, setDevice] = useState(params.device ?? ""); // 1.23.0: Link aus den Plänen je Schicht
   const [epPort, setEpPort] = useState<{ device: string; port: string } | null>(null);
   const [err, setErr] = useState<unknown>(null);
   useEffect(() => {

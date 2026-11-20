@@ -19,6 +19,7 @@ export type View =
   | "reservierungen"
   | "asn"
   | "vlans"
+  | "plaene"
   | "wege"
   | "vergleich"
   | "apps"

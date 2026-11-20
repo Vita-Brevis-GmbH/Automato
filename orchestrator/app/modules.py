@@ -213,6 +213,7 @@ MODULES: tuple[Module, ...] = (
             "cable_labels",  # Kabelnummern und Transceiver (1.19.0)
             "reservations",  # Reservierungen VLAN/AS (1.19.0, ADR 0066)
             "as_numbers",  # AS-Nummern einzeln (1.19.0, ADR 0066)
+            "layer_plans",  # Plaene je Schicht L1/L2/L3 (1.23.0, ADR 0067 Nachtrag)
         ),
         store=(
             "as_numbers",  # AS-Nummern aus den BGP-Daten (1.19.0, ADR 0066)
@@ -229,6 +230,8 @@ MODULES: tuple[Module, ...] = (
             "l2_export",
             "l2_topo",
             "l3out_firewall",
+            "layer_plan_export",  # Plaene je Schicht als draw.io (1.23.0)
+            "layer_plans",  # Plaene je Schicht L1/L2/L3 (1.23.0, ADR 0067 Nachtrag)
             "net_lists",  # Netzlisten der Anbindungen (0.111.0)
             "parallel_net",
             "reconcile",
@@ -251,6 +254,7 @@ MODULES: tuple[Module, ...] = (
             "reservierungen",
             "asn",
             "vlans",  # VLANs je Standort, eigene Ansicht in L2 (1.19.0, ADR 0067)
+            "plaene",  # Plaene je Schicht L1/L2/L3 (1.23.0, ADR 0067 Nachtrag)
         ),
     ),  # fmt: skip
     Module(

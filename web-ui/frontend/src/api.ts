@@ -3944,6 +3944,99 @@ export interface TopologyModel {
 export const fetchTopology = (tenantId: number, node?: string) =>
   getJSON<TopologyModel>(`/api/topology${cq({ tenant_id: tenantId, node })}`);
 
+// Pläne je Netzwerkschicht (1.23.0, ADR 0067 Nachtrag 1.23.0): L1 Physik, L2 Switching, L3 Routing für den ganzen
+// Mandanten, Lage serverseitig, Filter nach Standort (`site`: Standort, 0 = ohne Standort, ohne Angabe alle)
+export type LayerPlanKey = "l1" | "l2" | "l3";
+export interface LayerPlanLink {
+  view: string;
+  params: Record<string, string>;
+}
+export interface LayerPlanNode {
+  id: string;
+  label: string;
+  kind: string;
+  kind_text: string;
+  sub: string;
+  read: boolean;
+  layer: string | null; // Ebene (ohne = immer sichtbar)
+  badges: { text: string; tone: string; layer: string | null }[];
+  info: string[];
+  link: LayerPlanLink | null;
+  foreign: boolean; // Nachbar an einem anderen Standort (blass)
+  group: number;
+  sites: number[];
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+export interface LayerPlanEnd {
+  x: number;
+  y: number;
+  text: string;
+  anchor: "start" | "end";
+}
+export interface LayerPlanEdge {
+  id: string;
+  a: string;
+  b: string;
+  kind: string;
+  label: string;
+  texts: { text: string; layer: string | null }[];
+  tone: string;
+  dash: boolean;
+  layer: string | null;
+  info: string[];
+  link: LayerPlanLink | null;
+  ends_layer: string;
+  end_a: string | null;
+  end_b: string | null;
+  points: [number, number][];
+  lx: number;
+  ly: number;
+  pa: LayerPlanEnd | null;
+  pb: LayerPlanEnd | null;
+}
+export interface LayerPlan {
+  layer: LayerPlanKey;
+  title: string;
+  site: number | null;
+  sites: SiteRef[];
+  layers: { key: string; label: string; used: boolean }[];
+  groups: { id: number; title: string; code: string | null; x: number; y: number; w: number; h: number }[];
+  nodes: LayerPlanNode[];
+  edges: LayerPlanEdge[];
+  summary: { nodes: Record<string, number>; edges: Record<string, number>; foreign: number };
+  limits: {
+    max_nodes: number;
+    max_edges: number;
+    nodes_total: number;
+    nodes_shown: number;
+    edges_total: number;
+    edges_shown: number;
+    dropped: Record<string, number>;
+    [k: string]: unknown;
+  };
+  notes: string[];
+  width: number;
+  height: number;
+}
+export const fetchLayerPlan = (tenantId: number, layer: LayerPlanKey, site: number | null) =>
+  getJSON<LayerPlan>(`/api/network-plans/${layer}${cq({ tenant_id: tenantId, site: site ?? undefined })}`);
+// Export draw.io (Ebenen als Ebenen in draw.io, ausgeblendete kommen ausgeblendet); Name aus Content-Disposition
+export async function exportLayerPlan(
+  tenantId: number,
+  layer: LayerPlanKey,
+  site: number | null,
+  hide: string[],
+): Promise<{ blob: Blob; filename: string }> {
+  const response = await fetchChecked(
+    withLang(`/api/network-plans/${layer}/export${cq({ tenant_id: tenantId, format: "drawio", site: site ?? undefined, hide: hide.join(",") || undefined })}`),
+  );
+  const match = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") ?? "");
+  return { blob: await response.blob(), filename: match?.[1] ?? `plan-${layer}.drawio` };
+}
+
 // Logische Zonen (0.51.0, ADR 0024): in Automato gepflegt, Selektoren wie beim Kunden und dazu
 // `exit` (Netze hinter einer Anbindung); Zonenmatrix mit Absicht je Paar, Zonenplan
 // 0.105.0 (ADR 0035): Ausgänge – Firewall-Interface, Firewall-Zone bzw. L3Out, über die die Zone erreicht wird
