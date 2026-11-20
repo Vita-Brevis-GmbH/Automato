@@ -368,3 +368,16 @@ def test_verwaiste_kopplung_sichtbar(client):
         e["tunnel"] for e in orphan["ends"]] == ["dial-in", "to-hub"]  # fmt: skip
     assert client.delete(f"/vpn/pairs/{orphan['pair_id']}", params={"tenant_id": tid},
                          headers=OP).status_code == 200  # fmt: skip
+
+
+def test_l3_plan_zeigt_gekoppelten_tunnel_als_linie(client):
+    """Gekoppelte Tunnel (1.23.0) erscheinen im L3-Plan als IPsec-Linie zwischen den beiden
+    gelesenen Firewalls - nicht als fremde Gegenstelle."""
+    tid, sids = _seed(client, _spoke(), _hub())
+    r = client.get("/network-plans/l3", params={"tenant_id": tid})
+    assert r.status_code == 200, r.text
+    plan = r.json()
+    a, b = f"{sids[SPOKE]}|root", f"{sids[HUB]}|root"
+    ipsec = [e for e in plan["edges"] if e.get("layer") == "ipsec"]
+    assert any({e["a"], e["b"]} == {a, b} for e in ipsec), ipsec
+    assert not any(n.get("kind") == "vpn_peer" for n in plan["nodes"])
