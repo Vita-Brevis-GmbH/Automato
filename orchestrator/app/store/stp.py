@@ -1,8 +1,9 @@
 """Spanning Tree der Switches (Automato 1.19.0, Anwender 2026-11-17 Prioritaet 5).
 
 Der Switch-Collector liest je VLAN bzw. MST-Instanz Root, eigene Bridge, Ports mit Rolle und
-Zustand und die Topologieaenderungen (`collectors/cisco_switch/stp.py`, IOS/IOS-XE und NX-OS);
-andere Plattformen stehen mit Status `unsupported` da und werden gezaehlt. Hier:
+Zustand und die Topologieaenderungen (`collectors/cisco_switch/stp.py`, IOS/IOS-XE, NX-OS, seit
+1.23.0 Catalyst 1200/1300); andere Plattformen stehen mit Status `unsupported` da und werden
+gezaehlt. Hier:
 
 - **Einspielen** (`replace`, aus dem Ingest): je Lauf des Quellsystems ersetzt; der Verlauf der
   Zaehler der Topologieaenderungen (`tc_history`) wird je Switch und Instanz mitgenommen - daraus

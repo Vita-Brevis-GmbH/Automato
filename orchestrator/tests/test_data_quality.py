@@ -411,3 +411,20 @@ def test_teilfehler_aus_der_meldung():
     assert [p["kind"] for p in parts] == ["unreadable", "unreadable"]
     assert data_quality.partial_parts("Avi 22.1 · Tenants admin · 3 Virtual Services") == []
     assert data_quality.partial_parts(None) == []
+
+
+def test_teilweise_gelesen_recht_des_switch_kontos():
+    """1.23.0 (Catalyst 1300, „show mac address-table: Unrecognized command“): liegt jeder Hinweis
+    am Recht des Kontos (User EXEC), nennt der Befund das Recht statt „Plattform bzw. Version“."""
+    from app.store import finding_text
+
+    rights = ("Hinweise: 10.0.1.30: show mac address-table: Unrecognized command – im User EXEC "
+              "(Prompt „>“, Stufe 1) nicht verfügbar: das Lesekonto muss nach der Anmeldung im "
+              "Privileged EXEC stehen (Prompt „#“)")  # fmt: skip
+    _, hint = finding_text._source_partial("sw-gruppe", {"parts": [{"kind": "notes",
+                                                                    "text": rights}]})  # fmt: skip
+    assert hint.startswith("Recht des Switch-Kontos prüfen") and "Plattform" not in hint
+    mixed = rights + "; 10.0.0.8: show vpc: Ausgabe nicht auswertbar"
+    _, hint = finding_text._source_partial("sw-gruppe", {"parts": [{"kind": "notes",
+                                                                    "text": mixed}]})  # fmt: skip
+    assert "Recht des Switch-Kontos" in hint and "Plattform bzw. Version" in hint

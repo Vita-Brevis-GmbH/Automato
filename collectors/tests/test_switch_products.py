@@ -4,6 +4,7 @@ Catalyst 9200L/3650/4500 (IOS/IOS-XE); Nexus 9000 deckt `test_switches` (NX-OS) 
 
 import socket
 import threading
+import time
 
 import paramiko
 import pytest
@@ -178,10 +179,22 @@ def test_lauf_mit_mehreren_produkten(monkeypatch):
 
 class _C1300(paramiko.ServerInterface):
     """Wie ein Catalyst 1300: Exec abgelehnt, Terminal mit Anmeldung in der Sitzung, Seiten mit
-    „More:“ bis `terminal datadump`."""
+    „More:“ bis `terminal datadump`.
 
-    def __init__(self, log):
-        self.log = log
+    1.23.0: `exec_ok` - Firmware 4.x nimmt Exec an; per Exec gehen nur die Befehle des User EXEC
+    (`show version` …), MAC-Tabelle, ARP und Spanning Tree antworten „Unrecognized command“ (das
+    Bild aus der Rueckmeldung). `level` 1: auch die Sitzung steht im User EXEC (Prompt `>`)."""
+
+    PRIVILEGED = ("show mac address-table", "show arp", "show spanning-tree",
+                  "show spanning-tree detail")  # fmt: skip
+
+    def __init__(self, log, exec_ok=False, level=15):
+        self.log, self.exec_ok, self.level = log, exec_ok, level
+
+    def _answer(self, line: str, privileged: bool) -> bytes:
+        if line in sp.C1300 and (privileged or line not in self.PRIVILEGED):
+            return sp.C1300[line].replace("\n", "\r\n").encode()
+        return b"% Unrecognized command\r\n"
 
     def check_auth_password(self, username, password):  # noqa: ARG002 - fragt in der Sitzung
         return paramiko.AUTH_SUCCESSFUL
@@ -194,9 +207,20 @@ class _C1300(paramiko.ServerInterface):
             return paramiko.OPEN_SUCCEEDED
         return paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
 
-    def check_channel_exec_request(self, channel, command):  # noqa: ARG002
+    def check_channel_exec_request(self, channel, command):
         self.log.append("exec")
-        return False
+        if not self.exec_ok:
+            return False
+        self.log.append(f"exec {command.decode()}")
+
+        def reply():
+            time.sleep(0.02)  # erst nach der Bestaetigung des Exec antworten
+            channel.sendall(self._answer(command.decode(), privileged=False))
+            channel.send_exit_status(0)
+            channel.close()
+
+        threading.Thread(target=reply, daemon=True).start()
+        return True
 
     def check_channel_pty_request(self, *args):  # noqa: ARG002
         return True
@@ -225,7 +249,7 @@ class _C1300(paramiko.ServerInterface):
                 chan.send(b"\r\n\r\nUser Name:")
                 self._line(chan)
                 return
-            prompt = b"\r\nacc-1300-01#"
+            prompt = b"\r\nacc-1300-01" + (b">" if self.level == 1 else b"#")
             chan.send(prompt)
             paging = True
             while True:
@@ -233,10 +257,8 @@ class _C1300(paramiko.ServerInterface):
                 self.log.append(line)
                 if line == "terminal datadump":
                     paging, out = False, b""
-                elif line in sp.C1300:
-                    out = sp.C1300[line].replace("\n", "\r\n").encode()
                 else:
-                    out = b"% Unrecognized command\r\n"
+                    out = self._answer(line, privileged=self.level > 1)
                 chan.send(line.encode() + b"\r\n")
                 if paging and out.count(b"\r\n") > 3:
                     head, _, tail = out.partition(b"\r\n")
@@ -250,7 +272,7 @@ class _C1300(paramiko.ServerInterface):
             return
 
 
-def _serve(log, connections=12):
+def _serve(log, connections=12, **kw):
     key = paramiko.RSAKey.generate(2048)
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
@@ -265,7 +287,7 @@ def _serve(log, connections=12):
             t = paramiko.Transport(conn)
             t.add_server_key(key)
             try:
-                t.start_server(server=_C1300(log))
+                t.start_server(server=_C1300(log, **kw))
             except (OSError, EOFError, paramiko.SSHException):
                 t.close()
 
@@ -309,3 +331,118 @@ def test_catalyst_1300_ueber_begrenzte_sitzung():
         assert msg.startswith("Anmeldung abgelehnt (SSH-Sitzung") and "Stufe 1" in msg
     finally:
         sock.close()
+
+
+# -- 1.23.0: Catalyst 1300 mit Firmware 4.x (Anwender 2026-11-20) ---------------------------------
+
+
+def _read_c1300(**kw):
+    log: list[str] = []
+    sock, port = _serve(log, **kw)
+    try:
+        target = Target(platform="cisco_switch", name="Access", username="ro", password="pw",
+                        read_scope=f"127.0.0.1:{port}")  # fmt: skip
+        return tasks.read_switch(f"127.0.0.1:{port}", target), log, target
+    finally:
+        sock.close()
+
+
+def test_catalyst_1300_mit_exec_liest_in_der_sitzung(monkeypatch):
+    """Anwender: „show mac address-table: Unrecognized command; show arp: Unrecognized command“ bei
+    Switches, auf denen die Befehle von Hand gehen. Nimmt die Firmware Exec an, stehen dort nur die
+    Befehle des User EXEC zur Verfuegung - der Collector las bis 1.22.0 alles per Exec. Seit 1.23.0
+    nach `show version` immer in der Sitzung (wie von Hand); nie `terminal length 0`."""
+    monkeypatch.setattr(sc, "SESSION_ONLY", frozenset())  # Verhalten bis 1.22.0 nachstellen
+    old, _, _ = _read_c1300(exec_ok=True)
+    assert old["mode"] == "exec"
+    assert "show mac address-table: Unrecognized command" in old["notes"]
+    assert "show arp: Unrecognized command" in old["notes"]
+    monkeypatch.undo()
+
+    sw, log, _ = _read_c1300(exec_ok=True)
+    assert (sw["platform"], sw["mode"], sw["privilege"]) == ("cbs", "shell", "privileged")
+    assert sw["notes"] == []
+    assert [x for x in log if x.startswith("exec ")] == ["exec show version"]
+    sent = [x for x in log if not x.startswith(("exec", "login", "key:"))]
+    assert sent == ["terminal datadump", *sc.COMMANDS["cbs"][1:]]
+    assert "terminal length 0" not in log
+    inv = sn.normalize({"switches": [sw]})
+    assert {(m.port, m.mac) for m in inv.macs} >= {("Gi1/0/1", "00:50:56:01:00:01")}
+    assert {(a.ip, a.interface) for a in inv.arps} == {("10.0.1.1", "Vl1"),
+                                                       ("10.10.0.21", "Vl10")}  # fmt: skip
+    assert inv.stp_devices[0].status == "read" and inv.stp_devices[0].mode == "rapid-pvst"
+
+
+def test_catalyst_1300_stufe_1_nennt_das_recht():
+    """Steht das Konto im User EXEC (Prompt `>`), nennt der Hinweis das nötige Recht statt nur
+    „Unrecognized command“ (im Befund sonst „Plattform bzw. Version prüfen“)."""
+    sw, _, target = _read_c1300(level=1)
+    assert (sw["mode"], sw["privilege"]) == ("shell", "user")
+    mac = next(n for n in sw["notes"] if n.startswith("show mac address-table:"))
+    assert "Unrecognized command" in mac and "Privileged EXEC" in mac and "Prompt „>“" in mac
+    assert any(n.startswith("show arp:") and "Privileged EXEC" in n for n in sw["notes"])
+    inv = sn.normalize({"switches": [sw]})
+    dev = inv.stp_devices[0]
+    assert dev.status == "unreadable" and "Privileged EXEC" in dev.note
+    assert inv.macs == [] and inv.interfaces  # Ports, VLANs und LLDP gehen auf Stufe 1
+
+
+def test_catalyst_1300_pruefen_nennt_sitzung_und_stufe():
+    for level, extra in ((15, False), (1, True)):
+        log: list[str] = []
+        sock, port = _serve(log, exec_ok=True, level=level)
+        try:
+            target = Target(platform="cisco_switch", name="Access", username="ro", password="pw",
+                            read_scope=f"127.0.0.1:{port}")  # fmt: skip
+            ok, text = tasks.check(target)
+        finally:
+            sock.close()
+        assert ok and "Catalyst 1200/1300 (Business-CLI), Sitzung" in text
+        assert ("Stufe 1 (Prompt „>“)" in text) is extra
+
+
+def test_catalyst_1300_firmware_41_ausgaben():
+    """Ausgaben aus der Rueckmeldung (anonymisiert): Erkennung, LLDP, MAC ohne `0 self`, ARP mit
+    `vlan 10    gi1/0/22` in der ersten Spalte, Spanning Tree Rapid-PVST."""
+    out = dict(sp.C1300, **sp.C1300_FW41)
+    assert sn.detect_platform(out["show version"]) == "cbs"
+    inv = cbs.inventory("10.0.1.30", out)
+    nb = {n.port: (n.remote_name, n.remote_port) for n in inv.neighbors}
+    assert nb["Gi1/0/22"] == ("fw-a1", "Management") and nb["Te1/0/1"] == ("sw-a2", "te1/0/3")
+    assert nb["Gi1/0/9"] == ("02:00:00:00:50:f0", "02:00:00:00:50:f0")  # ohne Systemname
+    assert nb["Gi1/0/18"] == ("switch312c5e", "gi8")
+    assert len(inv.macs) == 10 and all(m.port != "0" for m in inv.macs)
+    assert {m.port for m in inv.macs} >= {"Po1", "Gi1/0/22"}
+    assert [(a.ip, a.interface) for a in inv.arps] == [
+        ("10.10.0.1", "Vl10"), ("10.10.0.16", "Vl10"), ("10.10.0.17", "Vl10")]  # fmt: skip
+    assert all(i.name.strip() for i in inv.interfaces)
+    trees = cbs.stp_tree(out["show spanning-tree"])
+    assert len(trees) == 1
+    t = trees[0]
+    assert (t["kind"], t["number"], t["protocol"], t["mode"]) == ("vlan", 1, "rstp", "rapid-pvst")
+    assert (t["root_priority"], t["root_mac"], t["root_cost"], t["root_port"]) == (
+        32768, "02:00:00:00:01:7d", 1000, "Po2")  # fmt: skip
+    assert (t["bridge_priority"], t["bridge_mac"], t["is_root"]) == (
+        32768, "02:00:00:00:02:51", False)  # fmt: skip
+    p = t["ports"][0]
+    assert (p.port, p.role, p.state, p.cost, p.priority, p.type, p.inconsistent) == (
+        "Gi1/0/1", "designated", "forwarding", 20000, "128.1", "P2P Edge (rpvst)",
+        None)  # fmt: skip
+    # Alter der letzten Aenderung `01010145`: Einheit nicht belegt - nur die Zahl
+    assert cbs.stp_detail(out["show spanning-tree detail"]) == {
+        ("vlan", 1): {"tc_count": 55, "tc_ago": None}}  # fmt: skip
+
+
+def test_catalyst_1300_ports_nur_aus_zeilen_mit_port():
+    """„1 Ports ohne Namen nicht übernommen“: eine Tabelle ohne Spalte Port/Ch (z. B. eine
+    andere Ausgabe bzw. eine Tabelle der Firmware 4.x ohne Port) liefert keinen Port."""
+    out = dict(sp.C1300)
+    out["show interfaces description"] += """
+  VLAN    Interface     IP address
+--------------------- ---------------
+vlan 10    gi1/0/22   10.10.0.1
+"""
+    inv = cbs.inventory("10.0.1.30", out)
+    assert all(i.name.strip() for i in inv.interfaces)
+    assert {i.name for i in inv.interfaces} == {"Gi1/0/1", "Gi1/0/2", "Gi1/0/3", "Gi1/0/5",
+                                               "Gi1/0/6", "Te1/0/1", "Te1/0/2", "Po1"}  # fmt: skip

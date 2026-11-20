@@ -964,6 +964,22 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   fehlt“ stehen. Nach NetBox nur über den NetBox-Sync (Abschnitt *Reservierungen*).
 - **Verkabelung** (0.62.0, ADR 0025): welches Gerät an welchem Port welches anderen hängt –
   abgeleitet aus CDP/LLDP aller gelesenen Geräte (Switches & Router, ACI-Leafs), nichts von Hand.
+  **Catalyst 1200/1300** (Business-CLI wie Cisco Business 350, Firmware 3.x/4.x; seit 0.68.0,
+  1.23.0 erweitert): Automato erkennt die Plattform an `show version` (`Active-image:`) und liest
+  sie immer in einer **Sitzung wie von Hand im Terminal** (Anmeldung, `terminal datadump`, dann
+  nur die `show`-Befehle) – auch wenn die Firmware Exec annimmt (bis 1.22.0 las Automato dann per
+  Exec, und der Switch meldete für MAC-Tabelle und ARP „Unrecognized command“). Gelesen werden
+  `show system`, `show inventory`, `show interfaces status`/`description`/`port-channel`,
+  `show vlan`, `show lldp neighbors`, `show mac address-table`, `show arp`,
+  `show ipv6 neighbors all`, `show spanning-tree` und `show spanning-tree detail`.
+  **Recht des Lesekontos:** MAC-Tabelle, ARP und Spanning Tree zeigt diese CLI laut
+  CLI-Referenz nur im **Privileged EXEC** (Prompt `#`); ein Konto der Stufe 1 (Read-Only CLI)
+  steht nach der Anmeldung im User EXEC (Prompt `>`) und sieht nur Gerät, Ports, VLANs und LLDP.
+  **Verbindung prüfen** nennt dann „Stufe 1 (Prompt „>“): MAC-Tabelle, ARP und Spanning Tree nicht
+  lesbar“, der Lauf je Befehl „… im User EXEC (Prompt „>“, Stufe 1) nicht verfügbar …“ und der
+  Befund *teilweise gelesen* „Recht des Switch-Kontos prüfen“. Automato wechselt nie selbst die
+  Stufe (`enable` sendet es nicht). Prüfen von Hand: mit dem Lesekonto anmelden, Prompt ansehen,
+  `show mac address-table` eingeben.
   Seit 0.68.0 auch Catalyst 1200/1300 und Juniper MX/EX/QFX; ein MX steht als **Router** da
   (in der L2-Sicht ein Endgerät, kein Switch), seine Interface-Netze im Inventar. Seit 0.94.0
   auch **Arista EOS** (Konto mit Rolle `network-operator`) und **HPE Aruba CX/AOS-CX** (Konto
@@ -1094,7 +1110,8 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
     ungenutzten Peer („… (vPC-Peer) nicht genutzt“).
     Für Spanning Tree und den vPC-Status braucht das Konto zusätzlich `show spanning-tree`
     (IOS privilege 1 bzw. NX-OS `network-operator` dürfen das); die Agenten holen den Befehl
-    mit dem Selbst-Update.
+    mit dem Selbst-Update. Seit 1.23.0 auch Catalyst 1200/1300 (STP, RSTP, Rapid-PVST, MSTP;
+    `show spanning-tree` und `show spanning-tree detail`, Konto im Privileged EXEC).
   - Nicht für Kunden-Benutzer (Infrastruktur).
 - **Applikationen** (ADR 0012): *Applikationen* mit Kürzel, externem und internem Namen,
   Verwendungszweck (Dev/Test/Prod), Verantwortlichen, Kritikalität, Standort und Mitgliedern
@@ -2129,7 +2146,8 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
   „Cisco-Switches“): **SSH-Benutzer/
   Passwort** eines Kontos, das nur lesen darf (IOS/IOS-XE privilege 1 bzw. eine Parser-View mit
   den `show`-Befehlen des Lesevertrags, NX-OS Rolle `network-operator`, seit 0.68.0 Junos-Klasse
-  `read-only`, Catalyst 1200/1300 Stufe 1) und statt der Adresse
+  `read-only`, Catalyst 1200/1300 ein Konto im Privileged EXEC – siehe „Catalyst 1200/1300“
+  unter *Verkabelung*) und statt der Adresse
   die **Switches** (eine Adresse je Zeile, `host` bzw. `host:port`, bis 1000) – ein Quellsystem
   ist eine Gruppe von Switches mit demselben Konto, gemischt aus Catalyst 9200L/9300/3650/4500
   (IOS/IOS-XE), Nexus 9000 (NX-OS), Catalyst 1200/1300 (Business-CLI, gelesen über eine

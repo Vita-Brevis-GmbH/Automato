@@ -2032,7 +2032,30 @@ _PARTIAL_HINT = {  # Art des Teilfehlers -> was pruefen
         "Befehle ohne auswertbare Ausgabe: Plattform bzw. Version des Geräts prüfen",
         "Commands without parsable output: check the platform or version of the device",
     ),
+    "rights": (  # 1.23.0: Catalyst 1200/1300 im User EXEC (Collector: „… Privileged EXEC …“)
+        "Recht des Switch-Kontos prüfen: das Konto steht nach der Anmeldung im User EXEC (Prompt "
+        "„>“) – MAC-Tabelle, ARP bzw. Spanning Tree zeigt der Switch dort nicht; nötig ist ein "
+        "Lesekonto im Privileged EXEC (Prompt „#“)",
+        "Check the right of the switch account: after login it is in User EXEC (prompt “>”) – "
+        "the switch does not show the MAC table, ARP or Spanning Tree there; a read account in "
+        "Privileged EXEC (prompt “#”) is needed",
+    ),
 }
+RIGHTS_MARK = "Privileged EXEC"  # im Hinweis des Switch-Collectors (cbs.rights, 1.23.0)
+
+
+def _partial_kinds(parts: list[dict]) -> list[str]:
+    """Arten der Teilfehler fuer die Hinweise; Hinweise der Switches, die alle am Recht des
+    Kontos liegen (`RIGHTS_MARK`), nur als `rights` - nicht „Plattform bzw. Version pruefen“."""
+    kinds: list[str] = []
+    for p in parts:
+        kind, text = p.get("kind"), str(p.get("text") or "")
+        if kind == "notes" and RIGHTS_MARK in text:
+            items = text.split(": ", 1)[-1].split("; ")
+            kinds += ["rights"] + (["notes"] if any(RIGHTS_MARK not in i for i in items) else [])
+            continue
+        kinds.append(kind)
+    return kinds
 
 
 def _source_who(subject: str, d: dict) -> str:
@@ -2092,7 +2115,7 @@ def _source_partial(subject: str, d: dict) -> tuple[str, str]:
                        f"routing not readable in {n} context{'s' if n != 1 else ''}: "
                        f"{listed}"))  # fmt: skip
     shown = "; ".join(items) or "–"
-    kinds = [p.get("kind") for p in parts] + (["contexts"] if contexts else [])
+    kinds = _partial_kinds(parts) + (["contexts"] if contexts else [])
     checks = [L(*_PARTIAL_HINT[k]) for k in dict.fromkeys(kinds) if k in _PARTIAL_HINT]
     return (
         L(
