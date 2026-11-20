@@ -116,6 +116,9 @@ TENANT_ROUTE_CAPABILITIES: dict[tuple[str, str], str] = {
     ("GET", "/jobs/daily"): TENANT_READ,
     ("GET", "/jobs/{run_id}"): TENANT_READ,
     ("POST", "/jobs/{run_id}/cancel"): TENANT_MANAGE,
+    # layer_plans - Plaene je Schicht L1/L2/L3 (1.23.0, ADR 0067 Nachtrag)
+    ("GET", "/network-plans/{layer}"): TENANT_READ,
+    ("GET", "/network-plans/{layer}/export"): TENANT_READ,
     # modules
     ("GET", "/modules"): TENANT_READ,
     ("PUT", "/modules/{key}"): TENANT_MANAGE,

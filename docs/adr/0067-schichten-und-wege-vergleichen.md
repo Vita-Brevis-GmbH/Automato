@@ -146,3 +146,40 @@ Inventar (Subnetze und VRFs = L3). Auch die Dateien sind verflochten: `api/cabli
   ADR und in `tests/test_modules.py`.
 - Befunde von „Wege vergleichen“ wiederholen zum Teil Befunde der Verkabelung bzw. des Spanning
   Tree – bewusst: hier mit dem Weg, den sie treffen (VLAN, Abschnitt).
+
+## Nachtrag 1.23.0 – Pläne je Schicht (L1, L2, L3)
+
+Anwender 2026-11-20: „Ist es möglich, dass ich je einen Physical Layer, Layer L2 und einen Layer L3
+Plan erstellt haben könnte von den Daten?“ – Vorschlag angenommen („gerne“).
+
+1. **Eine Ansicht, je Schicht eine Stelle:** Ansicht `plaene` im Modul Analyse (lesend, kein neues
+   Modul, keine Migration) mit den Stellen **L1-Plan** `#l1/plan-physik`, **L2-Plan**
+   `#l2/plan-switching` und **L3-Plan** `#l3/plan-routing` (feste Parameter `plan=l1|l2|l3`, je
+   als erste Stelle ihrer Schicht). Kunden-Benutzer sehen sie nicht (wie Verkabelung und Routing,
+   deren Ansichten für sie nicht freigegeben sind); Mandanten-Benutzer lesen sie (`mandant.read`,
+   ADR 0068). Die Tabelle oben gilt mit diesen drei Zeilen; `tests/test_modules.py` hält sie fest.
+2. **Ganzer Mandant, Filter nach Standort:** ohne Auswahl alle Standorte, je Standort ein Rahmen;
+   mit Auswahl dessen Elemente und – blass – die direkten Nachbarn an anderen Standorten. Der
+   Standort eines gelesenen Elements ist der seines Quellsystems (`sites.source_sites`, wie die
+   VLANs je Standort); was Automato nicht liest (CDP/LLDP-Nachbarn, Segmente, Router, Netze,
+   VPN-Gegenstellen), erbt ihn von den Elementen, an denen es hängt – gelesene Elemente erben nie.
+   Die Wahl steht in der Adresse (`?site=<id>`, `site=0` = ohne Standort).
+3. **Nur gelesene Daten, nie erfunden:** L1 aus der Verkabelung und den Kabelnummern (Automato bzw.
+   NetBox; Kabel nur in NetBox gestrichelt, eigene Ebene), Port-Channel als **ein** Bündel mit
+   Mitgliedern; L2 aus der Verkabelung (Konfiguration am Port-Channel bzw. Port, erlaubte VLANs als
+   Schnitt beider Enden, Abweichung markiert) und dem Spanning Tree (Root je VLAN/MST, blockierte
+   Ports je Instanz bzw. am Port); L3 aus dem Topologie-Modell (ADR 0019/0032) mit statischen Routen
+   je Kante, BGP und IPsec (`store/vpn`; ein Tunnel, dessen beide Enden gelesen sind, ist **eine**
+   Linie zwischen den Firewalls – die Gegenstelle kommt aus `peers` bzw. einem Feld `peer` des
+   Tunnels, damit eine Kopplung beider Enden ohne Änderung hier erscheint).
+4. **Lage serverseitig, keine stillen Grenzen** (ADR 0048): Ebenen je Art bzw. ab dem Kern der
+   Verkabelung, Reihenfolge nach den Nachbarn, Umbruch je Zeile; Linien knicken um Elemente herum.
+   Höchstens 250 Elemente und 1200 Linien je Plan, Netze je L3-Knoten höchstens 8 (der Rest als
+   „+n Netze“); was nicht gezeichnet ist, wird je Art gezählt und angezeigt. Der Browser rechnet
+   keine Lage.
+5. **Ebenen und Export:** jedes Element bzw. jeder Text nennt seine Ebene (Ports, Kabelnummern,
+   VLANs, Spanning Tree, Netze, statische Routen, BGP, IPsec, Endgeräte); die Ansicht blendet sie
+   aus, der Export **draw.io** führt sie als Ebenen in draw.io (ausgeblendete kommen ausgeblendet
+   mit). Dateiname mit Schicht und Standort (`plan-l3-routing-chzrh1-<datum>.drawio`).
+6. **Datenstand:** die Pläne stehen nicht in der Doku einer Applikation – kein Teil im Fingerabdruck
+   (ADR 0037) bzw. im Datenstand (ADR 0049); ihre Eingaben ändern ihn bereits. Rein lesend.

@@ -189,6 +189,10 @@ def test_module_je_mandant_schalten(client, session_factory):
 # Parameter); die Module des Servers bleiben, die Schicht ist ein Merkmal der Ansicht (`places`
 # in `src/modules/<modul>/index.tsx`)
 LAYERS = {
+    # Plaene je Schicht (1.23.0, ADR 0067 Nachtrag 1.23.0): eine Ansicht, je Schicht eine Stelle
+    "plan-physik": ("l1", "plaene", 'plan: "l1"'),
+    "plan-switching": ("l2", "plaene", 'plan: "l2"'),
+    "plan-routing": ("l3", "plaene", 'plan: "l3"'),
     "verkabelung": ("l1", "verkabelung", ""),
     "ports": ("l1", "verkabelung", 'tab: "ports"'),
     "transceiver": ("l1", "verkabelung", 'tab: "transceiver"'),
@@ -244,6 +248,6 @@ def test_ansichten_nach_schichten():
     assert {v for _l, v, _p in LAYERS.values()} | CROSS == views
     # Module unveraendert: Schichten-Ansichten bleiben in Analyse bzw. Kern
     assert {"routing", "statisch", "asn", "verkabelung", "vlans", "spanningtree", "reservierungen",
-            "vpn"} <= set(modules.BY_KEY["analyse"].views)  # fmt: skip
+            "vpn", "plaene"} <= set(modules.BY_KEY["analyse"].views)  # fmt: skip
     assert {"regeln", "objekte", "nat"} <= set(modules.BY_KEY["kern"].views)
     assert modules.BY_KEY["vergleich"].depends == ("analyse", "wege")
