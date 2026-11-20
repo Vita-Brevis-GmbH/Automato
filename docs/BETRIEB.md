@@ -1035,6 +1035,19 @@ Regeln, VMs, Netze und Befunde auf seinen Ausschnitt ein.
       Kurzform des Ports bzw. Gross-/Kleinschreibung und Domäne des Geräts sind dasselbe Paar.
       Ändern bzw. „In Automato löschen“ im selben Dialog; was in NetBox steht, bleibt. Audit
       `cable_label.set`/`.deleted`; die Befunde der Prüfung „Kabel“ rechnen gleich neu. Kein CSV.
+    - **Gerät und Port wählen** (1.23.0): je Ende zuerst das **Gerät** mit Suche (Liste mit
+      Herkunft: *gelesen* zuerst, dann *CDP/LLDP* – nur von Nachbarn gemeldet –, *NetBox* – nur am
+      Kabel in NetBox –, *frei erfasst*), dann den **Port** dieses Geräts. An einem gelesenen Gerät
+      nur seine gelesenen Ports (Auswahlliste, ohne VLAN-Interfaces, Port-Channel, Loopbacks,
+      Tunnel); die API lehnt für ein neues Paar einen nicht gelesenen Port ab („Port aus der Liste
+      wählen“). Ist der Port gewählt, steht die **bekannte Gegenstelle** als Vorschlag darunter
+      (CDP/LLDP, Kabel in NetBox, frühere Erfassung, mit deren Nummer) und wird in ein leeres Ende
+      eingetragen – änderbar, ein Klick übernimmt einen anderen Vorschlag. **Frei** eingeben lässt
+      sich nur, was Automato nicht liest (z. B. ein Patchpanel) bzw. ein Port eines nur gemeldeten
+      Geräts – gekennzeichnet mit „frei“, im Dialog und im Reiter Kabelnummern. Am Port
+      („+ Nummer“) bleibt Ende A fest; Enden einer Verbindung bzw. einer bestehenden Erfassung
+      bleiben fest. Bestehende Erfassungen und Kabel in NetBox bleiben änderbar, auch wenn ein
+      Port nicht (mehr) gelesen wird.
     - Die Nummern aus NetBox kommen mit dem nächsten Lauf der Referenzquelle NetBox (Lese-Token
       mit Leserecht auf Kabel, wie die übrigen Objekte). Fehlt das Recht, steht „Kabel nicht
       gelesen (HTTP 403)“ im Lauf; Kabel mit anderen Enden (Patchpanel, Circuit, mehrere Ports)

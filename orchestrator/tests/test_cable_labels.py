@@ -224,6 +224,80 @@ def test_kabelnummer_erfassen_aendern_loeschen(client, session_factory):
     s.close()
 
 
+def test_auswahl_geraete_ports_und_vorschlag(client):
+    """1.23.0 (Anwender 2026-11-20: „Geräte und Ports auswählen“): Geraete mit Suche, Ports je
+    Geraet ohne logische Interfaces, Gegenstelle als Vorschlag mit Herkunft; frei nur ohne
+    gelesenes Geraet."""
+    ids = _setup(client)
+    tid = ids["tid"]
+    url = "/cabling/labels/choices"
+    out = client.get(url, params={"tenant_id": tid}, headers=VIEWER).json()
+    by = {d["name"]: d for d in out["items"]}
+    assert by["sw-acc-01"]["origin"] == "inventory" and not by["sw-acc-01"]["free_ports"]
+    assert by["fw-08"]["origin"] == "neighbor" and by["fw-08"]["free_ports"]  # nur aus LLDP
+    assert by["patch-01"]["origin"] == "netbox"  # nur am Kabel in NetBox
+    origins = [d["origin"] for d in out["items"]]
+    assert origins == sorted(origins, key=["inventory", "neighbor", "netbox", "free"].index)
+    found = client.get(url, params={"tenant_id": tid, "q": "CORE"}).json()
+    assert [d["name"] for d in found["items"]] == ["sw-core-01"] and found["total"] == 1
+    # Ports eines Geraets: gelesen, ohne Port-Channel; Zahlen numerisch sortiert
+    ports = client.get(url, params={"tenant_id": tid, "device": "SW-ACC-01"}).json()
+    assert ports["device"]["name"] == "sw-acc-01"
+    names = [p["name"] for p in ports["ports"]]
+    assert names == ["Gi1/0/2", "Gi1/0/5", "Gi1/0/47", "Gi1/0/48", "Te1/1/1"]
+    port = {p["name"]: p for p in ports["ports"]}
+    # Vorschlag: CDP (passt zum Kabel in NetBox K-0815) - eine Gegenstelle, beide Herkuenfte
+    (peer,) = port["Gi1/0/47"]["peers"]
+    assert peer == {"device": "sw-core-01", "port": "Eth1/1", "via": ["cdp", "netbox"],
+                    "labels": ["K-0815"]}  # fmt: skip
+    # CDP und NetBox verschieden: beide als Vorschlag, CDP zuerst
+    assert [(p["device"], p["port"], p["via"]) for p in port["Gi1/0/48"]["peers"]] == [
+        ("sw-core-01", "Eth1/2", ["cdp"]), ("sw-core-01", "Ethernet1/9", ["netbox"])]  # fmt: skip
+    core = client.get(url, params={"tenant_id": tid, "device": "sw-core-01"}).json()
+    assert "Ethernet1/9" not in {p["name"] for p in core["ports"]}  # nur gelesene Ports
+    assert port["Gi1/0/2"]["peers"][0]["device"] == "patch-01"
+    # nur die Gegenseite meldet (LLDP an sw-core-01 Eth1/3): auch ein Vorschlag
+    assert [(p["device"], p["port"], p["via"]) for p in port["Gi1/0/5"]["peers"]] == [
+        ("sw-core-01", "Eth1/3", ["lldp"])]  # fmt: skip
+    assert port["Te1/1/1"]["description"] == "fw-08 port5" and port["Te1/1/1"]["read"]
+    fw = client.get(url, params={"tenant_id": tid, "device": "fw-08"}).json()
+    assert fw["device"]["free_ports"] and [p["name"] for p in fw["ports"]] == ["port5"]
+    assert not fw["ports"][0]["read"]
+    unknown = client.get(url, params={"tenant_id": tid, "device": "pp-unbekannt"}).json()
+    assert unknown == {"device": None, "ports": []}
+    # Erfassen: an einem gelesenen Geraet nur ein gelesener Port (neues Paar)
+    bad = _put(client, tid, ("sw-acc-01", "Gi1/0/99"), ("patch-02", "12"), "K-1")
+    assert bad.status_code == 422 and "nicht gelesen" in bad.text
+    en = _put(client, tid, ("sw-acc-01", "Gi1/0/99"), ("patch-02", "12"), "K-1",
+              headers={**OP, "Accept-Language": "en"})  # fmt: skip
+    assert "choose a port from the list" in en.text
+    # frei ohne gelesenes Geraet; Namen in der Schreibweise der Plattform
+    ok = _put(client, tid, ("SW-ACC-01", "GigabitEthernet1/0/5"), ("patch-02", "12"), "K-1")
+    assert ok.status_code == 200, ok.text
+    assert (ok.json()["a"], ok.json()["b"]) == ({"device": "sw-acc-01", "port": "Gi1/0/5"},
+                                                {"device": "patch-02", "port": "12"})  # fmt: skip
+    listed = client.get("/cabling/labels", params={"tenant_id": tid, "q": "K-1"}).json()
+    (row,) = listed["items"]
+    assert (row["a"]["free"], row["b"]["free"]) == (False, True)  # frei erfasst gekennzeichnet
+    # frei erfasstes Geraet steht danach in der Auswahl (als frei erfasst), mit Vorschlag
+    again = client.get(url, params={"tenant_id": tid, "q": "patch-02"}).json()
+    assert [(d["name"], d["origin"]) for d in again["items"]] == [("patch-02", "free")]
+    pp = client.get(url, params={"tenant_id": tid, "device": "patch-02"}).json()
+    assert pp["ports"][0]["peers"] == [{"device": "sw-acc-01", "port": "Gi1/0/5",
+                                        "via": ["automato"], "labels": ["K-1"]}]  # fmt: skip
+    # bestehende Erfassung bleibt aenderbar, auch wenn der Port nicht mehr gelesen wird
+    s_ports = copy.deepcopy(_switches())
+    s_ports["inventory"]["interfaces"] = [
+        i for i in s_ports["inventory"]["interfaces"] if i["name"] != "Gi1/0/5"
+    ]
+    _deliver(client, tid, ids["sw"], "cisco_switch", s_ports)
+    assert _put(client, tid, ("sw-acc-01", "Gi1/0/5"), ("patch-02", "12"),
+                "K-2").status_code == 200  # fmt: skip
+    # ein Mandanten-fremder Leser sieht nichts
+    other = client.post("/tenants", json={"name": "Kunde B"}, headers=ADMIN).json()["id"]
+    assert client.get(url, params={"tenant_id": other}).json()["items"] == []
+
+
 def test_befunde_positiv_und_negativ(client):
     ids = _setup(client, half=True)
     tid = ids["tid"]

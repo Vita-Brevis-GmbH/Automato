@@ -287,18 +287,177 @@ def refresh_findings(session: Session, tenant_id: int) -> int:
     return len(issues)
 
 
+# -- Auswahl im Dialog (1.23.0) ----------------------------------------------------------------
+
+# Ports ohne Kabel: logische Interfaces der Geraete (SVI, Port-Channel, Loopback, Tunnel, ...)
+LOGICAL = frozenset({"vlan", "lag", "loopback", "tunnel", "vdom-link", "virtual"})
+# Herkunft eines Geraets in der Auswahl: gelesen (Ports aus dem Inventar), nur von Nachbarn
+# gemeldet (CDP/LLDP), nur am Kabel einer NetBox bzw. frueher frei erfasst (z. B. Patchpanel)
+INVENTORY, NEIGHBOR, FROM_NETBOX, FREE = "inventory", "neighbor", "netbox", "free"
+_ORIGIN_RANK = {INVENTORY: 0, NEIGHBOR: 1, FROM_NETBOX: 2, FREE: 3}
+_VIA_RANK = {"cdp": 0, "lldp": 0, "netbox": 1, "automato": 2}  # Vorschlaege: CDP/LLDP zuerst
+
+
+def port_order(name: str) -> tuple:
+    """Gi1/0/2 vor Gi1/0/10: Zahlen numerisch."""
+    import re
+
+    return tuple((0, int(x), "") if x.isdigit() else (1, 0, x.lower())
+                 for x in re.split(r"(\d+)", name))  # fmt: skip
+
+
+@dataclass
+class _Dev:
+    name: str
+    origin: str
+    kind: str | None = None
+    source: str | None = None
+    ports: dict[str, str] = field(default_factory=dict)  # port_key -> Name
+    inventory: set[str] = field(default_factory=set)  # port_key der gelesenen Ports
+
+
+class Choices:
+    """Geraete und Ports zum Erfassen einer Kabelnummer (Anwender 2026-11-20: „Geräte und Ports
+    auswählen“) und je Port die bekannte Gegenstelle als Vorschlag.
+
+    - **gelesen** (`inventory`): Geraet aus dem Netzinventar mit gelesenen Ports - nur diese Ports
+      (ohne logische Interfaces);
+    - **von Nachbarn gemeldet** (`neighbor`): Geraet nur aus CDP/LLDP (bzw. gelesen ohne Ports) -
+      die gemeldeten Ports, weitere frei;
+    - **NetBox** bzw. **frei erfasst** (`netbox`/`free`): Enden der Kabel in NetBox bzw. frueherer
+      Erfassungen (Patchpanel u. a.) - frei, als solche gekennzeichnet.
+
+    Vorschlag je Port: die Gegenstelle aus CDP/LLDP, dem Kabel in NetBox bzw. einer Erfassung -
+    mit Herkunft (`via`) und der Kabelnummer, falls eine besteht. Nichts geraten."""
+
+    def __init__(self, session: Session, tenant_id: int, cab: cabling.Cabling | None = None,
+                 index: Index | None = None):  # fmt: skip
+        self.cab = cab or cabling.build(session, tenant_id)
+        self.index = index or Index(session, tenant_id)
+        self.devices: dict[str, _Dev] = {}
+        for d in self.cab.devices.values():
+            self.devices[d.key] = _Dev(d.name, NEIGHBOR, d.kind, d.source)
+        for i in self.cab.ports:
+            dev = self.devices.get(cabling.device_key(i.device))
+            if dev is None or i.kind in LOGICAL:
+                continue
+            dev.ports.setdefault(cabling.port_key(i.name), i.name)
+            dev.inventory.add(cabling.port_key(i.name))
+            dev.origin = INVENTORY
+        # Vorschlaege je Port: Schluessel des Endes -> Gegenstellen (Schluessel -> Eintrag)
+        self.peers: dict[str, dict[str, dict]] = defaultdict(dict)
+        for link in self.cab.links.values():
+            via = sorted(link.protocols) or ["lldp"]
+            for end, other in ((link.a, link.b), (link.b, link.a)):
+                if end.port:
+                    self._port(end.device.name, end.port, NEIGHBOR)
+                if end.port and other.port:
+                    self._peer(end.device.name, end.port, other.device.name, other.port, via)
+        for c in self.index.cables:
+            for mine, theirs in ((c.a, c.b), (c.b, c.a)):
+                self._port(*mine, FROM_NETBOX)
+                self._peer(*mine, *theirs, ["netbox"], c.label)
+        for row in self.index.labels.values():
+            ends = ((row.a_device, row.a_port), (row.b_device, row.b_port))
+            for mine, theirs in (ends, ends[::-1]):
+                self._port(*mine, FREE)
+                self._peer(*mine, *theirs, ["automato"], row.label)
+
+    def _port(self, device: str, port: str, origin: str) -> None:
+        key = cabling.device_key(device)
+        dev = self.devices.get(key)
+        if dev is None:
+            dev = self.devices[key] = _Dev(device, origin)
+        if dev.origin != INVENTORY:  # gelesenes Geraet: nur gelesene Ports
+            dev.ports.setdefault(cabling.port_key(port), port)
+
+    def _peer(self, device: str, port: str, o_device: str, o_port: str, via: list[str],
+              label: str | None = None) -> None:  # fmt: skip
+        found = self.peers[end_key(device, port)]
+        entry = found.setdefault(end_key(o_device, o_port), {
+            "device": self.name(o_device), "port": self.port_name(o_device, o_port), "via": [],
+            "labels": []})  # fmt: skip
+        entry["via"] += [v for v in via if v not in entry["via"]]
+        if label and label not in entry["labels"]:
+            entry["labels"].append(label)
+
+    def name(self, device: str) -> str:
+        dev = self.devices.get(cabling.device_key(device))
+        return dev.name if dev is not None else device
+
+    def port_name(self, device: str, port: str) -> str:
+        dev = self.devices.get(cabling.device_key(device))
+        return dev.ports.get(cabling.port_key(port), port) if dev is not None else port
+
+    def complete(self, device: str) -> bool:
+        """Ports des Geraets gelesen: nur sie sind waehlbar (sonst auch frei)."""
+        dev = self.devices.get(cabling.device_key(device))
+        return dev is not None and dev.origin == INVENTORY
+
+    def device_list(self, q: str | None = None, limit: int = 100) -> tuple[int, list[dict]]:
+        needle = (q or "").strip().casefold()
+        rows = [d for d in self.devices.values() if needle in d.name.casefold()]
+        rows.sort(key=lambda d: (_ORIGIN_RANK[d.origin], d.name.casefold()))
+        out = [{"name": d.name, "origin": d.origin, "kind": d.kind, "source": d.source,
+                "ports": len(d.ports), "free_ports": d.origin != INVENTORY}
+               for d in rows[:limit]]  # fmt: skip
+        return len(rows), out
+
+    def port_list(self, device: str) -> dict | None:
+        dev = self.devices.get(cabling.device_key(device))
+        if dev is None:
+            return None
+        ifaces = {cabling.port_key(i.name): i for i in self.cab.ports
+                  if cabling.device_key(i.device) == cabling.device_key(device)}  # fmt: skip
+        ports = []
+        for key, name in sorted(dev.ports.items(), key=lambda kv: port_order(kv[1])):
+            i = ifaces.get(key)
+            peers = sorted(self.peers.get(end_key(device, name), {}).values(),
+                           key=lambda p: (min(_VIA_RANK.get(v, 9) for v in p["via"]),
+                                          p["device"].casefold()))  # fmt: skip
+            ports.append({
+                "name": name, "read": key in dev.inventory,
+                "status": i.status if i is not None else None,
+                "description": i.description if i is not None else None,
+                "peers": peers,
+            })  # fmt: skip
+        return {"device": {"name": dev.name, "origin": dev.origin, "kind": dev.kind,
+                           "source": dev.source, "free_ports": dev.origin != INVENTORY},
+                "ports": ports}  # fmt: skip
+
+    def check(self, device: str, port: str) -> tuple[str, str]:
+        """Ende pruefen und in der Schreibweise der Plattform: an einem gelesenen Geraet nur ein
+        gelesener Port; sonst frei."""
+        dev = self.devices.get(cabling.device_key(device))
+        if dev is None:
+            return device, port
+        key = cabling.port_key(port)
+        if dev.origin == INVENTORY and key not in dev.ports:
+            raise Invalid(
+                f"Port {port} auf {dev.name} nicht gelesen – Port aus der Liste wählen",
+                f"port {port} on {dev.name} not read – choose a port from the list",
+            )
+        return dev.name, dev.ports.get(key, port)
+
+
 # -- Erfassen -------------------------------------------------------------------------------------
 
 
 class Invalid(ValueError):
-    pass
+    """Ungueltige Erfassung - Text deutsch, `en` englisch (sonst ueber die Tabelle der API)."""
+
+    def __init__(self, text: str, en: str | None = None):
+        super().__init__(text)
+        self.en = en
 
 
 def set_label(session: Session, tenant_id: int, a_device: str, a_port: str, b_device: str,
-              b_port: str, label: str, note: str | None,
-              actor: str) -> tuple[CableLabel, str | None]:  # fmt: skip
+              b_port: str, label: str, note: str | None, actor: str,
+              choices: Choices | None = None) -> tuple[CableLabel, str | None]:  # fmt: skip
     """Kabelnummer eines Port-Paars erfassen bzw. aendern (eine Erfassung je Paar) -> (Zeile,
-    bisherige Nummer)."""
+    bisherige Nummer). Mit `choices` (1.23.0): ein neues Paar an einem gelesenen Geraet nur mit
+    einem gelesenen Port, Namen in der Schreibweise der Plattform; eine bestehende Erfassung und
+    ein Kabel in NetBox bleiben erfassbar, auch wenn ihr Port nicht (mehr) gelesen wird."""
     ends = [_clean(x) for x in (a_device, a_port, b_device, b_port)]
     if not all(ends):
         raise Invalid("Gerät und Port an beiden Enden angeben")
@@ -310,6 +469,9 @@ def set_label(session: Session, tenant_id: int, a_device: str, a_port: str, b_de
     if end_key(ends[0], ends[1]) == end_key(ends[2], ends[3]):
         raise Invalid("beide Enden sind derselbe Port")
     pair = pair_key(*ends)
+    if choices is not None and pair not in choices.index.labels | choices.index.by_pair:
+        ends[0], ends[1] = choices.check(ends[0], ends[1])
+        ends[2], ends[3] = choices.check(ends[2], ends[3])
     row = session.scalar(select(CableLabel).where(CableLabel.tenant_id == tenant_id,
                                                   CableLabel.pair == pair))  # fmt: skip
     old = row.label if row is not None else None
