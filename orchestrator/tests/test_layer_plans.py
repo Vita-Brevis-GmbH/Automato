@@ -77,9 +77,10 @@ def test_l2_trunks_vlans_root_und_blockierte_ports(client):
     tid, _sw = tstp._setup(client)
     plan = _plan(client, tid, "l2")
     names = {n["label"]: n for n in plan["nodes"]}
-    # weiterleitende Geraete: Switches und fw-08 (meldet sich per LLDP als Router)
+    # weiterleitende Geraete: Switches und fw-08 (meldet sich per LLDP als FortiGate - seit
+    # 1.23.0 als Firewall erkannt, nicht gelesen)
     assert {"sw-acc-01", "sw-core-01", "sw-cbs-01"} <= set(names)
-    assert names["fw-08"]["sub"] == "Router (nicht gelesen)" and not names["fw-08"]["read"]
+    assert names["fw-08"]["sub"] == "Firewall (nicht gelesen)" and not names["fw-08"]["read"]
     # Root je VLAN: sw-core-01 fuer 10, 20, 30, sw-acc-01 fuer 40
     core = [b for b in names["sw-core-01"]["badges"] if b["layer"] == "stp"]
     assert core == [{"text": "Root VLAN 10,20,30", "tone": "root", "layer": "stp"}]

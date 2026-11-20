@@ -571,6 +571,8 @@ def _device_node(d: cabling.Device, site_of: dict[int, int], layer: str | None, 
         bridge = d.caps & {"switch", "bridge", "b", "trans-bridge", "source-route-bridge"}
         sub = (L("Switch (nicht gelesen)", "Switch (not read)") if bridge
                else L("Router (nicht gelesen)", "Router (not read)"))  # fmt: skip
+    elif not d.read:  # 1.23.0: z. B. FortiGate per LLDP erkannt, aber nicht gelesen
+        sub = L(f"{sub} (nicht gelesen)", f"{sub} (not read)")
     if d.model:
         sub += f" · {d.model}"
     info = [
