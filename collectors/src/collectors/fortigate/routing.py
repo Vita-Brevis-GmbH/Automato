@@ -600,12 +600,30 @@ def _single(cfg: Any) -> dict:
     return cfg if isinstance(cfg, dict) else {}
 
 
+def _as(cfg: dict) -> str | None:
+    """AS des BGP-Prozesses; `0` bzw. leer = nicht gesetzt (FortiOS 7.4 liefert "0")."""
+    value = str(cfg.get("as") if cfg.get("as") is not None else "").strip()
+    return None if value in ("", "0", "0.0") else value
+
+
+def bgp_configured(cfg: Any) -> bool | None:
+    """Ist BGP im VDOM konfiguriert (1.23.0)? False = die gelesene Konfiguration hat weder AS noch
+    Nachbarn, -Gruppen bzw. -Bereiche; None = nicht beurteilbar (Tabelle leer bzw. nicht
+    geliefert)."""
+    cfg = _single(cfg)
+    if not cfg:
+        return None
+    neighbors = any(cfg.get(k) for k in ("neighbor", "neighbor-group", "neighbor-range",
+                                         "neighbor-range6"))  # fmt: skip
+    return bool(_as(cfg) or neighbors)
+
+
 def bgp_config(cfg: Any, node: str, vdom: str) -> tuple[NormalizedBgpObject | None, dict]:
     """BGP-Prozess (AS, Router-ID, network, aggregate, redistribute) und die Konfiguration je
     Nachbar (IP -> Filter ein/aus); Nachbar-Gruppen und -Bereiche (dynamische Nachbarn) unter
-    `groups`/`ranges`."""
+    `groups`/`ranges`. Ohne BGP (AS 0 und keine Nachbarn, 1.23.0) kein Prozess."""
     cfg = _single(cfg)
-    if not cfg or not (cfg.get("as") or cfg.get("neighbor")):
+    if not bgp_configured(cfg):
         return None, {}
     neighbors = {str(n["ip"]): _neighbor(n) for n in cfg.get("neighbor") or []
                  if isinstance(n, dict) and n.get("ip")}  # fmt: skip
@@ -633,7 +651,7 @@ def bgp_config(cfg: Any, node: str, vdom: str) -> tuple[NormalizedBgpObject | No
                     if isinstance(r, dict) and r.get("name")
                     and r.get("status") == "enable"]  # fmt: skip
     data = {
-        "as": str(cfg["as"]) if cfg.get("as") else None,
+        "as": _as(cfg),
         "router_id": cfg.get("router-id") or None,
         "networks": networks,
         "aggregates": aggregates,

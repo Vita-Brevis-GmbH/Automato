@@ -400,3 +400,70 @@ def test_ohne_verkabelung_keine_befunde(client):
     assert data["cabling"] is False
     assert [(s["state"], s["unchecked"]) for s in data["items"]] == [("unchecked", ["no_cabling"])]
     assert _path_types(client, tid) == set()
+
+
+def test_vlan_durch_das_aci_fabric_darf_anders_heissen(client):
+    """1.23.0 (Anwender: „VLAN … nur innerhalb des Standortes und BridgeDomain gleich“): sw-1 und
+    sw-2 haengen am Leaf leaf-101 - am einen Port VLAN 120, am anderen VLAN 130 (dieselbe Bridge
+    Domain). Hinter dem Fabric gilt das VLAN des Eingangs: keine Abweichung, kein „anderes VLAN“."""
+    fw_b = copy.deepcopy(FW_B)
+    for i in fw_b["inventory"]["interfaces"]:
+        if i["name"] in ("port2", "transit"):
+            i["tagged_vlans"] = [130]
+    sw = _switches(stp_data=False)
+    inv = sw["inventory"]
+    inv["interfaces"] = [i for i in inv["interfaces"] if i["name"] != "Gi1/0/47"]
+    inv["neighbors"] = [
+        _nb("sw-1", "Gi1/0/1", "fw-a", "port1"),
+        _nb("sw-1", "Gi1/0/48", "leaf-101", "Ethernet1/1"),
+        _nb("sw-2", "Gi1/0/48", "leaf-101", "Ethernet1/2"),
+        _nb("sw-2", "Gi1/0/1", "fw-b", "port2"),
+    ]
+    tid = _setup(client, sw, cables=None, firewalls=(("fw-a", FW_A), ("fw-b", fw_b)))
+    apic = client.post(
+        "/systems",
+        json={
+            "tenant_id": tid,
+            "name": "apic",
+            "platform": "cisco_aci",
+            "base_url": "https://apic",
+        },
+        headers=ADMIN,
+    ).json()
+    _deliver(
+        client,
+        tid,
+        apic["id"],
+        "cisco_aci",
+        {
+            "status": "completed",
+            "inventory": {
+                "devices": [{"name": "leaf-101", "role": "leaf", "node_id": "101"}],
+                "interfaces": [
+                    {
+                        "device": "leaf-101",
+                        "name": "eth1/1",
+                        "kind": "physical",
+                        "mode": "tagged",
+                        "tagged_vlans": [120],
+                        "neighbor": "sw-1",
+                        "neighbor_port": "Gi1/0/48",
+                    },
+                    {
+                        "device": "leaf-101",
+                        "name": "eth1/2",
+                        "kind": "physical",
+                        "mode": "tagged",
+                        "tagged_vlans": [130],
+                        "neighbor": "sw-2",
+                        "neighbor_port": "Gi1/0/48",
+                    },
+                ],
+            },
+        },
+    )
+    (sec,) = _sections(client, tid)["items"]
+    assert "leaf-101" in sec["segment"]["text"]
+    vlan = sec["checks"]["vlan"]
+    assert vlan["state"] == "ok" and vlan["items"] == [], vlan
+    assert vlan["count"] == 4

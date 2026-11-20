@@ -210,6 +210,12 @@ def _vdom_message(d: dict) -> str | None:
     missing += (d.get("ha") or {}).get("missing", [])
     if missing:
         parts.append(f"Routing nicht lesbar: {'; '.join(missing)}")
+    lldp = (d.get("lldp") or {}).get("missing") or []
+    if lldp:  # 1.23.0: nur fuer die Verkabelung - ein Hinweis, kein Teilfehler
+        parts.append(
+            f"Hinweise: LLDP der FortiGate nicht abgefragt ({'; '.join(lldp)}) - "
+            "Leserecht Netzwerk (netgrp) im Profil ergaenzen"
+        )
     return " · ".join(parts) or None
 
 
@@ -235,7 +241,9 @@ def collect_once(
             result = CollectorResult(status="completed", rules=rules, nat_rules=nat_rules,
                                      objects=objects, message=message)  # fmt: skip
         else:
-            inventory = norm.normalize_inventory(d.get("interfaces"), zones, d.get("system"), name)
+            inventory = norm.normalize_inventory(
+                d.get("interfaces"), zones, d.get("system"), name, d.get("lldp")
+            )
             node = (d.get("system") or {}).get("hostname") or name  # wie das Geraet im Inventar
             result = CollectorResult(
                 status="completed",

@@ -794,10 +794,13 @@ _L2_HINT = {
     "vlan_split": (
         "VLAN auf den Trunks dazwischen erlauben (bzw. bewusst getrennte Netze mit eigener "
         "VLAN-Nummer führen) – sonst erreichen die Geräte der Teile einander und das Gateway "
-        "nicht.",
+        "nicht. Geprüft wird nur innerhalb einer L2-Domäne (gleicher Standort, Switches über "
+        "Kabel verbunden); dieselbe VLAN-Nummer an anderen Standorten bzw. Systemen ist kein "
+        "Befund.",
         "Allow the VLAN on the trunks in between (or run intentionally separate networks with "
         "their own VLAN number) – otherwise the devices of the parts cannot reach each other and "
-        "the gateway.",
+        "the gateway. Only checked within one L2 domain (same site, switches connected by "
+        "cables); the same VLAN number at other sites or systems is not a finding.",
     ),
 }
 

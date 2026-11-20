@@ -351,8 +351,8 @@ export const FINDING_HINT: Record<string, string> = {
     "Port-Channel of which not all members are connected",
   ),
   vlan_split: L(
-    "VLAN wird an Access-Ports bzw. als SVI auf mehreren Switches genutzt, die Trunks dazwischen lassen es nicht durch",
-    "VLAN is used on access ports or as SVI on several switches, the trunks in between do not pass it",
+    "VLAN wird an Access-Ports bzw. als SVI auf mehreren Switches derselben L2-Domäne (Standort, über Kabel verbunden) genutzt, die Trunks dazwischen lassen es nicht durch",
+    "VLAN is used on access ports or as SVI on several switches of the same L2 domain (site, connected by cables), the trunks in between do not pass it",
   ),
   vpc_mismatch: L(
     "vPC nur auf einem Peer, down bzw. inkonsistent – oder der Peer des vPC-Paars ist nicht verbunden",

@@ -186,6 +186,8 @@ def _finish_reference_run(session: Session, run, result: CollectorResult, actor)
         )
     run.finished_at = datetime.now(UTC)
     run.message = result.message
+    if result.status == "completed" and result.zones is not None:  # AD-DNS (1.23.0)
+        run.zones = {str(z)[:253]: int(n) for z, n in list(result.zones.items())[:500]}
     if result.status == "completed" and source is not None and run.tenant_id:
 
         def finalize() -> None:

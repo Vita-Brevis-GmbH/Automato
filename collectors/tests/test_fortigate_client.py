@@ -366,3 +366,110 @@ def test_aci_nur_regeln_ohne_fabric(monkeypatch):
     result = sent["r"]
     assert result.status == "completed" and result.rules and result.epgs
     assert result.inventory is None and result.routing is None and result.message == "nur Regeln"
+
+
+def test_lldp_der_fortigate_und_hostname_aus_dem_status(monkeypatch):
+    """1.23.0 (Anwender: „die Firewalls werden nicht in der Verkabelung erkannt, LLDP ist
+    aktiv“): Hostname auch aus `system/global` als Liste bzw. aus dem Status - so heisst die
+    FortiGate im LLDP der Switches; MAC je Interface und die LLDP-Nachbarn der FortiGate (Monitor,
+    je VDOM, nur lesend). Ohne Leserecht ein Hinweis in der Meldung, kein Teilfehler."""
+    import collectors.fortigate.tasks as t
+    from collectors.common.dto import Target
+
+    asked: list = []
+    neighbors = [
+        {"port": "internal1", "system_name": "sw-a1", "chassis_id": "02:00:00:00:02:51",
+         "port_id": "gi1/0/24", "port_description": "uplink fw",
+         "system_description": "C1300-24P", "addresses": [{"address": "fe80::1"},
+                                                          {"address": "10.0.0.11"}],
+         "capabilities": ["bridge", "router"]},
+        {"port": "internal4", "chassis_id": "02:00:00:00:01:7d",
+         "port_id": "02:00:00:00:01:7e", "port_description": "gi1/0/23"},
+        {"system_name": "ohne-port"},
+    ]  # fmt: skip
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"  # nur lesend
+        path, vdom = request.url.path, request.url.params.get("vdom")
+        asked.append((path, vdom))
+        if path == "/api/v2/cmdb/system/global":
+            return httpx.Response(200, json={"results": [{"hostname": ""}]})
+        if path == "/api/v2/monitor/system/status":
+            return httpx.Response(
+                200,
+                json={
+                    "results": {"hostname": "fw-a1", "model": "FGT60F"},
+                    "serial": "FGT60F0000000001",
+                    "version": "v7.2.8",
+                },
+            )
+        if path == "/api/v2/cmdb/system/vdom":
+            return httpx.Response(200, json={"results": [{"name": "root"}]})
+        if path == "/api/v2/cmdb/system/interface":
+            return httpx.Response(
+                200,
+                json={
+                    "results": [
+                        {"name": "internal1", "type": "physical", "vdom": "root"},
+                        {"name": "mgmt", "type": "physical", "vdom": "root", "alias": "Management"},
+                    ]
+                },
+            )
+        if path == "/api/v2/monitor/network/lldp/neighbors":
+            return httpx.Response(200, json={"results": neighbors})
+        if path == "/api/v2/monitor/system/interface":
+            return httpx.Response(
+                200,
+                json={
+                    "results": {
+                        "internal1": {"name": "internal1", "mac": "02:00:00:00:20:54"},
+                        "mgmt": {"name": "mgmt", "mac": "02:00:00:00:20:53"},
+                    }
+                },
+            )
+        if path.startswith("/api/v2/cmdb/"):
+            return httpx.Response(200, json={"results": []})
+        return httpx.Response(404, json={})
+
+    client = FortiGateClient(
+        "https://fw", "t", client=httpx.Client(transport=httpx.MockTransport(handler))
+    )
+    d = client.gather()
+    assert d["system"]["hostname"] == "fw-a1"
+    assert ("/api/v2/monitor/network/lldp/neighbors", "root") in asked
+    assert d["lldp"]["macs"] == {"internal1": "02:00:00:00:20:54", "mgmt": "02:00:00:00:20:53"}
+    sent = {}
+    monkeypatch.setattr(t, "gather", lambda target=None: d)
+    monkeypatch.setattr(
+        t, "submit_result", lambda run_id, result, via_agent=False: sent.update(result=result)
+    )
+    t.collect_once("r1", Target(name="fw-a1r"))
+    inv = sent["result"].inventory
+    assert [x.name for x in inv.devices] == ["fw-a1"]  # Hostname, nicht der Name des Quellsystems
+    macs = {i.name: (i.attrs or {}).get("mac") for i in inv.interfaces}
+    assert macs == {"internal1": "02:00:00:00:20:54", "mgmt": "02:00:00:00:20:53"}
+    first, second = inv.neighbors  # ohne eigenes Interface faellt weg
+    assert (first.device, first.port, first.remote_name, first.remote_port, first.remote_ip,
+            first.remote_chassis) == ("fw-a1", "internal1", "sw-a1", "gi1/0/24", "10.0.0.11",
+                                      "02:00:00:00:02:51")  # fmt: skip
+    assert first.remote_caps == ["bridge", "router"] and first.remote_platform == "C1300-24P"
+    # ohne Systemname: die Chassis-ID; Port-ID als MAC: die Beschreibung des Ports
+    assert (second.remote_name, second.remote_port) == ("02:00:00:00:01:7d", "gi1/0/23")
+    assert sent["result"].message is None
+
+    # ohne Leserecht: Hinweis (kein „nicht lesbar“ = kein Teilfehler)
+    def denied(request: httpx.Request) -> httpx.Response:
+        if request.url.path in ("/api/v2/monitor/network/lldp/neighbors",
+                                "/api/v2/monitor/system/interface"):  # fmt: skip
+            return httpx.Response(403, json={})
+        return handler(request)
+
+    client = FortiGateClient(
+        "https://fw", "t", client=httpx.Client(transport=httpx.MockTransport(denied))
+    )
+    d = client.gather()
+    assert d["lldp"]["neighbors"] == [] and d["lldp"]["macs"] == {}
+    assert t._vdom_message(d) == (
+        "Hinweise: LLDP der FortiGate nicht abgefragt (LLDP-Nachbarn (HTTP 403); Interface-MACs "
+        "(HTTP 403)) - Leserecht Netzwerk (netgrp) im Profil ergaenzen"
+    )

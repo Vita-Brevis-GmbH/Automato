@@ -249,6 +249,7 @@ def inventory(
                 remote_name=device_name(nb.get("systemName") or nb.get("neighborDevice"))
                 or str(nb.get("chassisId") or "?"),
                 remote_port=pid or None, remote_ip=remote_ip,
+                remote_chassis=str(nb.get("chassisId") or "").strip()[:100] or None,  # 1.23.0
                 remote_platform=desc.splitlines()[0][:200] if desc else None,
                 remote_caps=_caps(nb), remote_description=desc[:500] or None,
             ))  # fmt: skip

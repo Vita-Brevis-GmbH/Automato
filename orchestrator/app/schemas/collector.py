@@ -173,6 +173,9 @@ class NormalizedNeighbor(BaseModel):
     remote_platform: str | None = None
     remote_caps: list[str] = Field(default_factory=list)
     remote_description: str | None = None
+    # LLDP: Chassis-ID der Gegenstelle (1.23.0) - MAC bzw. Text wie gemeldet; ordnet sie auch
+    # ohne passenden Systemnamen zu (z. B. FortiGate: eine MAC fuer alle Ports)
+    remote_chassis: str | None = None
 
 
 class NormalizedTransceiver(BaseModel):
@@ -565,6 +568,8 @@ class CollectorResult(BaseModel):
     # Referenzquellen (Infoblox/NetBox): Eintraege kommen in Teilen ueber .../references,
     # hier nur die Gesamtzahl zur Kontrolle (ADR 0010)
     reference_count: int | None = None
+    # AD-DNS (1.23.0): Eintraege je uebertragener Zone, auch 0 (Zone ohne PTR ist gelesen)
+    zones: dict[str, int] | None = None
     message: str | None = None
     # Switches (0.62.0): beim ersten Kontakt uebernommene SSH-Host-Schluessel je Adresse
     # (`<typ> <base64>`), der Orchestrator haelt sie fest

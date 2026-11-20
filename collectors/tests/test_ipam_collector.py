@@ -180,3 +180,24 @@ def test_geraete_clients_sind_nur_lesend():
         apic._client.post("https://apic/api/mo/uni/tn-x.json", json={})
     with pytest.raises(ReadOnlyViolation):
         apic._client.delete("https://apic/api/mo/uni/tn-x.json")
+
+
+def test_ad_dns_lauf_nennt_die_uebertragenen_zonen(monkeypatch):
+    """1.23.0: das Ergebnis nennt je uebertragener Zone die Anzahl Eintraege, auch 0 (eine
+    Reverse-Zone nur mit SOA/NS ist gelesen); andere Referenzquellen ohne diese Angabe."""
+    import collectors.ipam.tasks as t
+
+    class Fake:
+        zone_counts = {"example.ch": 1, "8.20.10.in-addr.arpa": 0}
+
+        def export(self):
+            return iter([{"kind": "a_record", "value": "10.20.8.15", "dns_name": "a.example.ch"}])
+
+    monkeypatch.setattr(t, "_adapter", lambda platform, target: Fake())
+    monkeypatch.setattr(t, "submit_references", lambda *a, **kw: None)
+    monkeypatch.setattr(t, "submit_result", lambda run_id, result, via_agent=False: None)
+    result = t.collect_ad_dns("r1", _target(platform="ad_dns", name="ad"))
+    assert result.status == "completed", result.message
+    assert result.zones == {"example.ch": 1, "8.20.10.in-addr.arpa": 0}
+    Fake.zone_counts = None
+    assert t.collect_netbox("r1", _target(platform="netbox", name="nb")).zones is None

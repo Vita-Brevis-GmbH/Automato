@@ -358,6 +358,7 @@ def _lldp(d: _Data, device: str, local: dict[str, int], if_names: dict[int, str]
         out.append(NormalizedNeighbor(
             device=device, port=port, protocol="lldp", remote_name=remote,
             remote_port=remote_port, remote_ip=ips[0] if ips else None, remote_caps=caps,
+            remote_chassis=(chassis or text(r.get("chassis")) or "")[:100] or None,  # 1.23.0
             remote_description=(text(r.get("descr")) or "")[:500] or None,
         ))  # fmt: skip
     return out

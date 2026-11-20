@@ -124,3 +124,13 @@ der NetBox-Sync (Vorschau → Übernehmen, ADR 0010); neu ist, was er schreibt.
   - IP-Adressen aus dem DNS anlegen. Ein DNS-Server kennt kein Netz und keine Präfixlänge (Entscheid
     Nr. 4 des ursprünglichen ADR).
   - Den PTR als Quelle des Namens nehmen. Er ist im AD oft veraltet und dient nur zur Kontrolle.
+
+## Nachtrag 1.23.0 – Zone gelesen heisst übertragen
+
+Anwender 2026-11-20: „A-Records ohne gelesene Rückwärtszone“, obwohl die Reverse-Zone eingetragen
+und im DC vorhanden ist (nur SOA/NS, keine PTR). Bisher zählte eine Zone als gelesen, wenn der
+Stand Einträge aus ihr hatte. Neu nennt der Lauf je übertragener Zone die Anzahl Einträge, auch 0
+(`collector_run.zones`, Migration 0099); eine übertragene Zone ist gelesen. Die Prüfung „nicht
+geprüft“ unterscheidet: keine Rückwärtszone eingetragen, eingetragen aber noch nicht gelesen, und
+„PTR fehlt“ (Zone gelesen, ohne PTR für diese Adressen, mit Liste). Läufe ohne diese Angabe gelten
+wie bisher.
